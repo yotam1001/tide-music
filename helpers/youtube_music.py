@@ -114,7 +114,9 @@ def selected_zen_database(value):
         raise ValueError("invalid selected profile")
     canonical = database.resolve(strict=True)
     root = (Path(os.environ["APPDATA"]) / "zen" / "Profiles").resolve(strict=True)
-    if canonical != database or not canonical.is_relative_to(root) or not canonical.is_file():
+    # Windows file pickers/TEMP can use harmless 8.3 aliases. Enforce the resolved
+    # boundary rather than requiring the spelling to already be canonical.
+    if not canonical.is_relative_to(root) or not canonical.is_file():
         raise ValueError("invalid selected profile")
     return canonical
 
@@ -329,9 +331,15 @@ def run(client, request):
     if action == "home":
         shelves = client.get_home(limit=3)
         cards = []
+        # ytmusicapi includes description shelves with string contents and None
+        # entries for unsupported mixed content. Keep the playable shelf rows.
+        shelves = [shelf for shelf in shelves if isinstance(shelf, dict)
+                   and isinstance(shelf.get("contents"), list)]
         for shelf in shelves[:3]:
             for item in shelf.get("contents", [])[:40]:
-                kind = clean(item.get("type") or "unknown", 30)
+                if not isinstance(item, dict):
+                    continue
+                kind = clean(item.get("type") or "unknown", 30).lower()
                 video = identifier(item.get("videoId"), True)
                 playlist = identifier(item.get("playlistId"))
                 if video:
@@ -340,8 +348,17 @@ def run(client, request):
                     kind, item_id = "playlist", playlist
                 else:
                     item_id = identifier(item.get("browseId"))
+                    if item_id.startswith("MPRE"):
+                        kind = "album"
+                    elif item_id.startswith("UC"):
+                        kind = "artist"
+                if not item_id:
+                    continue
+                artists = item.get("artists") or item.get("author") or []
+                if not isinstance(artists, list):
+                    artists = []
                 cards.append({"id": item_id, "title": clean(item.get("title")),
-                              "subtitle": clean(", ".join(a.get("name", "") for a in item.get("artists", []) or [])),
+                              "subtitle": clean(", ".join(clean(a.get("name")) for a in artists if isinstance(a, dict))),
                               "kind": kind, "shelf": clean(shelf.get("title"))})
         return {"type": "home", "cards": cards}
     raise ValueError("unsupported action")

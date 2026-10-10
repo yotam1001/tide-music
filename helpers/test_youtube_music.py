@@ -1,4 +1,5 @@
 import io
+import os
 from contextlib import closing
 import json
 import sqlite3
@@ -57,6 +58,21 @@ class ProviderTests(unittest.TestCase):
         for request in [{"action": "playlist", "id": "bad/id"}, {"action": "rate"}]:
             with self.assertRaises(ValueError):
                 run(FakeClient(), request)
+
+    def test_home_handles_mixed_package_parser_output(self):
+        client = FakeClient()
+        client.get_home = lambda limit: [
+            {"title": "Notice", "contents": "An informational description"},
+            {"title": "Listen again", "contents": [None, {}, "unsupported",
+                {"title": "Album", "browseId": "MPREfixture", "type": "Album", "artists": None},
+                {"title": "Artist", "browseId": "UCfixture"},
+                {"title": "Mix", "playlistId": "PLfixture", "author": [{"name": "Fixture author"}]},
+                {"title": "Song", "videoId": "K4DyBUG242c", "artists": [None, {"name": None}]}]},
+        ]
+        result = run(client, {"action": "home"})
+        self.assertEqual([card["kind"] for card in result["cards"]], ["album", "artist", "playlist", "song"])
+        self.assertEqual(result["cards"][2]["subtitle"], "Fixture author")
+        self.assertEqual(result["cards"][3]["subtitle"], "")
 
 
 class LoginTests(unittest.TestCase):
@@ -246,6 +262,20 @@ class LoginTests(unittest.TestCase):
                 reader.assert_not_called()
             with patch("youtube_music.Path.is_symlink", return_value=True):
                 self.assertEqual(connect_existing(str(selected)), {"type": "error", "code": "profile"})
+
+    @unittest.skipUnless(os.name == "nt", "Windows file path aliases")
+    def test_selected_database_accepts_windows_short_path_alias(self):
+        import ctypes
+        with tempfile.TemporaryDirectory() as appdata, \
+                patch.dict("youtube_music.os.environ", {"APPDATA": appdata}):
+            root = Path(appdata) / "zen" / "Profiles"
+            root.mkdir(parents=True)
+            selected = self.database(root) / "cookies.sqlite"
+            buffer = ctypes.create_unicode_buffer(4096)
+            length = ctypes.windll.kernel32.GetShortPathNameW(str(selected.parent), buffer, len(buffer))
+            self.assertGreater(length, 0)
+            alias = Path(buffer.value) / "cookies.sqlite"
+            self.assertEqual(selected_zen_database(str(alias)), selected.resolve())
 
     def test_existing_connection_verifies_account_without_browser_or_profile_changes(self):
         with tempfile.TemporaryDirectory() as appdata, \
