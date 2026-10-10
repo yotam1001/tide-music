@@ -22,7 +22,9 @@ Actual public music playback was tested muted with the official NCS upload of Ca
 
 No real account session has been imported in development or CI. Personal playlists, recommendations and Premium ad-free behavior require the user's local connection and remain unverified. Account verification confirms access to the library endpoint, not subscription entitlement. Provider setup installs a transient Python helper; it is not resident during idle/playback. The earlier memory measurements below predate this integration and must not be read as measurements of live account refresh.
 
-A 15-sample empty compact-mode spot check of the account build used one app process and approximately 4.86 MiB private memory (22.93 MiB total Working Set), with 0% median CPU after startup. Benchmark mode disables account loading, so this checks interface regression only, not authenticated playback or refresh memory.
+A 15-sample empty compact-mode spot check of the account build used one app process. Samples 6–15 had median private memory of 4.87 MiB, total Working Set of 22.98 MiB and 0% CPU. Benchmark mode disables account loading, so this checks interface regression only, not authenticated playback or refresh memory.
+
+The muted public-music smoke also passed with an empty fixture cookie jar whose path contains spaces and a comma, exercising mpv option escaping through actual YouTube extraction. This is not an authenticated or Premium test.
 
 ## Initial renderer experiment
 

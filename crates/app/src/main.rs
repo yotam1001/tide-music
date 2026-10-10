@@ -70,6 +70,10 @@ fn configure_account_playback(s: &mut State, u: &AppWindow) -> bool {
     s.cookie_lease.take();
     s.active_playback = false;
     s.account_verified = false;
+    u.set_paused(true);
+    u.set_position(0.0);
+    u.set_duration(0.0);
+    u.set_status_text("Ready".into());
     let lease = s
         .provider
         .as_ref()
@@ -86,7 +90,6 @@ fn configure_account_playback(s: &mut State, u: &AppWindow) -> bool {
         Ok(engine) => {
             s.engine = Some(engine);
             s.command_error = None;
-            u.set_paused(true);
             send(s, u, PlaybackCommand::SetVolume(u.get_volume() as f64));
             true
         }
