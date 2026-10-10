@@ -1,0 +1,13 @@
+Use case: product-mockup
+Asset type: high-fidelity static UI concept image for a lightweight native Windows music player
+Primary request: Show a polished, efficient medium-width desktop library screen in a clearly cool-white and cobalt-blue visual language. The app is a fictional local music player. Include a narrow left navigation rail with small simple icons and readable labels, a top header with search field and concise library controls, a row of compact playlist tiles above a clean track list, and a restrained bottom playback bar with playback controls, progress, volume, and current track. Also show a matching compact mini-player as a separate floating window near the main window, using the same design system and modest dimensions. Make the layout feel keyboard-friendly and practical, like a carefully finished native Windows desktop app.
+Scene/backdrop: neutral light desktop canvas, windows shown front-on with subtle natural window shadows and ample breathing room
+Subject: medium-width main music library window plus one compact companion mini-player window
+Style/medium: crisp realistic desktop application UI mockup, precise restrained product design, not a photograph of a monitor
+Composition/framing: wide landscape presentation; main window is dominant and fully visible, mini-player clearly separated nearby; crisp legible interface hierarchy
+Lighting/mood: bright, calm, focused, orderly, accessible
+Color palette: cool white, very pale blue-gray surfaces, cobalt-blue selection and active controls, subtle slate text, fine light-gray dividers
+Materials/textures: flat native desktop surfaces, clean thin borders, restrained shadows, no glass effects
+Text (verbatim): use plausible short fictional labels and track titles such as “Library”, “Playlists”, “Recently added”, “Liked songs”, “Evening drive”, “Blue Hour”, “Low Tide”, “Small Hours”; text should be tidy and mostly legible
+Constraints: compact album thumbnails only; recognizable realistic controls; balanced density; clear active track and selected navigation state; high fidelity visual hierarchy; fictional content only
+Avoid: YouTube branding, logos, performance claims or badges, waveforms, glassmorphism, oversized album artwork, dark theme, warm ivory or amber palette, clutter, illegible fake text, gradients used as decoration, browser chrome, watermark

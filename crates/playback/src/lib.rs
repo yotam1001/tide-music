@@ -1,0 +1,1706 @@
+use std::collections::HashMap;
+use std::env;
+use std::ffi::OsString;
+use std::fs;
+use std::io;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, RwLock};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+use serde_json::{json, Value};
+use tide_core::{PlaybackCommand, PlaybackSnapshot};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader, WriteHalf};
+use tokio::sync::{mpsc, watch};
+use url::Url;
+
+#[cfg(windows)]
+mod owned_process;
+#[cfg(windows)]
+pub use owned_process::OwnedProcess;
+
+const COMMAND_CAPACITY: usize = 64;
+const IPC_EVENT_CAPACITY: usize = 256;
+const MAX_SOURCE_BYTES: usize = 8 * 1024;
+const MAX_IPC_LINE_BYTES: usize = 256 * 1024;
+const IPC_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+const SHUTDOWN_GRACE: Duration = Duration::from_millis(900);
+const IPC_WRITE_TIMEOUT: Duration = Duration::from_millis(500);
+static PIPE_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+/// A cheap, thread-safe view of playback state.
+///
+/// The mpv process is started on the first `Load` command and is owned by the
+/// worker. Dropping this handle asks the worker to quit and joins it, so an
+/// owned mpv process cannot outlive the handle.
+pub struct PlaybackHandle {
+    command_tx: mpsc::Sender<WorkerCommand>,
+    shutdown_tx: watch::Sender<bool>,
+    shutdown_requested: Arc<AtomicBool>,
+    desired_generation: Arc<AtomicU64>,
+    supersede_epoch: Arc<AtomicU64>,
+    desired_volume: Arc<AtomicU64>,
+    snapshot: Arc<RwLock<PlaybackSnapshot>>,
+    send_gate: Arc<Mutex<()>>,
+    worker: Option<thread::JoinHandle<()>>,
+    yt_dlp_available: bool,
+}
+
+/// Start the native playback worker. mpv is located at runtime but is not
+/// launched until the first real track is loaded.
+#[cfg(windows)]
+pub fn start() -> Result<PlaybackHandle, String> {
+    let runtimes = RuntimePaths::discover()?;
+    let yt_dlp_available = runtimes.yt_dlp.is_some();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_io()
+        .enable_time()
+        .build()
+        .map_err(|error| format!("Could not initialize the playback worker: {error}"))?;
+
+    let (command_tx, command_rx) = mpsc::channel(COMMAND_CAPACITY);
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let snapshot = Arc::new(RwLock::new(PlaybackSnapshot {
+        volume: 100.0,
+        paused: true,
+        ..PlaybackSnapshot::default()
+    }));
+    let desired_generation = Arc::new(AtomicU64::new(0));
+    let supersede_epoch = Arc::new(AtomicU64::new(0));
+    let desired_volume = Arc::new(AtomicU64::new(100.0_f64.to_bits()));
+    let shutdown_requested = Arc::new(AtomicBool::new(false));
+    let send_gate = Arc::new(Mutex::new(()));
+
+    let worker_snapshot = Arc::clone(&snapshot);
+    let worker_generation = Arc::clone(&desired_generation);
+    let worker_epoch = Arc::clone(&supersede_epoch);
+    let worker_gate = Arc::clone(&send_gate);
+    let worker_volume = Arc::clone(&desired_volume);
+    let worker = thread::Builder::new()
+        .name("tide-playback".into())
+        .spawn(move || {
+            runtime.block_on(run_worker(
+                runtimes,
+                command_rx,
+                shutdown_rx,
+                worker_snapshot,
+                WorkerControls {
+                    desired_generation: worker_generation,
+                    supersede_epoch: worker_epoch,
+                    send_gate: worker_gate,
+                    desired_volume: worker_volume,
+                },
+            ));
+        })
+        .map_err(|error| format!("Could not start the playback worker: {error}"))?;
+
+    Ok(PlaybackHandle {
+        command_tx,
+        shutdown_tx,
+        shutdown_requested,
+        desired_generation,
+        supersede_epoch,
+        desired_volume,
+        snapshot,
+        send_gate,
+        worker: Some(worker),
+        yt_dlp_available,
+    })
+}
+
+#[cfg(not(windows))]
+pub fn start() -> Result<PlaybackHandle, String> {
+    Err("The native mpv named-pipe backend is currently supported on Windows only.".into())
+}
+
+impl PlaybackHandle {
+    /// Queue a playback command without waiting for mpv or network I/O.
+    pub fn send(&self, command: PlaybackCommand) -> Result<(), String> {
+        if self.shutdown_requested.load(Ordering::Acquire) {
+            return Err("The playback engine is shutting down.".into());
+        }
+
+        match command {
+            PlaybackCommand::Load { source, generation } => {
+                let validated = validate_source(&source)?;
+                if validated.is_youtube && !self.yt_dlp_available {
+                    return Err(
+                        "YouTube playback needs yt-dlp.exe. Place it beside mpv in .tools/runtime or the app's tools directory, or add it to PATH.".into(),
+                    );
+                }
+
+                let _gate = self
+                    .send_gate
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let previous_generation = self.desired_generation.load(Ordering::Acquire);
+                if generation < previous_generation {
+                    return Err(format!(
+                        "Ignoring stale playback generation {generation}; generation {previous_generation} is already active."
+                    ));
+                }
+
+                if self.shutdown_requested.load(Ordering::Acquire) {
+                    return Err("The playback engine is shutting down.".into());
+                }
+                let epoch = next_epoch(self.supersede_epoch.load(Ordering::Acquire));
+                self.command_tx
+                    .try_send(WorkerCommand::Load(PendingLoad {
+                        source: validated.source,
+                        generation,
+                        epoch,
+                    }))
+                    .map_err(command_queue_error)?;
+
+                self.supersede_epoch.store(epoch, Ordering::Release);
+                self.desired_generation.store(generation, Ordering::Release);
+                let mut snapshot = self.snapshot_write();
+                snapshot.generation = generation;
+                snapshot.position = 0.0;
+                snapshot.duration = 0.0;
+                snapshot.paused = false;
+                snapshot.loading = true;
+                snapshot.ended = false;
+                snapshot.error = None;
+                snapshot.title = None;
+                Ok(())
+            }
+            PlaybackCommand::Seek(seconds) => {
+                if !seconds.is_finite() || seconds < 0.0 {
+                    return Err("Seek position must be a finite, non-negative number.".into());
+                }
+                let _gate = self
+                    .send_gate
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                if self.shutdown_requested.load(Ordering::Acquire) {
+                    return Err("The playback engine is shutting down.".into());
+                }
+                self.try_send(ActionCommand::Seek(seconds))
+            }
+            PlaybackCommand::SetVolume(volume) => {
+                if !volume.is_finite() || !(0.0..=100.0).contains(&volume) {
+                    return Err("Volume must be a finite number from 0 to 100.".into());
+                }
+                let _gate = self
+                    .send_gate
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                if self.shutdown_requested.load(Ordering::Acquire) {
+                    return Err("The playback engine is shutting down.".into());
+                }
+                self.command_tx
+                    .try_send(WorkerCommand::Action {
+                        epoch: self.supersede_epoch.load(Ordering::Acquire),
+                        command: ActionCommand::SetVolume,
+                    })
+                    .map_err(command_queue_error)?;
+                self.desired_volume
+                    .store(volume.to_bits(), Ordering::Release);
+                self.snapshot_write().volume = volume;
+                Ok(())
+            }
+            PlaybackCommand::Stop => {
+                let _gate = self
+                    .send_gate
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                if self.shutdown_requested.load(Ordering::Acquire) {
+                    return Err("The playback engine is shutting down.".into());
+                }
+                let epoch = next_epoch(self.supersede_epoch.load(Ordering::Acquire));
+                self.command_tx
+                    .try_send(WorkerCommand::Stop { epoch })
+                    .map_err(command_queue_error)?;
+                self.supersede_epoch.store(epoch, Ordering::Release);
+                reset_snapshot(&mut self.snapshot_write());
+                Ok(())
+            }
+            PlaybackCommand::SetPaused(paused) => {
+                let _gate = self
+                    .send_gate
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                if self.shutdown_requested.load(Ordering::Acquire) {
+                    return Err("The playback engine is shutting down.".into());
+                }
+                self.try_send(ActionCommand::SetPaused(paused))
+            }
+            PlaybackCommand::TogglePause => {
+                let _gate = self
+                    .send_gate
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                if self.shutdown_requested.load(Ordering::Acquire) {
+                    return Err("The playback engine is shutting down.".into());
+                }
+                self.try_send(ActionCommand::TogglePause)
+            }
+            PlaybackCommand::Shutdown => {
+                let _gate = self
+                    .send_gate
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                self.shutdown_requested.store(true, Ordering::Release);
+                self.shutdown_tx.send_replace(true);
+                Ok(())
+            }
+        }
+    }
+
+    /// Return a copy of the most recently observed playback state.
+    pub fn snapshot(&self) -> PlaybackSnapshot {
+        self.snapshot_read().clone()
+    }
+
+    fn try_send(&self, command: ActionCommand) -> Result<(), String> {
+        self.command_tx
+            .try_send(WorkerCommand::Action {
+                epoch: self.supersede_epoch.load(Ordering::Acquire),
+                command,
+            })
+            .map_err(command_queue_error)
+    }
+
+    fn snapshot_read(&self) -> std::sync::RwLockReadGuard<'_, PlaybackSnapshot> {
+        self.snapshot
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn snapshot_write(&self) -> std::sync::RwLockWriteGuard<'_, PlaybackSnapshot> {
+        self.snapshot
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
+impl Drop for PlaybackHandle {
+    fn drop(&mut self) {
+        self.shutdown_requested.store(true, Ordering::Release);
+        self.shutdown_tx.send_replace(true);
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
+
+fn command_queue_error<T>(error: mpsc::error::TrySendError<T>) -> String {
+    match error {
+        mpsc::error::TrySendError::Full(_) => {
+            "The playback command queue is full; try again shortly.".into()
+        }
+        mpsc::error::TrySendError::Closed(_) => {
+            "The playback worker is no longer accepting commands.".into()
+        }
+    }
+}
+
+fn next_epoch(current: u64) -> u64 {
+    current.wrapping_add(1).max(1)
+}
+
+enum WorkerCommand {
+    Load(PendingLoad),
+    Stop { epoch: u64 },
+    Action { epoch: u64, command: ActionCommand },
+}
+
+enum ActionCommand {
+    TogglePause,
+    SetPaused(bool),
+    Seek(f64),
+    SetVolume,
+}
+
+#[cfg(windows)]
+struct WorkerControls {
+    desired_generation: Arc<AtomicU64>,
+    supersede_epoch: Arc<AtomicU64>,
+    desired_volume: Arc<AtomicU64>,
+    send_gate: Arc<Mutex<()>>,
+}
+
+#[derive(Clone, Debug)]
+struct RuntimePaths {
+    mpv: PathBuf,
+    yt_dlp: Option<PathBuf>,
+}
+
+impl RuntimePaths {
+    fn discover() -> Result<Self, String> {
+        let mpv = find_runtime_binary("mpv.exe")
+            .ok_or_else(|| {
+                "mpv.exe was not found. Place it in the app's tools directory, .tools/runtime, or add it to PATH.".to_owned()
+            })?;
+        Ok(Self {
+            mpv,
+            yt_dlp: Self::discover_yt_dlp(),
+        })
+    }
+
+    fn discover_yt_dlp() -> Option<PathBuf> {
+        find_runtime_binary("yt-dlp.exe")
+    }
+}
+
+fn find_runtime_binary(name: &str) -> Option<PathBuf> {
+    let mut directories = Vec::new();
+
+    if let Some(runtime_dir) = env::var_os("TIDE_RUNTIME_DIR") {
+        directories.push(PathBuf::from(runtime_dir));
+    }
+
+    if let Ok(executable) = env::current_exe() {
+        if let Some(exe_dir) = executable.parent() {
+            directories.push(exe_dir.join("tools"));
+            directories.push(exe_dir.join(".tools").join("runtime"));
+            directories.push(exe_dir.to_path_buf());
+            add_runtime_ancestors(exe_dir, &mut directories);
+        }
+    }
+
+    if let Ok(current_dir) = env::current_dir() {
+        add_runtime_ancestors(&current_dir, &mut directories);
+    }
+
+    for directory in directories {
+        let candidate = directory.join(name);
+        if candidate.is_file() {
+            return fs::canonicalize(&candidate).ok().or(Some(candidate));
+        }
+    }
+
+    if let Some(path) = env::var_os("PATH") {
+        for directory in env::split_paths(&path) {
+            let candidate = directory.join(name);
+            if candidate.is_file() {
+                return fs::canonicalize(&candidate).ok().or(Some(candidate));
+            }
+        }
+    }
+    None
+}
+
+fn add_runtime_ancestors(start: &Path, directories: &mut Vec<PathBuf>) {
+    for ancestor in start.ancestors().take(8) {
+        directories.push(ancestor.join(".tools").join("runtime"));
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ValidatedSource {
+    source: String,
+    is_youtube: bool,
+}
+
+/// Validate before adding a source to a persistent queue. This shares the
+/// backend's scheme, credentials, control-character, and local-file checks.
+pub fn validate_playback_source(source: &str) -> Result<String, String> {
+    validate_source(source).map(|validated| validated.source)
+}
+
+fn validate_source(source: &str) -> Result<ValidatedSource, String> {
+    let source = source.trim();
+    if source.is_empty() {
+        return Err("Choose a local file or an http/https URL.".into());
+    }
+    if source.len() > MAX_SOURCE_BYTES {
+        return Err("The playback source is too long.".into());
+    }
+    if source.chars().any(char::is_control) {
+        return Err("The playback source contains unsupported control characters.".into());
+    }
+
+    if source.contains("://") || source.starts_with("http:") || source.starts_with("https:") {
+        let url = Url::parse(source).map_err(|_| "Enter a valid http/https URL.".to_owned())?;
+        if url.scheme() != "http" && url.scheme() != "https" {
+            return Err("Only http and https playback URLs are supported.".into());
+        }
+        if url.host_str().is_none() || !url.username().is_empty() || url.password().is_some() {
+            return Err(
+                "The URL must have a host and must not contain embedded credentials.".into(),
+            );
+        }
+        let is_youtube = url.host_str().is_some_and(is_youtube_host);
+        return Ok(ValidatedSource {
+            source: url.to_string(),
+            is_youtube,
+        });
+    }
+
+    #[cfg(windows)]
+    if source.starts_with("\\\\") || source.starts_with("//") {
+        return Err("Network shares are not accepted as local playback files.".into());
+    }
+
+    let path = PathBuf::from(source);
+    if !path.is_file() {
+        return Err("The local playback file does not exist or is not a regular file.".into());
+    }
+    let absolute_path = if path.is_absolute() {
+        path
+    } else {
+        env::current_dir()
+            .map_err(|error| format!("Could not resolve the local file path: {error}"))?
+            .join(path)
+    };
+    Ok(ValidatedSource {
+        source: absolute_path.to_string_lossy().into_owned(),
+        is_youtube: false,
+    })
+}
+
+fn is_youtube_host(host: &str) -> bool {
+    host == "youtube.com"
+        || host.ends_with(".youtube.com")
+        || host == "youtu.be"
+        || host.ends_with(".youtu.be")
+}
+
+#[cfg(windows)]
+type PipeWriter = WriteHalf<tokio::net::windows::named_pipe::NamedPipeClient>;
+
+#[cfg(windows)]
+struct RunningPlayer {
+    child: OwnedChild,
+    writer: PipeWriter,
+    reader_task: tokio::task::JoinHandle<()>,
+    session_id: u64,
+}
+
+/// std::process::Child does not kill the child when dropped. This guard makes
+/// even worker unwinding terminate and reap the owned mpv process.
+#[cfg(windows)]
+struct OwnedChild {
+    process: Child,
+    // Close after the child has been reaped; this also kills helper descendants.
+    _job: OwnedJob,
+}
+
+#[cfg(windows)]
+impl OwnedChild {
+    fn try_wait(&mut self) -> io::Result<Option<std::process::ExitStatus>> {
+        self.process.try_wait()
+    }
+
+    fn kill(&mut self) -> io::Result<()> {
+        self.process.kill()
+    }
+
+    fn wait(&mut self) -> io::Result<std::process::ExitStatus> {
+        self.process.wait()
+    }
+}
+
+#[cfg(windows)]
+impl Drop for OwnedChild {
+    fn drop(&mut self) {
+        if self.process.try_wait().ok().flatten().is_none() {
+            let _ = self.process.kill();
+            let _ = self.process.wait();
+        }
+    }
+}
+
+#[cfg(windows)]
+struct OwnedJob(windows_sys::Win32::Foundation::HANDLE);
+
+#[cfg(windows)]
+impl OwnedJob {
+    fn attach(process: &Child) -> io::Result<Self> {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::System::JobObjects::{
+            AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+            SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        };
+
+        // SAFETY: Null security attributes create a non-inheritable, unnamed
+        // job. All handles and structure pointers below remain valid for each
+        // synchronous Win32 call. OwnedJob closes its unique handle once.
+        unsafe {
+            let handle = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+            if handle.is_null() {
+                return Err(io::Error::last_os_error());
+            }
+            let job = Self(handle);
+            let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+            limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            if SetInformationJobObject(
+                job.0,
+                JobObjectExtendedLimitInformation,
+                (&limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+                std::mem::size_of_val(&limits) as u32,
+            ) == 0
+                || AssignProcessToJobObject(job.0, process.as_raw_handle()) == 0
+            {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(job)
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Drop for OwnedJob {
+    fn drop(&mut self) {
+        // SAFETY: This is the unique handle returned by CreateJobObjectW.
+        unsafe { windows_sys::Win32::Foundation::CloseHandle(self.0) };
+    }
+}
+
+#[derive(Clone, Debug)]
+struct PendingLoad {
+    source: String,
+    generation: u64,
+    epoch: u64,
+}
+
+#[cfg(windows)]
+#[derive(Default)]
+struct PlayerState {
+    active_generation: Option<u64>,
+    active_epoch: Option<u64>,
+    active_entry_id: Option<u64>,
+    awaiting_start: Option<u64>,
+    next_request_id: i64,
+    requests: HashMap<i64, RequestPurpose>,
+}
+
+#[cfg(windows)]
+enum RequestPurpose {
+    Load { generation: u64, epoch: u64 },
+}
+
+#[cfg(windows)]
+enum IpcEvent {
+    Line {
+        session_id: u64,
+        line: String,
+    },
+    Closed {
+        session_id: u64,
+        error: Option<String>,
+    },
+}
+
+#[cfg(windows)]
+async fn run_worker(
+    runtimes: RuntimePaths,
+    mut command_rx: mpsc::Receiver<WorkerCommand>,
+    mut shutdown_rx: watch::Receiver<bool>,
+    snapshot: Arc<RwLock<PlaybackSnapshot>>,
+    controls: WorkerControls,
+) {
+    let WorkerControls {
+        desired_generation,
+        supersede_epoch,
+        desired_volume,
+        send_gate,
+    } = controls;
+    let (ipc_event_tx, mut ipc_event_rx) = mpsc::channel(IPC_EVENT_CAPACITY);
+    let mut player: Option<RunningPlayer> = None;
+    let mut state = PlayerState::default();
+    let mut next_session_id = 1_u64;
+
+    loop {
+        tokio::select! {
+            biased;
+            changed = shutdown_rx.changed() => {
+                if changed.is_err() || *shutdown_rx.borrow() {
+                    break;
+                }
+            }
+            event = ipc_event_rx.recv() => {
+                match event {
+                    Some(IpcEvent::Line { session_id, line })
+                        if player.as_ref().is_some_and(|running| running.session_id == session_id) => {
+                                if let Ok(message) = serde_json::from_str::<Value>(&line) {
+                                    let _gate = send_gate.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                                    apply_ipc_message(
+                                        &mut state,
+                                        &mut snapshot_write(&snapshot),
+                                        &message,
+                                        desired_generation.load(Ordering::Acquire),
+                                        supersede_epoch.load(Ordering::Acquire),
+                                    );
+                                    // Display the accepted volume target. An
+                                    // earlier volume property event must not
+                                    // overwrite a newer queued volume control.
+                                    snapshot_write(&snapshot).volume =
+                                        f64::from_bits(desired_volume.load(Ordering::Acquire));
+                                }
+                    }
+                    Some(IpcEvent::Closed { session_id, error })
+                        if player.as_ref().is_some_and(|running| running.session_id == session_id) => {
+                            if let (Some(generation), Some(epoch)) =
+                                (state.active_generation, state.active_epoch)
+                            {
+                                let text = error.map_or_else(
+                                    || "The mpv IPC connection closed unexpectedly.".to_owned(),
+                                    |error| format!("The mpv IPC connection failed: {error}"),
+                                );
+                                set_generation_error(
+                                    &snapshot,
+                                    &desired_generation,
+                                    &supersede_epoch,
+                                    &send_gate,
+                                    generation,
+                                    epoch,
+                                    text,
+                                );
+                            }
+                            if let Some(mut failed) = player.take() {
+                                terminate_player(&mut failed).await;
+                            }
+                            state = PlayerState::default();
+                    }
+                    _ => {}
+                }
+            }
+            command = command_rx.recv() => {
+                let Some(command) = command else { break; };
+                match command {
+                    WorkerCommand::Load(load) => {
+                        let generation = load.generation;
+                        let skip_load = {
+                            let _gate = send_gate.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                            load.epoch != supersede_epoch.load(Ordering::Acquire)
+                        };
+                        if !skip_load {
+                            // Events have no track token for many properties.
+                            // A separate session per track both cancels slow
+                            // extraction and makes every old event identifiable.
+                            if let Some(mut old) = player.take() {
+                                terminate_player(&mut old).await;
+                            }
+                            state = PlayerState::default();
+                            if player.is_none() {
+                                let volume = f64::from_bits(desired_volume.load(Ordering::Acquire));
+                                match launch_player(
+                                    &runtimes,
+                                    volume,
+                                    &mut shutdown_rx,
+                                    &ipc_event_tx,
+                                    next_session_id,
+                                    &supersede_epoch,
+                                    load.epoch,
+                                ).await {
+                                    Ok(Some(running)) => {
+                                        next_session_id = next_session_id.wrapping_add(1).max(1);
+                                        player = Some(running);
+                                        if let Some(running) = player.as_mut() {
+                                            if let Err(error) = observe_properties(running).await {
+                                                set_generation_error(
+                                                    &snapshot,
+                                                    &desired_generation,
+                                                    &supersede_epoch,
+                                                    &send_gate,
+                                                    generation,
+                                                    load.epoch,
+                                                    error.to_string(),
+                                                );
+                                                terminate_player(running).await;
+                                                player = None;
+                                                continue;
+                                            }
+                                        }
+                                    }
+                                    Ok(None) => {
+                                        if *shutdown_rx.borrow() {
+                                            break;
+                                        }
+                                        continue;
+                                    }
+                                    Err(error) => {
+                                        set_generation_error(
+                                            &snapshot,
+                                            &desired_generation,
+                                            &supersede_epoch,
+                                            &send_gate,
+                                            generation,
+                                            load.epoch,
+                                            error,
+                                        );
+                                        continue;
+                                    }
+                                }
+                            }
+                            // A newer source may have arrived while mpv was
+                            // starting. Leave mpv idle and let that queued
+                            // source become the first load.
+                            let still_current = {
+                                let _gate = send_gate.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                                generation == desired_generation.load(Ordering::Acquire)
+                                    && load.epoch == supersede_epoch.load(Ordering::Acquire)
+                            };
+                            if !still_current {
+                                continue;
+                            }
+                            if let Some(running) = player.as_mut() {
+                                let epoch = load.epoch;
+                                if let Err(error) = begin_load(running, &mut state, load).await {
+                                    set_generation_error(
+                                        &snapshot,
+                                        &desired_generation,
+                                        &supersede_epoch,
+                                        &send_gate,
+                                        generation,
+                                        epoch,
+                                        error.to_string(),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    WorkerCommand::Action { epoch, command } => {
+                        let command = {
+                            let _gate = send_gate.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                            if epoch != supersede_epoch.load(Ordering::Acquire)
+                                && !matches!(command, ActionCommand::SetVolume)
+                            {
+                                continue;
+                            }
+                            match command {
+                                ActionCommand::TogglePause => json!(["cycle", "pause"]),
+                                ActionCommand::SetPaused(paused) => json!(["set_property", "pause", paused]),
+                                ActionCommand::Seek(seconds) => json!(["seek", seconds, "absolute+exact"]),
+                                ActionCommand::SetVolume => json!([
+                                    "set_property", "volume", f64::from_bits(desired_volume.load(Ordering::Acquire))
+                                ]),
+                            }
+                        };
+                        if let Some(running) = player.as_mut() {
+                            if let Err(error) = send_ipc_command(&mut running.writer, command, None).await {
+                                if let (Some(generation), Some(active_epoch)) =
+                                    (state.active_generation, state.active_epoch)
+                                {
+                                    set_generation_error(
+                                        &snapshot, &desired_generation, &supersede_epoch,
+                                        &send_gate, generation, active_epoch,
+                                        format!("Could not send a playback control: {error}"),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    WorkerCommand::Stop { epoch } => {
+                        let _gate = send_gate.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                        if epoch != supersede_epoch.load(Ordering::Acquire) {
+                            continue;
+                        }
+                        state = PlayerState::default();
+                        drop(_gate);
+                        if let Some(mut running) = player.take() {
+                            terminate_player(&mut running).await;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if let Some(mut running) = player.take() {
+        terminate_player(&mut running).await;
+    }
+    let _gate = send_gate
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    reset_snapshot(&mut snapshot_write(&snapshot));
+}
+
+#[cfg(windows)]
+async fn launch_player(
+    runtimes: &RuntimePaths,
+    volume: f64,
+    shutdown_rx: &mut watch::Receiver<bool>,
+    ipc_event_tx: &mpsc::Sender<IpcEvent>,
+    session_id: u64,
+    desired_epoch: &AtomicU64,
+    epoch: u64,
+) -> Result<Option<RunningPlayer>, String> {
+    use std::os::windows::process::CommandExt;
+    use tokio::net::windows::named_pipe::ClientOptions;
+
+    let pipe_path = unique_pipe_path();
+    let mut command = Command::new(&runtimes.mpv);
+    command
+        .arg("--no-config")
+        .arg("--idle=yes")
+        .arg("--terminal=no")
+        .arg("--input-terminal=no")
+        .arg("--force-window=no")
+        .arg("--vid=no")
+        .arg("--vo=null")
+        .arg("--audio-display=no")
+        .arg("--osc=no")
+        .arg("--osd-level=0")
+        .arg("--ytdl=yes")
+        .arg("--ytdl-format=bestaudio/best")
+        .arg("--ytdl-raw-options=ignore-config=")
+        .arg("--cache=yes")
+        .arg("--cache-secs=20")
+        .arg("--demuxer-readahead-secs=5")
+        .arg("--demuxer-max-bytes=16MiB")
+        .arg("--demuxer-max-back-bytes=2MiB")
+        .arg(format!("--volume={volume}"))
+        .arg(format!("--input-ipc-server={pipe_path}"))
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .creation_flags(0x08000000);
+
+    if runtimes.yt_dlp.is_some() {
+        command.arg("--script-opts=ytdl_hook-ytdl_path=yt-dlp.exe");
+    }
+    command.env("PATH", child_path(runtimes)?);
+
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("Could not start mpv.exe: {error}"))?;
+    // mpv is idle here and cannot launch a source extractor until loadfile.
+    // Refuse playback if process-tree containment could not be installed.
+    let job = match OwnedJob::attach(&child) {
+        Ok(job) => job,
+        Err(error) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!("Could not contain the mpv process tree: {error}"));
+        }
+    };
+    let mut child = OwnedChild {
+        process: child,
+        _job: job,
+    };
+    let started = Instant::now();
+
+    let client = loop {
+        if *shutdown_rx.borrow() || desired_epoch.load(Ordering::Acquire) != epoch {
+            return Ok(None);
+        }
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|error| format!("Could not check the mpv process: {error}"))?
+        {
+            return Err(format!(
+                "mpv.exe exited before its IPC pipe was ready (status {status}). Check that this is a recent mpv build."
+            ));
+        }
+        match ClientOptions::new().open(&pipe_path) {
+            Ok(client) => break client,
+            Err(_) if started.elapsed() < IPC_CONNECT_TIMEOUT => {
+                tokio::select! {
+                    changed = shutdown_rx.changed() => {
+                        if changed.is_err() || *shutdown_rx.borrow() {
+                            return Ok(None);
+                        }
+                    }
+                    _ = tokio::time::sleep(Duration::from_millis(30)) => {}
+                }
+            }
+            Err(error) => {
+                return Err(format!(
+                    "mpv.exe started, but its named-pipe IPC did not become ready within {} seconds: {error}",
+                    IPC_CONNECT_TIMEOUT.as_secs()
+                ));
+            }
+        }
+    };
+
+    let (reader, writer) = tokio::io::split(client);
+    let mut reader = BufReader::new(reader);
+    let event_tx = ipc_event_tx.clone();
+    let reader_task = tokio::spawn(async move {
+        loop {
+            match read_ipc_line(&mut reader).await {
+                Ok(Some(line)) => {
+                    if event_tx
+                        .send(IpcEvent::Line { session_id, line })
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+                Ok(None) => {
+                    let _ = event_tx
+                        .send(IpcEvent::Closed {
+                            session_id,
+                            error: None,
+                        })
+                        .await;
+                    break;
+                }
+                Err(error) => {
+                    let _ = event_tx
+                        .send(IpcEvent::Closed {
+                            session_id,
+                            error: Some(error.to_string()),
+                        })
+                        .await;
+                    break;
+                }
+            }
+        }
+    });
+
+    // Send initial controls before a track is loaded. These commands never
+    // include user input and use JSON arguments rather than text IPC syntax.
+    let mut running = RunningPlayer {
+        child,
+        writer,
+        reader_task,
+        session_id,
+    };
+    if let Err(error) = send_ipc_command(
+        &mut running.writer,
+        json!(["set_property", "volume", volume]),
+        None,
+    )
+    .await
+    {
+        terminate_player(&mut running).await;
+        return Err(format!("Could not initialize mpv IPC: {error}"));
+    }
+    Ok(Some(running))
+}
+
+#[cfg(windows)]
+async fn read_ipc_line(reader: &mut (impl AsyncBufRead + Unpin)) -> io::Result<Option<String>> {
+    let mut line = Vec::new();
+    loop {
+        let available = reader.fill_buf().await?;
+        if available.is_empty() {
+            if line.is_empty() {
+                return Ok(None);
+            }
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "mpv IPC line was incomplete",
+            ));
+        }
+        let newline = available.iter().position(|byte| *byte == b'\n');
+        let take = newline.map_or(available.len(), |index| index + 1);
+        if line.len() + take > MAX_IPC_LINE_BYTES {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "mpv IPC line exceeded its size limit",
+            ));
+        }
+        line.extend_from_slice(&available[..take]);
+        reader.consume(take);
+        if newline.is_some() {
+            return String::from_utf8(line)
+                .map(Some)
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error));
+        }
+    }
+}
+
+#[cfg(windows)]
+fn unique_pipe_path() -> String {
+    let counter = PIPE_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let tick = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    format!(
+        r"\\.\pipe\tide-playback-{}-{tick}-{counter}",
+        std::process::id()
+    )
+}
+
+#[cfg(windows)]
+fn child_path(runtimes: &RuntimePaths) -> Result<OsString, String> {
+    let mut paths = Vec::new();
+    if let Some(directory) = runtimes.mpv.parent() {
+        paths.push(directory.to_path_buf());
+    }
+    if let Some(directory) = runtimes.yt_dlp.as_ref().and_then(|path| path.parent()) {
+        if !paths.iter().any(|existing| existing == directory) {
+            paths.push(directory.to_path_buf());
+        }
+    }
+    if let Some(inherited) = env::var_os("PATH") {
+        paths.extend(env::split_paths(&inherited));
+    }
+    env::join_paths(paths)
+        .map_err(|error| format!("Could not prepare the mpv runtime PATH: {error}"))
+}
+
+#[cfg(windows)]
+async fn observe_properties(player: &mut RunningPlayer) -> io::Result<()> {
+    for (id, property) in [
+        (1, "time-pos"),
+        (2, "duration"),
+        (3, "pause"),
+        (4, "volume"),
+        (5, "media-title"),
+    ] {
+        send_ipc_command(
+            &mut player.writer,
+            json!(["observe_property", id, property]),
+            None,
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+async fn begin_load(
+    player: &mut RunningPlayer,
+    state: &mut PlayerState,
+    load: PendingLoad,
+) -> io::Result<()> {
+    state.active_generation = Some(load.generation);
+    state.active_epoch = Some(load.epoch);
+    state.active_entry_id = None;
+    state.awaiting_start = Some(load.generation);
+    let request_id = next_request_id(state);
+    state.requests.insert(
+        request_id,
+        RequestPurpose::Load {
+            generation: load.generation,
+            epoch: load.epoch,
+        },
+    );
+    if let Err(error) = send_ipc_command(
+        &mut player.writer,
+        json!(["loadfile", load.source, "replace"]),
+        Some(request_id),
+    )
+    .await
+    {
+        state.requests.remove(&request_id);
+        state.awaiting_start = None;
+        state.active_generation = None;
+        state.active_epoch = None;
+        return Err(error);
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn next_request_id(state: &mut PlayerState) -> i64 {
+    state.next_request_id = state.next_request_id.wrapping_add(1).max(1);
+    state.next_request_id
+}
+
+#[cfg(windows)]
+async fn send_ipc_command(
+    writer: &mut PipeWriter,
+    command: Value,
+    request_id: Option<i64>,
+) -> io::Result<()> {
+    let mut message = json!({ "command": command });
+    if let Some(request_id) = request_id {
+        message["request_id"] = json!(request_id);
+    }
+    let mut encoded = serde_json::to_vec(&message)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    encoded.push(b'\n');
+    tokio::time::timeout(IPC_WRITE_TIMEOUT, async {
+        writer.write_all(&encoded).await?;
+        writer.flush().await
+    })
+    .await
+    .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "mpv IPC write timed out"))?
+}
+
+#[cfg(windows)]
+fn apply_ipc_message(
+    state: &mut PlayerState,
+    snapshot: &mut PlaybackSnapshot,
+    message: &Value,
+    desired_generation: u64,
+    desired_epoch: u64,
+) {
+    if let Some(request_id) = message.get("request_id").and_then(Value::as_i64) {
+        if let Some(RequestPurpose::Load { generation, epoch }) = state.requests.remove(&request_id)
+        {
+            let error = message.get("error").and_then(Value::as_str);
+            if error.is_some_and(|error| error != "success")
+                && generation == desired_generation
+                && epoch == desired_epoch
+            {
+                snapshot.loading = false;
+                snapshot.error = Some(
+                    "mpv rejected this source. Check that the file or URL is supported and try again."
+                        .into(),
+                );
+                if state.awaiting_start == Some(generation) {
+                    state.awaiting_start = None;
+                    state.active_generation = None;
+                    state.active_epoch = None;
+                    state.active_entry_id = None;
+                }
+            }
+        }
+    }
+
+    match message.get("event").and_then(Value::as_str) {
+        Some("start-file") => {
+            if let Some(generation) = state.awaiting_start.take() {
+                state.active_generation = Some(generation);
+                state.active_entry_id = message.get("playlist_entry_id").and_then(Value::as_u64);
+            }
+        }
+        Some("file-loaded") => {
+            if active_is_current(state, desired_generation, desired_epoch) {
+                snapshot.loading = false;
+                snapshot.ended = false;
+                snapshot.error = None;
+            }
+        }
+        Some("end-file") => {
+            let event_entry = message.get("playlist_entry_id").and_then(Value::as_u64);
+            if event_entry.is_some()
+                && event_entry == state.active_entry_id
+                && active_is_current(state, desired_generation, desired_epoch)
+            {
+                let reason = message
+                    .get("reason")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown");
+                snapshot.loading = false;
+                match reason {
+                    "eof" => {
+                        snapshot.ended = true;
+                        snapshot.paused = true;
+                    }
+                    "error" => {
+                        snapshot.ended = true;
+                        snapshot.paused = true;
+                        snapshot.error = Some(
+                            "Playback failed while reading this source. Check the file or URL and connection.".into(),
+                        );
+                    }
+                    _ => {}
+                }
+                state.active_entry_id = None;
+                state.active_generation = None;
+                state.active_epoch = None;
+            }
+        }
+        Some("property-change") if active_is_current(state, desired_generation, desired_epoch) => {
+            if let (Some(name), Some(data)) = (
+                message.get("name").and_then(Value::as_str),
+                message.get("data"),
+            ) {
+                apply_property(snapshot, name, data);
+            }
+        }
+        _ => {}
+    }
+}
+
+#[cfg(windows)]
+fn active_is_current(state: &PlayerState, desired_generation: u64, desired_epoch: u64) -> bool {
+    state.awaiting_start.is_none()
+        && state.active_entry_id.is_some()
+        && state.active_generation == Some(desired_generation)
+        && state.active_epoch == Some(desired_epoch)
+}
+
+fn apply_property(snapshot: &mut PlaybackSnapshot, name: &str, value: &Value) {
+    match name {
+        "time-pos" => {
+            if let Some(position) = finite_non_negative(value) {
+                snapshot.position = position;
+            }
+        }
+        "duration" => {
+            if let Some(duration) = finite_non_negative(value) {
+                snapshot.duration = duration;
+            }
+        }
+        "pause" => {
+            if let Some(paused) = value.as_bool() {
+                snapshot.paused = paused;
+            }
+        }
+        "volume" => {
+            if let Some(volume) = finite_non_negative(value) {
+                snapshot.volume = volume.clamp(0.0, 100.0);
+            }
+        }
+        "media-title" => {
+            snapshot.title = value
+                .as_str()
+                .map(str::trim)
+                .filter(|title| !title.is_empty())
+                .map(str::to_owned);
+        }
+        _ => {}
+    }
+}
+
+fn finite_non_negative(value: &Value) -> Option<f64> {
+    value
+        .as_f64()
+        .filter(|number| number.is_finite() && *number >= 0.0)
+}
+
+#[cfg(windows)]
+async fn terminate_player(player: &mut RunningPlayer) {
+    let _ = tokio::time::timeout(
+        Duration::from_millis(200),
+        send_ipc_command(&mut player.writer, json!(["quit"]), None),
+    )
+    .await;
+
+    let deadline = Instant::now() + SHUTDOWN_GRACE;
+    loop {
+        match player.child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if Instant::now() < deadline => {
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+            _ => {
+                let _ = player.child.kill();
+                let _ = player.child.wait();
+                break;
+            }
+        }
+    }
+    player.reader_task.abort();
+    let _ = (&mut player.reader_task).await;
+}
+
+fn reset_snapshot(snapshot: &mut PlaybackSnapshot) {
+    snapshot.position = 0.0;
+    snapshot.duration = 0.0;
+    snapshot.paused = true;
+    snapshot.loading = false;
+    snapshot.ended = false;
+    snapshot.error = None;
+    snapshot.title = None;
+}
+
+fn snapshot_write(
+    snapshot: &RwLock<PlaybackSnapshot>,
+) -> std::sync::RwLockWriteGuard<'_, PlaybackSnapshot> {
+    snapshot
+        .write()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+#[cfg(windows)]
+fn set_generation_error(
+    snapshot: &RwLock<PlaybackSnapshot>,
+    desired_generation: &AtomicU64,
+    desired_epoch: &AtomicU64,
+    send_gate: &Mutex<()>,
+    generation: u64,
+    epoch: u64,
+    error: String,
+) {
+    let _gate = send_gate
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if desired_generation.load(Ordering::Acquire) != generation
+        || desired_epoch.load(Ordering::Acquire) != epoch
+    {
+        return;
+    }
+    let mut snapshot = snapshot_write(snapshot);
+    if snapshot.generation == generation {
+        snapshot.loading = false;
+        snapshot.paused = true;
+        snapshot.error = Some(error);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(windows)]
+    #[tokio::test(flavor = "current_thread")]
+    async fn ipc_reader_enforces_limit_before_allocating_an_unbounded_line() {
+        let bytes = vec![b'x'; MAX_IPC_LINE_BYTES + 1];
+        let mut reader = BufReader::new(bytes.as_slice());
+        assert_eq!(
+            read_ipc_line(&mut reader).await.unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+        let mut reader = BufReader::new(b"one\ntwo\n".as_slice());
+        assert_eq!(
+            read_ipc_line(&mut reader).await.unwrap().as_deref(),
+            Some("one\n")
+        );
+        assert_eq!(
+            read_ipc_line(&mut reader).await.unwrap().as_deref(),
+            Some("two\n")
+        );
+        assert!(read_ipc_line(&mut reader).await.unwrap().is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn dropping_owned_process_terminates_its_descendant() {
+        use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+        use std::os::windows::process::CommandExt;
+        use windows_sys::Win32::Foundation::WAIT_OBJECT_0;
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE,
+        };
+
+        let directory = env::temp_dir().join(format!(
+            "tide-job-test-{}-{}",
+            std::process::id(),
+            PIPE_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&directory).unwrap();
+        let mut process = Command::new(env::current_exe().unwrap())
+            .args(["--exact", "tests::job_tree_probe", "--ignored"])
+            .env("TIDE_PLAYBACK_TREE_TEST_DIR", &directory)
+            .env_remove("TIDE_PLAYBACK_TREE_TEST_LEAF")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .creation_flags(0x08000000)
+            .spawn()
+            .unwrap();
+        let job = match OwnedJob::attach(&process) {
+            Ok(job) => job,
+            Err(error) => {
+                let _ = process.kill();
+                let _ = process.wait();
+                panic!("Could not attach the test process to a job: {error}");
+            }
+        };
+        let mut owner = OwnedChild { process, _job: job };
+        fs::write(directory.join("go"), b"go").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(15);
+        let leaf_pid = loop {
+            if let Ok(pid) = fs::read_to_string(directory.join("leaf-pid")) {
+                if let Ok(pid) = pid.parse::<u32>() {
+                    break pid;
+                }
+            }
+            if let Some(status) = owner.try_wait().unwrap() {
+                use std::io::Read;
+                let mut details = String::new();
+                owner
+                    .process
+                    .stdout
+                    .take()
+                    .unwrap()
+                    .read_to_string(&mut details)
+                    .unwrap();
+                owner
+                    .process
+                    .stderr
+                    .take()
+                    .unwrap()
+                    .read_to_string(&mut details)
+                    .unwrap();
+                panic!("Process-tree probe exited early ({status}): {details}");
+            }
+            assert!(
+                Instant::now() < deadline,
+                "Child process did not report its descendant"
+            );
+            thread::sleep(Duration::from_millis(10));
+        };
+        // SAFETY: OpenProcess returns a new owned handle. OwnedHandle closes it
+        // exactly once; WaitForSingleObject only observes process termination.
+        let leaf_handle = unsafe {
+            let handle = OpenProcess(PROCESS_SYNCHRONIZE, 0, leaf_pid);
+            assert!(
+                !handle.is_null(),
+                "Could not observe the descendant process"
+            );
+            OwnedHandle::from_raw_handle(handle)
+        };
+        drop(owner);
+        let result = unsafe { WaitForSingleObject(leaf_handle.as_raw_handle(), 3000) };
+        assert_eq!(
+            result, WAIT_OBJECT_0,
+            "Descendant outlived its owned process tree"
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn cancelling_contained_process_terminates_descendant_and_closes_pipes() {
+        use std::io::Read;
+        use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+        use windows_sys::Win32::Foundation::WAIT_OBJECT_0;
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE,
+        };
+        let directory = env::temp_dir().join(format!(
+            "tide-cancel-test-{}-{}",
+            std::process::id(),
+            PIPE_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&directory).unwrap();
+        let mut command = Command::new(env::current_exe().unwrap());
+        command
+            .args(["--exact", "tests::job_tree_probe", "--ignored"])
+            .env("TIDE_PLAYBACK_TREE_TEST_DIR", &directory)
+            .env_remove("TIDE_PLAYBACK_TREE_TEST_LEAF")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let mut owner = OwnedProcess::spawn(&mut command).unwrap();
+        let mut stdout = owner.take_stdout().unwrap();
+        let mut stderr = owner.take_stderr().unwrap();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let stdout_tx = done_tx.clone();
+        let stdout_reader = thread::spawn(move || {
+            let _ = stdout.read_to_end(&mut Vec::new());
+            let _ = stdout_tx.send(());
+        });
+        let stderr_reader = thread::spawn(move || {
+            let _ = stderr.read_to_end(&mut Vec::new());
+            let _ = done_tx.send(());
+        });
+        fs::write(directory.join("go"), b"go").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(15);
+        let pid = loop {
+            if let Ok(pid) = fs::read_to_string(directory.join("leaf-pid")) {
+                if let Ok(pid) = pid.parse::<u32>() {
+                    break pid;
+                }
+            }
+            assert!(
+                owner.try_wait().unwrap().is_none(),
+                "Contained root exited early"
+            );
+            assert!(Instant::now() < deadline, "Descendant did not start");
+            thread::sleep(Duration::from_millis(10));
+        };
+        // SAFETY: OpenProcess returns a new owned handle used only to wait.
+        let leaf_handle = unsafe {
+            let handle = OpenProcess(PROCESS_SYNCHRONIZE, 0, pid);
+            assert!(!handle.is_null());
+            OwnedHandle::from_raw_handle(handle)
+        };
+        owner.terminate_tree().unwrap();
+        assert_eq!(
+            unsafe { WaitForSingleObject(leaf_handle.as_raw_handle(), 3000) },
+            WAIT_OBJECT_0
+        );
+        done_rx
+            .recv_timeout(Duration::from_secs(3))
+            .expect("Pipe remained open after cancellation");
+        done_rx
+            .recv_timeout(Duration::from_secs(3))
+            .expect("Pipe remained open after cancellation");
+        stdout_reader.join().unwrap();
+        stderr_reader.join().unwrap();
+        drop(owner);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    // Only the cleanup test launches this probe. The root waits until the job
+    // is attached before spawning the leaf, exactly as idle mpv does.
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "process-tree cleanup test helper"]
+    fn job_tree_probe() {
+        use std::os::windows::process::CommandExt;
+        let directory = PathBuf::from(
+            env::var_os("TIDE_PLAYBACK_TREE_TEST_DIR")
+                .expect("This helper must be launched by its owning test"),
+        );
+        if env::var_os("TIDE_PLAYBACK_TREE_TEST_LEAF").is_none() {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !directory.join("go").is_file() {
+                assert!(Instant::now() < deadline);
+                thread::sleep(Duration::from_millis(10));
+            }
+            let leaf = Command::new(env::current_exe().unwrap())
+                .args(["--exact", "tests::job_tree_probe", "--ignored"])
+                .env("TIDE_PLAYBACK_TREE_TEST_LEAF", "1")
+                .stdin(Stdio::null())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .creation_flags(0x08000000)
+                .spawn()
+                .unwrap();
+            fs::write(directory.join("leaf-pid"), leaf.id().to_string()).unwrap();
+            // The owner must kill this whole process tree before this returns.
+            thread::sleep(Duration::from_secs(30));
+            let mut leaf = leaf;
+            let _ = leaf.kill();
+            let _ = leaf.wait();
+        } else {
+            thread::sleep(Duration::from_secs(30));
+        }
+    }
+
+    #[test]
+    fn validates_youtube_hosts_without_accepting_suffix_spoofs() {
+        assert!(
+            validate_source("https://music.youtube.com/watch?v=abc")
+                .unwrap()
+                .is_youtube
+        );
+        assert!(validate_source("https://youtu.be/abc").unwrap().is_youtube);
+        assert!(
+            !validate_source("https://youtube.com.example.org/watch?v=abc")
+                .unwrap()
+                .is_youtube
+        );
+    }
+
+    #[test]
+    fn rejects_unsupported_schemes_and_embedded_credentials() {
+        assert!(validate_source("ftp://example.org/audio.mp3").is_err());
+        assert!(validate_source("https://user:pass@example.org/song.mp3").is_err());
+        assert!(validate_source("https://example.org/\ntrack").is_err());
+    }
+
+    #[test]
+    fn accepts_existing_local_files_and_returns_absolute_path() {
+        let path = std::env::temp_dir().join(format!(
+            "tide-playback-test-{}-{}.mp3",
+            std::process::id(),
+            PIPE_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::write(&path, b"not decoded by this validation test").unwrap();
+        let validated = validate_source(path.to_str().unwrap()).unwrap();
+        assert!(Path::new(&validated.source).is_absolute());
+        assert!(!validated.is_youtube);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn rejects_invalid_control_values() {
+        assert!(finite_non_negative(&json!(-1.0)).is_none());
+        assert!(finite_non_negative(&json!("NaN")).is_none());
+        let mut snapshot = PlaybackSnapshot::default();
+        apply_property(&mut snapshot, "volume", &json!(130.0));
+        assert_eq!(snapshot.volume, 100.0);
+        apply_property(&mut snapshot, "media-title", &json!("  "));
+        assert!(snapshot.title.is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn ignores_end_file_and_property_events_from_superseded_entries() {
+        let mut state = PlayerState {
+            active_generation: Some(4),
+            active_epoch: Some(2),
+            active_entry_id: Some(11),
+            ..PlayerState::default()
+        };
+        let mut snapshot = PlaybackSnapshot {
+            generation: 5,
+            loading: true,
+            volume: 100.0,
+            ..PlaybackSnapshot::default()
+        };
+
+        apply_ipc_message(
+            &mut state,
+            &mut snapshot,
+            &json!({
+                "event": "end-file",
+                "reason": "error",
+                "playlist_entry_id": 11,
+                "file_error": "old URL with sensitive query data"
+            }),
+            5,
+            2,
+        );
+        apply_ipc_message(
+            &mut state,
+            &mut snapshot,
+            &json!({ "event": "property-change", "name": "media-title", "data": "old title" }),
+            5,
+            2,
+        );
+
+        assert!(snapshot.loading);
+        assert!(snapshot.error.is_none());
+        assert!(snapshot.title.is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn stop_epoch_suppresses_late_events_even_when_generation_is_unchanged() {
+        let mut state = PlayerState {
+            active_generation: Some(4),
+            active_epoch: Some(8),
+            active_entry_id: Some(13),
+            ..PlayerState::default()
+        };
+        let mut snapshot = PlaybackSnapshot {
+            generation: 4,
+            loading: false,
+            position: 12.0,
+            volume: 100.0,
+            ..PlaybackSnapshot::default()
+        };
+
+        apply_ipc_message(
+            &mut state,
+            &mut snapshot,
+            &json!({ "event": "end-file", "reason": "error", "playlist_entry_id": 13 }),
+            4,
+            9,
+        );
+        apply_ipc_message(
+            &mut state,
+            &mut snapshot,
+            &json!({ "event": "property-change", "name": "time-pos", "data": 99.0 }),
+            4,
+            9,
+        );
+
+        assert!(!snapshot.ended);
+        assert!(snapshot.error.is_none());
+        assert_eq!(snapshot.position, 12.0);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn maps_file_events_to_the_waiting_generation_and_discards_stale_completion() {
+        let mut state = PlayerState {
+            awaiting_start: Some(6),
+            active_generation: Some(6),
+            active_epoch: Some(3),
+            ..PlayerState::default()
+        };
+        let mut snapshot = PlaybackSnapshot {
+            generation: 6,
+            loading: true,
+            volume: 100.0,
+            ..PlaybackSnapshot::default()
+        };
+        apply_ipc_message(
+            &mut state,
+            &mut snapshot,
+            &json!({ "event": "start-file", "playlist_entry_id": 12 }),
+            6,
+            3,
+        );
+        apply_ipc_message(
+            &mut state,
+            &mut snapshot,
+            &json!({ "event": "file-loaded" }),
+            6,
+            3,
+        );
+        assert!(!snapshot.loading);
+        apply_ipc_message(
+            &mut state,
+            &mut snapshot,
+            &json!({ "event": "end-file", "reason": "eof", "playlist_entry_id": 12 }),
+            6,
+            3,
+        );
+        assert!(snapshot.ended);
+        assert!(snapshot.paused);
+    }
+}

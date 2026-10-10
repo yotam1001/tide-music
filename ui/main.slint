@@ -1,0 +1,1611 @@
+import { Button, LineEdit, ListView, Palette, Slider } from "std-widgets.slint";
+
+export struct TrackRow {
+    title: string,
+    artist: string,
+    album: string,
+    duration: string,
+}
+
+component SearchMark inherits Path {
+    in property <color> ink;
+    width: 18px;
+    height: 18px;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    fill: Colors.transparent;
+    stroke: root.ink;
+    stroke-width: 1.6px;
+    commands: "M 18 10 A 8 8 0 1 0 2 10 A 8 8 0 1 0 18 10 Z M 16 16 L 22 22";
+}
+
+component VolumeMark inherits Path {
+    in property <color> ink;
+    width: 18px;
+    height: 18px;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    fill: Colors.transparent;
+    stroke: root.ink;
+    stroke-width: 1.5px;
+    commands: "M 3 9 L 7 9 L 12 5 L 12 19 L 7 15 L 3 15 Z M 16 8 C 19 10 19 14 16 16 M 19 5 C 24 9 24 15 19 19";
+}
+
+// The native slider supplies pointer, keyboard, focus and accessibility actions.
+// Its value drives a tiny code-native treatment in the approved accent colors.
+component TideSlider inherits Rectangle {
+    in property <float> minimum: 0;
+    in property <float> maximum: 100;
+    in-out property <float> value: 0;
+    in property <bool> enabled: true;
+    in property <bool> light-mode: false;
+    in property <string> label;
+    in property <string> value-text;
+    callback released(float);
+    private property <float> fraction: root.maximum > root.minimum
+        ? min(1, max(0, (root.value - root.minimum) / (root.maximum - root.minimum))) : 0;
+    private property <color> accent: root.light-mode ? #ad574b : #a43352;
+
+    min-width: 40px;
+    min-height: 20px;
+    horizontal-stretch: 1;
+    forward-focus: native;
+
+    Rectangle {
+        x: 10px;
+        y: (root.height - 4px) / 2;
+        width: max(0px, root.width - 20px);
+        height: 4px;
+        border-radius: 2px;
+        background: root.light-mode ? #b7a599 : #44464d;
+    }
+    Rectangle {
+        x: 10px;
+        y: (root.height - 4px) / 2;
+        width: max(0px, root.width - 20px) * root.fraction;
+        height: 4px;
+        border-radius: 2px;
+        background: root.enabled ? root.accent : (root.light-mode ? #c1b3aa : #4b4950);
+    }
+    Rectangle {
+        x: 3px + max(0px, root.width - 20px) * root.fraction;
+        y: (root.height - 14px) / 2;
+        width: 14px;
+        height: 14px;
+        border-radius: 7px;
+        border-width: native.has-focus ? 2px : 0px;
+        border-color: root.light-mode ? #68465d : #f2bccb;
+        background: root.enabled ? root.accent : (root.light-mode ? #c1b3aa : #4b4950);
+    }
+    native := Slider {
+        width: parent.width;
+        height: parent.height;
+        opacity: 0;
+        minimum: root.minimum;
+        maximum: root.maximum;
+        value <=> root.value;
+        enabled: root.enabled;
+        accessible-label: root.label;
+        accessible-value: root.value-text;
+        changed(value) => { root.released(value); }
+    }
+}
+
+// Buttons use Slint's standard Button for keyboard and accessibility behavior,
+// while the surrounding rectangle supplies Tide's compact visual treatment.
+component TideButton inherits Rectangle {
+    in property <string> label;
+    in property <string> caption;
+    in property <color> surface-color;
+    in property <color> text-color;
+    in property <color> accent-color;
+    in property <color> accent-text-color;
+    in property <color> outline-color;
+    in property <color> focus-color;
+    in property <color> pressed-color;
+    in property <bool> active: false;
+    in property <bool> round: false;
+    in property <length> caption-size: 14px;
+    callback clicked;
+
+    private property <string> icon-kind:
+        root.caption == "⏮" ? "previous" : root.caption == "⏭" ? "next"
+        : root.caption == "▶" ? "play" : root.caption == "Ⅱ" ? "pause"
+        : root.caption == "↻" ? "repeat" : root.caption == "⌄" ? "collapse"
+        : root.caption == "↗" ? "expand" : root.caption == "◐" || root.caption == "☼" ? "mode"
+        : root.caption == "⌫" ? "clear" : root.caption == "＋" ? "add"
+        : root.caption == "⇄" ? "shuffle" : root.caption == "→" ? "send" : "";
+    private property <color> icon-color: root.active ? root.accent-text-color : root.text-color;
+
+    border-radius: root.round ? self.height / 2 : 8px;
+    border-width: control.has-focus ? 2px : 1px;
+    border-color: control.has-focus ? root.focus-color : root.outline-color;
+    background: root.active ? root.accent-color
+        : control.pressed ? root.pressed-color : root.surface-color;
+
+    control := Button {
+        width: parent.width;
+        height: parent.height;
+        text: "";
+        opacity: 0;
+        accessible-label: root.label;
+        clicked => { root.clicked(); }
+    }
+
+    Text {
+        width: parent.width;
+        height: parent.height;
+        text: root.icon-kind == "" ? root.caption : "";
+        color: root.active ? root.accent-text-color : root.text-color;
+        font-size: root.caption-size;
+        font-weight: 650;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    if root.icon-kind != "" : Path {
+        x: (root.width - 20px) / 2;
+        y: (root.height - 20px) / 2;
+        width: 20px;
+        height: 20px;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        fill: root.icon-kind == "play" || root.icon-kind == "pause" || root.icon-kind == "previous" || root.icon-kind == "next" ? root.icon-color : Colors.transparent;
+        stroke: root.icon-color;
+        stroke-width: 1.5px;
+        commands: root.icon-kind == "play" ? "M 7 4 L 20 12 L 7 20 Z"
+            : root.icon-kind == "pause" ? "M 6 5 L 9 5 L 9 19 L 6 19 Z M 15 5 L 18 5 L 18 19 L 15 19 Z"
+            : root.icon-kind == "previous" ? "M 6 5 L 6 19 M 18 5 L 9 12 L 18 19 Z"
+            : root.icon-kind == "next" ? "M 18 5 L 18 19 M 6 5 L 15 12 L 6 19 Z"
+            : root.icon-kind == "repeat" ? "M 17 3 L 21 7 L 17 11 M 21 7 L 7 7 C 4 7 3 9 3 12 M 7 21 L 3 17 L 7 13 M 3 17 L 17 17 C 20 17 21 15 21 12"
+            : root.icon-kind == "shuffle" ? "M 3 6 L 7 6 C 11 6 13 18 17 18 L 21 18 M 17 14 L 21 18 L 17 22 M 3 18 L 7 18 C 11 18 13 6 17 6 L 21 6 M 17 2 L 21 6 L 17 10"
+            : root.icon-kind == "collapse" ? "M 5 9 L 12 16 L 19 9"
+            : root.icon-kind == "expand" ? "M 14 4 L 20 4 L 20 10 M 20 4 L 10 14 M 10 5 L 5 5 L 5 19 L 19 19 L 19 14"
+            : root.icon-kind == "mode" ? "M 12 3 A 9 9 0 1 0 12 21 A 9 9 0 1 0 12 3 Z M 12 3 L 12 21 M 12 6 L 17 6 M 12 9 L 19 9 M 12 12 L 20 12 M 12 15 L 19 15 M 12 18 L 17 18"
+            : root.icon-kind == "clear" ? "M 6 7 L 18 7 L 17 21 L 7 21 Z M 4 7 L 20 7 M 9 7 L 9 3 L 15 3 L 15 7 M 10 10 L 10 18 M 14 10 L 14 18"
+            : root.icon-kind == "add" ? "M 12 5 L 12 19 M 5 12 L 19 12"
+            : "M 4 12 L 20 12 M 14 6 L 20 12 L 14 18";
+    }
+}
+
+// Code-native abstract cover art avoids loading and retaining large artwork in
+// the lightweight layouts. The parent can replace this component once artwork
+// becomes part of the shared track model.
+component AlbumArt inherits Rectangle {
+    in property <bool> light-mode: false;
+    in property <int> variant: 0;
+
+    border-radius: 5px;
+    border-width: 1px;
+    border-color: root.light-mode ? #c9b7ae : #333038;
+    background: root.light-mode ? #d8c6b0 : #c6b9a8;
+    clip: true;
+    accessible-role: image;
+    accessible-label: "Abstract Tide album artwork placeholder";
+
+    Rectangle {
+        width: parent.width;
+        height: parent.height * 0.60;
+        background: root.light-mode ? #d8c6b0 : #c6b9a8;
+    }
+
+    Rectangle {
+        x: parent.width * 0.38;
+        y: parent.height * 0.12;
+        width: parent.width * 0.55;
+        height: parent.width * 0.55;
+        border-radius: parent.width * 0.28;
+        background: root.light-mode ? #b25b3d : #7d2637;
+    }
+
+    Path {
+        width: parent.width;
+        height: parent.height;
+        viewbox-width: 100;
+        viewbox-height: 100;
+        fill: root.light-mode ? #b96640 : #343335;
+        commands: "M 0 43 C 23 42 43 69 100 60 L 100 100 L 0 100 Z";
+    }
+
+    Path {
+        width: parent.width;
+        height: parent.height;
+        viewbox-width: 100;
+        viewbox-height: 100;
+        fill: root.light-mode ? #d09a3a : #22252a;
+        commands: "M 0 75 L 100 47 L 100 100 L 0 100 Z";
+    }
+
+    Path {
+        width: parent.width;
+        height: parent.height;
+        viewbox-width: 100;
+        viewbox-height: 100;
+        fill: root.light-mode ? #246471 : #171b20;
+        commands: "M 0 99 C 35 86 57 58 100 40 L 100 100 Z";
+    }
+
+    Path {
+        width: parent.width;
+        height: parent.height;
+        viewbox-width: 100;
+        viewbox-height: 100;
+        fill: root.light-mode ? #627242 : #101316;
+        commands: "M 0 65 C 33 74 60 82 100 96 L 100 100 L 0 100 Z";
+    }
+
+    if root.variant == 2 : Rectangle {
+        x: parent.width * 0.60;
+        y: parent.height * 0.22;
+        width: parent.width * 0.20;
+        height: parent.width * 0.20;
+        border-radius: parent.width * 0.10;
+        background: root.light-mode ? #d1a94f : #d3b895;
+    }
+}
+
+component QueueRow inherits Rectangle {
+    in property <TrackRow> track;
+    in property <int> row-index;
+    in property <int> current-index;
+    in property <bool> light-mode: false;
+    in property <bool> compact: false;
+    callback select(int);
+
+    private property <color> row-background: root.light-mode ? #e6d9d4 : #15171c;
+    private property <color> selected-background: root.light-mode ? #d8c2bd : #38202a;
+    private property <color> hover-background: root.light-mode ? #ddd0cb : #202127;
+    private property <color> foreground: root.light-mode ? #382a3b : #f3eff2;
+    private property <color> secondary: root.light-mode ? #766871 : #aaa4ac;
+    private property <color> outline: root.light-mode ? #cdbdb7 : #2b2c32;
+    private property <length> columns-width: root.width - (root.compact ? 138px : 150px);
+
+    height: root.compact ? 44px : 47px;
+    border-radius: root.compact ? 0px : 6px;
+    border-width: action.has-focus ? 2px : 0px;
+    border-color: action.has-focus
+        ? (root.light-mode ? #68465d : #e1768b)
+        : root.outline;
+    background: root.row-index == root.current-index ? root.selected-background
+        : action.pressed ? root.hover-background : root.row-background;
+
+    action := Button {
+        width: parent.width;
+        height: parent.height;
+        text: "";
+        opacity: 0;
+        accessible-label: root.track.title + " by " + root.track.artist
+            + ", " + root.track.album + ", " + root.track.duration;
+        clicked => { root.select(root.row-index); }
+    }
+
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        spacing: 12px;
+
+        Text {
+            width: 26px;
+            text: root.row-index == root.current-index ? "♫" : "" + (root.row-index + 1);
+            color: root.row-index == root.current-index
+                ? (root.light-mode ? #9b4b4b : #d26580) : root.secondary;
+            font-size: 13px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+
+        Text {
+            width: root.columns-width * (root.compact ? 0.60 : 0.40);
+            text: root.track.title;
+            color: root.foreground;
+            font-size: 14px;
+            font-weight: root.row-index == root.current-index ? 650 : 450;
+            overflow: elide;
+            vertical-alignment: center;
+        }
+
+        Text {
+            width: root.columns-width * (root.compact ? 0.40 : 0.30);
+            text: root.track.artist;
+            color: root.secondary;
+            font-size: 13px;
+            overflow: elide;
+            vertical-alignment: center;
+        }
+
+        if !root.compact : Text {
+            width: root.columns-width * 0.30;
+            text: root.track.album;
+            color: root.secondary;
+            font-size: 13px;
+            overflow: elide;
+            vertical-alignment: center;
+        }
+
+        Text {
+            width: 48px;
+            text: root.track.duration;
+            color: root.secondary;
+            font-size: 12px;
+            horizontal-alignment: right;
+            vertical-alignment: center;
+        }
+    }
+}
+
+// Covers are derived from queue entries rather than a fabricated catalog.
+component QueueCover inherits Rectangle {
+    in property <TrackRow> track;
+    in property <int> row-index;
+    in property <int> current-index;
+    callback select(int);
+
+    border-radius: 6px;
+    background: action.has-focus ? #38202a : #0f1115;
+    VerticalLayout {
+        spacing: 6px;
+        AlbumArt { height: self.width; variant: root.row-index; }
+        Text {
+            text: root.track.album == "" ? root.track.title : root.track.album;
+            color: #f4f0f2;
+            font-size: 13px;
+            font-weight: 550;
+            overflow: elide;
+        }
+        Text { text: root.track.artist; color: #a7a2a9; font-size: 11px; overflow: elide; }
+    }
+    action := Button {
+        width: parent.width;
+        height: parent.height;
+        text: "";
+        opacity: 0;
+        accessible-label: "Play " + root.track.title + " by " + root.track.artist;
+        clicked => { root.select(root.row-index); }
+    }
+}
+
+component EmptyQueue inherits Rectangle {
+    in property <bool> light-mode: false;
+    in property <color> foreground;
+    in property <color> secondary;
+
+    border-radius: 12px;
+    border-width: 1px;
+    border-color: root.light-mode ? #cdbdb7 : #292a30;
+    background: root.light-mode ? #e9deda : #14161a;
+
+    VerticalLayout {
+        padding: 26px;
+        spacing: 9px;
+        alignment: center;
+
+        Text {
+            text: "Your queue is empty";
+            color: root.foreground;
+            font-size: 20px;
+            font-weight: 650;
+            horizontal-alignment: center;
+        }
+        Text {
+            text: "Add a link above or open a local audio file to begin.";
+            color: root.secondary;
+            font-size: 13px;
+            horizontal-alignment: center;
+            wrap: word-wrap;
+        }
+    }
+}
+
+component TransportButtons inherits Rectangle {
+    in property <bool> paused;
+    in property <bool> repeat-enabled;
+    in property <bool> light-mode: false;
+    in property <bool> show-repeat: true;
+    in property <bool> show-shuffle: true;
+    callback previous-track;
+    callback toggle-pause;
+    callback next-track;
+    callback toggle-repeat;
+    callback shuffle-queue;
+
+    private property <color> surface: root.light-mode ? #eaded9 : #1b1c22;
+    private property <color> foreground: root.light-mode ? #432d45 : #f3eff2;
+    private property <color> accent: root.light-mode ? #ad574b : #9e304d;
+    private property <color> accent-foreground: #fff8f6;
+    private property <color> outline: root.light-mode ? #cfbdb7 : #323139;
+    private property <color> focus-ring: root.light-mode ? #6e4b61 : #e1768b;
+    private property <color> pressed: root.light-mode ? #dbc9c2 : #2c2730;
+
+    HorizontalLayout {
+        spacing: 9px;
+        alignment: center;
+
+        if root.show-shuffle : TideButton {
+            width: 36px;
+            height: 36px;
+            label: "Shuffle upcoming tracks";
+            caption: "⇄";
+            surface-color: root.surface;
+            text-color: root.foreground;
+            accent-color: root.accent;
+            accent-text-color: root.accent-foreground;
+            outline-color: root.outline;
+            focus-color: root.focus-ring;
+            pressed-color: root.pressed;
+            clicked => { root.shuffle-queue(); }
+        }
+
+        TideButton {
+            width: 42px;
+            height: 40px;
+            label: "Previous track";
+            caption: "⏮";
+            surface-color: root.surface;
+            text-color: root.foreground;
+            accent-color: root.accent;
+            accent-text-color: root.accent-foreground;
+            outline-color: root.outline;
+            focus-color: root.focus-ring;
+            pressed-color: root.pressed;
+            clicked => { root.previous-track(); }
+        }
+
+        TideButton {
+            width: 48px;
+            height: 44px;
+            label: root.paused ? "Play" : "Pause";
+            caption: root.paused ? "▶" : "Ⅱ";
+            active: true;
+            round: true;
+            caption-size: 17px;
+            surface-color: root.surface;
+            text-color: root.foreground;
+            accent-color: root.accent;
+            accent-text-color: root.accent-foreground;
+            outline-color: root.outline;
+            focus-color: root.focus-ring;
+            pressed-color: root.pressed;
+            clicked => { root.toggle-pause(); }
+        }
+
+        TideButton {
+            width: 42px;
+            height: 40px;
+            label: "Next track";
+            caption: "⏭";
+            surface-color: root.surface;
+            text-color: root.foreground;
+            accent-color: root.accent;
+            accent-text-color: root.accent-foreground;
+            outline-color: root.outline;
+            focus-color: root.focus-ring;
+            pressed-color: root.pressed;
+            clicked => { root.next-track(); }
+        }
+
+        if root.show-repeat : TideButton {
+            width: 38px;
+            height: 38px;
+            label: root.repeat-enabled ? "Turn repeat off" : "Turn repeat on";
+            caption: "↻";
+            active: root.repeat-enabled;
+            surface-color: root.surface;
+            text-color: root.foreground;
+            accent-color: root.accent;
+            accent-text-color: root.accent-foreground;
+            outline-color: root.outline;
+            focus-color: root.focus-ring;
+            pressed-color: root.pressed;
+            clicked => { root.toggle-repeat(); }
+        }
+    }
+}
+
+component FullLibraryView inherits Rectangle {
+    in property <[TrackRow]> rows;
+    in property <int> current-index;
+    in property <string> track-title;
+    in property <string> track-artist;
+    in property <string> track-album;
+    in property <float> position;
+    in property <float> duration;
+    in property <bool> paused;
+    in property <float> volume;
+    in property <string> status-text;
+    in-out property <string> source-input;
+    in property <bool> light-mode;
+    in property <bool> repeat-enabled;
+
+    callback add-source(string);
+    callback select-track(int);
+    callback toggle-pause();
+    callback next-track();
+    callback previous-track();
+    callback seek(float);
+    callback change-volume(float);
+    callback toggle-repeat();
+    callback shuffle-queue();
+    callback switch-mode();
+    callback collapse-player();
+    callback open-file();
+    callback clear-queue();
+
+    private property <color> canvas: root.light-mode ? #dfd1cd : #0f1115;
+    private property <color> sidebar: root.light-mode ? #e9ddda : #121418;
+    private property <color> surface: root.light-mode ? #e7d9d5 : #17191e;
+    private property <color> surface-raised: root.light-mode ? #eee4e0 : #1c1e24;
+    private property <color> foreground: root.light-mode ? #3c2a40 : #f4f0f2;
+    private property <color> secondary: root.light-mode ? #756873 : #a7a2a9;
+    private property <color> outline: root.light-mode ? #cfbfba : #292a30;
+    private property <color> accent: root.light-mode ? #ad574b : #982b49;
+    private property <color> accent-foreground: #fff8f6;
+    private property <color> focus-ring: root.light-mode ? #6e4b61 : #e1768b;
+    private property <color> pressed: root.light-mode ? #dbc9c2 : #2c2730;
+
+    background: root.canvas;
+
+    pure function format-time(seconds: float) -> string {
+        let total: int = seconds;
+        let minutes: int = total / 60;
+        let remainder: int = total - (minutes * 60);
+        return minutes + ":" + (remainder < 10 ? "0" + remainder : remainder);
+    }
+
+    VerticalLayout {
+        spacing: 0px;
+
+        Rectangle {
+            height: 62px;
+            background: root.sidebar;
+            border-width: 0px;
+            border-color: root.outline;
+
+            HorizontalLayout {
+                padding-left: 22px;
+                padding-right: 22px;
+                spacing: 18px;
+                cross-axis-alignment: center;
+
+                HorizontalLayout {
+                    width: 180px;
+                    spacing: 10px;
+                    cross-axis-alignment: center;
+
+                    Rectangle {
+                        width: 28px;
+                        height: 28px;
+                        border-radius: 14px;
+                        background: root.accent;
+                        Text {
+                            width: parent.width;
+                            height: parent.height;
+                            text: "t";
+                            color: root.accent-foreground;
+                            font-size: 17px;
+                            font-weight: 700;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    Text {
+                        text: "Tide";
+                        color: root.foreground;
+                        font-size: 19px;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                    }
+                }
+
+                Rectangle {
+                    horizontal-stretch: 1;
+                    min-width: 300px;
+                    height: 40px;
+                    border-radius: 10px;
+                    border-width: 1px;
+                    border-color: root.outline;
+                    background: root.surface-raised;
+
+                    HorizontalLayout {
+                        padding-left: 13px;
+                        padding-right: 7px;
+                        spacing: 8px;
+                        cross-axis-alignment: center;
+
+                        SearchMark { ink: root.secondary; }
+
+                        LineEdit {
+                            horizontal-stretch: 1;
+                            text <=> root.source-input;
+                            input-type: search;
+                            placeholder-text: "Search YouTube or paste a link…";
+                            accessible-label: "Music link or search";
+                            font-size: 14px;
+                            accepted(value) => {
+                                if value != "" { root.add-source(value); }
+                            }
+                        }
+
+                        TideButton {
+                            width: 58px;
+                            height: 30px;
+                            label: "Add source";
+                            caption: "Add";
+                            caption-size: 12px;
+                            active: true;
+                            surface-color: root.surface-raised;
+                            text-color: root.foreground;
+                            accent-color: root.accent;
+                            accent-text-color: root.accent-foreground;
+                            outline-color: root.outline;
+                            focus-color: root.focus-ring;
+                            pressed-color: root.pressed;
+                            clicked => {
+                                if root.source-input != "" { root.add-source(root.source-input); }
+                            }
+                        }
+                    }
+                }
+
+                TideButton {
+                    width: 42px;
+                    height: 40px;
+                    label: "Switch to lightweight view";
+                    caption: root.light-mode ? "☼" : "◐";
+                    surface-color: root.surface-raised;
+                    text-color: root.foreground;
+                    accent-color: root.accent;
+                    accent-text-color: root.accent-foreground;
+                    outline-color: root.outline;
+                    focus-color: root.focus-ring;
+                    pressed-color: root.pressed;
+                    clicked => { root.switch-mode(); }
+                }
+            }
+        }
+
+        HorizontalLayout {
+            vertical-stretch: 1;
+            spacing: 0px;
+
+            Rectangle {
+                width: 198px;
+                background: root.sidebar;
+                border-width: 0px;
+                border-color: root.outline;
+
+                VerticalLayout {
+                    padding-left: 15px;
+                    padding-right: 15px;
+                    padding-top: 24px;
+                    padding-bottom: 18px;
+                    spacing: 8px;
+
+                    Text {
+                        text: "WORKSPACE";
+                        color: root.secondary;
+                        font-size: 10px;
+                        font-weight: 700;
+                        letter-spacing: 1px;
+                        height: 22px;
+                        vertical-alignment: center;
+                    }
+
+                    Rectangle {
+                        height: 42px;
+                        border-radius: 9px;
+                        background: root.light-mode ? #dcc8c3 : #38202a;
+                        HorizontalLayout {
+                            padding-left: 12px;
+                            spacing: 11px;
+                            cross-axis-alignment: center;
+                            Text { text: "≡"; color: root.light-mode ? #9a4d4a : #d56a82; font-size: 20px; }
+                            Text { text: "Queue"; color: root.foreground; font-size: 14px; font-weight: 600; }
+                        }
+                    }
+
+                    TideButton {
+                        height: 42px;
+                        label: "Open a local audio file";
+                        caption: "＋   Open file";
+                        surface-color: root.sidebar;
+                        text-color: root.secondary;
+                        accent-color: root.accent;
+                        accent-text-color: root.accent-foreground;
+                        outline-color: root.sidebar;
+                        focus-color: root.focus-ring;
+                        pressed-color: root.pressed;
+                        clicked => { root.open-file(); }
+                    }
+
+                    TideButton {
+                        height: 42px;
+                        label: "Clear the playback queue";
+                        caption: "Clear queue";
+                        surface-color: root.sidebar;
+                        text-color: root.secondary;
+                        accent-color: root.accent;
+                        accent-text-color: root.accent-foreground;
+                        outline-color: root.sidebar;
+                        focus-color: root.focus-ring;
+                        pressed-color: root.pressed;
+                        clicked => { root.clear-queue(); }
+                    }
+
+                    Rectangle { vertical-stretch: 1; background: Colors.transparent; }
+
+                    Rectangle {
+                        border-radius: 10px;
+                        border-width: 1px;
+                        border-color: root.outline;
+                        background: root.surface;
+                        height: 92px;
+                        VerticalLayout {
+                            padding: 12px;
+                            spacing: 6px;
+                            Text {
+                                text: "STATUS";
+                                color: root.secondary;
+                                font-size: 10px;
+                                font-weight: 700;
+                                letter-spacing: 1px;
+                            }
+                            Text {
+                                text: root.status-text == "" ? "Add a source to get started." : root.status-text;
+                                color: root.foreground;
+                                font-size: 12px;
+                                overflow: elide;
+                                wrap: word-wrap;
+                                accessible-live-region: polite;
+                            }
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                horizontal-stretch: 1;
+                min-width: 520px;
+                background: root.canvas;
+
+                VerticalLayout {
+                    padding-left: 24px;
+                    padding-right: 24px;
+                    padding-top: 22px;
+                    padding-bottom: 18px;
+                    spacing: 14px;
+
+                    HorizontalLayout {
+                        height: 46px;
+                        spacing: 12px;
+                        cross-axis-alignment: center;
+
+                        VerticalLayout {
+                            vertical-stretch: 1;
+                            spacing: 2px;
+                            Text {
+                                text: "Your queue";
+                                color: root.foreground;
+                                font-size: 26px;
+                                font-weight: 700;
+                            }
+                            Text {
+                                text: root.rows.length + " tracks";
+                                color: root.secondary;
+                                font-size: 12px;
+                            }
+                        }
+
+                        Rectangle { horizontal-stretch: 1; background: Colors.transparent; }
+
+                        TideButton {
+                            width: 44px;
+                            height: 40px;
+                            label: "Open a local audio file";
+                            caption: "＋";
+                            caption-size: 18px;
+                            surface-color: root.surface-raised;
+                            text-color: root.foreground;
+                            accent-color: root.accent;
+                            accent-text-color: root.accent-foreground;
+                            outline-color: root.outline;
+                            focus-color: root.focus-ring;
+                            pressed-color: root.pressed;
+                            clicked => { root.open-file(); }
+                        }
+                    }
+
+                    if root.rows.length > 0 : HorizontalLayout {
+                        height: (root.width - 558px) / 3 + 44px;
+                        spacing: 18px;
+                        for index in min(3, root.rows.length) : QueueCover {
+                            width: (root.width - 558px) / 3;
+                            track: root.rows[index];
+                            row-index: index;
+                            current-index: root.current-index;
+                            select(index) => { root.select-track(index); }
+                        }
+                    }
+                    HorizontalLayout {
+                        height: 34px;
+                        padding-left: 12px;
+                        padding-right: 12px;
+                        spacing: 12px;
+                        Text { width: 26px; text: "#"; color: root.secondary; font-size: 11px; vertical-alignment: center; horizontal-alignment: center; }
+                        Text { horizontal-stretch: 4; text: "TITLE"; color: root.secondary; font-size: 10px; font-weight: 700; letter-spacing: 0.8px; vertical-alignment: center; }
+                        Text { horizontal-stretch: 3; text: "ARTIST"; color: root.secondary; font-size: 10px; font-weight: 700; letter-spacing: 0.8px; vertical-alignment: center; }
+                        Text { horizontal-stretch: 3; text: "ALBUM"; color: root.secondary; font-size: 10px; font-weight: 700; letter-spacing: 0.8px; vertical-alignment: center; }
+                        Text { width: 48px; text: "TIME"; color: root.secondary; font-size: 10px; font-weight: 700; vertical-alignment: center; horizontal-alignment: right; }
+                    }
+
+                    if root.rows.length == 0 : EmptyQueue {
+                        vertical-stretch: 1;
+                        light-mode: root.light-mode;
+                        foreground: root.foreground;
+                        secondary: root.secondary;
+                    }
+
+                    if root.rows.length > 0 : ListView {
+                        vertical-stretch: 1;
+                        accessible-label: "Playback queue";
+                        for row[index] in root.rows : QueueRow {
+                            track: row;
+                            row-index: index;
+                            current-index: root.current-index;
+                            light-mode: root.light-mode;
+                            select(index) => { root.select-track(index); }
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                width: 276px;
+                background: root.sidebar;
+                border-width: 0px;
+                border-color: root.outline;
+
+                VerticalLayout {
+                    padding: 22px;
+                    spacing: 13px;
+
+                    HorizontalLayout {
+                        height: 30px;
+                        cross-axis-alignment: center;
+                        Text { text: "Now playing"; color: root.foreground; font-size: 17px; font-weight: 650; }
+                        Rectangle { horizontal-stretch: 1; background: Colors.transparent; }
+                        Text { text: root.paused ? "PAUSED" : "PLAYING"; color: root.secondary; font-size: 9px; font-weight: 700; letter-spacing: 0.7px; }
+                    }
+
+                    AlbumArt {
+                        width: 232px;
+                        height: 232px;
+                        variant: root.current-index < 0 ? 0 : root.current-index;
+                        light-mode: root.light-mode;
+                    }
+
+                    VerticalLayout {
+                        spacing: 5px;
+                        Text {
+                            text: root.track-title == "" ? "Nothing playing" : root.track-title;
+                            color: root.foreground;
+                            font-size: 19px;
+                            font-weight: 700;
+                            overflow: elide;
+                        }
+                        Text {
+                            text: root.track-artist == "" ? "—" : root.track-artist;
+                            color: root.secondary;
+                            font-size: 14px;
+                            overflow: elide;
+                        }
+                    }
+
+                    Rectangle { height: 1px; background: root.outline; }
+
+                    HorizontalLayout {
+                        Text { text: "Album"; color: root.secondary; font-size: 12px; }
+                        Rectangle { horizontal-stretch: 1; background: Colors.transparent; }
+                        Text { text: root.track-album == "" ? "—" : root.track-album; color: root.foreground; font-size: 12px; overflow: elide; }
+                    }
+
+                    Rectangle { vertical-stretch: 1; background: Colors.transparent; }
+
+                    Text {
+                        text: root.status-text;
+                        color: root.secondary;
+                        font-size: 11px;
+                        wrap: word-wrap;
+                        overflow: elide;
+                        accessible-live-region: polite;
+                    }
+                }
+            }
+        }
+
+        Rectangle {
+            height: 112px;
+            background: root.sidebar;
+            border-width: 1px;
+            border-color: root.outline;
+
+            VerticalLayout {
+                padding-left: 18px;
+                padding-right: 18px;
+                padding-top: 11px;
+                padding-bottom: 9px;
+                spacing: 4px;
+
+                HorizontalLayout {
+                    vertical-stretch: 1;
+                    spacing: 16px;
+                    cross-axis-alignment: center;
+
+                    HorizontalLayout {
+                        width: 250px;
+                        spacing: 10px;
+                        cross-axis-alignment: center;
+                        AlbumArt { width: 48px; height: 48px; variant: root.current-index < 0 ? 0 : root.current-index; light-mode: root.light-mode; }
+                        VerticalLayout {
+                            spacing: 2px;
+                            Text { text: root.track-title == "" ? "Nothing playing" : root.track-title; color: root.foreground; font-size: 13px; font-weight: 650; overflow: elide; }
+                            Text { text: root.track-artist; color: root.secondary; font-size: 11px; overflow: elide; }
+                        }
+                    }
+
+                    TransportButtons {
+                        width: 244px;
+                        height: 48px;
+                        paused: root.paused;
+                        repeat-enabled: root.repeat-enabled;
+                        light-mode: root.light-mode;
+                        previous-track => { root.previous-track(); }
+                        toggle-pause => { root.toggle-pause(); }
+                        next-track => { root.next-track(); }
+                        toggle-repeat => { root.toggle-repeat(); }
+                        shuffle-queue => { root.shuffle-queue(); }
+                    }
+
+                    Rectangle { horizontal-stretch: 1; background: Colors.transparent; }
+
+                    HorizontalLayout {
+                        width: 232px;
+                        spacing: 8px;
+                        cross-axis-alignment: center;
+                        VolumeMark { ink: root.secondary; }
+                        TideSlider {
+                            light-mode: root.light-mode;
+                            horizontal-stretch: 1;
+                            minimum: 0;
+                            maximum: 100;
+                            value: root.volume;
+                            label: "Volume";
+                            value-text: root.volume.to-fixed(0) + "%";
+                            released(value) => { root.change-volume(value); }
+                        }
+                        Text { text: root.volume.to-fixed(0) + "%"; color: root.secondary; font-size: 11px; width: 35px; horizontal-alignment: right; }
+                    }
+
+                    TideButton {
+                        width: 42px;
+                        height: 40px;
+                        label: "Collapse player";
+                        caption: "⌄";
+                        surface-color: root.surface-raised;
+                        text-color: root.foreground;
+                        accent-color: root.accent;
+                        accent-text-color: root.accent-foreground;
+                        outline-color: root.outline;
+                        focus-color: root.focus-ring;
+                        pressed-color: root.pressed;
+                        clicked => { root.collapse-player(); }
+                    }
+                }
+
+                HorizontalLayout {
+                    padding-left: 266px;
+                    padding-right: 286px;
+                    spacing: 9px;
+                    Text {
+                        width: 37px;
+                        text: root.format-time(root.position);
+                        color: root.secondary;
+                        font-size: 10px;
+                        horizontal-alignment: right;
+                        vertical-alignment: center;
+                    }
+                    TideSlider {
+                        light-mode: root.light-mode;
+                        horizontal-stretch: 1;
+                        minimum: 0;
+                        maximum: root.duration > 0 ? root.duration : 1;
+                        value: root.position;
+                        enabled: root.duration > 0;
+                        label: "Playback position";
+                        value-text: root.position.to-fixed(0) + " seconds";
+                        released(value) => { root.seek(value); }
+                    }
+                    Text {
+                        width: 37px;
+                        text: root.duration > 0 ? root.format-time(root.duration) : "0:00";
+                        color: root.secondary;
+                        font-size: 10px;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+    }
+}
+
+component LightweightView inherits Rectangle {
+    in property <[TrackRow]> rows;
+    in property <int> current-index;
+    in property <string> track-title;
+    in property <string> track-artist;
+    in property <string> track-album;
+    in property <float> position;
+    in property <float> duration;
+    in property <bool> paused;
+    in property <float> volume;
+    in property <string> status-text;
+    in-out property <string> source-input;
+    in property <bool> light-mode;
+    in property <bool> repeat-enabled;
+
+    callback add-source(string);
+    callback select-track(int);
+    callback toggle-pause();
+    callback next-track();
+    callback previous-track();
+    callback seek(float);
+    callback change-volume(float);
+    callback toggle-repeat();
+    callback shuffle-queue();
+    callback switch-mode();
+    callback collapse-player();
+    callback open-file();
+    callback clear-queue();
+
+    private property <color> canvas: #e4d5d1;
+    private property <color> surface: #efe4df;
+    private property <color> surface-deep: #d9c8c3;
+    private property <color> foreground: #432d45;
+    private property <color> secondary: #756571;
+    private property <color> outline: #c8b7b1;
+    private property <color> accent: #ad574b;
+    private property <color> accent-foreground: #fff8f6;
+    private property <color> focus-ring: #68465d;
+    private property <color> pressed: #d4bfb8;
+
+    background: root.canvas;
+
+    pure function format-time(seconds: float) -> string {
+        let total: int = seconds;
+        let minutes: int = total / 60;
+        let remainder: int = total - (minutes * 60);
+        return minutes + ":" + (remainder < 10 ? "0" + remainder : remainder);
+    }
+
+    VerticalLayout {
+        spacing: 0px;
+
+        Rectangle {
+            height: 44px;
+            background: #563750;
+
+            HorizontalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                spacing: 10px;
+                cross-axis-alignment: center;
+
+                Rectangle {
+                    width: 26px;
+                    height: 26px;
+                    border-radius: 13px;
+                    background: #c66654;
+                    Text { width: parent.width; height: parent.height; text: "t"; color: #fff7f3; font-size: 16px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                }
+                Text { text: "Tide"; color: #fff7f3; font-size: 18px; font-weight: 700; vertical-alignment: center; }
+                Rectangle { horizontal-stretch: 1; background: Colors.transparent; }
+                Text { text: "LIGHTWEIGHT"; color: #dcc9d6; font-size: 9px; font-weight: 700; letter-spacing: 1px; vertical-alignment: center; }
+                TideButton {
+                    width: 36px;
+                    height: 34px;
+                    label: "Switch to full dark view";
+                    caption: "◐";
+                    surface-color: #63465f;
+                    text-color: #fff7f3;
+                    accent-color: #ad574b;
+                    accent-text-color: #fff8f6;
+                    outline-color: #785d72;
+                    focus-color: #f0c5c7;
+                    pressed-color: #76556f;
+                    clicked => { root.switch-mode(); }
+                }
+                TideButton {
+                    width: 36px;
+                    height: 34px;
+                    label: "Collapse player";
+                    caption: "⌄";
+                    surface-color: #63465f;
+                    text-color: #fff7f3;
+                    accent-color: #ad574b;
+                    accent-text-color: #fff8f6;
+                    outline-color: #785d72;
+                    focus-color: #f0c5c7;
+                    pressed-color: #76556f;
+                    clicked => { root.collapse-player(); }
+                }
+            }
+        }
+
+        VerticalLayout {
+            vertical-stretch: 1;
+            padding: 14px;
+            spacing: 8px;
+
+            Rectangle {
+                height: 40px;
+                border-radius: 10px;
+                border-width: 1px;
+                border-color: root.outline;
+                background: root.surface;
+
+                HorizontalLayout {
+                    padding-left: 12px;
+                    padding-right: 7px;
+                    spacing: 8px;
+                    cross-axis-alignment: center;
+                    SearchMark { ink: root.secondary; }
+                    LineEdit {
+                        horizontal-stretch: 1;
+                        text <=> root.source-input;
+                        input-type: search;
+                        placeholder-text: "Search or paste a link…";
+                        accessible-label: "Search or paste a music link";
+                        font-size: 13px;
+                        accepted(value) => { if value != "" { root.add-source(value); } }
+                    }
+                    TideButton {
+                        width: 30px;
+                        height: 30px;
+                        label: "Add link or search YouTube";
+                        caption: "→";
+                        caption-size: 16px;
+                        surface-color: root.surface;
+                        text-color: root.foreground;
+                        accent-color: root.accent;
+                        accent-text-color: root.accent-foreground;
+                        outline-color: root.surface;
+                        focus-color: root.focus-ring;
+                        pressed-color: root.pressed;
+                        clicked => { if root.source-input != "" { root.add-source(root.source-input); } }
+                    }
+                    TideButton {
+                        width: 30px;
+                        height: 30px;
+                        label: "Open local audio file";
+                        caption: "＋";
+                        caption-size: 16px;
+                        surface-color: root.surface;
+                        text-color: root.foreground;
+                        accent-color: root.accent;
+                        accent-text-color: root.accent-foreground;
+                        outline-color: root.surface;
+                        focus-color: root.focus-ring;
+                        pressed-color: root.pressed;
+                        clicked => { root.open-file(); }
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                height: 104px;
+                spacing: 15px;
+                cross-axis-alignment: center;
+
+                AlbumArt { width: 104px; height: 104px; variant: root.current-index < 0 ? 0 : root.current-index; light-mode: true; }
+
+                VerticalLayout {
+                    vertical-stretch: 1;
+                    spacing: 5px;
+                    Text { text: "NOW PLAYING"; color: #9d5549; font-size: 9px; font-weight: 700; letter-spacing: 1px; }
+                    Text {
+                        text: root.track-title == "" ? "Nothing playing yet" : root.track-title;
+                        color: root.foreground;
+                        font-size: 20px;
+                        font-weight: 700;
+                        overflow: elide;
+                    }
+                    Text {
+                        text: root.track-artist == "" ? "Choose a track from your queue" : root.track-artist;
+                        color: root.secondary;
+                        font-size: 14px;
+                        overflow: elide;
+                    }
+                    Text { text: root.track-album; color: root.secondary; font-size: 12px; overflow: elide; }
+                    Text {
+                        text: root.status-text;
+                        color: #94605a;
+                        font-size: 10px;
+                        overflow: elide;
+                        accessible-live-region: polite;
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                height: 22px;
+                spacing: 9px;
+                Text { width: 38px; text: root.format-time(root.position); color: root.secondary; font-size: 10px; vertical-alignment: center; horizontal-alignment: right; }
+                TideSlider {
+                    light-mode: root.light-mode;
+                    horizontal-stretch: 1;
+                    minimum: 0;
+                    maximum: root.duration > 0 ? root.duration : 1;
+                    value: root.position;
+                    enabled: root.duration > 0;
+                    label: "Playback position";
+                    value-text: root.position.to-fixed(0) + " seconds";
+                    released(value) => { root.seek(value); }
+                }
+                Text { width: 38px; text: root.duration > 0 ? root.format-time(root.duration) : "0:00"; color: root.secondary; font-size: 10px; vertical-alignment: center; }
+            }
+
+            HorizontalLayout {
+                height: 50px;
+                spacing: 12px;
+                cross-axis-alignment: center;
+
+                Rectangle { horizontal-stretch: 1; background: Colors.transparent; }
+                TransportButtons {
+                    width: 244px;
+                    height: 48px;
+                    paused: root.paused;
+                    repeat-enabled: root.repeat-enabled;
+                    light-mode: true;
+                    previous-track => { root.previous-track(); }
+                    toggle-pause => { root.toggle-pause(); }
+                    next-track => { root.next-track(); }
+                    toggle-repeat => { root.toggle-repeat(); }
+                    shuffle-queue => { root.shuffle-queue(); }
+                }
+                Rectangle { horizontal-stretch: 1; background: Colors.transparent; }
+            }
+
+            HorizontalLayout {
+                height: 24px;
+                spacing: 8px;
+                VolumeMark { ink: root.secondary; }
+                TideSlider {
+                    light-mode: root.light-mode;
+                    horizontal-stretch: 1;
+                    minimum: 0;
+                    maximum: 100;
+                    value: root.volume;
+                    label: "Volume";
+                    value-text: root.volume.to-fixed(0) + "%";
+                    released(value) => { root.change-volume(value); }
+                }
+                Text { text: root.volume.to-fixed(0) + "%"; width: 38px; color: root.secondary; font-size: 10px; horizontal-alignment: right; vertical-alignment: center; }
+            }
+
+            Rectangle { height: 1px; background: root.outline; }
+
+            HorizontalLayout {
+                height: 30px;
+                spacing: 8px;
+                Text { text: "Queue"; color: root.foreground; font-size: 15px; font-weight: 700; vertical-alignment: center; }
+                Text { text: root.rows.length + " tracks"; color: root.secondary; font-size: 10px; vertical-alignment: center; }
+                Rectangle { horizontal-stretch: 1; background: Colors.transparent; }
+                TideButton {
+                    width: 34px;
+                    height: 30px;
+                    label: "Clear queue";
+                    caption: "⌫";
+                    surface-color: root.surface;
+                    text-color: root.secondary;
+                    accent-color: root.accent;
+                    accent-text-color: root.accent-foreground;
+                    outline-color: root.outline;
+                    focus-color: root.focus-ring;
+                    pressed-color: root.pressed;
+                    clicked => { root.clear-queue(); }
+                }
+            }
+
+            if root.rows.length == 0 : EmptyQueue {
+                vertical-stretch: 1;
+                light-mode: true;
+                foreground: root.foreground;
+                secondary: root.secondary;
+            }
+
+            if root.rows.length > 0 : ListView {
+                vertical-stretch: 1;
+                accessible-label: "Playback queue";
+                for row[index] in root.rows : QueueRow {
+                    track: row;
+                    row-index: index;
+                    current-index: root.current-index;
+                    light-mode: true;
+                    compact: true;
+                    select(index) => { root.select-track(index); }
+                }
+            }
+
+            TideButton {
+                height: 34px;
+                label: "Switch to full view";
+                caption: "↗   Full view";
+                surface-color: root.surface-deep;
+                text-color: root.foreground;
+                accent-color: root.accent;
+                accent-text-color: root.accent-foreground;
+                outline-color: root.outline;
+                focus-color: root.focus-ring;
+                pressed-color: root.pressed;
+                clicked => { root.switch-mode(); }
+            }
+        }
+    }
+}
+
+component CollapsedPlayerView inherits Rectangle {
+    in property <string> track-title;
+    in property <string> track-artist;
+    in property <float> position;
+    in property <float> duration;
+    in property <bool> paused;
+    in property <float> volume;
+    in property <int> current-index;
+    in property <bool> light-mode;
+
+    callback toggle-pause();
+    callback next-track();
+    callback previous-track();
+    callback seek(float);
+    callback change-volume(float);
+    callback switch-mode();
+    callback collapse-player();
+
+    private property <color> canvas: root.light-mode ? #e4d5d1 : #111318;
+    private property <color> surface: root.light-mode ? #efe4df : #191b20;
+    private property <color> foreground: root.light-mode ? #432d45 : #f3eff2;
+    private property <color> secondary: root.light-mode ? #756571 : #a7a2a9;
+    private property <color> outline: root.light-mode ? #c8b7b1 : #2d2e34;
+    private property <color> accent: root.light-mode ? #ad574b : #9e304d;
+    private property <color> accent-foreground: #fff8f6;
+    private property <color> focus-ring: root.light-mode ? #68465d : #e1768b;
+    private property <color> pressed: root.light-mode ? #d4bfb8 : #2c2730;
+
+    background: root.canvas;
+    border-width: 1px;
+    border-color: root.outline;
+
+    pure function format-time(seconds: float) -> string {
+        let total: int = seconds;
+        let minutes: int = total / 60;
+        let remainder: int = total - (minutes * 60);
+        return minutes + ":" + (remainder < 10 ? "0" + remainder : remainder);
+    }
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 10px;
+
+        HorizontalLayout {
+            vertical-stretch: 1;
+            spacing: 12px;
+            cross-axis-alignment: center;
+
+            AlbumArt {
+                width: 58px;
+                height: 58px;
+                variant: root.current-index < 0 ? 0 : root.current-index;
+                light-mode: root.light-mode;
+            }
+            VerticalLayout {
+                horizontal-stretch: 1;
+                min-width: 100px;
+                spacing: 5px;
+                Text { text: root.track-title == "" ? "Nothing playing" : root.track-title; color: root.foreground; font-size: 14px; font-weight: 650; overflow: elide; }
+                Text { text: root.track-artist; color: root.secondary; font-size: 12px; overflow: elide; }
+            }
+            TransportButtons {
+                width: 150px;
+                height: 48px;
+                paused: root.paused;
+                show-repeat: false;
+                show-shuffle: false;
+                light-mode: root.light-mode;
+                previous-track => { root.previous-track(); }
+                toggle-pause => { root.toggle-pause(); }
+                next-track => { root.next-track(); }
+            }
+            TideButton {
+                width: 34px;
+                height: 34px;
+                label: root.light-mode ? "Switch to dark view" : "Switch to light view";
+                caption: "◐";
+                surface-color: root.surface;
+                text-color: root.foreground;
+                accent-color: root.accent;
+                accent-text-color: root.accent-foreground;
+                outline-color: root.outline;
+                focus-color: root.focus-ring;
+                pressed-color: root.pressed;
+                clicked => { root.switch-mode(); }
+            }
+            TideButton {
+                width: 34px;
+                height: 34px;
+                label: "Expand player";
+                caption: "↗";
+                caption-size: 17px;
+                surface-color: root.surface;
+                text-color: root.foreground;
+                accent-color: root.accent;
+                accent-text-color: root.accent-foreground;
+                outline-color: root.outline;
+                focus-color: root.focus-ring;
+                pressed-color: root.pressed;
+                clicked => { root.collapse-player(); }
+            }
+        }
+
+        HorizontalLayout {
+            height: 24px;
+            spacing: 9px;
+            cross-axis-alignment: center;
+            Text { width: 36px; text: root.format-time(root.position); color: root.secondary; font-size: 10px; horizontal-alignment: right; vertical-alignment: center; }
+            TideSlider {
+                light-mode: root.light-mode;
+                horizontal-stretch: 1;
+                minimum: 0;
+                maximum: root.duration > 0 ? root.duration : 1;
+                value: root.position;
+                enabled: root.duration > 0;
+                label: "Playback position";
+                value-text: root.position.to-fixed(0) + " seconds";
+                released(value) => { root.seek(value); }
+            }
+            Text { width: 36px; text: root.duration > 0 ? root.format-time(root.duration) : "0:00"; color: root.secondary; font-size: 10px; vertical-alignment: center; }
+            VolumeMark { ink: root.secondary; }
+            TideSlider {
+                light-mode: root.light-mode;
+                width: 106px;
+                minimum: 0;
+                maximum: 100;
+                value: root.volume;
+                label: "Volume";
+                value-text: root.volume.to-fixed(0) + "%";
+                released(value) => { root.change-volume(value); }
+            }
+        }
+    }
+}
+export component AppWindow inherits Window {
+    callback media-command(int, float);
+    in property <[TrackRow]> rows;
+    in property <int> current-index;
+    in property <string> track-title;
+    in property <string> track-artist;
+    in property <string> track-album;
+    in property <float> position;
+    in property <float> duration;
+    in property <bool> paused;
+    in property <float> volume;
+    in property <string> status-text;
+    in-out property <string> source-input;
+    in property <bool> light-mode;
+    in property <bool> collapsed;
+    in property <bool> repeat-enabled;
+
+    callback add-source(string);
+    callback select-track(int);
+    callback toggle-pause();
+    callback next-track();
+    callback previous-track();
+    callback seek(float);
+    callback change-volume(float);
+    callback toggle-repeat();
+    callback shuffle-queue();
+    callback switch-mode();
+    callback collapse-player();
+    callback open-file();
+    callback clear-queue();
+
+    title: "Tide";
+    default-font-family: "Segoe UI";
+    default-font-size: 14px;
+    preferred-width: root.collapsed ? 650px : (root.light-mode ? 490px : 1200px);
+    preferred-height: root.collapsed ? 170px : (root.light-mode ? 680px : 800px);
+    min-width: root.collapsed ? 620px : (root.light-mode ? 440px : 1080px);
+    min-height: root.collapsed ? 112px : (root.light-mode ? 560px : 650px);
+    background: root.light-mode ? #e4d5d1 : #0f1115;
+    init => {
+        Palette.color-scheme = root.light-mode ? light : dark;
+    }
+    changed light-mode => {
+        Palette.color-scheme = root.light-mode ? light : dark;
+    }
+
+    if root.collapsed : CollapsedPlayerView {
+        track-title: root.track-title;
+        track-artist: root.track-artist;
+        current-index: root.current-index;
+        position: root.position;
+        duration: root.duration;
+        paused: root.paused;
+        volume: root.volume;
+        light-mode: root.light-mode;
+        toggle-pause => { root.toggle-pause(); }
+        previous-track => { root.previous-track(); }
+        next-track => { root.next-track(); }
+        seek(value) => { root.seek(value); }
+        change-volume(value) => { root.change-volume(value); }
+        switch-mode => { root.switch-mode(); }
+        collapse-player => { root.collapse-player(); }
+    }
+
+    if !root.collapsed && root.light-mode : LightweightView {
+        rows: root.rows;
+        current-index: root.current-index;
+        track-title: root.track-title;
+        track-artist: root.track-artist;
+        track-album: root.track-album;
+        position: root.position;
+        duration: root.duration;
+        paused: root.paused;
+        volume: root.volume;
+        status-text: root.status-text;
+        source-input <=> root.source-input;
+        light-mode: root.light-mode;
+        repeat-enabled: root.repeat-enabled;
+        add-source(value) => { root.add-source(value); }
+        select-track(index) => { root.select-track(index); }
+        toggle-pause => { root.toggle-pause(); }
+        next-track => { root.next-track(); }
+        previous-track => { root.previous-track(); }
+        seek(value) => { root.seek(value); }
+        change-volume(value) => { root.change-volume(value); }
+        toggle-repeat => { root.toggle-repeat(); }
+        shuffle-queue => { root.shuffle-queue(); }
+        switch-mode => { root.switch-mode(); }
+        collapse-player => { root.collapse-player(); }
+        open-file => { root.open-file(); }
+        clear-queue => { root.clear-queue(); }
+    }
+
+    if !root.collapsed && !root.light-mode : FullLibraryView {
+        rows: root.rows;
+        current-index: root.current-index;
+        track-title: root.track-title;
+        track-artist: root.track-artist;
+        track-album: root.track-album;
+        position: root.position;
+        duration: root.duration;
+        paused: root.paused;
+        volume: root.volume;
+        status-text: root.status-text;
+        source-input <=> root.source-input;
+        light-mode: root.light-mode;
+        repeat-enabled: root.repeat-enabled;
+        add-source(value) => { root.add-source(value); }
+        select-track(index) => { root.select-track(index); }
+        toggle-pause => { root.toggle-pause(); }
+        next-track => { root.next-track(); }
+        previous-track => { root.previous-track(); }
+        seek(value) => { root.seek(value); }
+        change-volume(value) => { root.change-volume(value); }
+        toggle-repeat => { root.toggle-repeat(); }
+        shuffle-queue => { root.shuffle-queue(); }
+        switch-mode => { root.switch-mode(); }
+        collapse-player => { root.collapse-player(); }
+        open-file => { root.open-file(); }
+        clear-queue => { root.clear-queue(); }
+    }
+}
