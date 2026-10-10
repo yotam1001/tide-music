@@ -42,6 +42,18 @@ struct State {
 }
 
 type LibraryResult = Result<tide_provider::Response, String>;
+fn select_zen_session() -> Option<tide_provider::Request> {
+    let mut dialog = rfd::FileDialog::new()
+        .set_title("Connect your Zen session: select cookies.sqlite in your profile")
+        .add_filter("Zen cookie database", &["sqlite"])
+        .set_file_name("cookies.sqlite");
+    if let Some(appdata) = std::env::var_os("APPDATA") {
+        dialog = dialog.set_directory(PathBuf::from(appdata).join("zen/Profiles"));
+    }
+    dialog
+        .pick_file()
+        .map(|database| tide_provider::Request::Connect { database })
+}
 fn request_library(
     s: &mut State,
     u: &AppWindow,
@@ -51,7 +63,7 @@ fn request_library(
     if s.library_worker.is_some() {
         return;
     }
-    let connecting = matches!(request, tide_provider::Request::Connect);
+    let connecting = matches!(request, tide_provider::Request::Connect { .. });
     let Some(provider) = s
         .provider
         .clone()
@@ -66,7 +78,7 @@ fn request_library(
     u.set_account_busy(true);
     u.set_account_status(
         if connecting {
-            "Sign in to YouTube Music in the Edge window. Close it or press Cancel to stop."
+            "Verifying the YouTube Music session from your selected Zen profile…"
         } else {
             "Fetching YouTube Music…"
         }
@@ -587,12 +599,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if std::env::args().any(|a| a == "--connect-account") && !test_mode {
         ui.set_library_open(true);
-        request_library(
-            &mut state.borrow_mut(),
-            &ui,
-            &library_tx,
-            tide_provider::Request::Connect,
-        );
+        if let Some(request) = select_zen_session() {
+            request_library(&mut state.borrow_mut(), &ui, &library_tx, request);
+        }
     }
     {
         let state = state.clone();
@@ -600,12 +609,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let tx = library_tx.clone();
         ui.on_connect_account(move || {
             if let Some(u) = weak.upgrade() {
-                request_library(
-                    &mut state.borrow_mut(),
-                    &u,
-                    &tx,
-                    tide_provider::Request::Connect,
-                );
+                let Some(request) = select_zen_session() else {
+                    return;
+                };
+                request_library(&mut state.borrow_mut(), &u, &tx, request);
             }
         });
     }
@@ -792,8 +799,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
     ui.on_open_account_help(|| {
-        let mut command=std::process::Command::new("rundll32.exe");
-        command.arg("url.dll,FileProtocolHandler").arg("https://github.com/yotam1001/tide-music/blob/codex/account-library-sync/docs/ACCOUNT_SETUP.md");
+        let zen = std::env::var_os("TIDE_ZEN_EXE").map(PathBuf::from).or_else(|| std::env::var_os("ProgramFiles").map(|p| PathBuf::from(p).join("Zen Browser/zen.exe"))).unwrap_or_else(|| PathBuf::from("zen.exe"));
+        let mut command=std::process::Command::new(zen);
+        command.arg("-new-tab").arg("https://github.com/yotam1001/tide-music/blob/codex/account-library-sync/docs/ACCOUNT_SETUP.md");
         #[cfg(windows)] { use std::os::windows::process::CommandExt; command.creation_flags(0x08000000); }
         let _=command.spawn();
     });

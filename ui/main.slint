@@ -1811,7 +1811,7 @@ component LibraryView inherits Rectangle {
                     accessible-live-region: polite;
                 }
                 Text {
-                    text: "Sign in locally · browser closes after connection";
+                    text: "Connect your existing Zen session locally";
                     color: root.secondary;
                     font-size: 12px;
                 }
@@ -1832,7 +1832,7 @@ component LibraryView inherits Rectangle {
                         light-mode: root.light-mode;
                         enabled: !root.account-busy;
                         active: true;
-                        label: "Connect your account using a temporary Edge window";
+                        label: "Connect the YouTube Music session from your selected Zen profile";
                         caption: root.account-connected ? "Reconnect account" : "Connect account";
                         clicked => { root.connect-account(); }
                     }

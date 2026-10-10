@@ -34,7 +34,7 @@ pub struct Card {
 #[derive(Clone, Serialize)]
 #[serde(tag = "action", rename_all = "lowercase")]
 pub enum Request {
-    Connect,
+    Connect { database: PathBuf },
     Library,
     Playlist { id: String },
     Liked,
@@ -82,10 +82,12 @@ impl Drop for CookieLease {
     }
 }
 
+#[cfg(test)]
 struct LoginDirectory {
     path: PathBuf,
     parent: PathBuf,
 }
+#[cfg(test)]
 impl Drop for LoginDirectory {
     fn drop(&mut self) {
         remove_private_login_directory(&self.path, &self.parent);
@@ -204,19 +206,9 @@ impl Provider {
 
     #[cfg(windows)]
     pub fn execute(&self, request: Request, cancel: Arc<AtomicBool>) -> Result<Response, String> {
-        if matches!(request, Request::Connect) {
-            let path = self.directory.join(format!(
-                "login-{}-{}",
-                std::process::id(),
-                LEASE_COUNTER.fetch_add(1, Ordering::Relaxed)
-            ));
-            fs::create_dir(&path).map_err(|_| "Could not prepare private sign-in directory")?;
-            let login = LoginDirectory {
-                path,
-                parent: self.directory.clone(),
-            };
+        if let Request::Connect { ref database } = request {
             let input = serde_json::to_vec(
-                &serde_json::json!({"action":"connect", "directory": login.path}),
+                &serde_json::json!({"action":"connect_existing", "database": database}),
             )
             .map_err(|_| "Could not prepare account connection")?;
             return match execute_helper(&input, cancel.clone(), Duration::from_secs(600))? {
@@ -493,8 +485,14 @@ fn execute_helper(
         Response::Error { code } if code == "runtime" => {
             Err("Install the optional account helper with scripts/setup-provider.ps1".into())
         }
+        Response::Error { code } if code == "profile" => {
+            Err("Select cookies.sqlite inside your Zen profile, or use Import session for a custom profile".into())
+        }
+        Response::Error { code } if code == "session" => {
+            Err("Sign in to YouTube Music in your Zen profile, then retry Connect account. For another Google account, use Import session".into())
+        }
         Response::Error { code } if code == "login_browser" => Err(
-            "Could not open the sign-in browser. Install Microsoft Edge or use Import session"
+            "Could not open the sign-in browser. Install Zen or set TIDE_ZEN_EXE, or use Import session"
                 .into(),
         ),
         Response::Error { code } if code == "login_blocked" => Err(
@@ -505,7 +503,7 @@ fn execute_helper(
             Err("Sign-in window closed or timed out. Choose Connect account to try again".into())
         }
         Response::Error { code } if code == "cleanup" => {
-            Err("Sign-in browser cleanup failed. Close Edge and retry Connect account".into())
+            Err("Sign-in browser cleanup failed. Close the temporary Zen window and retry Connect account".into())
         }
         Response::Error { .. } => {
             Err("YouTube Music request failed. Re-import a fresh session and try again".into())

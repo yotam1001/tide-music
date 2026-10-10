@@ -1,13 +1,16 @@
 import io
+from contextlib import closing
 import json
+import sqlite3
+import time
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import MagicMock, patch
-from youtube_music import (LOGIN_SECONDS, MUSIC_URL, authenticated_request, connect, main,
-                          music_cookies, music_url, remove_login_profile, run,
-                          session_headers, tracks, wait_for_login)
+from youtube_music import (LOGIN_SECONDS, MUSIC_URL, connect, connect_existing, create_client, main,
+                          music_cookies, read_music_cookies, remove_login_profile, run,
+                          selected_zen_database, session_headers, tracks, validate_session, wait_for_login, zen_executable)
 
 
 class FakeClient:
@@ -57,115 +60,130 @@ class ProviderTests(unittest.TestCase):
 
 
 class LoginTests(unittest.TestCase):
-    COOKIE = {"name": "__Secure-3PAPISID", "value": "fixture",
-              "domain": ".youtube.com", "path": "/"}
+    COOKIE = {"name": "__Secure-3PAPISID", "value": "fixture", "domain": ".youtube.com", "path": "/"}
 
-    def request(self, url=MUSIC_URL + "/youtubei/v1/browse", **changes):
-        values = {"url": url, "method": "POST", "headers": {
-            "authorization": "SAPISIDHASH fixture", "x-goog-authuser": "0"}}
-        values.update(changes)
-        request = SimpleNamespace(**values)
-        request.all_headers = lambda: {**request.headers, "Cookie": "__Secure-3PAPISID=fixture"}
-        return request
+    def database(self, root, origin_attributes=True):
+        profile = Path(tempfile.mkdtemp(prefix="zen-login-", dir=root))
+        database = profile / "cookies.sqlite"
+        with closing(sqlite3.connect(database)) as connection, connection:
+            extra = ", originAttributes TEXT DEFAULT ''" if origin_attributes else ""
+            connection.execute("CREATE TABLE moz_cookies (name TEXT, value TEXT, host TEXT, path TEXT, expiry INTEGER" + extra + ")")
+        return profile
 
-    def test_host_and_authentication_scope(self):
-        self.assertTrue(authenticated_request(self.request()))
-        for url in ["https://music.youtube.com.evil.test/youtubei/v1/browse",
-                    "https://accounts.google.com/youtubei/v1/browse",
-                    "http://music.youtube.com/youtubei/v1/browse",
-                    MUSIC_URL + ":444/youtubei/v1/browse", MUSIC_URL + "/watch",
-                    "https://user@music.youtube.com/youtubei/v1/browse"]:
-            self.assertFalse(authenticated_request(self.request(url)))
-        self.assertFalse(music_url("https://music.youtube.com:invalid"))
-        self.assertFalse(authenticated_request(self.request(method="GET")))
-        self.assertFalse(authenticated_request(self.request(headers={"x-goog-authuser": "0"})))
-        self.assertFalse(authenticated_request(self.request(headers={"authorization": "Bearer fixture"})))
+    def insert(self, profile, name="__Secure-3PAPISID", value="fixture", host=".youtube.com", path="/", expiry=None, attrs=None):
+        row = [name, value, host, path, expiry if expiry is not None else int(time.time()) + 3600]
+        if attrs is not None:
+            row.append(attrs)
+        with closing(sqlite3.connect(profile / "cookies.sqlite")) as connection, connection:
+            connection.execute("INSERT INTO moz_cookies VALUES (" + ",".join("?" for _ in row) + ")", row)
 
-    def test_normalizes_only_selected_headers(self):
-        headers = session_headers({"Cookie": "__Secure-3PAPISID=fixture; SID=fixture",
-                                   "X-Goog-AuthUser": "2", "X-Goog-PageId": "123",
-                                   "User-Agent": "Fixture Browser", "Origin": "https://wrong.test",
-                                   "Authorization": "SAPISIDHASH fixture",
-                                   "X-Other-Secret": "fixture"})
-        self.assertEqual(headers["x-goog-authuser"], "2")
-        self.assertEqual(headers["x-goog-pageid"], "123")
+    def test_sqlite_reads_only_scoped_unexpired_default_context(self):
+        with tempfile.TemporaryDirectory() as root:
+            profile = self.database(root)
+            for host in [".youtube.com", "youtube.com", "music.youtube.com", ".music.youtube.com"]:
+                self.insert(profile, host=host, attrs="")
+            self.insert(profile, name="GoogleSecret", host=".google.com", attrs="")
+            self.insert(profile, name="LookalikeSecret", host=".youtube.com.evil.test", attrs="")
+            self.insert(profile, name="WrongPath", path="/watch", attrs="")
+            self.insert(profile, name="Expired", expiry=int(time.time()) - 1, attrs="")
+            self.insert(profile, name="ContainerSecret", attrs="^userContextId=1")
+            self.insert(profile, name="Oversize", value="x" * 4097, attrs="")
+            cookies = read_music_cookies(profile, Path(root))
+            self.assertEqual(len(cookies), 4)
+            self.assertEqual({cookie["name"] for cookie in cookies}, {"__Secure-3PAPISID"})
+            self.assertEqual({cookie["domain"] for cookie in cookies},
+                             {".youtube.com", "youtube.com", "music.youtube.com", ".music.youtube.com"})
+            real_connect = sqlite3.connect
+            observed = []
+            def readonly_connect(database_uri, **kwargs):
+                observed.append((database_uri, kwargs))
+                return real_connect(database_uri, **kwargs)
+            with patch("youtube_music.sqlite3.connect", side_effect=readonly_connect):
+                self.assertEqual(len(read_music_cookies(profile, Path(root))), 4)
+            self.assertTrue(observed[0][0].endswith("?mode=ro"))
+            self.assertTrue(observed[0][1]["uri"])
+            self.assertLessEqual(observed[0][1]["timeout"], 0.1)
+
+    def test_sqlite_old_schema_row_limit_and_missing_database(self):
+        with tempfile.TemporaryDirectory() as root:
+            profile = self.database(root, origin_attributes=False)
+            self.insert(profile)
+            self.assertEqual(len(read_music_cookies(profile, Path(root))), 1)
+            for index in range(200):
+                self.insert(profile, name="Cookie" + str(index))
+            self.assertEqual(read_music_cookies(profile, Path(root)), [])
+            missing = Path(tempfile.mkdtemp(prefix="zen-login-", dir=root))
+            self.assertEqual(read_music_cookies(missing, Path(root)), [])
+            self.assertFalse((missing / "cookies.sqlite").exists())
+            self.assertEqual(read_music_cookies(profile, missing), [])
+
+    def test_normalizes_selected_headers_and_rejects_invalid_session(self):
+        headers = session_headers({"Cookie": "__Secure-3PAPISID=fixture", "X-Goog-AuthUser": "0",
+                                   "X-Goog-PageId": "123", "Origin": "https://wrong.test",
+                                   "Authorization": "SAPISIDHASH fixture", "X-Other-Secret": "fixture"})
         self.assertEqual(headers["origin"], MUSIC_URL)
+        self.assertEqual(headers["x-goog-pageid"], "123")
         self.assertNotIn("authorization", headers)
         self.assertNotIn("x-other-secret", headers)
-        for invalid in [{"cookie": "SID=fixture", "x-goog-authuser": "0"},
-                        {"cookie": "__Secure-3PAPISID=fixture", "x-goog-authuser": "0\r\nx:bad"},
-                        {"cookie": "__Secure-3PAPISID=fixture", "x-goog-authuser": "0",
-                         "x-goog-pageid": "invalid"}]:
-            self.assertIsNone(session_headers(invalid))
-
-    def test_cookie_fallback_is_scoped_and_bounded(self):
-        cookies = [self.COOKIE, {**self.COOKIE, "name": "GoogleSecret", "domain": ".google.com"},
-                   {**self.COOKIE, "name": "LookalikeSecret", "domain": ".youtube.com.evil.test"},
-                   {**self.COOKIE, "name": "BadValue", "value": "bad;value"},
-                   {**self.COOKIE, "name": "WrongPath", "path": "/watch"}]
-        result = session_headers({"x-goog-authuser": "0"}, cookies)
-        self.assertEqual(result["cookie"], "__Secure-3PAPISID=fixture")
-        self.assertIsNone(session_headers({"x-goog-authuser": "0"}, [cookies[1]]))
-        self.assertEqual(music_cookies([{**self.COOKIE, "value": "x" * 4097}]), "")
+        self.assertIsNone(session_headers({"x-goog-authuser": "0"}, [{**self.COOKIE, "domain": ".google.com"}]))
+        self.assertIsNone(session_headers({"x-goog-authuser": "0"}, [{**self.COOKIE, "value": "x" * 4097}]))
+        self.assertIsNone(session_headers({"cookie": "SID=fixture", "x-goog-authuser": "0"}))
+        self.assertIsNone(session_headers({"x-goog-authuser": "0\r\nx:bad"}, [self.COOKIE]))
         self.assertEqual(music_cookies([{**self.COOKIE, "name": "C" + str(i), "value": "x" * 4096}
                                        for i in range(20)]), "")
 
-    def context(self, page_url=MUSIC_URL, events=(), step=1):
+    def test_wait_requires_account_validation_and_limits_retries(self):
         clock = [0]
-        handlers = {}
-        events = iter(events)
-        cookie_urls = []
-        page = SimpleNamespace(url=page_url, is_closed=lambda: False)
-
-        def wait(_milliseconds):
-            clock[0] += step
-            response = next(events, None)
-            if response is not None:
-                handlers["response"](response)
-
-        def cookies(url):
-            cookie_urls.append(url)
-            return [self.COOKIE]
-
-        page.wait_for_timeout = wait
-        context = SimpleNamespace(pages=[page], on=lambda event, callback: handlers.update({event: callback}),
-                                  cookies=cookies)
-        return context, clock, cookie_urls
-
-    def test_capture_requires_music_return_and_successful_browse(self):
-        response = SimpleNamespace(status=200, request=self.request())
-        context, clock, cookie_urls = self.context(events=[response])
-        with patch("youtube_music.time.monotonic", side_effect=lambda: clock[0]):
-            result = wait_for_login(context, timeout=5)
+        process = SimpleNamespace(poll=lambda: None)
+        def sleep(seconds):
+            clock[0] += seconds
+        with patch("youtube_music.time.monotonic", side_effect=lambda: clock[0]), \
+                patch("youtube_music.time.sleep", side_effect=sleep), \
+                patch("youtube_music.read_music_cookies", return_value=[self.COOKIE]), \
+                patch("youtube_music.validate_session", side_effect=[False, True]) as validate:
+            result = wait_for_login(process, Path("fixture"), Path("fixture"), timeout=30)
         self.assertEqual(result["type"], "session")
-        self.assertEqual(cookie_urls, [MUSIC_URL])
-        for page_url, status in [("https://accounts.google.com/signin", 200), (MUSIC_URL, 401)]:
-            context, clock, cookie_urls = self.context(page_url, [SimpleNamespace(status=status, request=self.request())])
-            with patch("youtube_music.time.monotonic", side_effect=lambda: clock[0]):
-                self.assertEqual(wait_for_login(context, timeout=3)["code"], "login_timeout")
-            self.assertEqual(cookie_urls, [])
+        self.assertEqual(result["headers"]["x-goog-authuser"], "0")
+        self.assertEqual(validate.call_count, 2)
+        self.assertGreaterEqual(clock[0], 15)
 
-    def test_unrelated_requests_never_read_full_headers(self):
-        request = self.request("https://accounts.google.com/youtubei/v1/browse")
-        request.all_headers = lambda: self.fail("Must not inspect Google request cookies")
-        context, clock, cookie_urls = self.context(events=[SimpleNamespace(status=200, request=request)])
-        with patch("youtube_music.time.monotonic", side_effect=lambda: clock[0]):
-            self.assertEqual(wait_for_login(context, timeout=2)["code"], "login_timeout")
-        self.assertEqual(cookie_urls, [])
+    def test_wait_closed_and_eight_minute_bound_without_credentials(self):
+        clock = [0]
+        process = SimpleNamespace(poll=lambda: None)
+        def sleep(seconds):
+            clock[0] += seconds
+        with patch("youtube_music.time.monotonic", side_effect=lambda: clock[0]), \
+                patch("youtube_music.time.sleep", side_effect=sleep), \
+                patch("youtube_music.read_music_cookies", return_value=[]), \
+                patch("youtube_music.validate_session") as validate:
+            self.assertEqual(wait_for_login(process, Path("fixture"), Path("fixture"), timeout=99999)["code"], "login_timeout")
+        self.assertEqual(clock[0], LOGIN_SECONDS)
+        validate.assert_not_called()
+        process.poll = lambda: 0
+        self.assertEqual(wait_for_login(process, Path("fixture"), Path("fixture"))["code"], "login_closed")
 
-    def test_closed_rejected_and_eight_minute_limit(self):
-        context, clock, _ = self.context(step=100)
-        with patch("youtube_music.time.monotonic", side_effect=lambda: clock[0]):
-            self.assertEqual(wait_for_login(context, timeout=99999)["code"], "login_timeout")
-        self.assertLessEqual(clock[0], LOGIN_SECONDS + 100)
-        context.pages = []
-        self.assertEqual(wait_for_login(context)["code"], "login_closed")
-        context, _, _ = self.context("https://accounts.google.com/signin/rejected")
-        self.assertEqual(wait_for_login(context)["code"], "login_blocked")
+    def test_identity_validation_closes_session_and_requires_real_name(self):
+        for info, expected in [({"accountName": "Fixture listener"}, True), ({"name": "Fixture"}, True),
+                               ({}, False), ({"accountName": {}}, False), ({"accountName": ""}, False), (None, False)]:
+            client, session = MagicMock(), MagicMock()
+            client.get_account_info.return_value = info
+            with patch("youtube_music.create_client", return_value=(client, session)):
+                self.assertEqual(validate_session({}), expected)
+            session.close.assert_called_once()
+
+    def test_client_sets_browser_auth_marker_and_network_timeout(self):
+        api = MagicMock()
+        requests = MagicMock()
+        helpers = SimpleNamespace(initialize_headers=lambda: {"origin": MUSIC_URL})
+        with patch.dict("sys.modules", {"ytmusicapi": api, "ytmusicapi.helpers": helpers, "requests": requests}):
+            create_client({"cookie": "__Secure-3PAPISID=fixture", "x-goog-authuser": "0"})
+        options = api.YTMusic.call_args.kwargs
+        self.assertEqual(options["auth"]["authorization"], "SAPISIDHASH")
+        self.assertEqual(requests.Session.return_value.request.keywords["timeout"], 20)
 
     def test_removal_only_deletes_owned_child_profile(self):
         with tempfile.TemporaryDirectory() as private, tempfile.TemporaryDirectory() as unrelated:
-            profile = Path(tempfile.mkdtemp(prefix="edge-login-", dir=private))
+            profile = Path(tempfile.mkdtemp(prefix="zen-login-", dir=private))
             (profile / "fixture").write_text("fixture")
             self.assertFalse(remove_login_profile(Path(unrelated), Path(private)))
             self.assertTrue(Path(unrelated).exists())
@@ -177,31 +195,92 @@ class LoginTests(unittest.TestCase):
         stdin = SimpleNamespace(buffer=io.BytesIO(b'{"action":"connect","directory":"fixture"}'))
         stdout = io.StringIO()
         with patch("youtube_music.sys.stdin", stdin), patch("youtube_music.sys.stdout", stdout), \
-                patch("youtube_music.connect", return_value={"type": "error", "code": "login_closed"}) as connect:
+                patch("youtube_music.connect", return_value={"type": "error", "code": "login_closed"}) as handler:
             main()
-        connect.assert_called_once_with("fixture")
+        handler.assert_called_once_with("fixture")
         self.assertEqual(json.loads(stdout.getvalue()), {"type": "error", "code": "login_closed"})
 
-    def test_connect_uses_local_sandboxed_edge_and_cleans_profile(self):
-        playwright = MagicMock()
-        manager = MagicMock()
-        manager.__enter__.return_value = playwright
-        context = playwright.chromium.launch_persistent_context.return_value
-        context.pages = [MagicMock()]
-        api = SimpleNamespace(sync_playwright=lambda: manager)
+    def test_connect_opens_normal_fresh_profile_and_preserves_session_on_locks(self):
+        expected = {"type": "session", "headers": {"cookie": "fixture"}}
         with tempfile.TemporaryDirectory() as private, \
-                patch.dict("sys.modules", {"playwright.sync_api": api}), \
-                patch.dict("youtube_music.os.environ", {"DEBUG": "pw:protocol", "PWDEBUG": "1",
-                                                       "SELENIUM_REMOTE_URL": "https://fixture.invalid"}), \
-                patch("youtube_music.wait_for_login", return_value={"type": "error", "code": "login_closed"}):
-            self.assertEqual(connect(private)["code"], "login_closed")
-            args, options = playwright.chromium.launch_persistent_context.call_args
-            self.assertEqual(Path(args[0]).parent, Path(private).resolve())
-            self.assertEqual(options["channel"], "msedge")
-            self.assertFalse(options["headless"])
-            self.assertTrue(options["chromium_sandbox"])
-            context.close.assert_called_once()
-            self.assertEqual(list(Path(private).iterdir()), [])
+                patch("youtube_music.zen_executable", return_value="fixture/zen.exe"), \
+                patch("youtube_music.subprocess.Popen") as popen, \
+                patch("youtube_music.close_login_browser") as close, \
+                patch("youtube_music.remove_login_profile", return_value=False):
+            def signed_in(process, profile, directory):
+                self.assertEqual(profile.parent, Path(private).resolve())
+                self.assertTrue(profile.name.startswith("zen-login-"))
+                self.assertEqual((profile / "user.js").read_text(), 'user_pref("signon.rememberSignons", false);\n')
+                return expected
+            with patch("youtube_music.wait_for_login", side_effect=signed_in):
+                self.assertEqual(connect(private), expected)
+            args = popen.call_args.args[0]
+            self.assertEqual(args[1:4], ["-no-remote", "-wait-for-browser", "-profile"])
+            self.assertEqual(args[-1], MUSIC_URL)
+            self.assertEqual(set(popen.call_args.kwargs), {"stdout", "stderr"})
+            close.assert_called_once_with(popen.return_value)
+
+    def test_executable_discovery_uses_zen_override(self):
+        with tempfile.TemporaryDirectory() as root:
+            executable = Path(root) / "zen.exe"
+            executable.touch()
+            with patch.dict("youtube_music.os.environ", {"TIDE_ZEN_EXE": str(executable)}):
+                self.assertEqual(zen_executable(), str(executable.resolve()))
+
+    def test_selected_database_is_confined_to_explicit_zen_profiles_file(self):
+        with tempfile.TemporaryDirectory() as appdata, tempfile.TemporaryDirectory() as unrelated, \
+                patch.dict("youtube_music.os.environ", {"APPDATA": appdata}):
+            root = Path(appdata) / "zen" / "Profiles"
+            root.mkdir(parents=True)
+            profile = self.database(root)
+            selected = profile / "cookies.sqlite"
+            self.assertEqual(selected_zen_database(str(selected)), selected.resolve())
+            outside = self.database(unrelated) / "cookies.sqlite"
+            wrong_name = profile / "logins.json"
+            wrong_name.write_text("fixture")
+            not_a_file = root / "cookies.sqlite"
+            not_a_file.mkdir()
+            for invalid in [outside, wrong_name, not_a_file, Path("cookies.sqlite"), profile / "missing.sqlite"]:
+                with patch("youtube_music.read_cookie_database") as reader:
+                    self.assertEqual(connect_existing(str(invalid)), {"type": "error", "code": "profile"})
+                reader.assert_not_called()
+            with patch("youtube_music.Path.is_symlink", return_value=True):
+                self.assertEqual(connect_existing(str(selected)), {"type": "error", "code": "profile"})
+
+    def test_existing_connection_verifies_account_without_browser_or_profile_changes(self):
+        with tempfile.TemporaryDirectory() as appdata, \
+                patch.dict("youtube_music.os.environ", {"APPDATA": appdata}), \
+                patch("youtube_music.subprocess.Popen") as spawn, \
+                patch("youtube_music.close_login_browser") as close, \
+                patch("youtube_music.remove_login_profile") as remove:
+            root = Path(appdata) / "zen" / "Profiles"
+            root.mkdir(parents=True)
+            profile = self.database(root)
+            self.insert(profile, attrs="")
+            selected = profile / "cookies.sqlite"
+            before = selected.read_bytes()
+            with patch("youtube_music.validate_session", return_value=True) as validate:
+                result = connect_existing(str(selected))
+            self.assertEqual(result["type"], "session")
+            self.assertEqual(result["headers"]["x-goog-authuser"], "0")
+            validate.assert_called_once_with(result["headers"])
+            for failure in [False, ValueError("fixture error")]:
+                with patch("youtube_music.validate_session", side_effect=[failure]):
+                    self.assertEqual(connect_existing(str(selected)), {"type": "error", "code": "session"})
+            self.assertEqual(selected.read_bytes(), before)
+            self.assertEqual([path.name for path in profile.iterdir()], ["cookies.sqlite"])
+            spawn.assert_not_called()
+            close.assert_not_called()
+            remove.assert_not_called()
+
+    def test_existing_connect_dispatches_private_payload(self):
+        stdin = SimpleNamespace(buffer=io.BytesIO(b'{"action":"connect_existing","database":"fixture"}'))
+        stdout = io.StringIO()
+        with patch("youtube_music.sys.stdin", stdin), patch("youtube_music.sys.stdout", stdout), \
+                patch("youtube_music.connect_existing", return_value={"type": "error", "code": "profile"}) as handler:
+            main()
+        handler.assert_called_once_with("fixture")
+        self.assertEqual(json.loads(stdout.getvalue()), {"type": "error", "code": "profile"})
 
 
 if __name__ == "__main__":

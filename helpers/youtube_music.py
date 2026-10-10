@@ -1,19 +1,23 @@
 """Read-only YouTube Music bridge. Credentials arrive on stdin, never argv."""
 import json
+from contextlib import closing
 import os
 from pathlib import Path
 import re
 import shutil
+import sqlite3
+import subprocess
 import sys
 import tempfile
 import time
-from urllib.parse import urlsplit
 import warnings
 
 MAX_INPUT = 65536
 MAX_TRACKS = 2000
 LOGIN_SECONDS = 8 * 60
+LOGIN_RETRY_SECONDS = 15
 MUSIC_URL = "https://music.youtube.com"
+COOKIE_DOMAINS = (".youtube.com", "youtube.com", "music.youtube.com", ".music.youtube.com")
 SESSION_HEADERS = {
     "accept": 1024, "accept-language": 1024, "content-type": 256,
     "user-agent": 1024, "x-goog-authuser": 8, "x-goog-pageid": 128,
@@ -22,28 +26,16 @@ SESSION_HEADERS = {
 warnings.filterwarnings("ignore")
 
 
-def music_url(value, browse=False):
-    """Accept only the official HTTPS host, never lookalikes or other Google URLs."""
-    try:
-        url = urlsplit(value)
-        return (url.scheme == "https" and url.hostname == "music.youtube.com"
-                and url.port in (None, 443) and not url.username and not url.password
-                and (not browse or url.path == "/youtubei/v1/browse"))
-    except (TypeError, ValueError):
-        return False
-
-
 def safe_header(value, limit):
     return (isinstance(value, str) and bool(value) and len(value) <= limit
             and all(32 <= ord(char) < 127 or char == "\t" for char in value))
 
 
 def music_cookies(cookies):
-    """Input must come from context.cookies(MUSIC_URL); also enforce its domain."""
+    """Normalize only caller-authorized YouTube cookies."""
     result = []
     for cookie in cookies[:200]:
-        if cookie.get("domain") not in (".youtube.com", "youtube.com", "music.youtube.com",
-                                        ".music.youtube.com"):
+        if cookie.get("domain") not in COOKIE_DOMAINS:
             continue
         if cookie.get("path", "/") != "/":
             continue
@@ -77,15 +69,122 @@ def session_headers(raw, cookies=()):
     return headers
 
 
-def authenticated_request(request):
-    if not music_url(request.url, browse=True) or request.method != "POST":
-        return False
-    # Request.headers omits cookies. Only request all_headers after the browser
-    # itself has sent an authenticated Music browse request, never during sign-in.
-    headers = request.headers
-    return (bool(re.fullmatch(r"[0-9]{1,4}", headers.get("x-goog-authuser", "")))
-            and bool(re.search(r"(?:^| )SAPISID(?:1P|3P)?HASH ",
-                               headers.get("authorization", ""))))
+def owned_profile(profile, directory):
+    resolved = profile.resolve()
+    return (resolved.parent == directory.resolve()
+            and resolved.name.startswith("zen-login-") and not profile.is_symlink())
+
+
+def read_music_cookies(profile, directory):
+    """Read only this helper's own SQLite database, never a user's browser profile."""
+    if not owned_profile(profile, directory):
+        return []
+    database = profile / "cookies.sqlite"
+    if not database.is_file() or database.is_symlink() or database.resolve().parent != profile.resolve():
+        return []
+    return read_cookie_database(database)
+
+
+def read_cookie_database(database):
+    """Caller must authorize and confine the file before this bounded read."""
+    try:
+        with closing(sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True, timeout=0.1)) as connection:
+            connection.execute("PRAGMA query_only=ON")
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(moz_cookies)")}
+            context_filter = " AND originAttributes = ''" if "originAttributes" in columns else ""
+            rows = connection.execute(
+                "SELECT name, value, host, path FROM moz_cookies "
+                "WHERE host IN (?, ?, ?, ?) AND path = '/' AND expiry > ? "
+                "AND length(name) BETWEEN 1 AND 128 AND length(value) BETWEEN 1 AND 4096"
+                + context_filter + " ORDER BY host, name LIMIT 201",
+                (*COOKIE_DOMAINS, int(time.time())),
+            ).fetchall()
+        if len(rows) > 200:
+            return []
+        return [{"name": name, "value": value, "domain": host, "path": path}
+                for name, value, host, path in rows]
+    except (sqlite3.Error, OSError):
+        # Browser startup, write locks, or shutdown can temporarily prevent a read.
+        return []
+
+
+def selected_zen_database(value):
+    database = Path(value)
+    if not database.is_absolute() or database.name != "cookies.sqlite" or database.is_symlink():
+        raise ValueError("invalid selected profile")
+    canonical = database.resolve(strict=True)
+    root = (Path(os.environ["APPDATA"]) / "zen" / "Profiles").resolve(strict=True)
+    if canonical != database or not canonical.is_relative_to(root) or not canonical.is_file():
+        raise ValueError("invalid selected profile")
+    return canonical
+
+
+def connect_existing(database):
+    # This path arrives only after the user explicitly selects the cookie file.
+    # No browser is opened, no profile is copied, and no files are changed here.
+    try:
+        database = selected_zen_database(database)
+    except (ValueError, OSError, KeyError, TypeError):
+        return {"type": "error", "code": "profile"}
+    headers = session_headers({"x-goog-authuser": "0"}, read_cookie_database(database))
+    if not headers:
+        return {"type": "error", "code": "session"}
+    try:
+        if validate_session(headers):
+            return {"type": "session", "headers": headers}
+    except ImportError:
+        return {"type": "error", "code": "runtime"}
+    except Exception:
+        pass
+    return {"type": "error", "code": "session"}
+
+
+def create_client(auth):
+    from ytmusicapi import YTMusic
+    from ytmusicapi.helpers import initialize_headers
+    import requests
+    from functools import partial
+    session = requests.Session()
+    session.request = partial(session.request, timeout=20)
+    headers = initialize_headers()
+    headers.update(auth)
+    # This marker selects browser authentication. ytmusicapi generates the actual
+    # current-time signature from __Secure-3PAPISID before sending any request.
+    headers["authorization"] = "SAPISIDHASH"
+    try:
+        return YTMusic(auth=headers, user=headers.get("x-goog-pageid"), requests_session=session), session
+    except Exception:
+        session.close()
+        raise
+
+
+def validate_session(headers):
+    client, session = create_client(headers)
+    try:
+        info = client.get_account_info()
+        name = (info.get("accountName") or info.get("name")) if isinstance(info, dict) else None
+        return isinstance(name, str) and bool(clean(name))
+    finally:
+        session.close()
+
+
+def zen_executable():
+    override = os.environ.get("TIDE_ZEN_EXE")
+    if override:
+        candidate = Path(override).resolve(strict=True)
+        if candidate.is_file() and candidate.name.lower() == "zen.exe":
+            return str(candidate)
+        raise ValueError("invalid browser executable")
+    for variable in ("ProgramFiles", "ProgramFiles(x86)"):
+        root = os.environ.get(variable)
+        if root:
+            candidate = Path(root) / "Zen Browser" / "zen.exe"
+            if candidate.is_file():
+                return str(candidate.resolve())
+    candidate = shutil.which("zen.exe")
+    if candidate:
+        return str(Path(candidate).resolve())
+    raise FileNotFoundError("browser unavailable")
 
 
 def remove_login_profile(profile, directory):
@@ -93,7 +192,7 @@ def remove_login_profile(profile, directory):
     # directory, an old browser profile, or a path outside our private directory.
     for _ in range(20):
         resolved = profile.resolve()
-        if resolved.parent != directory.resolve() or not resolved.name.startswith("edge-login-"):
+        if not owned_profile(profile, directory):
             return False
         try:
             shutil.rmtree(resolved)
@@ -105,83 +204,79 @@ def remove_login_profile(profile, directory):
     return False
 
 
-def wait_for_login(context, timeout=LOGIN_SECONDS, start_page=None):
-    candidate = None
-    closed = False
-
-    def did_close(_context):
-        nonlocal closed
-        closed = True
-
-    def observed(response):
-        nonlocal candidate
-        try:
-            request = response.request
-            if response.status == 200 and authenticated_request(request):
-                candidate = request.all_headers()
-        except Exception:
-            # Browser-close races and network errors must never expose headers.
-            pass
-
-    context.on("response", observed)
-    context.on("close", did_close)
-    if start_page is not None:
-        start_page.goto(MUSIC_URL, wait_until="domcontentloaded", timeout=30000)
+def wait_for_login(process, profile, directory, timeout=LOGIN_SECONDS):
     deadline = time.monotonic() + min(max(timeout, 0), LOGIN_SECONDS)
+    last_cookie = None
+    retry_at = 0
     while time.monotonic() < deadline:
-        if closed:
+        if process.poll() is not None:
             return {"type": "error", "code": "login_closed"}
-        pages = [page for page in context.pages if not page.is_closed()]
-        if not pages:
-            return {"type": "error", "code": "login_closed"}
-        for page in pages:
-            url = urlsplit(page.url)
-            if url.hostname == "accounts.google.com" and "/signin/rejected" in url.path:
-                return {"type": "error", "code": "login_blocked"}
-        if candidate and any(music_url(page.url) for page in pages):
-            headers = session_headers(candidate, context.cookies(MUSIC_URL))
-            if headers:
-                return {"type": "session", "headers": headers}
-        # Playwright waits dispatch browser events while the user operates Edge.
-        try:
-            pages[0].wait_for_timeout(250)
-        except Exception:
-            if closed or not context.pages:
-                return {"type": "error", "code": "login_closed"}
-            raise
+        headers = session_headers({"x-goog-authuser": "0"}, read_music_cookies(profile, directory))
+        now = time.monotonic()
+        if headers and (headers["cookie"] != last_cookie or now >= retry_at):
+            last_cookie = headers["cookie"]
+            retry_at = now + LOGIN_RETRY_SECONDS
+            try:
+                if validate_session(headers):
+                    return {"type": "session", "headers": headers}
+            except ImportError:
+                return {"type": "error", "code": "runtime"}
+            except Exception:
+                # Cookie presence during a Google redirect does not prove login.
+                # Network and account failures stay private and may be retried.
+                pass
+        time.sleep(min(1, max(0, deadline - time.monotonic())))
     return {"type": "error", "code": "login_timeout"}
 
 
+def close_login_browser(process):
+    if process.poll() is not None:
+        return
+    if os.name == "nt":
+        try:
+            # Without /F, taskkill requests normal window closure. /T restricts
+            # closure to our own fresh-profile process and its descendants.
+            subprocess.run(["taskkill", "/PID", str(process.pid), "/T"],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           timeout=3, creationflags=subprocess.CREATE_NO_WINDOW, check=False)
+            process.wait(timeout=3)
+            return
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    try:
+        process.terminate()
+        process.wait(timeout=3)
+    except (OSError, subprocess.TimeoutExpired):
+        try:
+            process.kill()
+            process.wait(timeout=1)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+
+
 def connect(directory):
-    from playwright.sync_api import sync_playwright
     directory = Path(directory).resolve(strict=True)
     if not directory.is_dir():
         raise ValueError("invalid private directory")
-    profile = Path(tempfile.mkdtemp(prefix="edge-login-", dir=directory))
+    profile = Path(tempfile.mkdtemp(prefix="zen-login-", dir=directory))
     result = {"type": "error", "code": "login_browser"}
-    # Debugging switches can make the Playwright driver log protocol credentials.
-    suppressed = {name: os.environ.pop(name) for name in (
-        "DEBUG", "PWDEBUG", "SELENIUM_REMOTE_URL", "SELENIUM_REMOTE_CAPABILITIES",
-        "SELENIUM_REMOTE_HEADERS") if name in os.environ}
+    process = None
     try:
-        with sync_playwright() as playwright:
-            context = None
-            try:
-                context = playwright.chromium.launch_persistent_context(
-                    str(profile), channel="msedge", headless=False, timeout=30000,
-                    accept_downloads=False, chromium_sandbox=True,
-                )
-                page = context.pages[0] if context.pages else context.new_page()
-                result = wait_for_login(context, start_page=page)
-            finally:
-                if context is not None:
-                    context.close()
+        (profile / "user.js").write_text('user_pref("signon.rememberSignons", false);\n', encoding="utf-8")
+        # The normal Windows launcher waits for this separate browser instance;
+        # there is no debugger, automation interface, or existing profile access.
+        process = subprocess.Popen([zen_executable(), "-no-remote", "-wait-for-browser",
+                                    "-profile", str(profile), MUSIC_URL],
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        result = wait_for_login(process, profile, directory)
     except Exception:
         pass
     finally:
-        os.environ.update(suppressed)
-        if not remove_login_profile(profile, directory):
-            result = {"type": "error", "code": "cleanup"}
+        if process is not None:
+            close_login_browser(process)
+        # Rust kills any remaining descendants and removes its private root after
+        # helper exit. A locked file must not discard an already verified session.
+        remove_login_profile(profile, directory)
     return result
 
 
@@ -258,20 +353,19 @@ def main():
         if len(raw) > MAX_INPUT:
             raise ValueError("input limit")
         request = json.loads(raw)
+        if request.get("action") == "connect_existing":
+            result = connect_existing(request["database"])
+            print(json.dumps(result, ensure_ascii=True))
+            return
         if request.get("action") == "connect":
             result = connect(request["directory"])
             print(json.dumps(result, ensure_ascii=True))
             return
-        from ytmusicapi import YTMusic
-        from ytmusicapi.helpers import initialize_headers
-        import requests
-        from functools import partial
-        session = requests.Session()
-        session.request = partial(session.request, timeout=20)
-        headers = initialize_headers()
-        headers.update(request.pop("headers"))
-        client = YTMusic(auth=headers, user=headers.get("x-goog-pageid"), requests_session=session)
-        result = run(client, request)
+        client, session = create_client(request.pop("headers"))
+        try:
+            result = run(client, request)
+        finally:
+            session.close()
         print(json.dumps(result, ensure_ascii=True))
     except ImportError:
         print('{"type":"error","code":"runtime"}')

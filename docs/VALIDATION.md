@@ -26,7 +26,7 @@ A 15-sample empty compact-mode spot check of the account build used one app proc
 
 The muted public-music smoke also passed with an empty fixture cookie jar whose path contains spaces and a comma, exercising mpv option escaping through actual YouTube extraction. This is not an authenticated or Premium test.
 
-Connect account now launches installed Edge using a new temporary profile and private Playwright pipe. Thirteen Python tests cover library limits, authenticated Music request selection, cookie/header scope, rejected/closed/timed-out login, sandboxed browser configuration, and owned profile removal. Rust cleanup tests also cover stale login roots and normal guard removal. Live Google login remains user-driven and unverified; browser rejection is handled through the manual-import fallback.
+Connect account reads the user-selected existing Zen cookie database through read-only SQLite and validates account access before import. Tests cover cookie scope, expiry/context filtering, input bounds and profile confinement alongside library behavior. Live user account access remains unverified until the user completes the connection.
 
 ## Initial renderer experiment
 
