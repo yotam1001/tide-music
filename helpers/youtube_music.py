@@ -141,6 +141,24 @@ def connect_existing(database):
     return {"type": "error", "code": "session"}
 
 
+def switch_account(headers, index):
+    if type(index) is not int or not 0 <= index <= 9 or not isinstance(headers, dict):
+        return {"type": "error", "code": "session"}
+    try:
+        # Normalize a separate candidate. Failed verification must leave the
+        # caller's current session unchanged and must not return new headers.
+        candidate_source = {name: value for name, value in headers.items()
+                            if name.lower() != "x-goog-pageid"}
+        candidate = session_headers({**candidate_source, "x-goog-authuser": str(index)})
+        if candidate and validate_session(candidate):
+            return {"type": "session", "headers": candidate}
+    except ImportError:
+        return {"type": "error", "code": "runtime"}
+    except Exception:
+        pass
+    return {"type": "error", "code": "session"}
+
+
 def create_client(auth):
     from ytmusicapi import YTMusic
     from ytmusicapi.helpers import initialize_headers
@@ -370,6 +388,10 @@ def main():
         if len(raw) > MAX_INPUT:
             raise ValueError("input limit")
         request = json.loads(raw)
+        if request.get("action") == "switchaccount":
+            result = switch_account(request.get("headers"), request.get("index"))
+            print(json.dumps(result, ensure_ascii=True))
+            return
         if request.get("action") == "connect_existing":
             result = connect_existing(request["database"])
             print(json.dumps(result, ensure_ascii=True))

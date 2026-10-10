@@ -59,11 +59,23 @@ pub fn start() -> Result<PlaybackHandle, String> {
 /// The caller must keep it alive until this handle and its helpers are dropped.
 #[cfg(windows)]
 pub fn start_with_cookie_file(cookies: Option<PathBuf>) -> Result<PlaybackHandle, String> {
+    start_with_account(cookies, 0)
+}
+
+#[cfg(windows)]
+pub fn start_with_account(
+    cookies: Option<PathBuf>,
+    account_index: u32,
+) -> Result<PlaybackHandle, String> {
+    if account_index > 9 {
+        return Err("Invalid signed-in account selection".into());
+    }
     if cookies.as_ref().is_some_and(|path| !path.is_file()) {
         return Err("The signed-in session file is unavailable. Reconnect your account.".into());
     }
     let mut runtimes = RuntimePaths::discover()?;
     runtimes.cookies = cookies;
+    runtimes.account_index = account_index;
     let yt_dlp_available = runtimes.yt_dlp.is_some();
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_io()
@@ -128,6 +140,10 @@ pub fn start() -> Result<PlaybackHandle, String> {
 
 #[cfg(not(windows))]
 pub fn start_with_cookie_file(_: Option<PathBuf>) -> Result<PlaybackHandle, String> {
+    start()
+}
+#[cfg(not(windows))]
+pub fn start_with_account(_: Option<PathBuf>, _: u32) -> Result<PlaybackHandle, String> {
     start()
 }
 
@@ -342,6 +358,7 @@ struct WorkerControls {
 #[derive(Clone, Debug)]
 struct RuntimePaths {
     cookies: Option<PathBuf>,
+    account_index: u32,
     mpv: PathBuf,
     yt_dlp: Option<PathBuf>,
 }
@@ -354,6 +371,7 @@ impl RuntimePaths {
             })?;
         Ok(Self {
             cookies: None,
+            account_index: 0,
             mpv,
             yt_dlp: Self::discover_yt_dlp(),
         })
@@ -873,9 +891,20 @@ async fn launch_player(
     if let Some(cookies) = &runtimes.cookies {
         let path = cookies.to_string_lossy();
         command.arg(format!(
-            "--ytdl-raw-options=ignore-config=,cookies=%{}%{}",
+            "--ytdl-raw-options=ignore-config=,cookies=%{}%{}{}",
             path.len(),
-            path
+            path,
+            if runtimes.account_index > 0 {
+                let args = "youtube:player_skip=webpage,configs";
+                format!(
+                    ",add-headers=X-Goog-AuthUser:{},extractor-args=%{}%{}",
+                    runtimes.account_index,
+                    args.len(),
+                    args
+                )
+            } else {
+                String::new()
+            }
         ));
     }
 

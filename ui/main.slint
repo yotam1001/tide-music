@@ -1,4 +1,4 @@
-import { Button, LineEdit, ListView, Palette, Slider } from "std-widgets.slint";
+import { Button, ComboBox, LineEdit, ListView, Palette, Slider } from "std-widgets.slint";
 
 export struct TrackRow {
     title: string,
@@ -1747,6 +1747,8 @@ component RecommendationPanel inherits Rectangle {
 }
 
 component LibraryView inherits Rectangle {
+    in-out property <int> account-index;
+    callback switch-account(int);
     callback connect-account();
     callback cancel-account();
     in property <[PlaylistRow]> library-playlists;
@@ -1793,7 +1795,7 @@ component LibraryView inherits Rectangle {
             }
         }
         Rectangle {
-            height: 207px;
+            height: 250px;
             border-radius: 12px;
             border-width: 1px;
             border-color: root.light-mode ? #c8b7b1 : #292a30;
@@ -1823,6 +1825,25 @@ component LibraryView inherits Rectangle {
                     wrap: word-wrap;
                     overflow: elide;
                     accessible-live-region: polite;
+                }
+                HorizontalLayout {
+                    height: 34px;
+                    spacing: 8px;
+                    Text { text: "Google account"; color: root.secondary; vertical-alignment: center; }
+                    ComboBox {
+                        horizontal-stretch: 1;
+                        model: ["Account 1", "Account 2", "Account 3", "Account 4", "Account 5", "Account 6", "Account 7", "Account 8", "Account 9", "Account 10"];
+                        current-index <=> root.account-index;
+                        enabled: root.account-connected && !root.account-busy;
+                    }
+                    LibraryButton {
+                        width: 86px;
+                        light-mode: root.light-mode;
+                        enabled: root.account-connected && !root.account-busy;
+                        caption: "Switch";
+                        label: "Verify and connect the selected Google account";
+                        clicked => { root.switch-account(root.account-index); }
+                    }
                 }
                 HorizontalLayout {
                     height: 36px;
@@ -1940,6 +1961,8 @@ component LibraryView inherits Rectangle {
     }
 }
 export component AppWindow inherits Window {
+    in-out property <int> account-index;
+    callback switch-account(int);
     callback connect-account();
     callback cancel-account();
     callback media-command(int, float);
@@ -2021,6 +2044,8 @@ export component AppWindow inherits Window {
     }
 
     if root.library-open && !root.collapsed : LibraryView {
+        account-index <=> root.account-index;
+        switch-account(index) => { root.switch-account(index); }
         connect-account => { root.connect-account(); }
         cancel-account => { root.cancel-account(); }
         library-playlists: root.library-playlists;

@@ -35,6 +35,7 @@ pub struct Card {
 #[serde(tag = "action", rename_all = "lowercase")]
 pub enum Request {
     Connect { database: PathBuf },
+    SwitchAccount { index: u32 },
     Library,
     Playlist { id: String },
     Liked,
@@ -127,6 +128,41 @@ impl Provider {
     pub fn is_connected(&self) -> bool {
         self.directory.join("session.dpapi").is_file()
     }
+    pub fn account_index(&self) -> u32 {
+        let Ok(mut headers) = self.headers() else {
+            return 0;
+        };
+        let index = headers
+            .get("x-goog-authuser")
+            .and_then(|value| value.parse::<u32>().ok())
+            .filter(|value| *value < 10)
+            .unwrap_or(0);
+        for value in headers.values_mut() {
+            value.zeroize();
+        }
+        index
+    }
+    fn save_verified_session(
+        &self,
+        mut headers: BTreeMap<String, String>,
+        cancel: &AtomicBool,
+    ) -> Result<Response, String> {
+        let encoded = serde_json::to_vec(&headers);
+        for value in headers.values_mut() {
+            value.zeroize();
+        }
+        let mut encoded = encoded.map_err(|_| "Could not prepare account session")?;
+        let result = if cancel.load(Ordering::Acquire) {
+            Err("Account connection cancelled".into())
+        } else if encoded.len() > MAX_SESSION {
+            Err("Account session exceeds the input limit".into())
+        } else {
+            self.import_bytes(&encoded)
+        };
+        encoded.zeroize();
+        result?;
+        Ok(Response::Connected)
+    }
     pub fn import_session(&self, path: &Path) -> Result<(), String> {
         let mut bytes = read_limited(path, MAX_SESSION)?;
         let result = self.import_bytes(&bytes);
@@ -212,27 +248,13 @@ impl Provider {
             )
             .map_err(|_| "Could not prepare account connection")?;
             return match execute_helper(&input, cancel.clone(), Duration::from_secs(600))? {
-                Response::Session { mut headers } => {
-                    let encoded = serde_json::to_vec(&headers);
-                    for value in headers.values_mut() {
-                        value.zeroize();
-                    }
-                    let mut encoded = encoded.map_err(|_| "Could not prepare account session")?;
-                    if cancel.load(Ordering::Acquire) {
-                        encoded.zeroize();
-                        return Err("Account connection cancelled".into());
-                    }
-                    let result = if encoded.len() <= MAX_SESSION {
-                        self.import_bytes(&encoded)
-                    } else {
-                        Err("Account session exceeds the input limit".into())
-                    };
-                    encoded.zeroize();
-                    result?;
-                    Ok(Response::Connected)
-                }
+                Response::Session { headers } => self.save_verified_session(headers, &cancel),
                 _ => Err("Account connection did not return a session".into()),
             };
+        }
+        let switching = matches!(request, Request::SwitchAccount { .. });
+        if matches!(request, Request::SwitchAccount { index } if index > 9) {
+            return Err("Choose an account between 1 and 10".into());
         }
         let mut headers = self.headers()?;
         #[derive(Serialize)]
@@ -253,9 +275,20 @@ impl Provider {
             input.zeroize();
             return Err("Session headers exceed the helper input limit".into());
         }
-        let result = execute_helper(&input, cancel, Duration::from_secs(60));
+        let result = execute_helper(&input, cancel.clone(), Duration::from_secs(60));
         input.zeroize();
-        result
+        match result? {
+            Response::Session { headers } if switching => {
+                self.save_verified_session(headers, &cancel)
+            }
+            Response::Session { mut headers } => {
+                for value in headers.values_mut() {
+                    value.zeroize();
+                }
+                Err("Unexpected account session response".into())
+            }
+            response => Ok(response),
+        }
     }
     #[cfg(not(windows))]
     pub fn execute(&self, _: Request, _: Arc<AtomicBool>) -> Result<Response, String> {
@@ -722,6 +755,20 @@ mod tests {
         assert!(provider.is_connected());
         let encrypted = fs::read(directory.join("session.dpapi")).unwrap();
         assert!(!encrypted.windows(7).any(|s| s == b"fixture"));
+        let mut candidate = provider.headers().unwrap();
+        candidate.insert("x-goog-authuser".into(), "1".into());
+        assert!(provider
+            .save_verified_session(candidate.clone(), &AtomicBool::new(true))
+            .is_err());
+        assert_eq!(
+            fs::read(directory.join("session.dpapi")).unwrap(),
+            encrypted
+        );
+        assert_eq!(provider.account_index(), 0);
+        provider
+            .save_verified_session(candidate, &AtomicBool::new(false))
+            .unwrap();
+        assert_eq!(provider.account_index(), 1);
         let lease = provider.cookie_lease().unwrap().unwrap();
         let path = lease.path().to_owned();
         assert!(path.is_file());

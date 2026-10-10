@@ -11,7 +11,8 @@ import unittest
 from unittest.mock import MagicMock, patch
 from youtube_music import (LOGIN_SECONDS, MUSIC_URL, connect, connect_existing, create_client, main,
                           music_cookies, read_music_cookies, remove_login_profile, run,
-                          selected_zen_database, session_headers, tracks, validate_session, wait_for_login, zen_executable)
+                          selected_zen_database, session_headers, switch_account, tracks,
+                          validate_session, wait_for_login, zen_executable)
 
 
 class FakeClient:
@@ -311,6 +312,52 @@ class LoginTests(unittest.TestCase):
             main()
         handler.assert_called_once_with("fixture")
         self.assertEqual(json.loads(stdout.getvalue()), {"type": "error", "code": "profile"})
+
+    def test_account_switch_verifies_zero_and_one_without_mutating_current_headers(self):
+        current = {"cookie": "__Secure-3PAPISID=fixture", "x-goog-authuser": "0"}
+        for index in [0, 1]:
+            with patch("youtube_music.validate_session", return_value=True) as validate:
+                result = switch_account(current, index)
+            self.assertEqual(result["type"], "session")
+            self.assertEqual(result["headers"]["x-goog-authuser"], str(index))
+            validate.assert_called_once_with(result["headers"])
+        self.assertEqual(current, {"cookie": "__Secure-3PAPISID=fixture", "x-goog-authuser": "0"})
+
+    def test_account_switch_rejects_invalid_indices_and_failed_accounts(self):
+        current = {"cookie": "__Secure-3PAPISID=fixture", "x-goog-authuser": "0"}
+        for index in [-1, 10, 9999, True, False, 1.0, "1", None]:
+            with patch("youtube_music.validate_session") as validate:
+                self.assertEqual(switch_account(current, index), {"type": "error", "code": "session"})
+            validate.assert_not_called()
+        for failure in [False, ValueError("fixture error")]:
+            with patch("youtube_music.validate_session", side_effect=[failure]):
+                self.assertEqual(switch_account(current, 1), {"type": "error", "code": "session"})
+        self.assertEqual(current["x-goog-authuser"], "0")
+        self.assertEqual(switch_account({"cookie": "invalid"}, 1), {"type": "error", "code": "session"})
+
+    def test_account_switch_drops_inherited_brand_channel_before_verification(self):
+        for channel_header in ["x-goog-pageid", "X-Goog-PageId"]:
+            current = {"cookie": "__Secure-3PAPISID=fixture", "x-goog-authuser": "0", channel_header: "123"}
+            def validate(candidate):
+                self.assertNotIn("x-goog-pageid", candidate)
+                self.assertEqual(candidate["x-goog-authuser"], "1")
+                return True
+            with patch("youtube_music.validate_session", side_effect=validate):
+                result = switch_account(current, 1)
+            self.assertEqual(result["type"], "session")
+            self.assertNotIn("x-goog-pageid", result["headers"])
+            self.assertEqual(current[channel_header], "123")
+
+    def test_account_switch_dispatches_private_payload_before_client_creation(self):
+        stdin = SimpleNamespace(buffer=io.BytesIO(b'{"action":"switchaccount","headers":{},"index":1}'))
+        stdout = io.StringIO()
+        with patch("youtube_music.sys.stdin", stdin), patch("youtube_music.sys.stdout", stdout), \
+                patch("youtube_music.switch_account", return_value={"type": "error", "code": "session"}) as handler, \
+                patch("youtube_music.create_client") as create:
+            main()
+        handler.assert_called_once_with({}, 1)
+        create.assert_not_called()
+        self.assertEqual(json.loads(stdout.getvalue()), {"type": "error", "code": "session"})
 
 
 if __name__ == "__main__":

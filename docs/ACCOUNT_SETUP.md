@@ -18,7 +18,7 @@ Python runs only while a library request is active and exits afterward. The nati
 
 **Recommended:** sign in to YouTube Music in your existing Zen browser. In Tide's Library, choose **Connect account**. The file picker opens the normal Zen Profiles directory. Open your profile folder and select **cookies.sqlite**. Tide reads only scoped YouTube cookies from that selected file using read-only SQLite, verifies account access and encrypts the session locally. Your regular Zen browser stays open; no new profile or Google account is required.
 
-The initial connection uses Google account index zero. For multiple Google accounts, brand channels or custom Zen profile locations, use the manual import below. If you are unsure which profile is active, Zen's `about:support` page shows its Profile Folder. Do not share the cookie database or its contents.
+The initial connection uses your first signed-in Google account. If the displayed name is wrong, use the **Google account** selector and **Switch**: Account 2 selects your second signed-in account, and so on. Tide verifies the selected account before saving; an unavailable account leaves the current connection unchanged. Brand channels and custom Zen profile locations can use the manual import below. If you are unsure which profile is active, Zen's `about:support` page shows its Profile Folder. Do not share the cookie database or its contents.
 
 Manual import fallback:
 
@@ -38,7 +38,7 @@ Playback requires a temporary Netscape cookie file restricted to `.youtube.com` 
 - Fetches fresh account data on refresh; selecting a playlist replaces Tide's queue. This does not copy audio files, change your YouTube library, or migrate data to another service.
 - Sends no likes, playlist edits or playback-history updates. Listening in Tide therefore does not currently train YouTube recommendations.
 
-YouTube playback is gated until the imported account has been verified by a successful library response. Local audio continues to work without library verification. A successful library response verifies account access, **not Premium entitlement**. No ad-blocking feature is implemented: signed-in playback uses the session you supplied. Live Premium playback still requires testing with your account; extraction can fail or require additional provider tokens on some content. Tide does not silently discard the imported cookies to retry anonymous playback.
+YouTube playback is gated until the imported account has been verified by a successful library response. Local audio continues to work without library verification. A successful library response verifies account access, **not Premium entitlement**. For additional Google accounts, native extraction passes the selected account header and skips YouTube webpage/config bootstraps so they cannot replace that selection. This uses documented yt-dlp options; some videos may need additional provider metadata or tokens. No ad-blocking feature is implemented: signed-in playback uses the session you supplied. A local selected-account extraction test detected a Premium subscription and returned playable audio formats. This is a short live check, not a guarantee for every track; extraction can fail or require additional provider tokens on some content. Tide does not silently discard the imported cookies to retry anonymous playback.
 
 ## Troubleshooting
 

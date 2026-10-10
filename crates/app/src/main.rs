@@ -63,7 +63,10 @@ fn request_library(
     if s.library_worker.is_some() {
         return;
     }
-    let connecting = matches!(request, tide_provider::Request::Connect { .. });
+    let connecting = matches!(
+        request,
+        tide_provider::Request::Connect { .. } | tide_provider::Request::SwitchAccount { .. }
+    );
     let Some(provider) = s
         .provider
         .clone()
@@ -78,7 +81,7 @@ fn request_library(
     u.set_account_busy(true);
     u.set_account_status(
         if connecting {
-            "Verifying the YouTube Music session from your selected Zen profile…"
+            "Verifying your selected YouTube Music account…"
         } else {
             "Fetching YouTube Music…"
         }
@@ -105,8 +108,13 @@ fn configure_account_playback(s: &mut State, u: &AppWindow) -> bool {
         .transpose()
         .map(|value| value.flatten());
     let result = lease.and_then(|lease| {
-        let engine =
-            tide_playback::start_with_cookie_file(lease.as_ref().map(|l| l.path().to_path_buf()))?;
+        let engine = tide_playback::start_with_account(
+            lease.as_ref().map(|l| l.path().to_path_buf()),
+            s.provider
+                .as_ref()
+                .map(|provider| provider.account_index())
+                .unwrap_or(0),
+        )?;
         s.cookie_lease = lease;
         Ok(engine)
     });
@@ -531,8 +539,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let (engine, error) = match credential_error.map_or_else(
         || {
-            tide_playback::start_with_cookie_file(
+            tide_playback::start_with_account(
                 cookie_lease.as_ref().map(|l| l.path().to_path_buf()),
+                provider
+                    .as_ref()
+                    .map(|provider| provider.account_index())
+                    .unwrap_or(0),
             )
         },
         Err,
@@ -589,13 +601,58 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     let (tx, rx) = mpsc::sync_channel(2);
     let (library_tx, library_rx) = mpsc::sync_channel::<LibraryResult>(2);
-    if ui.get_account_connected() && !std::env::args().any(|a| a == "--connect-account") {
+    ui.set_account_index(
+        state
+            .borrow()
+            .provider
+            .as_ref()
+            .map(|provider| provider.account_index() as i32)
+            .unwrap_or(0),
+    );
+    let startup_account = std::env::args()
+        .collect::<Vec<_>>()
+        .windows(2)
+        .find(|pair| pair[0] == "--account-index")
+        .and_then(|pair| pair[1].parse::<u32>().ok())
+        .filter(|index| *index < 10);
+    if ui.get_account_connected()
+        && !std::env::args().any(|a| a == "--connect-account")
+        && startup_account.is_none()
+    {
         request_library(
             &mut state.borrow_mut(),
             &ui,
             &library_tx,
             tide_provider::Request::Library,
         );
+    }
+    if let Some(index) = startup_account.filter(|_| !test_mode) {
+        ui.set_library_open(true);
+        request_library(
+            &mut state.borrow_mut(),
+            &ui,
+            &library_tx,
+            tide_provider::Request::SwitchAccount { index },
+        );
+    }
+    {
+        let state = state.clone();
+        let weak = ui.as_weak();
+        let tx = library_tx.clone();
+        ui.on_switch_account(move |index| {
+            if let Some(u) = weak.upgrade() {
+                if (0..10).contains(&index) {
+                    request_library(
+                        &mut state.borrow_mut(),
+                        &u,
+                        &tx,
+                        tide_provider::Request::SwitchAccount {
+                            index: index as u32,
+                        },
+                    );
+                }
+            }
+        });
     }
     if std::env::args().any(|a| a == "--connect-account") && !test_mode {
         ui.set_library_open(true);
@@ -1101,6 +1158,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     u.set_account_busy(false);
                     match result {
                         Ok(tide_provider::Response::Connected) => {
+                            u.set_account_index(
+                                s.provider
+                                    .as_ref()
+                                    .map(|provider| provider.account_index() as i32)
+                                    .unwrap_or(0),
+                            );
                             s.library_playlists.clear();
                             s.recommendations.clear();
                             refresh_library_models(&s, &u);

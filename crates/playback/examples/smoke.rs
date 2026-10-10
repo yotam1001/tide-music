@@ -3,7 +3,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use tide_core::{PlaybackCommand, PlaybackSnapshot};
-use tide_playback::{start, start_with_cookie_file, PlaybackHandle};
+use tide_playback::{start, start_with_account, PlaybackHandle};
 
 fn wait_for(
     handle: &PlaybackHandle,
@@ -40,7 +40,12 @@ fn run() -> Result<(), String> {
     let timeout = Duration::from_secs(45);
     // Optional local fixture jar exercises mpv option escaping without placing
     // any cookie contents on the command line. Never use real sessions in CI.
-    let handle = start_with_cookie_file(std::env::args().nth(2).map(Into::into))?;
+    let account_index = std::env::args()
+        .nth(3)
+        .map(|value| value.parse::<u32>().map_err(|_| "Invalid account index"))
+        .transpose()?
+        .unwrap_or(0);
+    let handle = start_with_account(std::env::args().nth(2).map(Into::into), account_index)?;
     let initial = handle.snapshot();
     if !initial.paused || initial.loading || initial.generation != 0 {
         return Err(format!("Unexpected initial snapshot: {initial:?}"));
