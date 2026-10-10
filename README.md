@@ -2,7 +2,7 @@
 
 A Windows-first native Rust music player designed to leave resources available for games.
 
-**Working early prototype:** native interface, local/YouTube URL playback, search, queue controls and Windows media controls are implemented. YouTube URL playback and search use unofficial tooling and can fail when YouTube changes. Personal YouTube Music account/library sync is not implemented. This is not an official YouTube product.
+**Working early prototype:** native interface, local/YouTube music playback, search, queue controls and Windows media controls. Optional account integration reads playlists, Liked Songs and recommendations and supplies your signed-in session to playback. Live account/Premium verification requires your local session and is still pending. YouTube features use unofficial tooling and can fail when YouTube changes. This is not an official YouTube product.
 
 ## Design
 
@@ -13,6 +13,7 @@ A Windows-first native Rust music player designed to leave resources available f
 
 ![Full native interface](docs/screenshots/full.png)
 ![Compact native interface](docs/screenshots/light.png)
+![Native account library](docs/screenshots/library-full.png)
 
 These are native screenshots with explicitly selected visual-test metadata; playback is inactive in the screenshots. Abstract cover art is a vector placeholder, not fetched album artwork. Earlier design references are in `docs/concepts/`.
 
@@ -27,7 +28,7 @@ cargo run -p tide-music
 
 The setup script downloads mpv, yt-dlp and Deno into `.tools/runtime`; it does not alter system PATH, register startup tasks or read browser credentials. Alternatively place trusted binaries in `tools/` beside the application, set `TIDE_RUNTIME_DIR` to their directory, or use PATH. mpv is the native audio engine; yt-dlp/Deno handle the current YouTube extraction requirements. Ordinary local playback only needs mpv.
 
-Paste a supported http/https media link, enter a YouTube search query, or open an audio file. Search currently adds up to eight results to the queue; select a row to play. Use mode controls to switch between full, compact and collapsed views. The prototype saves queue metadata and preferences under the current user's application-data directory; it does not save account credentials or automatically download a music library.
+Paste a supported http/https media link, enter a YouTube search query, or open an audio file. Search currently adds up to eight results to the queue; select a row to play. Use mode controls to switch between full, compact and collapsed views. The prototype saves queue metadata and preferences under the current user's application-data directory. For account features, install the optional helper with `scripts/setup-provider.ps1`, then follow [local account setup](docs/ACCOUNT_SETUP.md). Imported sessions are encrypted with Windows DPAPI; audio is streamed rather than downloaded as a library.
 
 ## Resource use
 
@@ -40,9 +41,10 @@ cargo fmt --all -- --check
 cargo test --workspace --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
 python scripts/check_public_files.py
+python -m unittest discover -s helpers -p "test_*.py"
 ```
 
-Native screenshots: `cargo run -p tide-music -- --smoke-ui .local/screens --smoke-populated`. This shows and captures full, compact and collapsed views, then exits. Test sample metadata is confined to this explicitly selected smoke mode.
+Native screenshots: `cargo run -p tide-music -- --smoke-ui .local/screens --smoke-populated`. Add `--smoke-library` for the account screen with synthetic metadata. This shows and captures full, compact and collapsed views, then exits. Smoke/benchmark modes never load your saved account session.
 
 ## Privacy and credentials
 

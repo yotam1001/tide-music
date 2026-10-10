@@ -12,7 +12,17 @@ Validated on Windows 11 Pro 10.0.26200, Ryzen 5 7600X, approximately 15.1 GiB us
 - The pinned runtime setup script completed successfully. Runtime binaries and toolchains are excluded from Git.
 - The local portable executable rendered all three empty layouts, then passed a separate live YouTube IPC readback check: duration 634.601 seconds, position advancing beyond one second, volume zero and pause false. Closing it removed the owned helpers.
 
-Physical keyboard/headset routing while a game has focus, audio-device removal, extended playback/soak tests, display scaling at 150%/200%, and game frame-time comparisons remain unverified. Account/library sync, real album artwork and system tray support are not implemented.
+Physical keyboard/headset routing while a game has focus, audio-device removal, extended playback/soak tests, display scaling at 150%/200%, and game frame-time comparisons remain unverified. Real album artwork and system tray support are not implemented.
+
+## Account integration validation
+
+The account branch adds encrypted session import, read-only playlists/Liked Songs/Home requests and a YouTube-scoped playback cookie lease. Deterministic tests cover bounded metadata, safe track URLs, rejection of unsupported actions, header filtering, DPAPI roundtrip/tamper rejection, encrypted storage, normal lease removal and owner-aware stale lease cleanup. Local playback remains available before account verification. Library UI screenshots use synthetic metadata and do not authenticate.
+
+Actual public music playback was tested muted with the official NCS upload of Cartoon/Jéja's “On & On”: duration 207.981 seconds, seek/pause/replacement/stop/EOF checks passed, including process cleanup. This verifies music playback through the native engine, not Premium playback.
+
+No real account session has been imported in development or CI. Personal playlists, recommendations and Premium ad-free behavior require the user's local connection and remain unverified. Account verification confirms access to the library endpoint, not subscription entitlement. Provider setup installs a transient Python helper; it is not resident during idle/playback. The earlier memory measurements below predate this integration and must not be read as measurements of live account refresh.
+
+A 15-sample empty compact-mode spot check of the account build used one app process and approximately 4.86 MiB private memory (22.93 MiB total Working Set), with 0% median CPU after startup. Benchmark mode disables account loading, so this checks interface regression only, not authenticated playback or refresh memory.
 
 ## Initial renderer experiment
 

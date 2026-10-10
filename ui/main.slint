@@ -7,6 +7,20 @@ export struct TrackRow {
     duration: string,
 }
 
+export struct PlaylistRow {
+    id: string,
+    title: string,
+    subtitle: string,
+}
+
+export struct RecommendationRow {
+    id: string,
+    title: string,
+    subtitle: string,
+    kind: string,
+    shelf: string,
+}
+
 component SearchMark inherits Path {
     in property <color> ink;
     width: 18px;
@@ -105,6 +119,7 @@ component TideButton inherits Rectangle {
     in property <color> pressed-color;
     in property <bool> active: false;
     in property <bool> round: false;
+    in property <bool> enabled: true;
     in property <length> caption-size: 14px;
     callback clicked;
 
@@ -122,6 +137,7 @@ component TideButton inherits Rectangle {
     border-color: control.has-focus ? root.focus-color : root.outline-color;
     background: root.active ? root.accent-color
         : control.pressed ? root.pressed-color : root.surface-color;
+    opacity: root.enabled ? 1 : 0.45;
 
     control := Button {
         width: parent.width;
@@ -129,6 +145,7 @@ component TideButton inherits Rectangle {
         text: "";
         opacity: 0;
         accessible-label: root.label;
+        enabled: root.enabled;
         clicked => { root.clicked(); }
     }
 
@@ -529,6 +546,7 @@ component FullLibraryView inherits Rectangle {
     callback collapse-player();
     callback open-file();
     callback clear-queue();
+    callback open-library();
 
     private property <color> canvas: root.light-mode ? #dfd1cd : #0f1115;
     private property <color> sidebar: root.light-mode ? #e9ddda : #121418;
@@ -702,6 +720,20 @@ component FullLibraryView inherits Rectangle {
                             Text { text: "≡"; color: root.light-mode ? #9a4d4a : #d56a82; font-size: 20px; }
                             Text { text: "Queue"; color: root.foreground; font-size: 14px; font-weight: 600; }
                         }
+                    }
+
+                    TideButton {
+                        height: 42px;
+                        label: "Open your YouTube Music library";
+                        caption: "Library";
+                        surface-color: root.sidebar;
+                        text-color: root.foreground;
+                        accent-color: root.accent;
+                        accent-text-color: root.accent-foreground;
+                        outline-color: root.outline;
+                        focus-color: root.focus-ring;
+                        pressed-color: root.pressed;
+                        clicked => { root.open-library(); }
                     }
 
                     TideButton {
@@ -1066,6 +1098,7 @@ component LightweightView inherits Rectangle {
     callback collapse-player();
     callback open-file();
     callback clear-queue();
+    callback open-library();
 
     private property <color> canvas: #e4d5d1;
     private property <color> surface: #efe4df;
@@ -1336,18 +1369,35 @@ component LightweightView inherits Rectangle {
                 }
             }
 
-            TideButton {
+            HorizontalLayout {
                 height: 34px;
-                label: "Switch to full view";
-                caption: "↗   Full view";
-                surface-color: root.surface-deep;
-                text-color: root.foreground;
-                accent-color: root.accent;
-                accent-text-color: root.accent-foreground;
-                outline-color: root.outline;
-                focus-color: root.focus-ring;
-                pressed-color: root.pressed;
-                clicked => { root.switch-mode(); }
+                spacing: 8px;
+                TideButton {
+                    horizontal-stretch: 1;
+                    label: "Open your YouTube Music library";
+                    caption: "Library";
+                    surface-color: root.surface-deep;
+                    text-color: root.foreground;
+                    accent-color: root.accent;
+                    accent-text-color: root.accent-foreground;
+                    outline-color: root.outline;
+                    focus-color: root.focus-ring;
+                    pressed-color: root.pressed;
+                    clicked => { root.open-library(); }
+                }
+                TideButton {
+                    horizontal-stretch: 1;
+                    label: "Switch to full view";
+                    caption: "Full view";
+                    surface-color: root.surface-deep;
+                    text-color: root.foreground;
+                    accent-color: root.accent;
+                    accent-text-color: root.accent-foreground;
+                    outline-color: root.outline;
+                    focus-color: root.focus-ring;
+                    pressed-color: root.pressed;
+                    clicked => { root.switch-mode(); }
+                }
             }
         }
     }
@@ -1487,8 +1537,402 @@ component CollapsedPlayerView inherits Rectangle {
         }
     }
 }
+component LibraryButton inherits TideButton {
+    in property <bool> light-mode: false;
+    height: 36px;
+    caption-size: 12px;
+    surface-color: root.light-mode ? #efe4df : #1c1e24;
+    text-color: root.light-mode ? #432d45 : #f4f0f2;
+    accent-color: root.light-mode ? #ad574b : #982b49;
+    accent-text-color: #fff8f6;
+    outline-color: root.light-mode ? #c8b7b1 : #323139;
+    focus-color: root.light-mode ? #68465d : #e1768b;
+    pressed-color: root.light-mode ? #d4bfb8 : #2c2730;
+}
+
+component LibraryRow inherits Rectangle {
+    in property <string> title;
+    in property <string> subtitle;
+    in property <string> detail;
+    in property <bool> light-mode;
+    in property <bool> enabled: true;
+    in property <bool> supported: true;
+    callback activate();
+    height: root.detail == "" ? 74px : 94px;
+    border-radius: 7px;
+    background: root.light-mode ? #e6d9d4 : #17191e;
+    HorizontalLayout {
+        padding: 12px;
+        spacing: 12px;
+        cross-axis-alignment: center;
+        VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: 4px;
+            Text {
+                text: root.title;
+                color: root.light-mode ? #432d45 : #f4f0f2;
+                font-size: 14px;
+                font-weight: 650;
+                overflow: elide;
+            }
+            Text {
+                text: root.subtitle;
+                color: root.light-mode ? #756571 : #a7a2a9;
+                font-size: 11px;
+                overflow: elide;
+            }
+            if root.detail != "" : Text {
+                text: root.detail;
+                color: root.light-mode ? #94605a : #c77b8e;
+                font-size: 10px;
+                overflow: elide;
+            }
+        }
+        LibraryButton {
+            width: root.supported ? 58px : 84px;
+            light-mode: root.light-mode;
+            enabled: root.enabled && root.supported;
+            label: root.supported ? "Play " + root.title : root.title + " is not supported in Tide";
+            caption: root.supported ? "Play" : "Unavailable";
+            clicked => { root.activate(); }
+        }
+    }
+}
+
+component LibraryEmpty inherits Rectangle {
+    in property <string> message;
+    in property <string> detail;
+    in property <bool> light-mode;
+    VerticalLayout {
+        padding: 20px;
+        spacing: 8px;
+        alignment: center;
+        Text {
+            text: root.message;
+            color: root.light-mode ? #432d45 : #f4f0f2;
+            font-size: 16px;
+            font-weight: 650;
+            horizontal-alignment: center;
+            wrap: word-wrap;
+        }
+        Text {
+            text: root.detail;
+            color: root.light-mode ? #756571 : #a7a2a9;
+            font-size: 12px;
+            horizontal-alignment: center;
+            wrap: word-wrap;
+        }
+    }
+}
+
+component PlaylistPanel inherits Rectangle {
+    in property <[PlaylistRow]> rows;
+    in property <bool> light-mode;
+    in property <bool> connected;
+    in property <bool> busy;
+    callback refresh();
+    callback play-liked();
+    callback select(int);
+    border-radius: 10px;
+    border-width: 1px;
+    border-color: root.light-mode ? #c8b7b1 : #292a30;
+    background: root.light-mode ? #eaded9 : #121418;
+    VerticalLayout {
+        padding: 14px;
+        spacing: 10px;
+        HorizontalLayout {
+            height: 36px;
+            spacing: 10px;
+            cross-axis-alignment: center;
+            Text {
+                horizontal-stretch: 1;
+                text: "Playlists";
+                color: root.light-mode ? #432d45 : #f4f0f2;
+                font-size: 18px;
+                font-weight: 700;
+            }
+            Text { text: "" + root.rows.length; color: root.light-mode ? #756571 : #a7a2a9; font-size: 11px; }
+            LibraryButton {
+                width: 72px;
+                light-mode: root.light-mode;
+                enabled: root.connected && !root.busy;
+                label: "Refresh your YouTube Music library";
+                caption: "Refresh";
+                clicked => { root.refresh(); }
+            }
+        }
+        LibraryButton {
+            light-mode: root.light-mode;
+            enabled: root.connected && !root.busy;
+            label: "Play your Liked Songs";
+            caption: "Liked Songs";
+            active: true;
+            clicked => { root.play-liked(); }
+        }
+        if root.rows.length > 0 : ListView {
+            vertical-stretch: 1;
+            accessible-label: "Your YouTube Music playlists";
+            for row[index] in root.rows : LibraryRow {
+                title: row.title;
+                subtitle: row.subtitle;
+                light-mode: root.light-mode;
+                enabled: root.connected && !root.busy;
+                activate => { root.select(index); }
+            }
+        }
+        if root.rows.length == 0 : LibraryEmpty {
+            vertical-stretch: 1;
+            light-mode: root.light-mode;
+            message: root.busy ? "Loading your library…" : root.connected ? "No playlists loaded" : "Your music belongs here";
+            detail: root.connected ? "Refresh to load your saved playlists." : "Import a local session to load your playlists and Liked Songs.";
+        }
+    }
+}
+
+component RecommendationPanel inherits Rectangle {
+    in property <[RecommendationRow]> rows;
+    in property <bool> light-mode;
+    in property <bool> connected;
+    in property <bool> busy;
+    callback refresh();
+    callback select(int);
+    border-radius: 10px;
+    border-width: 1px;
+    border-color: root.light-mode ? #c8b7b1 : #292a30;
+    background: root.light-mode ? #eaded9 : #121418;
+    VerticalLayout {
+        padding: 14px;
+        spacing: 10px;
+        HorizontalLayout {
+            height: 36px;
+            spacing: 10px;
+            cross-axis-alignment: center;
+            Text {
+                horizontal-stretch: 1;
+                text: "For you";
+                color: root.light-mode ? #432d45 : #f4f0f2;
+                font-size: 18px;
+                font-weight: 700;
+            }
+            Text { text: "" + root.rows.length; color: root.light-mode ? #756571 : #a7a2a9; font-size: 11px; }
+            LibraryButton {
+                width: 72px;
+                light-mode: root.light-mode;
+                enabled: root.connected && !root.busy;
+                label: "Refresh your YouTube Music recommendations";
+                caption: "Refresh";
+                clicked => { root.refresh(); }
+            }
+        }
+        if root.rows.length > 0 : ListView {
+            vertical-stretch: 1;
+            accessible-label: "Your YouTube Music recommendations";
+            for row[index] in root.rows : LibraryRow {
+                title: row.title;
+                subtitle: row.subtitle;
+                detail: row.shelf + (row.shelf == "" ? "" : " · ") + row.kind;
+                light-mode: root.light-mode;
+                enabled: root.connected && !root.busy;
+                supported: row.kind == "song" || row.kind == "playlist";
+                activate => { root.select(index); }
+            }
+        }
+        if root.rows.length == 0 : LibraryEmpty {
+            vertical-stretch: 1;
+            light-mode: root.light-mode;
+            message: root.busy ? "Loading recommendations…" : "Recommendations";
+            detail: root.connected ? "Refresh to load suggestions from your YouTube Music home." : "Connect a session to see your recommendations.";
+        }
+    }
+}
+
+component LibraryView inherits Rectangle {
+    in property <[PlaylistRow]> library-playlists;
+    in property <[RecommendationRow]> recommendations;
+    in property <bool> account-connected;
+    in property <bool> account-busy;
+    in property <string> account-name;
+    in property <string> account-status;
+    in property <bool> light-mode;
+    callback import-account();
+    callback refresh-library();
+    callback disconnect-account();
+    callback select-library-playlist(int);
+    callback play-liked();
+    callback refresh-recommendations();
+    callback select-recommendation(int);
+    callback open-account-help();
+    callback back();
+    private property <bool> compact: root.width < 850px;
+    private property <bool> show-recommendations: false;
+    private property <color> foreground: root.light-mode ? #432d45 : #f4f0f2;
+    private property <color> secondary: root.light-mode ? #756571 : #a7a2a9;
+    background: root.light-mode ? #e4d5d1 : #0f1115;
+
+    VerticalLayout {
+        padding: root.compact ? 14px : 24px;
+        spacing: 14px;
+        HorizontalLayout {
+            height: 44px;
+            spacing: 12px;
+            cross-axis-alignment: center;
+            VerticalLayout {
+                horizontal-stretch: 1;
+                spacing: 2px;
+                Text { text: "Your library"; color: root.foreground; font-size: 24px; font-weight: 700; }
+                Text { text: "YouTube Music"; color: root.secondary; font-size: 11px; }
+            }
+            LibraryButton {
+                width: root.compact ? 88px : 120px;
+                light-mode: root.light-mode;
+                label: "Back to player";
+                caption: root.compact ? "Back" : "Back to player";
+                clicked => { root.back(); }
+            }
+        }
+        Rectangle {
+            height: 164px;
+            border-radius: 12px;
+            border-width: 1px;
+            border-color: root.light-mode ? #c8b7b1 : #292a30;
+            background: root.light-mode ? #efe4df : #17191e;
+            VerticalLayout {
+                padding: 14px;
+                spacing: 7px;
+                Text {
+                    text: root.account-busy ? "Syncing…" : root.account-connected
+                        ? "Connected" + (root.account-name == "" ? "" : " · " + root.account-name) : "Disconnected";
+                    color: root.foreground;
+                    font-size: 18px;
+                    font-weight: 650;
+                    overflow: elide;
+                    accessible-live-region: polite;
+                }
+                Text {
+                    text: "Import a local YouTube Music session";
+                    color: root.secondary;
+                    font-size: 12px;
+                }
+                Text {
+                    text: root.account-status;
+                    color: root.secondary;
+                    font-size: 11px;
+                    height: 32px;
+                    wrap: word-wrap;
+                    overflow: elide;
+                    accessible-live-region: polite;
+                }
+                HorizontalLayout {
+                    height: 36px;
+                    spacing: 8px;
+                    LibraryButton {
+                        horizontal-stretch: 1;
+                        light-mode: root.light-mode;
+                        enabled: !root.account-busy;
+                        label: "Import a local YouTube Music session from a file";
+                        caption: "Import session";
+                        active: !root.account-connected;
+                        clicked => { root.import-account(); }
+                    }
+                    LibraryButton {
+                        horizontal-stretch: 1;
+                        light-mode: root.light-mode;
+                        enabled: root.account-connected && !root.account-busy;
+                        label: "Disconnect your YouTube Music session";
+                        caption: "Disconnect";
+                        clicked => { root.disconnect-account(); }
+                    }
+                    LibraryButton {
+                        width: 58px;
+                        light-mode: root.light-mode;
+                        label: "Help with importing a YouTube Music session";
+                        caption: "Help";
+                        clicked => { root.open-account-help(); }
+                    }
+                }
+            }
+        }
+        if root.compact : HorizontalLayout {
+            height: 36px;
+            spacing: 8px;
+            LibraryButton {
+                horizontal-stretch: 1;
+                light-mode: root.light-mode;
+                active: !root.show-recommendations;
+                label: "Show your playlists and Liked Songs";
+                caption: "Playlists";
+                clicked => { root.show-recommendations = false; }
+            }
+            LibraryButton {
+                horizontal-stretch: 1;
+                light-mode: root.light-mode;
+                active: root.show-recommendations;
+                label: "Show your recommendations";
+                caption: "For you";
+                clicked => { root.show-recommendations = true; }
+            }
+        }
+        if !root.compact : HorizontalLayout {
+            vertical-stretch: 1;
+            spacing: 18px;
+            PlaylistPanel {
+                width: (root.width - 66px) / 2;
+                rows: root.library-playlists;
+                light-mode: root.light-mode;
+                connected: root.account-connected;
+                busy: root.account-busy;
+                refresh => { root.refresh-library(); }
+                play-liked => { root.play-liked(); }
+                select(index) => { root.select-library-playlist(index); }
+            }
+            RecommendationPanel {
+                width: (root.width - 66px) / 2;
+                rows: root.recommendations;
+                light-mode: root.light-mode;
+                connected: root.account-connected;
+                busy: root.account-busy;
+                refresh => { root.refresh-recommendations(); }
+                select(index) => { root.select-recommendation(index); }
+            }
+        }
+        if root.compact && !root.show-recommendations : PlaylistPanel {
+            vertical-stretch: 1;
+            rows: root.library-playlists;
+            light-mode: root.light-mode;
+            connected: root.account-connected;
+            busy: root.account-busy;
+            refresh => { root.refresh-library(); }
+            play-liked => { root.play-liked(); }
+            select(index) => { root.select-library-playlist(index); }
+        }
+        if root.compact && root.show-recommendations : RecommendationPanel {
+            vertical-stretch: 1;
+            rows: root.recommendations;
+            light-mode: root.light-mode;
+            connected: root.account-connected;
+            busy: root.account-busy;
+            refresh => { root.refresh-recommendations(); }
+            select(index) => { root.select-recommendation(index); }
+        }
+    }
+}
 export component AppWindow inherits Window {
     callback media-command(int, float);
+    in property <[PlaylistRow]> library-playlists;
+    in property <[RecommendationRow]> recommendations;
+    in property <bool> account-connected;
+    in property <bool> account-busy;
+    in property <string> account-name;
+    in property <string> account-status;
+    in-out property <bool> library-open: false;
+    callback import-account();
+    callback refresh-library();
+    callback disconnect-account();
+    callback select-library-playlist(int);
+    callback play-liked();
+    callback refresh-recommendations();
+    callback select-recommendation(int);
+    callback open-account-help();
     in property <[TrackRow]> rows;
     in property <int> current-index;
     in property <string> track-title;
@@ -1551,36 +1995,26 @@ export component AppWindow inherits Window {
         collapse-player => { root.collapse-player(); }
     }
 
-    if !root.collapsed && root.light-mode : LightweightView {
-        rows: root.rows;
-        current-index: root.current-index;
-        track-title: root.track-title;
-        track-artist: root.track-artist;
-        track-album: root.track-album;
-        position: root.position;
-        duration: root.duration;
-        paused: root.paused;
-        volume: root.volume;
-        status-text: root.status-text;
-        source-input <=> root.source-input;
+    if root.library-open && !root.collapsed : LibraryView {
+        library-playlists: root.library-playlists;
+        recommendations: root.recommendations;
+        account-connected: root.account-connected;
+        account-busy: root.account-busy;
+        account-name: root.account-name;
+        account-status: root.account-status;
         light-mode: root.light-mode;
-        repeat-enabled: root.repeat-enabled;
-        add-source(value) => { root.add-source(value); }
-        select-track(index) => { root.select-track(index); }
-        toggle-pause => { root.toggle-pause(); }
-        next-track => { root.next-track(); }
-        previous-track => { root.previous-track(); }
-        seek(value) => { root.seek(value); }
-        change-volume(value) => { root.change-volume(value); }
-        toggle-repeat => { root.toggle-repeat(); }
-        shuffle-queue => { root.shuffle-queue(); }
-        switch-mode => { root.switch-mode(); }
-        collapse-player => { root.collapse-player(); }
-        open-file => { root.open-file(); }
-        clear-queue => { root.clear-queue(); }
+        import-account => { root.import-account(); }
+        refresh-library => { root.refresh-library(); }
+        disconnect-account => { root.disconnect-account(); }
+        select-library-playlist(index) => { root.select-library-playlist(index); }
+        play-liked => { root.play-liked(); }
+        refresh-recommendations => { root.refresh-recommendations(); }
+        select-recommendation(index) => { root.select-recommendation(index); }
+        open-account-help => { root.open-account-help(); }
+        back => { root.library-open = false; }
     }
 
-    if !root.collapsed && !root.light-mode : FullLibraryView {
+    if !root.library-open && !root.collapsed && root.light-mode : LightweightView {
         rows: root.rows;
         current-index: root.current-index;
         track-title: root.track-title;
@@ -1607,5 +2041,36 @@ export component AppWindow inherits Window {
         collapse-player => { root.collapse-player(); }
         open-file => { root.open-file(); }
         clear-queue => { root.clear-queue(); }
+        open-library => { root.library-open = true; }
+    }
+
+    if !root.library-open && !root.collapsed && !root.light-mode : FullLibraryView {
+        rows: root.rows;
+        current-index: root.current-index;
+        track-title: root.track-title;
+        track-artist: root.track-artist;
+        track-album: root.track-album;
+        position: root.position;
+        duration: root.duration;
+        paused: root.paused;
+        volume: root.volume;
+        status-text: root.status-text;
+        source-input <=> root.source-input;
+        light-mode: root.light-mode;
+        repeat-enabled: root.repeat-enabled;
+        add-source(value) => { root.add-source(value); }
+        select-track(index) => { root.select-track(index); }
+        toggle-pause => { root.toggle-pause(); }
+        next-track => { root.next-track(); }
+        previous-track => { root.previous-track(); }
+        seek(value) => { root.seek(value); }
+        change-volume(value) => { root.change-volume(value); }
+        toggle-repeat => { root.toggle-repeat(); }
+        shuffle-queue => { root.shuffle-queue(); }
+        switch-mode => { root.switch-mode(); }
+        collapse-player => { root.collapse-player(); }
+        open-file => { root.open-file(); }
+        clear-queue => { root.clear-queue(); }
+        open-library => { root.library-open = true; }
     }
 }

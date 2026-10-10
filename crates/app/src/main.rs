@@ -32,6 +32,94 @@ struct State {
     search_generation: u64,
     search_cancel: Arc<AtomicBool>,
     search_worker: Option<std::thread::JoinHandle<()>>,
+    provider: Option<tide_provider::Provider>,
+    cookie_lease: Option<tide_provider::CookieLease>,
+    library_worker: Option<std::thread::JoinHandle<()>>,
+    library_cancel: Arc<AtomicBool>,
+    library_playlists: Vec<tide_provider::Playlist>,
+    recommendations: Vec<tide_provider::Card>,
+    account_verified: bool,
+}
+
+type LibraryResult = Result<tide_provider::Response, String>;
+fn request_library(
+    s: &mut State,
+    u: &AppWindow,
+    tx: &mpsc::SyncSender<LibraryResult>,
+    request: tide_provider::Request,
+) {
+    if s.library_worker.is_some() {
+        return;
+    }
+    let Some(provider) = s.provider.clone().filter(|p| p.is_connected()) else {
+        u.set_account_status("Import a local signed-in YouTube Music session first".into());
+        return;
+    };
+    s.library_cancel.store(false, Ordering::Release);
+    let cancel = s.library_cancel.clone();
+    let tx = tx.clone();
+    u.set_account_busy(true);
+    u.set_account_status("Fetching YouTube Music…".into());
+    s.library_worker = Some(std::thread::spawn(move || {
+        let _ = tx.try_send(provider.execute(request, cancel));
+    }));
+}
+
+fn configure_account_playback(s: &mut State, u: &AppWindow) -> bool {
+    s.engine.take(); // Drop/join helpers before releasing their cookie lease.
+    s.cookie_lease.take();
+    s.active_playback = false;
+    s.account_verified = false;
+    let lease = s
+        .provider
+        .as_ref()
+        .map(|p| p.cookie_lease())
+        .transpose()
+        .map(|value| value.flatten());
+    let result = lease.and_then(|lease| {
+        let engine =
+            tide_playback::start_with_cookie_file(lease.as_ref().map(|l| l.path().to_path_buf()))?;
+        s.cookie_lease = lease;
+        Ok(engine)
+    });
+    match result {
+        Ok(engine) => {
+            s.engine = Some(engine);
+            s.command_error = None;
+            u.set_paused(true);
+            send(s, u, PlaybackCommand::SetVolume(u.get_volume() as f64));
+            true
+        }
+        Err(error) => {
+            report_error(s, u, error);
+            false
+        }
+    }
+}
+
+fn refresh_library_models(s: &State, u: &AppWindow) {
+    let playlists: Vec<PlaylistRow> = s
+        .library_playlists
+        .iter()
+        .map(|p| PlaylistRow {
+            id: p.id.clone().into(),
+            title: p.title.clone().into(),
+            subtitle: p.subtitle.clone().into(),
+        })
+        .collect();
+    u.set_library_playlists(ModelRc::new(VecModel::from(playlists)));
+    let cards: Vec<RecommendationRow> = s
+        .recommendations
+        .iter()
+        .map(|p| RecommendationRow {
+            id: p.id.clone().into(),
+            title: p.title.clone().into(),
+            subtitle: p.subtitle.clone().into(),
+            kind: p.kind.clone().into(),
+            shelf: p.shelf.clone().into(),
+        })
+        .collect();
+    u.set_recommendations(ModelRc::new(VecModel::from(cards)));
 }
 fn settings_path() -> PathBuf {
     std::env::var_os("APPDATA")
@@ -154,6 +242,17 @@ fn play(state: &mut State, ui: &AppWindow) -> bool {
     else {
         return false;
     };
+    if is_youtube_source(&source)
+        && state.provider.as_ref().is_some_and(|p| p.is_connected())
+        && !state.account_verified
+    {
+        report_error(
+            state,
+            ui,
+            "Refresh the library to verify your account before signed-in playback".into(),
+        );
+        return false;
+    }
     let engine = &state.engine;
     let result = submit_load(
         &mut state.generation,
@@ -177,6 +276,25 @@ fn play(state: &mut State, ui: &AppWindow) -> bool {
     ui.set_paused(false);
     save(&state.settings);
     true
+}
+
+fn is_youtube_source(source: &str) -> bool {
+    let Some((scheme, rest)) = source.split_once("://") else {
+        return false;
+    };
+    if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
+        return false;
+    }
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let host = authority
+        .rsplit('@')
+        .next()
+        .unwrap_or("")
+        .split(':')
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    host == "youtu.be" || host == "youtube.com" || host.ends_with(".youtube.com")
 }
 
 fn select_and_play(state: &mut State, ui: &AppWindow, index: usize) {
@@ -369,7 +487,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if sanitize_queue(&mut settings.queue) {
         save(&settings);
     }
-    let (engine, error) = match tide_playback::start() {
+    let test_mode = std::env::args().any(|a| a == "--smoke-ui" || a == "--benchmark-mode");
+    let provider = if test_mode {
+        None
+    } else {
+        tide_provider::Provider::new().ok()
+    };
+    let lease_result = provider
+        .as_ref()
+        .map(|p| p.cookie_lease())
+        .transpose()
+        .map(|value| value.flatten());
+    let (cookie_lease, credential_error) = match lease_result {
+        Ok(lease) => (lease, None),
+        Err(error) => (None, Some(error)),
+    };
+    let (engine, error) = match credential_error.map_or_else(
+        || {
+            tide_playback::start_with_cookie_file(
+                cookie_lease.as_ref().map(|l| l.path().to_path_buf()),
+            )
+        },
+        Err,
+    ) {
         Ok(e) => (Some(e), None),
         Err(e) => (None, Some(e)),
     };
@@ -382,7 +522,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         search_generation: 0,
         search_cancel: Arc::new(AtomicBool::new(false)),
         search_worker: None,
+        provider,
+        cookie_lease,
+        library_worker: None,
+        library_cancel: Arc::new(AtomicBool::new(false)),
+        library_playlists: Vec::new(),
+        recommendations: Vec::new(),
+        account_verified: false,
     }));
+    ui.set_account_connected(
+        state
+            .borrow()
+            .provider
+            .as_ref()
+            .is_some_and(|p| p.is_connected()),
+    );
+    ui.set_account_status(
+        if ui.get_account_connected() {
+            "Saved session · refresh to verify the account"
+        } else {
+            "Connect your YouTube Music account locally"
+        }
+        .into(),
+    );
     ui.set_light_mode(state.borrow().settings.light_mode);
     ui.set_volume(state.borrow().settings.volume.unwrap_or(70.0) as f32);
     ui.set_repeat_enabled(state.borrow().settings.repeat);
@@ -399,6 +561,197 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         PlaybackCommand::SetVolume(ui.get_volume() as f64),
     );
     let (tx, rx) = mpsc::sync_channel(2);
+    let (library_tx, library_rx) = mpsc::sync_channel::<LibraryResult>(2);
+    if ui.get_account_connected() {
+        request_library(
+            &mut state.borrow_mut(),
+            &ui,
+            &library_tx,
+            tide_provider::Request::Library,
+        );
+    }
+    {
+        let state = state.clone();
+        let weak = ui.as_weak();
+        let tx = library_tx.clone();
+        ui.on_import_account(move || {
+            let file = rfd::FileDialog::new()
+                .add_filter(
+                    "Browser request headers / authentication JSON",
+                    &["txt", "json"],
+                )
+                .pick_file();
+            let (Some(file), Some(u)) = (file, weak.upgrade()) else {
+                return;
+            };
+            let mut s = state.borrow_mut();
+            if s.library_worker.is_some() {
+                return;
+            }
+            let result = s
+                .provider
+                .as_ref()
+                .ok_or("Secure account storage is unavailable".to_string())
+                .and_then(|p| p.import_session(&file));
+            match result {
+                Ok(()) => {
+                    s.library_playlists.clear();
+                    s.recommendations.clear();
+                    refresh_library_models(&s, &u);
+                    u.set_account_connected(true);
+                    u.set_account_name("Session imported".into());
+                    if configure_account_playback(&mut s, &u) {
+                        request_library(&mut s, &u, &tx, tide_provider::Request::Library);
+                    } else {
+                        u.set_account_status(
+                            "Session saved, but signed-in playback could not start".into(),
+                        );
+                    }
+                }
+                Err(error) => u.set_account_status(error.into()),
+            }
+        });
+    }
+    {
+        let state = state.clone();
+        let weak = ui.as_weak();
+        let tx = library_tx.clone();
+        ui.on_refresh_library(move || {
+            if let Some(u) = weak.upgrade() {
+                request_library(
+                    &mut state.borrow_mut(),
+                    &u,
+                    &tx,
+                    tide_provider::Request::Library,
+                );
+            }
+        });
+    }
+    {
+        let state = state.clone();
+        let weak = ui.as_weak();
+        let tx = library_tx.clone();
+        ui.on_refresh_recommendations(move || {
+            if let Some(u) = weak.upgrade() {
+                request_library(
+                    &mut state.borrow_mut(),
+                    &u,
+                    &tx,
+                    tide_provider::Request::Home,
+                );
+            }
+        });
+    }
+    {
+        let state = state.clone();
+        let weak = ui.as_weak();
+        let tx = library_tx.clone();
+        ui.on_play_liked(move || {
+            if let Some(u) = weak.upgrade() {
+                request_library(
+                    &mut state.borrow_mut(),
+                    &u,
+                    &tx,
+                    tide_provider::Request::Liked,
+                );
+            }
+        });
+    }
+    {
+        let state = state.clone();
+        let weak = ui.as_weak();
+        let tx = library_tx.clone();
+        ui.on_select_library_playlist(move |index| {
+            if let Some(u) = weak.upgrade() {
+                let mut s = state.borrow_mut();
+                if let Some(p) = usize::try_from(index)
+                    .ok()
+                    .and_then(|i| s.library_playlists.get(i))
+                    .cloned()
+                {
+                    request_library(
+                        &mut s,
+                        &u,
+                        &tx,
+                        tide_provider::Request::Playlist { id: p.id },
+                    );
+                }
+            }
+        });
+    }
+    {
+        let state = state.clone();
+        let weak = ui.as_weak();
+        let tx = library_tx.clone();
+        ui.on_select_recommendation(move |index| {
+            if let Some(u) = weak.upgrade() {
+                let mut s = state.borrow_mut();
+                if let Some(card) = usize::try_from(index)
+                    .ok()
+                    .and_then(|i| s.recommendations.get(i))
+                    .cloned()
+                {
+                    if card.kind == "song"
+                        && card.id.len() == 11
+                        && card
+                            .id
+                            .bytes()
+                            .all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
+                    {
+                        if add(
+                            &mut s,
+                            &u,
+                            format!("https://www.youtube.com/watch?v={}", card.id),
+                        ) {
+                            u.set_library_open(false);
+                        }
+                    } else if card.kind == "playlist" {
+                        request_library(
+                            &mut s,
+                            &u,
+                            &tx,
+                            tide_provider::Request::Playlist { id: card.id },
+                        );
+                    }
+                }
+            }
+        });
+    }
+    {
+        let state = state.clone();
+        let weak = ui.as_weak();
+        ui.on_disconnect_account(move || {
+            if let Some(u) = weak.upgrade() {
+                let mut s = state.borrow_mut();
+                if s.library_worker.is_some() {
+                    return;
+                }
+                let result = s
+                    .provider
+                    .as_ref()
+                    .map(|p| p.disconnect())
+                    .unwrap_or(Ok(()));
+                match result {
+                    Ok(()) => {
+                        configure_account_playback(&mut s, &u);
+                        s.library_playlists.clear();
+                        s.recommendations.clear();
+                        refresh_library_models(&s, &u);
+                        u.set_account_connected(false);
+                        u.set_account_name("".into());
+                        u.set_account_status("Disconnected · session removed from Tide".into());
+                    }
+                    Err(error) => u.set_account_status(error.into()),
+                }
+            }
+        });
+    }
+    ui.on_open_account_help(|| {
+        let mut command=std::process::Command::new("rundll32.exe");
+        command.arg("url.dll,FileProtocolHandler").arg("https://github.com/yotam1001/tide-music/blob/codex/account-library-sync/docs/ACCOUNT_SETUP.md");
+        #[cfg(windows)] { use std::os::windows::process::CommandExt; command.creation_flags(0x08000000); }
+        let _=command.spawn();
+    });
     {
         let state = state.clone();
         let weak = ui.as_weak();
@@ -679,6 +1032,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let state = state.clone();
         let weak = ui.as_weak();
         let media = media.clone();
+        let library_tx = library_tx.clone();
         timer.start(
             slint::TimerMode::Repeated,
             Duration::from_secs(1),
@@ -687,6 +1041,91 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     return;
                 };
                 let mut s = state.borrow_mut();
+                while let Ok(result) = library_rx.try_recv() {
+                    if let Some(worker) = s.library_worker.take() {
+                        let _ = worker.join();
+                    }
+                    u.set_account_busy(false);
+                    match result {
+                        Ok(tide_provider::Response::Library {
+                            account,
+                            playlists,
+                            truncated,
+                        }) => {
+                            s.account_verified = true;
+                            s.library_playlists = playlists.into_iter().take(200).collect();
+                            u.set_account_name(account.into());
+                            refresh_library_models(&s, &u);
+                            u.set_account_status(
+                                if truncated {
+                                    "Signed-in account verified · showing the first 200 playlists"
+                                } else {
+                                    "Signed-in account verified · playlists refreshed"
+                                }
+                                .into(),
+                            );
+                            s.command_error = None;
+                            request_library(&mut s, &u, &library_tx, tide_provider::Request::Home);
+                        }
+                        Ok(tide_provider::Response::Home { cards }) => {
+                            s.recommendations = cards.into_iter().take(120).collect();
+                            refresh_library_models(&s, &u);
+                            u.set_account_status(
+                                "Your YouTube Music recommendations are refreshed".into(),
+                            );
+                        }
+                        Ok(tide_provider::Response::Tracks { tracks, truncated }) => {
+                            let tracks: Vec<Track> = tracks
+                                .into_iter()
+                                .take(2000)
+                                .filter(|t| {
+                                    t.source
+                                        .strip_prefix("https://www.youtube.com/watch?v=")
+                                        .is_some_and(|id| {
+                                            id.len() == 11
+                                                && id.bytes().all(|c| {
+                                                    c.is_ascii_alphanumeric()
+                                                        || c == b'-'
+                                                        || c == b'_'
+                                                })
+                                        })
+                                })
+                                .collect();
+                            if tracks.is_empty() {
+                                u.set_account_status(
+                                    "No playable tracks were returned for this playlist".into(),
+                                );
+                            } else {
+                                let previous = s.settings.queue.clone();
+                                s.settings.queue = Queue {
+                                    tracks,
+                                    current: Some(0),
+                                };
+                                if play(&mut s, &u) {
+                                    u.set_library_open(false);
+                                    u.set_account_status(
+                                        if truncated {
+                                            "Playing the first 2,000 playlist tracks"
+                                        } else {
+                                            "Playlist loaded into the player"
+                                        }
+                                        .into(),
+                                    );
+                                } else {
+                                    s.settings.queue = previous;
+                                    refresh(&u, &s);
+                                    u.set_account_status(
+                                        "Playlist loaded, but playback could not start".into(),
+                                    );
+                                }
+                            }
+                        }
+                        Ok(tide_provider::Response::Error { .. }) => u.set_account_status(
+                            "Account request failed; reconnect and retry".into(),
+                        ),
+                        Err(error) => u.set_account_status(error.into()),
+                    }
+                }
                 if let Some(session) = media.borrow_mut().as_mut() {
                     let _ = session.update(
                         &u.get_track_title(),
@@ -798,6 +1237,49 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     if let Some(dir) = std::env::args().skip_while(|a| a != "--smoke-ui").nth(1) {
+        if std::env::args().any(|a| a == "--smoke-library") {
+            let mut s = state.borrow_mut();
+            s.library_playlists = vec![
+                tide_provider::Playlist {
+                    id: "PLfixture".into(),
+                    title: "Late night focus".into(),
+                    subtitle: "24 tracks".into(),
+                },
+                tide_provider::Playlist {
+                    id: "PLfixture2".into(),
+                    title: "Weekend favourites".into(),
+                    subtitle: "56 tracks".into(),
+                },
+            ];
+            s.recommendations = vec![
+                tide_provider::Card {
+                    id: "fixture0001".into(),
+                    title: "A Quiet Sun".into(),
+                    subtitle: "True North".into(),
+                    kind: "song".into(),
+                    shelf: "Listen again".into(),
+                },
+                tide_provider::Card {
+                    id: "PLfixture".into(),
+                    title: "Your evening mix".into(),
+                    subtitle: "A mix for you".into(),
+                    kind: "playlist".into(),
+                    shelf: "For you".into(),
+                },
+                tide_provider::Card {
+                    id: "MPREfixture".into(),
+                    title: "Midnight Geometry".into(),
+                    subtitle: "Echo Frame".into(),
+                    kind: "album".into(),
+                    shelf: "Recommended albums".into(),
+                },
+            ];
+            refresh_library_models(&s, &ui);
+            ui.set_library_open(true);
+            ui.set_account_connected(true);
+            ui.set_account_name("Sample listener".into());
+            ui.set_account_status("Visual test data · no account connected".into());
+        }
         if std::env::args().any(|a| a == "--smoke-populated") {
             let mut s = state.borrow_mut();
             s.settings.queue = Queue {
@@ -892,6 +1374,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     smoke_timer.stop();
     let mut s = state.borrow_mut();
     s.search_cancel.store(true, Ordering::Release);
+    s.library_cancel.store(true, Ordering::Release);
+    if let Some(worker) = s.library_worker.take() {
+        let _ = worker.join();
+    }
     if let Some(worker) = s.search_worker.take() {
         let _ = worker.join();
     }
@@ -905,6 +1391,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn account_gate_is_only_for_youtube_hosts() {
+        for source in [
+            "https://www.youtube.com/watch?v=fixture0001",
+            "https://music.youtube.com/watch?v=fixture0001",
+            "https://youtu.be/fixture0001",
+        ] {
+            assert!(is_youtube_source(source));
+        }
+        for source in [
+            "local.wav",
+            "https://youtube.com.example/song",
+            "https://example.com/youtube.com",
+        ] {
+            assert!(!is_youtube_source(source));
+        }
+    }
 
     fn track(source: &str) -> Track {
         Track {

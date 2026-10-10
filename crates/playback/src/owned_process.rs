@@ -2,7 +2,7 @@
 use std::io;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::os::windows::process::CommandExt;
-use std::process::{ChildStderr, ChildStdout, Command, ExitStatus};
+use std::process::{ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus};
 
 use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
 use windows_sys::Win32::System::Diagnostics::ToolHelp::{
@@ -42,6 +42,9 @@ impl OwnedProcess {
 
     pub fn take_stdout(&mut self) -> Option<ChildStdout> {
         self.child.process.stdout.take()
+    }
+    pub fn take_stdin(&mut self) -> Option<ChildStdin> {
+        self.child.process.stdin.take()
     }
     pub fn take_stderr(&mut self) -> Option<ChildStderr> {
         self.child.process.stderr.take()

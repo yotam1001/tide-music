@@ -52,7 +52,18 @@ pub struct PlaybackHandle {
 /// launched until the first real track is loaded.
 #[cfg(windows)]
 pub fn start() -> Result<PlaybackHandle, String> {
-    let runtimes = RuntimePaths::discover()?;
+    start_with_cookie_file(None)
+}
+
+/// Use a caller-owned, private cookie lease for signed-in YouTube playback.
+/// The caller must keep it alive until this handle and its helpers are dropped.
+#[cfg(windows)]
+pub fn start_with_cookie_file(cookies: Option<PathBuf>) -> Result<PlaybackHandle, String> {
+    if cookies.as_ref().is_some_and(|path| !path.is_file()) {
+        return Err("The signed-in session file is unavailable. Reconnect your account.".into());
+    }
+    let mut runtimes = RuntimePaths::discover()?;
+    runtimes.cookies = cookies;
     let yt_dlp_available = runtimes.yt_dlp.is_some();
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_io()
@@ -113,6 +124,11 @@ pub fn start() -> Result<PlaybackHandle, String> {
 #[cfg(not(windows))]
 pub fn start() -> Result<PlaybackHandle, String> {
     Err("The native mpv named-pipe backend is currently supported on Windows only.".into())
+}
+
+#[cfg(not(windows))]
+pub fn start_with_cookie_file(_: Option<PathBuf>) -> Result<PlaybackHandle, String> {
+    start()
 }
 
 impl PlaybackHandle {
@@ -325,6 +341,7 @@ struct WorkerControls {
 
 #[derive(Clone, Debug)]
 struct RuntimePaths {
+    cookies: Option<PathBuf>,
     mpv: PathBuf,
     yt_dlp: Option<PathBuf>,
 }
@@ -336,6 +353,7 @@ impl RuntimePaths {
                 "mpv.exe was not found. Place it in the app's tools directory, .tools/runtime, or add it to PATH.".to_owned()
             })?;
         Ok(Self {
+            cookies: None,
             mpv,
             yt_dlp: Self::discover_yt_dlp(),
         })
@@ -852,6 +870,14 @@ async fn launch_player(
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .creation_flags(0x08000000);
+    if let Some(cookies) = &runtimes.cookies {
+        let path = cookies.to_string_lossy();
+        command.arg(format!(
+            "--ytdl-raw-options=ignore-config=,cookies=%{}%{}",
+            path.len(),
+            path
+        ));
+    }
 
     if runtimes.yt_dlp.is_some() {
         command.arg("--script-opts=ytdl_hook-ytdl_path=yt-dlp.exe");

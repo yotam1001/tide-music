@@ -13,6 +13,8 @@ auth*.json
 credentials*.json
 *.log
 *.sqlite*
+*.dpapi
+session.pending
 __pycache__/
 .DS_Store
 Thumbs.db

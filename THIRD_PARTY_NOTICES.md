@@ -6,6 +6,7 @@ Tide's original application code uses the MIT license in LICENSE. Dependencies a
 - [mpv](https://mpv.io/): external native playback tool. Licensing depends on the build and enabled dependencies; consult [mpv licensing](https://github.com/mpv-player/mpv/blob/master/Copyright) before redistributing a binary. Runtime downloads are not committed here.
 - [yt-dlp](https://github.com/yt-dlp/yt-dlp): external extraction tool. See its [license information](https://github.com/yt-dlp/yt-dlp#license) and the selected binary's third-party notices before redistribution.
 - [Deno](https://deno.com/): external JavaScript runtime, MIT licensed with third-party dependencies. See [license](https://github.com/denoland/deno/blob/main/LICENSE.md).
+- [ytmusicapi](https://github.com/sigma67/ytmusicapi): optional, transient library helper dependency, MIT licensed. It uses [Requests](https://github.com/psf/requests), Apache-2.0 licensed, and its dependencies. Their packages and licenses are installed by pip in the local virtual environment and are not vendored in this repository.
 
 YTerMusic informed the architecture investigation. Its source has not been vendored into Tide. Reused code in future contributions must preserve applicable upstream license and attribution notices.
 
