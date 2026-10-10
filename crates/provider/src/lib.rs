@@ -34,6 +34,7 @@ pub struct Card {
 #[derive(Clone, Serialize)]
 #[serde(tag = "action", rename_all = "lowercase")]
 pub enum Request {
+    Connect,
     Library,
     Playlist { id: String },
     Liked,
@@ -42,6 +43,10 @@ pub enum Request {
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Response {
+    Connected,
+    Session {
+        headers: BTreeMap<String, String>,
+    },
     Library {
         account: String,
         playlists: Vec<Playlist>,
@@ -77,6 +82,36 @@ impl Drop for CookieLease {
     }
 }
 
+struct LoginDirectory {
+    path: PathBuf,
+    parent: PathBuf,
+}
+impl Drop for LoginDirectory {
+    fn drop(&mut self) {
+        remove_private_login_directory(&self.path, &self.parent);
+    }
+}
+fn remove_private_login_directory(path: &Path, parent: &Path) {
+    // Resolve both before any recursive deletion. Reject links outside the
+    // designated account directory and remove only Tide's own login root.
+    let (Ok(target), Ok(root)) = (path.canonicalize(), parent.canonicalize()) else {
+        return;
+    };
+    if target.parent() != Some(root.as_path())
+        || !target
+            .file_name()
+            .is_some_and(|n| n.to_string_lossy().starts_with("login-"))
+    {
+        return;
+    }
+    for _ in 0..5 {
+        if fs::remove_dir_all(&target).is_ok() || !target.exists() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
 impl Provider {
     pub fn new() -> Result<Self, String> {
         let directory = std::env::var_os("APPDATA")
@@ -92,8 +127,13 @@ impl Provider {
     }
     pub fn import_session(&self, path: &Path) -> Result<(), String> {
         let mut bytes = read_limited(path, MAX_SESSION)?;
-        let result = (|| {
-            let mut headers = parse_headers(&bytes)?;
+        let result = self.import_bytes(&bytes);
+        bytes.zeroize();
+        result
+    }
+    fn import_bytes(&self, bytes: &[u8]) -> Result<(), String> {
+        (|| {
+            let mut headers = parse_headers(bytes)?;
             let mut clear = serde_json::to_vec(&headers).map_err(|_| "Could not encode session")?;
             for value in headers.values_mut() {
                 value.zeroize();
@@ -109,9 +149,8 @@ impl Provider {
                 fs::remove_file(&destination).map_err(|_| "Could not replace session")?;
             }
             fs::rename(temporary, destination).map_err(|_| "Could not finish session import")
-        })();
-        bytes.zeroize();
-        result.map_err(str::to_string)
+        })()
+        .map_err(str::to_string)
     }
     pub fn disconnect(&self) -> Result<(), String> {
         remove_stale_leases(&self.directory);
@@ -165,6 +204,44 @@ impl Provider {
 
     #[cfg(windows)]
     pub fn execute(&self, request: Request, cancel: Arc<AtomicBool>) -> Result<Response, String> {
+        if matches!(request, Request::Connect) {
+            let path = self.directory.join(format!(
+                "login-{}-{}",
+                std::process::id(),
+                LEASE_COUNTER.fetch_add(1, Ordering::Relaxed)
+            ));
+            fs::create_dir(&path).map_err(|_| "Could not prepare private sign-in directory")?;
+            let login = LoginDirectory {
+                path,
+                parent: self.directory.clone(),
+            };
+            let input = serde_json::to_vec(
+                &serde_json::json!({"action":"connect", "directory": login.path}),
+            )
+            .map_err(|_| "Could not prepare account connection")?;
+            return match execute_helper(&input, cancel.clone(), Duration::from_secs(600))? {
+                Response::Session { mut headers } => {
+                    let encoded = serde_json::to_vec(&headers);
+                    for value in headers.values_mut() {
+                        value.zeroize();
+                    }
+                    let mut encoded = encoded.map_err(|_| "Could not prepare account session")?;
+                    if cancel.load(Ordering::Acquire) {
+                        encoded.zeroize();
+                        return Err("Account connection cancelled".into());
+                    }
+                    let result = if encoded.len() <= MAX_SESSION {
+                        self.import_bytes(&encoded)
+                    } else {
+                        Err("Account session exceeds the input limit".into())
+                    };
+                    encoded.zeroize();
+                    result?;
+                    Ok(Response::Connected)
+                }
+                _ => Err("Account connection did not return a session".into()),
+            };
+        }
         let mut headers = self.headers()?;
         #[derive(Serialize)]
         struct Payload<'a> {
@@ -184,7 +261,7 @@ impl Provider {
             input.zeroize();
             return Err("Session headers exceed the helper input limit".into());
         }
-        let result = execute_helper(&input, cancel);
+        let result = execute_helper(&input, cancel, Duration::from_secs(60));
         input.zeroize();
         result
     }
@@ -210,10 +287,13 @@ fn remove_stale_leases(directory: &Path) {
         let Some(name) = name.to_str() else {
             continue;
         };
-        let Some(body) = name
-            .strip_prefix("playback-")
-            .and_then(|s| s.strip_suffix(".txt"))
-        else {
+        let login = name.starts_with("login-");
+        let Some(body) = (if login {
+            name.strip_prefix("login-")
+        } else {
+            name.strip_prefix("playback-")
+                .and_then(|s| s.strip_suffix(".txt"))
+        }) else {
             continue;
         };
         let Some((pid, counter)) = body.split_once('-') else {
@@ -237,7 +317,11 @@ fn remove_stale_leases(directory: &Path) {
             }
         };
         if gone {
-            let _ = fs::remove_file(entry.path());
+            if login {
+                remove_private_login_directory(&entry.path(), directory);
+            } else {
+                let _ = fs::remove_file(entry.path());
+            }
         }
     }
 }
@@ -328,7 +412,11 @@ fn cookie_jar(cookie: &str) -> Result<String, &'static str> {
 }
 
 #[cfg(windows)]
-fn execute_helper(input: &[u8], cancel: Arc<AtomicBool>) -> Result<Response, String> {
+fn execute_helper(
+    input: &[u8],
+    cancel: Arc<AtomicBool>,
+    timeout: Duration,
+) -> Result<Response, String> {
     let python = runtime_path(
         "TIDE_PROVIDER_PYTHON",
         ".tools/provider-venv/Scripts/python.exe",
@@ -369,7 +457,7 @@ fn execute_helper(input: &[u8], cancel: Arc<AtomicBool>) -> Result<Response, Str
     });
     let started = Instant::now();
     let status = loop {
-        if cancel.load(Ordering::Acquire) || started.elapsed() > Duration::from_secs(60) {
+        if cancel.load(Ordering::Acquire) || started.elapsed() > timeout {
             let _ = child.terminate_tree();
             let _ = writer.join();
             let _ = reader.join();
@@ -404,6 +492,20 @@ fn execute_helper(input: &[u8], cancel: Arc<AtomicBool>) -> Result<Response, Str
     match response.map_err(|_| "Account helper returned an unsupported response")? {
         Response::Error { code } if code == "runtime" => {
             Err("Install the optional account helper with scripts/setup-provider.ps1".into())
+        }
+        Response::Error { code } if code == "login_browser" => Err(
+            "Could not open the sign-in browser. Install Microsoft Edge or use Import session"
+                .into(),
+        ),
+        Response::Error { code } if code == "login_blocked" => Err(
+            "Google declined this browser's login. Use Import session from your regular browser"
+                .into(),
+        ),
+        Response::Error { code } if code == "login_closed" || code == "login_timeout" => {
+            Err("Sign-in window closed or timed out. Choose Connect account to try again".into())
+        }
+        Response::Error { code } if code == "cleanup" => {
+            Err("Sign-in browser cleanup failed. Close Edge and retry Connect account".into())
         }
         Response::Error { .. } => {
             Err("YouTube Music request failed. Re-import a fresh session and try again".into())
@@ -603,6 +705,19 @@ mod tests {
         remove_stale_leases(&directory);
         assert!(!stale.exists());
         assert!(active.exists());
+        let stale_profile = directory.join("login-4294967295-1");
+        fs::create_dir(&stale_profile).unwrap();
+        fs::write(stale_profile.join("public-fixture"), b"fixture").unwrap();
+        remove_stale_leases(&directory);
+        assert!(!stale_profile.exists());
+        let owned_profile = directory.join(format!("login-{}-1000", std::process::id()));
+        fs::create_dir(&owned_profile).unwrap();
+        let guard = LoginDirectory {
+            path: owned_profile.clone(),
+            parent: directory.clone(),
+        };
+        drop(guard);
+        assert!(!owned_profile.exists());
         let input = directory.join("fixture-input.txt");
         fs::write(&input, concat!("Cookie: __Secure-3PAPISID=", "fixture")).unwrap();
         provider.import_session(&input).unwrap();

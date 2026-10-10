@@ -16,10 +16,14 @@ Python runs only while a library request is active and exits afterward. The nati
 
 ## Import a session locally
 
+**Recommended:** in Tide's Library, choose **Connect account**. A fresh temporary Microsoft Edge window opens. Sign in to your existing Google account there, then return to YouTube Music (open Library if needed to trigger an authenticated browse request). Tide captures only the Music session after a successful authenticated request, closes the browser and encrypts the session locally. You do not need to copy headers. The login wait is limited to eight minutes; Cancel or closing Tide terminates the owned browser. Install Microsoft Edge if it is unavailable. If Google rejects the automated browser, use the manual import steps below; Tide does not bypass that rejection.
+
+This flow never opens your existing browser profile, reads password fields or opens a listening debugging port. Its temporary profile lives in Tide's private account directory and is removed after the browser exits. Cancel/shutdown also remove the owned login root after stopping its processes; roots left by a crash are reaped on a later startup when the owning process has exited. A temporary browser uses additional RAM during sign-in and is not kept running during music playback.
+
 1. Open [YouTube Music](https://music.youtube.com/) in your browser and sign in to the account with your Premium subscription. Confirm the correct identity and that official playback is ad-free.
 2. Follow the request-header instructions in the [ytmusicapi browser authentication guide](https://ytmusicapi.readthedocs.io/en/stable/setup/browser.html): open browser developer tools, select Network, filter for `browse`, and navigate inside YouTube Music until a request appears. Copy its **request headers**. Tide also accepts the browser authentication JSON produced by that guide.
 3. Save those headers as a UTF-8 text file **outside this repository**. The request must include its Cookie header, including `__Secure-3PAPISID`. Never send the file or its contents through chat, GitHub, screenshots or bug reports. It grants account access.
-4. In Tide, open **Library**, choose **Import session**, and select the local file. Wait for the account name and playlists to appear. Check that the name matches your intended account. Choose Liked Songs, a playlist or a playable recommendation.
+4. In Tide, open **Library**, choose **Import session**, and select the local file. Wait for the account name and playlists to appear. Check that the name matches your intended account. Choose Liked Songs, a playlist or a playable recommendation. These steps are the fallback if Connect account cannot sign in.
 
 Tide encrypts its saved copy with Windows DPAPI for your Windows user and restricts the account directory to its owner and SYSTEM. It does not automatically read browser storage. The original imported file remains under your control: remove it when you no longer need it, or store it securely outside Git. A session may expire or rotate; reimport a fresh request when prompted. Disconnect removes Tide's saved session and clears the displayed library.
 

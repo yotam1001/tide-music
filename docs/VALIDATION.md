@@ -26,6 +26,8 @@ A 15-sample empty compact-mode spot check of the account build used one app proc
 
 The muted public-music smoke also passed with an empty fixture cookie jar whose path contains spaces and a comma, exercising mpv option escaping through actual YouTube extraction. This is not an authenticated or Premium test.
 
+Connect account now launches installed Edge using a new temporary profile and private Playwright pipe. Thirteen Python tests cover library limits, authenticated Music request selection, cookie/header scope, rejected/closed/timed-out login, sandboxed browser configuration, and owned profile removal. Rust cleanup tests also cover stale login roots and normal guard removal. Live Google login remains user-driven and unverified; browser rejection is handled through the manual-import fallback.
+
 ## Initial renderer experiment
 
 The first GPU-rendered release failed the initial idle private-memory target. Twenty samples per layout, with a one-second delay between collections, an empty queue and no playback helper, yielded settled median private memory of approximately 255 MiB full, 213 MiB compact and 210 MiB collapsed after excluding the first five samples. This motivated selecting and measuring the software renderer. Keeping all layouts in the executable does not instantiate all of them simultaneously.

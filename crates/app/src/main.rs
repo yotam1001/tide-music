@@ -51,7 +51,12 @@ fn request_library(
     if s.library_worker.is_some() {
         return;
     }
-    let Some(provider) = s.provider.clone().filter(|p| p.is_connected()) else {
+    let connecting = matches!(request, tide_provider::Request::Connect);
+    let Some(provider) = s
+        .provider
+        .clone()
+        .filter(|p| connecting || p.is_connected())
+    else {
         u.set_account_status("Import a local signed-in YouTube Music session first".into());
         return;
     };
@@ -59,7 +64,14 @@ fn request_library(
     let cancel = s.library_cancel.clone();
     let tx = tx.clone();
     u.set_account_busy(true);
-    u.set_account_status("Fetching YouTube Music…".into());
+    u.set_account_status(
+        if connecting {
+            "Sign in to YouTube Music in the Edge window. Close it or press Cancel to stop."
+        } else {
+            "Fetching YouTube Music…"
+        }
+        .into(),
+    );
     s.library_worker = Some(std::thread::spawn(move || {
         let _ = tx.try_send(provider.execute(request, cancel));
     }));
@@ -565,13 +577,43 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     let (tx, rx) = mpsc::sync_channel(2);
     let (library_tx, library_rx) = mpsc::sync_channel::<LibraryResult>(2);
-    if ui.get_account_connected() {
+    if ui.get_account_connected() && !std::env::args().any(|a| a == "--connect-account") {
         request_library(
             &mut state.borrow_mut(),
             &ui,
             &library_tx,
             tide_provider::Request::Library,
         );
+    }
+    if std::env::args().any(|a| a == "--connect-account") && !test_mode {
+        ui.set_library_open(true);
+        request_library(
+            &mut state.borrow_mut(),
+            &ui,
+            &library_tx,
+            tide_provider::Request::Connect,
+        );
+    }
+    {
+        let state = state.clone();
+        let weak = ui.as_weak();
+        let tx = library_tx.clone();
+        ui.on_connect_account(move || {
+            if let Some(u) = weak.upgrade() {
+                request_library(
+                    &mut state.borrow_mut(),
+                    &u,
+                    &tx,
+                    tide_provider::Request::Connect,
+                );
+            }
+        });
+    }
+    {
+        let state = state.clone();
+        ui.on_cancel_account(move || {
+            state.borrow().library_cancel.store(true, Ordering::Release);
+        });
     }
     {
         let state = state.clone();
@@ -1050,6 +1092,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     u.set_account_busy(false);
                     match result {
+                        Ok(tide_provider::Response::Connected) => {
+                            s.library_playlists.clear();
+                            s.recommendations.clear();
+                            refresh_library_models(&s, &u);
+                            u.set_account_connected(true);
+                            u.set_account_name("Verifying account…".into());
+                            if configure_account_playback(&mut s, &u) {
+                                request_library(
+                                    &mut s,
+                                    &u,
+                                    &library_tx,
+                                    tide_provider::Request::Library,
+                                );
+                            } else {
+                                u.set_account_status(
+                                    "Session saved, but playback setup failed".into(),
+                                );
+                            }
+                        }
                         Ok(tide_provider::Response::Library {
                             account,
                             playlists,
@@ -1123,7 +1184,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                             }
                         }
-                        Ok(tide_provider::Response::Error { .. }) => u.set_account_status(
+                        Ok(
+                            tide_provider::Response::Error { .. }
+                            | tide_provider::Response::Session { .. },
+                        ) => u.set_account_status(
                             "Account request failed; reconnect and retry".into(),
                         ),
                         Err(error) => u.set_account_status(error.into()),
