@@ -66,6 +66,28 @@ saved accounts and does not register a Windows media session. The separate
 `--smoke-listening-session 1200` check uses the saved verified account and tests
 live recommendation playback; the local check cannot prove YouTube reliability.
 
+## Build a preview ZIP
+
+After building the release executable, generate dependency notices for the same
+Windows target. For a normal MSVC build:
+
+```powershell
+powershell -File scripts/build-preview.ps1
+cargo metadata --locked --filter-platform x86_64-pc-windows-msvc --format-version 1 > .local/cargo-metadata.json
+python scripts/generate-dependency-notices.py .local/cargo-metadata.json .local/DEPENDENCIES.md
+powershell -File scripts/package-preview.ps1 -DependenciesNotice .local/DEPENDENCIES.md -StartHere docs/START_HERE.md
+python scripts/check-preview-package.py dist/path-to-generated-preview.zip
+```
+
+Create `.local` first if it does not exist. For a GNU build, use
+`x86_64-pc-windows-gnu` for the metadata target. The script packages only its
+explicit file list, generates SHA-256 checksums and refuses existing outputs.
+The ZIP includes the app, setup scripts, helper source and notices. It does not
+include downloaded tools, Python environments, credentials or browser profiles.
+Extracted previews use the included START_HERE.md instructions to install their
+tools and optional account helper locally. A preview ZIP is not a stable-release
+claim; see [release readiness](docs/RELEASE_READINESS.md).
+
 ## Privacy and credentials
 
 No application API key is required. Never commit keys, tokens, cookies, `.env` files or local credential files. The ignore rules and tracked-file scan provide defense in depth; they do not replace reviewing every commit. Search and link playback contact external providers; local file playback stays local. There is no analytics or automatic browser-cookie access.

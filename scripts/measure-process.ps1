@@ -42,14 +42,14 @@ try {
                 $taskPrivate += $taskChild.PrivateMemorySize64; $taskWorking += $taskChild.WorkingSet64
                 $taskCounterKey = "$taskId/$($taskChild.StartTime.Ticks)"
                 $taskLastCpu = if ($taskCpuCounters.ContainsKey($taskCounterKey)) { $taskCpuCounters[$taskCounterKey] } else { 0.0 }
-                $taskCpu += [Math]::Max(0, $taskChild.CPU - $taskLastCpu)
+                $taskCpu += [Math]::Max(0.0, $taskChild.CPU - $taskLastCpu)
                 $taskCpuCounters[$taskCounterKey] = $taskChild.CPU
             }
         }
         $taskNow = Get-Date
         $taskElapsed = ($taskNow - $taskPreviousTime).TotalSeconds
         # CPU percentage uses one logical core as the denominator.
-        $taskCpuPercent = [Math]::Max(0, $taskCpu / $taskElapsed * 100)
+        $taskCpuPercent = [Math]::Max(0.0, $taskCpu / $taskElapsed * 100)
         $taskRows.Add([pscustomobject]@{ second=$taskIndex+1; processes=$taskIds.Count; private_mib=[Math]::Round($taskPrivate/1MB,2); working_set_mib=[Math]::Round($taskWorking/1MB,2); cpu_one_core_percent=[Math]::Round($taskCpuPercent,3) })
         $taskPreviousTime = $taskNow
     }

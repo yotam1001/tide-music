@@ -1,4 +1,4 @@
-import { Button, ComboBox, LineEdit, ListView, Palette, ScrollView, Slider } from "std-widgets.slint";
+import { AboutSlint, Button, ComboBox, LineEdit, ListView, Palette, ScrollView, Slider } from "std-widgets.slint";
 
 export struct TrackRow {
     title: string,
@@ -1225,6 +1225,9 @@ export component AppWindow inherits Window {
                                 LibraryButton { width: 70px; light-mode: root.light-mode; caption: "Help"; label: "Help connecting your account"; clicked => { root.open-account-help(); } }
                             }
                             Rectangle { height: 12px; }
+                            Rectangle { height: 1px; background: root.outline; }
+                            Text { text: "About Tide · 0.1.0 preview"; color: root.secondary; font-size: 12px; }
+                            AboutSlint { height: 112px; horizontal-stretch: 0; }
                             }
                         }
                     }

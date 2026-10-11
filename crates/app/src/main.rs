@@ -1849,7 +1849,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(windows)]
     {
         use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-        if listening_seconds.is_none() {
+        if !test_mode && listening_seconds.is_none() {
             if let Ok(handle) = ui.window().window_handle().window_handle() {
                 if let RawWindowHandle::Win32(handle) = handle.as_raw() {
                     let weak = ui.as_weak();
@@ -2238,7 +2238,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         } else {
                             s.active_playback = false;
                             u.set_paused(true);
-                            s.radio_resume_when_ready = s.settings.autoplay;
+                            s.radio_resume_when_ready = s.settings.autoplay
+                                && s.account_verified
+                                && current_video_id(&s).is_some();
                             request_radio(&mut s, &u, &library_tx, false);
                             if !failed {
                                 u.set_status_text(

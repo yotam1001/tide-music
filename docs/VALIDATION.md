@@ -222,3 +222,27 @@ ended after successful app exit. CPU readings were zero throughout and are not
 accepted as useful CPU evidence. This test used three queue entries referencing
 one short local silence file, without accounts, thumbnails or extraction; it
 does not prove long-session YouTube stability or gaming impact.
+
+## Portable preview validation
+
+An extracted preview was installed outside the source checkout using its included
+runtime and provider setup scripts. The fresh Python environment installed the
+pinned helper dependency graph, passed imports and reported no broken dependency
+requirements. A muted five-minute local run passed 15 natural transitions,
+pause/resume, skip and seek, and all observed helper processes ended afterward.
+Median process-tree working set was 58.8 MiB, peak 89.8 MiB; median private bytes
+were 51.4 MiB, peak 52.6 MiB. This remains a local-audio test.
+
+The distributable build remaps compiler paths. The final ZIP passed exact payload
+allowlist, SHA-256 and credential/private-path checks. Its scanner also rejected
+synthetic API credentials and Google cookies injected into checksum-correct
+copies of the executable and helper. Binary scanning treats compiled cookie-name
+literals and SVG property names as static text rather than credential values.
+The About Slint attribution was restored in Account settings and verified visible
+after scrolling at simulated 200% scale.
+
+A subsequent 25-second run of the remapped executable outside the checkout
+confirmed startup and local playback. The resource script now preserves fractional
+CPU time instead of choosing PowerShell's integer Math.Max overload. This short
+sample reported mean CPU use of 1.59% of one logical core including startup,
+with a 20.62% peak. These figures do not measure authenticated playback or gaming.
