@@ -86,3 +86,14 @@ Short process-tree measurements of the new release, without account access:
 Idle samples lasted 12 seconds, excluding the first four samples. Playback lasted 20 seconds; the settled median uses the final eight samples and includes mpv. The highest observed startup/extraction working set was 136.29 MiB. These measurements exclude album artwork and signed-in library contents and do not prove long-session behavior or gaming frame-time impact. Decoded artwork cache pixels are capped at about 1.27 MiB, with extra temporary fetch/decode buffers.
 
 A live song-radio read returned 25 usable recommendation tracks with thumbnail URLs. The opt-in muted `--smoke-autoplay` test then found that the saved session no longer passed account verification, and timed out before starting playback. Direct account/library reads confirmed the session needed renewal. End-to-end authenticated recommendation playback is therefore pending a fresh local connection; the radio response, queue operations and native playback checks are separate evidence, not a completed autoplay handoff test. No session values, account names or private library contents are included in these results.
+
+
+## Simplified shell validation
+
+The Home/Library revision passes 45 deterministic Rust tests (two separate manual/live tests stay ignored), strict Clippy, and the existing 29 Python helper tests. New tests cover manual queue insertion before autoplay, reordering without moving the current song or crossing origin groups, removing upcoming suggestions when autoplay is disabled, and loading older saved track metadata with the new origin field defaulting to manual.
+
+The native UI smoke accepts an optional `--fixture-audio path/to/silent.wav` argument. With a silent local file it exercises real playback commands and asserts that search/playlist play preserves the browsing screen, choosing a search song starts a fresh queue, manual choices take priority, autoplay-off removes suggestions, and playlist shuffle/reordering/removal work. The test uses transient settings and never loads a saved account. Eleven screenshot states cover full/light Home, compact queue overlay, compact Library, playlist details, search, wide queue, Account settings, Library, mini and restore. Rendered review caught and corrected unsupported menu glyphs, misleading unavailable album navigation and unknown duration placeholders.
+
+These checks establish local playback/control and layout behavior. They do not substitute for the still-pending authenticated live autoplay handoff or a long listening session.
+
+A 12-second full-window idle repeat for the simplified release, excluding the first four samples, measured 7.52 MiB median private memory and 27.85 MiB total working set. No account or audio helper was active; this is a short idle measurement.

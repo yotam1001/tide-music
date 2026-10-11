@@ -49,6 +49,9 @@ enum LibraryAction {
     #[default]
     Replace,
     Shuffle,
+    Preview {
+        title: String,
+    },
     Radio {
         seed: String,
         generation: u64,
@@ -70,6 +73,9 @@ struct State {
     library_cancel: Arc<AtomicBool>,
     library_playlists: Vec<tide_provider::Playlist>,
     recommendations: Vec<tide_provider::Card>,
+    detail_tracks: Vec<Track>,
+    search_tracks: Vec<Track>,
+    account_error: bool,
     account_verified: bool,
     library_action: LibraryAction,
     shuffle_request: bool,
@@ -111,6 +117,23 @@ fn request_library(
             replace_upcoming: false,
         },
         tide_provider::Request::Playlist { .. } if s.shuffle_request => LibraryAction::Shuffle,
+        tide_provider::Request::Playlist { id } => LibraryAction::Preview {
+            title: s
+                .library_playlists
+                .iter()
+                .find(|p| p.id == *id)
+                .map(|p| p.title.clone())
+                .or_else(|| {
+                    s.recommendations
+                        .iter()
+                        .find(|p| p.id == *id)
+                        .map(|p| p.title.clone())
+                })
+                .unwrap_or_else(|| "Playlist".into()),
+        },
+        tide_provider::Request::Liked => LibraryAction::Preview {
+            title: "Liked Songs".into(),
+        },
         _ => LibraryAction::Replace,
     };
     let Some(provider) = s
@@ -122,6 +145,14 @@ fn request_library(
         return;
     };
     s.library_cancel.store(false, Ordering::Release);
+    if let LibraryAction::Preview { title } = &action {
+        s.detail_tracks.clear();
+        u.set_detail_title(title.clone().into());
+        u.set_detail_open(true);
+        u.set_detail_busy(true);
+        u.set_search_open(false);
+        u.set_detail_rows(ModelRc::new(VecModel::default()));
+    }
     s.library_action = action;
     s.shuffle_request = false;
     let cancel = s.library_cancel.clone();
@@ -200,6 +231,9 @@ fn configure_account_playback(s: &mut State, u: &AppWindow) -> bool {
     s.radio_attempted_generation = None;
     s.artwork.borrow_mut().clear();
     s.account_verified = false;
+    s.account_error = false;
+    u.set_error_is_account(false);
+    u.set_error_message("".into());
     u.set_paused(true);
     u.set_position(0.0);
     u.set_duration(0.0);
@@ -248,7 +282,12 @@ fn refresh_library_models(s: &State, u: &AppWindow) {
             artwork: p
                 .artwork_url
                 .as_deref()
-                .filter(|_| index < 12)
+                .filter(|_| {
+                    index < 12
+                        && u.get_library_open()
+                        && !u.get_detail_open()
+                        && !u.get_search_open()
+                })
                 .map(|url| artwork.get_or_request(url))
                 .unwrap_or_default(),
         })
@@ -267,7 +306,12 @@ fn refresh_library_models(s: &State, u: &AppWindow) {
             artwork: p
                 .artwork_url
                 .as_deref()
-                .filter(|_| index < 12)
+                .filter(|_| {
+                    index < 12
+                        && !u.get_library_open()
+                        && !u.get_detail_open()
+                        && !u.get_search_open()
+                })
                 .map(|url| artwork.get_or_request(url))
                 .unwrap_or_default(),
         })
@@ -318,6 +362,94 @@ fn sanitize_queue(queue: &mut Queue) -> bool {
     changed |= queue.current != old_current;
     changed
 }
+fn content_rows(tracks: &[Track], s: &State, visible: bool) -> ModelRc<TrackRow> {
+    let mut artwork = s.artwork.borrow_mut();
+    ModelRc::new(VecModel::from(
+        tracks
+            .iter()
+            .enumerate()
+            .map(|(index, t)| TrackRow {
+                title: t.title.clone().into(),
+                artist: t.artist.clone().into(),
+                album: t.album.clone().into(),
+                duration: "—".into(),
+                recommended: t.recommended,
+                artwork: t
+                    .artwork_url
+                    .as_deref()
+                    .filter(|_| visible && index < 12)
+                    .map(|url| artwork.get_or_request(url))
+                    .unwrap_or_default(),
+            })
+            .collect::<Vec<_>>(),
+    ))
+}
+fn refresh_content_models(s: &State, u: &AppWindow) {
+    u.set_detail_rows(content_rows(&s.detail_tracks, s, u.get_detail_open()));
+    u.set_search_rows(content_rows(&s.search_tracks, s, u.get_search_open()));
+}
+fn recommendation_track(card: &tide_provider::Card) -> Track {
+    Track {
+        title: card.title.clone(),
+        artist: card.subtitle.clone(),
+        album: String::new(),
+        source: format!("https://www.youtube.com/watch?v={}", card.id),
+        artwork_url: card.artwork_url.clone(),
+        recommended: false,
+    }
+}
+fn start_tracks(
+    s: &mut State,
+    u: &AppWindow,
+    mut tracks: Vec<Track>,
+    index: usize,
+    shuffle: bool,
+) -> bool {
+    tracks.truncate(tide_core::MAX_QUEUE_TRACKS);
+    if index >= tracks.len() {
+        return false;
+    }
+    for t in &mut tracks {
+        t.recommended = false;
+    }
+    let previous = s.settings.queue.clone();
+    s.settings.queue = Queue {
+        tracks,
+        current: Some(index),
+    };
+    if shuffle {
+        let seed = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos() as u64;
+        s.settings.queue.shuffle_all(seed);
+    }
+    if play(s, u) {
+        u.set_error_message("".into());
+        true
+    } else {
+        s.settings.queue = previous;
+        refresh(u, s);
+        false
+    }
+}
+fn queue_choice(s: &mut State, u: &AppWindow, track: Track, play_next: bool) {
+    if s.settings.queue.insert_manual(track, play_next) {
+        refresh(u, s);
+        save(&s.settings);
+        u.set_status_text(
+            if play_next {
+                "Will play next"
+            } else {
+                "Added to your queue"
+            }
+            .into(),
+        );
+    } else {
+        u.set_status_text("Queue limit reached (2,000 tracks)".into());
+    }
+}
+
 fn refresh(ui: &AppWindow, state: &State) {
     let mut artwork = state.artwork.borrow_mut();
     let current = state.settings.queue.current.unwrap_or(0);
@@ -340,6 +472,7 @@ fn refresh(ui: &AppWindow, state: &State) {
             artist: t.artist.clone().into(),
             album: t.album.clone().into(),
             duration: "—".into(),
+            recommended: t.recommended,
             artwork: t
                 .artwork_url
                 .as_deref()
@@ -369,6 +502,7 @@ fn refresh(ui: &AppWindow, state: &State) {
 }
 fn report_error(state: &mut State, ui: &AppWindow, error: String) {
     state.command_error = Some(error.clone());
+    ui.set_error_message(error.clone().into());
     ui.set_status_text(error.into());
 }
 
@@ -418,10 +552,12 @@ fn play(state: &mut State, ui: &AppWindow) -> bool {
         && state.provider.as_ref().is_some_and(|p| p.is_connected())
         && !state.account_verified
     {
+        state.account_error = true;
+        ui.set_error_is_account(true);
         report_error(
             state,
             ui,
-            "Refresh the library to verify your account before signed-in playback".into(),
+            "Open Account settings to verify or reconnect YouTube Music".into(),
         );
         return false;
     }
@@ -479,10 +615,6 @@ fn select_and_play(state: &mut State, ui: &AppWindow, index: usize) {
 }
 
 fn add(state: &mut State, ui: &AppWindow, source: String) -> bool {
-    if state.settings.queue.tracks.len() >= 2000 {
-        ui.set_status_text("Queue limit reached (2,000 tracks).".into());
-        return false;
-    }
     let source = match tide_playback::validate_playback_source(&source) {
         Ok(source) => source,
         Err(error) => {
@@ -499,17 +631,20 @@ fn add(state: &mut State, ui: &AppWindow, source: String) -> bool {
             .unwrap_or("Local track")
             .into()
     };
-    state.settings.queue.tracks.push(Track {
-        artwork_url: None,
-        title,
-        artist: String::new(),
-        album: String::new(),
-        source,
-    });
-    let index = state.settings.queue.tracks.len() - 1;
-    select_and_play(state, ui, index);
-    save(&state.settings);
-    true
+    start_tracks(
+        state,
+        ui,
+        vec![Track {
+            artwork_url: None,
+            recommended: false,
+            title,
+            artist: String::new(),
+            album: String::new(),
+            source,
+        }],
+        0,
+        false,
+    )
 }
 #[cfg(windows)]
 fn executable(name: &str) -> PathBuf {
@@ -630,6 +765,7 @@ fn search(query: String, cancel: Arc<AtomicBool>) -> Result<Vec<Track>, String> 
             }
             Some(Track {
                 artwork_url: None,
+                recommended: false,
                 title: e["title"].as_str().unwrap_or("Untitled").into(),
                 artist: e["uploader"].as_str().unwrap_or("").into(),
                 album: String::new(),
@@ -709,6 +845,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         library_cancel: Arc::new(AtomicBool::new(false)),
         library_playlists: Vec::new(),
         recommendations: Vec::new(),
+        detail_tracks: Vec::new(),
+        search_tracks: Vec::new(),
+        account_error: false,
         account_verified: false,
         library_action: LibraryAction::default(),
         shuffle_request: false,
@@ -760,7 +899,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let tx = library_tx.clone();
         ui.on_play_radio(move || {
             if let Some(u) = weak.upgrade() {
-                request_radio(&mut state.borrow_mut(), &u, &tx, true);
+                let mut s = state.borrow_mut();
+                s.settings.autoplay = true;
+                u.set_autoplay_enabled(true);
+                save(&s.settings);
+                request_radio(&mut s, &u, &tx, true);
             }
         });
     }
@@ -816,7 +959,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
     if let Some(index) = startup_account.filter(|_| !test_mode) {
-        ui.set_library_open(true);
+        ui.set_settings_open(true);
         request_library(
             &mut state.borrow_mut(),
             &ui,
@@ -844,7 +987,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
     if std::env::args().any(|a| a == "--connect-account") && !test_mode {
-        ui.set_library_open(true);
+        ui.set_settings_open(true);
         if let Some(request) = select_zen_session() {
             request_library(&mut state.borrow_mut(), &ui, &library_tx, request);
         }
@@ -996,27 +1139,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             .bytes()
                             .all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
                     {
-                        if add(
-                            &mut s,
-                            &u,
-                            format!("https://www.youtube.com/watch?v={}", card.id),
-                        ) {
-                            if let Some(track) = s
-                                .settings
-                                .queue
-                                .current
-                                .and_then(|index| s.settings.queue.tracks.get_mut(index))
-                            {
-                                track.title = card.title;
-                                track.artist = card.subtitle;
-                                track.artwork_url = card.artwork_url;
-                            }
-                            refresh(&u, &s);
-                            save(&s.settings);
-                            u.set_home_open(false);
-                            u.set_queue_open(true);
-                            u.set_library_open(false);
-                        }
+                        start_tracks(&mut s, &u, vec![recommendation_track(&card)], 0, false);
                     } else if card.kind == "playlist" {
                         request_library(
                             &mut s,
@@ -1054,6 +1177,208 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         u.set_account_status("Disconnected · session removed from Tide".into());
                     }
                     Err(error) => u.set_account_status(error.into()),
+                }
+            }
+        });
+    }
+    {
+        let state = state.clone();
+        let weak = ui.as_weak();
+        ui.on_play_detail(move || {
+            if let Some(u) = weak.upgrade() {
+                let mut s = state.borrow_mut();
+                let tracks = s.detail_tracks.clone();
+                start_tracks(&mut s, &u, tracks, 0, false);
+            }
+        });
+    }
+    {
+        let state = state.clone();
+        let weak = ui.as_weak();
+        ui.on_shuffle_detail(move || {
+            if let Some(u) = weak.upgrade() {
+                let mut s = state.borrow_mut();
+                let tracks = s.detail_tracks.clone();
+                start_tracks(&mut s, &u, tracks, 0, true);
+            }
+        });
+    }
+    {
+        let state = state.clone();
+        let weak = ui.as_weak();
+        ui.on_select_detail_track(move |index| {
+            if let Some(u) = weak.upgrade() {
+                let mut s = state.borrow_mut();
+                let tracks = s.detail_tracks.clone();
+                if let Ok(index) = usize::try_from(index) {
+                    start_tracks(&mut s, &u, tracks, index, false);
+                }
+            }
+        });
+    }
+    {
+        let state = state.clone();
+        let weak = ui.as_weak();
+        ui.on_select_search_track(move |index| {
+            if let Some(u) = weak.upgrade() {
+                let mut s = state.borrow_mut();
+                if let Some(track) = usize::try_from(index)
+                    .ok()
+                    .and_then(|i| s.search_tracks.get(i))
+                    .cloned()
+                {
+                    start_tracks(&mut s, &u, vec![track], 0, false);
+                }
+            }
+        });
+    }
+    {
+        let state = state.clone();
+        let weak = ui.as_weak();
+        ui.on_queue_search_track(move |index, next| {
+            if let Some(u) = weak.upgrade() {
+                let mut s = state.borrow_mut();
+                if let Some(t) = usize::try_from(index)
+                    .ok()
+                    .and_then(|i| s.search_tracks.get(i))
+                    .cloned()
+                {
+                    queue_choice(&mut s, &u, t, next);
+                }
+            }
+        });
+    }
+    {
+        let state = state.clone();
+        let weak = ui.as_weak();
+        ui.on_queue_detail_track(move |index, next| {
+            if let Some(u) = weak.upgrade() {
+                let mut s = state.borrow_mut();
+                if let Some(t) = usize::try_from(index)
+                    .ok()
+                    .and_then(|i| s.detail_tracks.get(i))
+                    .cloned()
+                {
+                    queue_choice(&mut s, &u, t, next);
+                }
+            }
+        });
+    }
+    {
+        let state = state.clone();
+        let weak = ui.as_weak();
+        ui.on_requeue_track(move |index, next| {
+            if let Some(u) = weak.upgrade() {
+                let mut s = state.borrow_mut();
+                if let Some(t) = usize::try_from(index)
+                    .ok()
+                    .and_then(|i| s.settings.queue.tracks.get(i))
+                    .cloned()
+                {
+                    if usize::try_from(index)
+                        .ok()
+                        .is_some_and(|i| s.settings.queue.current.is_none_or(|current| i > current))
+                    {
+                        s.settings.queue.remove(index as usize);
+                    }
+                    queue_choice(&mut s, &u, t, next);
+                }
+            }
+        });
+    }
+    {
+        let state = state.clone();
+        let weak = ui.as_weak();
+        ui.on_queue_recommendation(move |index, next| {
+            if let Some(u) = weak.upgrade() {
+                let mut s = state.borrow_mut();
+                if let Some(c) = usize::try_from(index)
+                    .ok()
+                    .and_then(|i| s.recommendations.get(i))
+                    .filter(|c| c.kind == "song")
+                    .cloned()
+                {
+                    queue_choice(&mut s, &u, recommendation_track(&c), next);
+                }
+            }
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_close_detail(move || {
+            if let Some(u) = weak.upgrade() {
+                u.set_detail_open(false);
+            }
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_close_search(move || {
+            if let Some(u) = weak.upgrade() {
+                u.set_search_open(false);
+            }
+        });
+    }
+    {
+        let state = state.clone();
+        let weak = ui.as_weak();
+        ui.on_retry_error(move || {
+            if let Some(u) = weak.upgrade() {
+                if state.borrow().account_error {
+                    u.set_settings_open(true);
+                } else {
+                    u.set_error_message("".into());
+                }
+            }
+        });
+    }
+    {
+        let state = state.clone();
+        let weak = ui.as_weak();
+        let tx = library_tx.clone();
+        ui.on_start_track_radio(move |context, index| {
+            if let Some(u) = weak.upgrade() {
+                let mut s = state.borrow_mut();
+                let index = usize::try_from(index).ok();
+                let track = index.and_then(|i| match context {
+                    0 => s.settings.queue.tracks.get(i).cloned(),
+                    1 => s.detail_tracks.get(i).cloned(),
+                    2 => s.search_tracks.get(i).cloned(),
+                    3 => s
+                        .recommendations
+                        .get(i)
+                        .filter(|c| c.kind == "song")
+                        .map(recommendation_track),
+                    _ => None,
+                });
+                if let Some(track) = track {
+                    if s.library_worker.is_some() {
+                        u.set_status_text(
+                            "Wait for the current music request, then try radio again".into(),
+                        );
+                        return;
+                    }
+                    if start_tracks(&mut s, &u, vec![track], 0, false) {
+                        s.settings.autoplay = true;
+                        u.set_autoplay_enabled(true);
+                        save(&s.settings);
+                        request_radio(&mut s, &u, &tx, true);
+                    }
+                }
+            }
+        });
+    }
+    {
+        let state = state.clone();
+        let weak = ui.as_weak();
+        ui.on_move_queue_track(move |index, direction| {
+            if let Some(u) = weak.upgrade() {
+                let mut s = state.borrow_mut();
+                if let Ok(index) = usize::try_from(index) {
+                    if s.settings.queue.move_upcoming(index, direction) {
+                        refresh(&u, &s);
+                        save(&s.settings);
+                    }
                 }
             }
         });
@@ -1101,6 +1426,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let tx = tx.clone();
                 state.search_cancel.store(false, Ordering::Release);
                 let cancel = state.search_cancel.clone();
+                ui.set_search_open(true);
+                ui.set_detail_open(false);
+                ui.set_search_busy(true);
+                state.search_tracks.clear();
+                ui.set_search_rows(ModelRc::new(VecModel::default()));
+                ui.set_error_message("".into());
                 ui.set_status_text("Searching YouTube…".into());
                 state.search_worker = Some(std::thread::spawn(move || {
                     let _ = tx.try_send((generation, search(query, cancel)));
@@ -1222,6 +1553,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             s.radio_attempted_generation = None;
         } else {
             s.radio_resume_when_ready = false;
+            s.settings.queue.remove_autoplay_upcoming();
+            refresh(&u, &s);
         }
         save(&s.settings);
     });
@@ -1429,6 +1762,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let weak = ui.as_weak();
         let media = media.clone();
         let library_tx = library_tx.clone();
+        let mut last_content_view = None;
         timer.start(
             slint::TimerMode::Repeated,
             Duration::from_secs(1),
@@ -1437,11 +1771,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     return;
                 };
                 let mut s = state.borrow_mut();
+                let content_view = (u.get_library_open(), u.get_detail_open(), u.get_search_open());
+                if last_content_view != Some(content_view) {
+                    refresh_library_models(&s, &u);
+                    refresh_content_models(&s, &u);
+                    last_content_view = Some(content_view);
+                }
                 while let Ok(result) = library_rx.try_recv() {
                     if let Some(worker) = s.library_worker.take() {
                         let _ = worker.join();
                     }
                     u.set_account_busy(false);
+                    u.set_detail_busy(false);
                     match result {
                         Ok(tide_provider::Response::Connected) => {
                             u.set_account_index(
@@ -1474,6 +1815,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             truncated,
                         }) => {
                             s.account_verified = true;
+                            s.account_error = false;
+                            u.set_error_is_account(false);
+                            u.set_error_message("".into());
                             s.library_playlists = playlists.into_iter().take(200).collect();
                             u.set_account_name(account.into());
                             refresh_library_models(&s, &u);
@@ -1537,7 +1881,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     s.settings.queue.tracks.truncate(keep);
                                 }
                                 let old_len = s.settings.queue.tracks.len();
-                                let added = s.settings.queue.append_deduplicated(tracks);
+                                let added = s.settings.queue.append_deduplicated(tracks.into_iter().map(|mut t| {
+                                    t.recommended = true; t
+                                }));
                                 if added > 0 && !s.active_playback && s.radio_resume_when_ready {
                                     s.settings.queue.select(old_len);
                                     play(&mut s, &u);
@@ -1548,6 +1894,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 u.set_account_status(
                                     format!("Added {added} recommended songs to the queue").into(),
                                 );
+                                continue;
+                            }
+                            if matches!(s.library_action, LibraryAction::Preview { .. }) {
+                                s.detail_tracks = tracks;
+                                u.set_detail_busy(false);
+                                refresh_content_models(&s, &u);
+                                u.set_account_status(if truncated {
+                                    "Showing the first 2,000 playlist tracks"
+                                } else { "Playlist ready" }.into());
                                 continue;
                             }
                             if tracks.is_empty() {
@@ -1569,10 +1924,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     s.settings.queue.shuffle_all(seed);
                                 }
                                 if play(&mut s, &u) {
-                                    u.set_home_open(false);
-                                    u.set_library_open(false);
-                                    u.set_queue_open(true);
-                                    u.set_library_open(false);
                                     u.set_account_status(
                                         if truncated {
                                             "Playing the first 2,000 playlist tracks"
@@ -1595,18 +1946,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             | tide_provider::Response::Session { .. },
                         ) => {
                             s.radio_resume_when_ready = false;
+                            s.account_error = true;
+                            u.set_error_is_account(true);
+                            u.set_error_message("Reconnect your YouTube Music account".into());
                             u.set_account_status(
                                 "Account request failed; reconnect and retry".into(),
                             );
                             u.set_status_text(
-                                "Open Library to reconnect your YouTube Music account".into(),
+                                "Open Account settings to reconnect YouTube Music".into(),
                             );
                         }
                         Err(error) => {
                             s.radio_resume_when_ready = false;
+                            s.account_error = true;
+                            u.set_error_is_account(true);
+                            u.set_error_message("Account unavailable. Reconnect or retry.".into());
                             u.set_account_status(error.into());
                             u.set_status_text(
-                                "Account request failed; open Library to reconnect or retry".into(),
+                                "Account request failed; open Account settings to reconnect or retry".into(),
                             );
                         }
                     }
@@ -1615,6 +1972,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if artwork_changed {
                     refresh(&u, &s);
                     refresh_library_models(&s, &u);
+                    refresh_content_models(&s, &u);
                 }
                 if s.active_playback {
                     request_radio(&mut s, &u, &library_tx, false);
@@ -1638,22 +1996,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     match result {
                         Ok(tracks) => {
-                            let remaining = 2000usize.saturating_sub(s.settings.queue.tracks.len());
-                            let count = tracks.len().min(remaining);
-                            s.settings
-                                .queue
-                                .tracks
-                                .extend(tracks.into_iter().take(remaining));
-                            refresh(&u, &s);
-                            u.set_home_open(false);
-                            u.set_library_open(false);
-                            u.set_queue_open(true);
-                            save(&s.settings);
-                            u.set_status_text(
-                                format!("Added {count} results · choose a track to play").into(),
-                            );
+                            let count = tracks.len();
+                            s.search_tracks = tracks;
+                            u.set_search_busy(false);
+                            refresh_content_models(&s, &u);
+                            u.set_status_text(format!("{count} results").into());
                         }
-                        Err(e) => u.set_status_text(e.into()),
+                        Err(e) => {
+                            u.set_search_busy(false);
+                            s.account_error = false;
+                            u.set_error_is_account(false);
+                            report_error(&mut s, &u, e);
+                        }
                     }
                 }
                 if let Some(engine) = &s.engine {
@@ -1693,6 +2047,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                         } else {
                             s.active_playback = false;
+                            u.set_paused(true);
                             s.radio_resume_when_ready = s.settings.autoplay;
                             request_radio(&mut s, &u, &library_tx, false);
                             if !failed {
@@ -1701,6 +2056,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     } else if failed {
                         s.active_playback = false;
+                        u.set_paused(true);
                     }
                 }
             },
@@ -1790,6 +2146,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 tracks: vec![
                     Track {
                         artwork_url: None,
+                        recommended: false,
                         title: "Tide Lines".into(),
                         artist: "Nova Wells".into(),
                         album: "Red Terrain".into(),
@@ -1797,6 +2154,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     },
                     Track {
                         artwork_url: None,
+                        recommended: false,
                         title: "Hollow Coast".into(),
                         artist: "Echo Frame".into(),
                         album: "Midnight Geometry".into(),
@@ -1804,6 +2162,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     },
                     Track {
                         artwork_url: None,
+                        recommended: false,
                         title: "A Quiet Sun / An intentionally long title for layout verification"
                             .into(),
                         artist: "True North".into(),
@@ -1812,6 +2171,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     },
                     Track {
                         artwork_url: None,
+                        recommended: false,
                         title: "Still Here".into(),
                         artist: "Maris".into(),
                         album: "Still Here".into(),
@@ -1819,6 +2179,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     },
                     Track {
                         artwork_url: None,
+                        recommended: false,
                         title: "Drift".into(),
                         artist: "Nova Wells".into(),
                         album: "Red Terrain".into(),
@@ -1829,6 +2190,105 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
             refresh(&ui, &s);
             ui.set_status_text("Visual test data · playback inactive".into());
+        }
+        {
+            let mut s = state.borrow_mut();
+            s.detail_tracks = s.settings.queue.tracks.clone();
+            s.search_tracks = s.settings.queue.tracks.iter().take(3).cloned().collect();
+            for t in s.settings.queue.tracks.iter_mut().skip(3) {
+                t.recommended = true;
+            }
+            ui.set_detail_title("Late night focus".into());
+            refresh(&ui, &s);
+            refresh_content_models(&s, &ui);
+        }
+        if let Some(audio) = std::env::args()
+            .skip_while(|a| a != "--fixture-audio")
+            .nth(1)
+        {
+            {
+                let mut s = state.borrow_mut();
+                for t in s.settings.queue.tracks.iter_mut() {
+                    t.source = audio.clone();
+                }
+                s.detail_tracks = s.settings.queue.tracks.clone();
+                s.search_tracks = s.detail_tracks.iter().take(3).cloned().collect();
+            }
+            ui.set_search_open(true);
+            ui.set_library_open(false);
+            ui.invoke_select_search_track(1);
+            assert!(
+                ui.get_search_open() && !ui.get_queue_open(),
+                "Song play must preserve search"
+            );
+            assert_eq!(
+                state.borrow().settings.queue.tracks.len(),
+                1,
+                "Playing a search song starts a fresh seed"
+            );
+            ui.invoke_queue_search_track(2, false);
+            {
+                let mut s = state.borrow_mut();
+                let mut automatic = s.search_tracks[0].clone();
+                automatic.recommended = true;
+                s.settings.queue.tracks.push(automatic);
+            }
+            ui.invoke_queue_search_track(0, true);
+            assert_eq!(state.borrow().settings.queue.tracks[1].title, "Tide Lines");
+            assert!(
+                state
+                    .borrow()
+                    .settings
+                    .queue
+                    .tracks
+                    .last()
+                    .unwrap()
+                    .recommended
+            );
+            ui.invoke_toggle_autoplay();
+            assert!(
+                !state
+                    .borrow()
+                    .settings
+                    .queue
+                    .tracks
+                    .iter()
+                    .any(|t| t.recommended),
+                "Autoplay off removes upcoming suggestions"
+            );
+            ui.invoke_toggle_autoplay();
+            ui.set_search_open(false);
+            ui.set_detail_open(true);
+            ui.invoke_select_detail_track(2);
+            assert!(
+                ui.get_detail_open() && !ui.get_queue_open(),
+                "Playlist play must preserve detail view"
+            );
+            assert_eq!(state.borrow().settings.queue.current, Some(2));
+            ui.invoke_shuffle_detail();
+            assert_eq!(state.borrow().settings.queue.current, Some(0));
+            let title = state.borrow().settings.queue.tracks[2].title.clone();
+            ui.invoke_move_queue_track(2, -1);
+            assert_eq!(state.borrow().settings.queue.tracks[1].title, title);
+            ui.invoke_remove_queue_track(1);
+            assert_eq!(state.borrow().settings.queue.tracks.len(), 4);
+            {
+                let mut s = state.borrow_mut();
+                send(&mut s, &ui, PlaybackCommand::Stop);
+                s.active_playback = false;
+                s.settings.queue = Queue {
+                    tracks: s.detail_tracks.clone(),
+                    current: Some(0),
+                };
+                for t in s.settings.queue.tracks.iter_mut().skip(3) {
+                    t.recommended = true;
+                }
+                refresh(&ui, &s);
+            }
+            ui.set_detail_open(false);
+            ui.set_paused(true);
+            ui.set_status_text("Visual test data · playback inactive".into());
+            println!("PASS: native song/playlist play preserves browsing; search seed, queue priority, autoplay off, shuffle, reorder and removal");
         }
         let output = PathBuf::from(dir);
         std::fs::create_dir_all(&output)?;
@@ -1858,9 +2318,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     1 => "light.png",
                     2 => "compact-queue.png",
                     3 => "compact-library.png",
-                    4 => "queue.png",
-                    5 => "library.png",
-                    6 => "collapsed.png",
+                    4 => "playlist-detail.png",
+                    5 => "search.png",
+                    6 => "queue.png",
+                    7 => "settings.png",
+                    8 => "library.png",
+                    9 => "collapsed.png",
                     _ => "restored.png",
                 };
                 if let Ok(pixels) = u.window().take_snapshot() {
@@ -1882,7 +2345,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     1 => {
                         u.invoke_toggle_compact();
-                        u.set_home_open(false);
                         u.set_queue_open(true);
                     }
                     2 => {
@@ -1892,17 +2354,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     3 => {
                         u.invoke_toggle_compact();
                         u.invoke_switch_mode();
+                        u.set_detail_open(true);
+                    }
+                    4 => {
+                        u.set_detail_open(false);
+                        u.set_search_open(true);
+                    }
+                    5 => {
+                        u.set_search_open(false);
                         u.set_library_open(false);
                         u.set_queue_open(true);
                     }
-                    4 => {
+                    6 => {
                         u.set_queue_open(false);
+                        u.set_settings_open(true);
+                    }
+                    7 => {
+                        u.set_settings_open(false);
                         u.set_library_open(true);
                     }
-                    5 => {
+                    8 => {
                         u.invoke_collapse_player();
                     }
-                    6 => {
+                    9 => {
                         u.invoke_collapse_player();
                         u.set_library_open(false);
                         u.set_home_open(true);
@@ -1974,6 +2448,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn older_saved_tracks_default_to_manual() {
+        let t: Track =
+            serde_json::from_str(r#"{"title":"old","artist":"","album":"","source":"local.wav"}"#)
+                .unwrap();
+        assert!(!t.recommended);
+    }
+
+    #[test]
     fn account_gate_is_only_for_youtube_hosts() {
         for source in [
             "https://www.youtube.com/watch?v=fixture0001",
@@ -1994,6 +2476,7 @@ mod tests {
     fn track(source: &str) -> Track {
         Track {
             artwork_url: None,
+            recommended: false,
             title: source.into(),
             artist: String::new(),
             album: String::new(),

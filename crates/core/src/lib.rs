@@ -11,6 +11,8 @@ pub struct Track {
     pub source: String,
     #[serde(default)]
     pub artwork_url: Option<String>,
+    #[serde(default)]
+    pub recommended: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -63,6 +65,59 @@ impl Queue {
         Some(removed)
     }
 
+    /// Insert a user choice before autoplay suggestions, keeping the active row stable.
+    pub fn insert_manual(&mut self, mut track: Track, play_next: bool) -> bool {
+        if self.tracks.len() >= MAX_QUEUE_TRACKS {
+            return false;
+        }
+        track.recommended = false;
+        let start = self.current.map_or(0, |i| i + 1).min(self.tracks.len());
+        let index = if play_next {
+            start
+        } else {
+            self.tracks
+                .iter()
+                .enumerate()
+                .skip(start)
+                .find(|(_, t)| t.recommended)
+                .map_or(self.tracks.len(), |(i, _)| i)
+        };
+        self.tracks.insert(index, track);
+        if self.current.is_none() {
+            self.current = Some(0);
+        }
+        true
+    }
+
+    /// Move an upcoming row within its manual or autoplay group.
+    pub fn move_upcoming(&mut self, index: usize, direction: i32) -> bool {
+        let start = self.current.map_or(0, |i| i + 1);
+        let target = match direction {
+            -1 => index.checked_sub(1),
+            1 => index.checked_add(1),
+            _ => None,
+        };
+        let Some(target) = target else {
+            return false;
+        };
+        if index < start
+            || target < start
+            || index >= self.tracks.len()
+            || target >= self.tracks.len()
+            || self.tracks[index].recommended != self.tracks[target].recommended
+        {
+            return false;
+        }
+        self.tracks.swap(index, target);
+        true
+    }
+    pub fn remove_autoplay_upcoming(&mut self) {
+        let start = self.current.map_or(0, |i| i + 1).min(self.tracks.len());
+        let mut next = self.tracks.split_off(start);
+        next.retain(|track| !track.recommended);
+        self.tracks.extend(next);
+    }
+
     /// Append recommendations once per source without changing the selection.
     /// Examine at most one queue's worth of inputs, even from an unbounded iterator.
     pub fn append_deduplicated(&mut self, tracks: impl IntoIterator<Item = Track>) -> usize {
@@ -93,12 +148,23 @@ impl Queue {
         if start >= self.tracks.len() {
             return;
         }
-        for i in (start + 1..self.tracks.len()).rev() {
-            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
-            let j = start + (seed as usize % (i - start + 1));
-            self.tracks.swap(i, j);
+        self.tracks[start..].sort_by_key(|track| track.recommended);
+        let split = self
+            .tracks
+            .iter()
+            .enumerate()
+            .skip(start)
+            .find(|(_, track)| track.recommended)
+            .map_or(self.tracks.len(), |(i, _)| i);
+        for (from, to) in [(start, split), (split, self.tracks.len())] {
+            for i in (from + 1..to).rev() {
+                seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+                let j = from + (seed as usize % (i - from + 1));
+                self.tracks.swap(i, j);
+            }
         }
     }
+
     pub fn select(&mut self, index: usize) -> Option<&Track> {
         if index >= self.tracks.len() {
             return None;
@@ -131,8 +197,74 @@ mod tests {
             album: String::new(),
             source: title.into(),
             artwork_url: None,
+            recommended: false,
         }
     }
+    #[test]
+    fn reorder_cannot_move_current_or_cross_autoplay_group() {
+        let mut auto = track("auto");
+        auto.recommended = true;
+        let mut q = Queue {
+            tracks: vec![track("current"), track("one"), track("two"), auto],
+            current: Some(0),
+        };
+        assert!(!q.move_upcoming(1, -1));
+        assert!(q.move_upcoming(2, -1));
+        assert_eq!(q.tracks[1].title, "two");
+        assert!(!q.move_upcoming(2, 1));
+        assert_eq!(q.current, Some(0));
+    }
+    #[test]
+    fn disabling_autoplay_preserves_current_and_manual_choices() {
+        let mut auto = track("auto");
+        auto.recommended = true;
+        let mut q = Queue {
+            tracks: vec![auto.clone(), track("manual"), auto],
+            current: Some(0),
+        };
+        q.remove_autoplay_upcoming();
+        assert_eq!(q.tracks.len(), 2);
+        assert_eq!(q.current, Some(0));
+        assert_eq!(q.tracks[1].title, "manual");
+    }
+
+    #[test]
+    fn manual_choices_precede_autoplay_without_changing_current() {
+        let mut auto = track("auto");
+        auto.recommended = true;
+        let mut q = Queue {
+            tracks: vec![track("playing"), track("chosen"), auto],
+            current: Some(0),
+        };
+        assert!(q.insert_manual(track("added"), false));
+        assert_eq!(
+            q.tracks
+                .iter()
+                .map(|t| t.title.as_str())
+                .collect::<Vec<_>>(),
+            ["playing", "chosen", "added", "auto"]
+        );
+        assert!(q.insert_manual(track("next"), true));
+        assert_eq!(q.tracks[1].title, "next");
+        assert_eq!(q.current, Some(0));
+        assert!(!q.tracks[1].recommended);
+    }
+    #[test]
+    fn shuffle_keeps_manual_tracks_ahead_of_recommendations() {
+        let mut a = track("a");
+        a.recommended = true;
+        let mut b = track("b");
+        b.recommended = true;
+        let mut q = Queue {
+            tracks: vec![track("playing"), a, track("manual"), b],
+            current: Some(0),
+        };
+        q.shuffle_upcoming(19);
+        assert_eq!(q.tracks[0].title, "playing");
+        assert_eq!(q.tracks[1].title, "manual");
+        assert!(q.tracks[2..].iter().all(|t| t.recommended));
+    }
+
     #[test]
     fn queue_does_not_wrap_without_repeat() {
         let mut q = Queue {
