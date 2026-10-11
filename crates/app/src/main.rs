@@ -789,7 +789,7 @@ fn search(query: String, cancel: Arc<AtomicBool>) -> Result<Vec<Track>, String> 
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    if std::env::args().any(|arg| arg == "--smoke-ui") {
+    if std::env::args().any(|arg| arg == "--smoke-ui" || arg.starts_with("--smoke-early-skip")) {
         let panic_hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
             panic_hook(info);
@@ -804,10 +804,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .and_then(|b| serde_json::from_slice(&b).ok())
         .unwrap_or_default();
     let smoke_autoplay = std::env::args().any(|a| a == "--smoke-autoplay");
-    if smoke_autoplay || std::env::args().any(|a| a == "--smoke-ui" || a == "--benchmark-mode") {
+    let smoke_skip_session = std::env::args().any(|a| a == "--smoke-early-skip-session");
+    let smoke_early_skip =
+        smoke_skip_session || std::env::args().any(|a| a == "--smoke-early-skip");
+    if smoke_autoplay
+        || smoke_early_skip
+        || std::env::args().any(|a| a == "--smoke-ui" || a == "--benchmark-mode")
+    {
         settings = Settings {
             transient: true,
-            volume: smoke_autoplay.then_some(0.0),
+            volume: (smoke_autoplay || smoke_early_skip).then_some(0.0),
             ..Settings::default()
         };
     }
@@ -822,7 +828,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if sanitize_queue(&mut settings.queue) {
         save(&settings);
     }
-    let test_mode = std::env::args().any(|a| a == "--smoke-ui" || a == "--benchmark-mode");
+    let test_mode = (smoke_early_skip && !smoke_skip_session)
+        || std::env::args().any(|a| a == "--smoke-ui" || a == "--benchmark-mode");
     let provider = if test_mode {
         None
     } else {
@@ -1773,6 +1780,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
+    // Prepare as soon as current playback is loaded, rather than waiting until
+    // EOF approaches. Keep the candidate through Pause so an early skip can
+    // use it. The resolver deduplicates requests and retains only one stream.
+    let preparation_timer = slint::Timer::default();
+    if state.borrow().engine.is_some() {
+        let state = state.clone();
+        preparation_timer.start(
+            slint::TimerMode::Repeated,
+            Duration::from_millis(250),
+            move || {
+                let s = state.borrow();
+                let Some(engine) = &s.engine else {
+                    return;
+                };
+                let p = engine.snapshot();
+                let eligible = s.active_playback
+                    && p.generation == s.generation
+                    && !p.loading
+                    && !p.ended
+                    && p.error.is_none();
+                let _ = engine.prepare_next(if eligible {
+                    upcoming_source(&s.settings.queue, s.settings.repeat)
+                } else {
+                    None
+                });
+            },
+        );
+    }
     // Publish confirmed playback state promptly so Windows chooses the correct
     // Play/Pause action even when the user presses a media key twice quickly.
     // Metadata and timeline writes are cached inside MediaSession.
@@ -2065,13 +2100,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     u.set_duration(p.duration as f32);
                     u.set_paused(p.paused);
                     let failed = p.error.is_some();
-                    let prepare = !p.loading && !p.ended && !failed && !p.paused
-                        && p.duration > 0.0 && p.duration - p.position <= 60.0;
-                    let _ = engine.prepare_next(if prepare {
-                        upcoming_source(&s.settings.queue, s.settings.repeat)
-                    } else {
-                        None
-                    });
                     if let Some(e) = p.error {
                         u.set_status_text(e.into());
                     } else if let Some(error) = &s.command_error {
@@ -2567,6 +2595,89 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
         );
     }
+    let early_skip_passed = Rc::new(RefCell::new(!smoke_early_skip));
+    if smoke_early_skip {
+        let sources: Vec<_> = std::env::args()
+            .skip_while(|a| a != "--smoke-early-skip" && a != "--smoke-early-skip-session")
+            .skip(1)
+            .take(2)
+            .collect();
+        if sources.len() != 2 || sources.iter().any(|source| !is_youtube_source(source)) {
+            return Err("Early-skip smoke requires two public YouTube URLs".into());
+        }
+        ui.invoke_change_volume(0.0);
+        {
+            let mut s = state.borrow_mut();
+            s.settings.autoplay = false;
+            s.settings.queue = Queue {
+                tracks: sources
+                    .iter()
+                    .enumerate()
+                    .map(|(index, source)| Track {
+                        title: format!("Early skip probe {}", index + 1),
+                        artist: String::new(),
+                        album: String::new(),
+                        source: source.clone(),
+                        artwork_url: None,
+                        recommended: false,
+                    })
+                    .collect(),
+                current: Some(0),
+            };
+        }
+        let state = state.clone();
+        let weak = ui.as_weak();
+        let passed = early_skip_passed.clone();
+        let started = std::time::Instant::now();
+        let mut skip_started: Option<std::time::Instant> = None;
+        let mut playback_started = false;
+        smoke_timer.start(slint::TimerMode::Repeated, Duration::from_millis(25), move || {
+            let Some(u) = weak.upgrade() else { return; };
+            if !playback_started {
+                let mut s = state.borrow_mut();
+                if !smoke_skip_session || s.account_verified {
+                    if !play(&mut s, &u) {
+                        eprintln!("Could not start early-skip probe");
+                        let _ = slint::quit_event_loop();
+                        return;
+                    }
+                    playback_started = true;
+                } else if started.elapsed() > Duration::from_secs(90) {
+                    eprintln!("Early-skip session verification timed out");
+                    let _ = slint::quit_event_loop();
+                }
+                return;
+            }
+            // Drop the state borrow before invoking the same Next callback that
+            // the player button and Windows media key use.
+            let ready = {
+                let s = state.borrow();
+                let engine = s.engine.as_ref().unwrap();
+                let p = engine.snapshot();
+                assert_eq!(p.volume, 0.0, "Early-skip probe must stay muted");
+                if p.error.is_some() {
+                    eprintln!("Early-skip playback failed");
+                    let _ = slint::quit_event_loop();
+                    return;
+                }
+                if let Some(skipped_at) = skip_started.filter(|_| p.generation == 2 && !p.loading && p.position > 0.05) {
+                    *passed.borrow_mut() = true;
+                    println!("PASS early skip: {:.3}s from Next to decoded audio; prepared without seeking near EOF", skipped_at.elapsed().as_secs_f64());
+                    let _ = u.hide(); let _ = slint::quit_event_loop(); return;
+                }
+                skip_started.is_none() && p.generation == 1 && !p.loading && p.duration > 120.0
+                    && p.duration - p.position > 60.0 && engine.next_is_prepared(&sources[1])
+            };
+            if ready {
+                println!("Next stream ready after {:.3}s from initial Load", started.elapsed().as_secs_f64());
+                skip_started = Some(std::time::Instant::now());
+                u.invoke_media_command(3, 0.0);
+            }
+            if started.elapsed() > Duration::from_secs(90) {
+                eprintln!("Early-skip smoke timed out"); let _ = u.hide(); let _ = slint::quit_event_loop();
+            }
+        });
+    }
     let autoplay_passed = Rc::new(RefCell::new(!smoke_autoplay));
     if smoke_autoplay {
         let state = state.clone();
@@ -2600,6 +2711,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let result = ui.run();
     timer.stop();
+    preparation_timer.stop();
+    media_timer.stop();
     smoke_timer.stop();
     let mut s = state.borrow_mut();
     s.search_cancel.store(true, Ordering::Release);
@@ -2614,6 +2727,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let _ = e.send(PlaybackCommand::Shutdown);
     }
     result?;
+    if !*early_skip_passed.borrow() {
+        return Err("Early-skip verification did not complete".into());
+    }
     if !*autoplay_passed.borrow() {
         return Err("Live autoplay verification did not complete".into());
     }

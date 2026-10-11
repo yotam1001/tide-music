@@ -159,3 +159,35 @@ The visual pass retains layout dimensions and navigation. Native screenshots
 cover dark/light Home, Library, playlist details, search, both queue layouts,
 insertion feedback, settings, mini and restore. Real pointer drag checks remain
 part of that smoke test.
+
+## Early skipping
+
+The earlier final-minute preparation gate has been removed. A 250 ms scheduler
+requests the next stream once current playback has loaded, including while
+paused. Only one stream address is retained, for at most ten minutes and never
+past thirty seconds before its signed expiry. Both playback paths retain the
+same best-available-audio selection.
+
+The opt-in muted app probe uses two public clips and invokes the actual Next
+callback well before the first clip ends. A release run without an account
+prepared the next stream 6.458 seconds after the initial load request and reached
+decoded audio 0.545 seconds after Next. A debug run using the existing encrypted
+session verified the account, prepared the next stream after 12.201 seconds and
+reached decoded audio 0.328 seconds after Next. No private library data or
+credentials are included in these measurements.
+
+The final release, with retry handling and diagnostics removed, repeated the
+signed-in check: preparation was ready after 14.106 seconds and Next reached
+decoded audio in 0.355 seconds.
+
+One preceding authenticated probe timed out before readiness; a subsequent
+diagnostic probe accepted the stream and passed. Failed preparation now has a
+twenty-second retry backoff. A fake-resolver test verifies failure, deduplication
+during backoff, successful retry and subsequent cache reuse; another test covers
+stale cancellation. Temporary diagnostics were removed. These are individual local observations, not a
+latency guarantee. Skipping before preparation finishes, or selecting a different
+song, can still require a network lookup. This check does not validate the
+separate authenticated recommendation handoff described above.
+
+The revision passes 59 deterministic Rust tests; three helper/interactive tests
+remain opt-in. Formatting and strict Clippy also pass.

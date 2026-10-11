@@ -20,10 +20,12 @@ extraction. Child `PATH` includes the discovered runtime directory so
 
 `prepare_next(Some(source))` prepares one upcoming YouTube stream, with
 deduplicated requests, a 45-second resolution timeout, a 2 MiB metadata output
-limit and a 90-second memory-only lifetime. `prepare_next(None)` cancels it.
-The app schedules this during the final minute of unpaused playback. Queue
+limit and a memory-only lifetime capped at ten minutes and thirty seconds before signed URL expiry. Invalid or already-expiring addresses fall back to ordinary loading. `prepare_next(None)` cancels it.
+The app schedules this once current playback is loaded, checking every 250 ms; Pause retains the candidate for early skipping. Queue
 changes replace the request; Load consumes a matching fresh result and cancels
-unfinished work. Stop and Drop also cancel and join preparation. Each resolver
+unfinished work. Failed resolution can retry after a twenty-second backoff,
+without repeatedly launching helpers on every timer tick. Stop and Drop also
+cancel and join preparation. Each resolver
 owns a kill-on-close process job and, when signed in, an exclusive cookie copy
 in the protected lease directory that is removed after process cleanup.
 
@@ -37,6 +39,12 @@ starts a fresh mpv session and is not guaranteed gapless playback.
 An opt-in muted public-source probe compares cold and prepared startup:
 `cargo run -p tide-playback --example transition -- <public-url> <next-public-url>`.
 It uses no account session and checks cancellation when the handle is dropped.
+
+The app-level early-skip check uses transient settings and invokes the same Next
+callback as the player controls:
+`cargo run -p tide-music -- --smoke-early-skip <public-url> <next-public-url>`.
+Use `--smoke-early-skip-session` instead to verify the existing encrypted local
+session before testing. Both probes stay muted and do not save their test queue.
 
 Runtime discovery checks, in order, `TIDE_RUNTIME_DIR`, the app's adjacent
 `tools` directory, `.tools/runtime` beside the app or in nearby project
