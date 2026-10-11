@@ -11,9 +11,12 @@ import sys
 import tempfile
 import time
 import warnings
+from urllib.parse import urlsplit
 
 MAX_INPUT = 65536
 MAX_TRACKS = 2000
+MAX_RADIO_TRACKS = 25
+ARTWORK_HOSTS = ("ytimg.com", "ggpht.com", "googleusercontent.com")
 LOGIN_SECONDS = 8 * 60
 LOGIN_RETRY_SECONDS = 15
 MUSIC_URL = "https://music.youtube.com"
@@ -305,24 +308,72 @@ def clean(value, limit=300):
 
 
 def identifier(value, video=False):
-    value = str(value or "")
+    if not isinstance(value, str):
+        return ""
     pattern = r"[A-Za-z0-9_-]{11}" if video else r"[A-Za-z0-9_-]{1,160}"
     return value if re.fullmatch(pattern, value) else ""
 
 
-def tracks(items):
-    result = []
-    for item in items[:MAX_TRACKS]:
-        video = identifier(item.get("videoId"), True)
-        if not video:
+def artwork_url(item):
+    """Choose a small public image without forwarding any account headers."""
+    thumbnails = item.get("thumbnails") or item.get("thumbnail") or []
+    if not isinstance(thumbnails, list):
+        return None
+    candidates = []
+    for thumbnail in thumbnails[:32]:
+        if not isinstance(thumbnail, dict):
             continue
+        url = thumbnail.get("url")
+        if (not isinstance(url, str) or not 1 <= len(url) <= 2048
+                or any(ord(char) <= 32 or ord(char) >= 127 for char in url)):
+            continue
+        try:
+            parsed = urlsplit(url)
+            host = parsed.hostname or ""
+            if (parsed.scheme != "https" or parsed.username is not None
+                    or parsed.password is not None or parsed.port not in (None, 443)
+                    or not any(host == allowed or host.endswith("." + allowed) for allowed in ARTWORK_HOSTS)):
+                continue
+        except ValueError:
+            continue
+        width, height = thumbnail.get("width"), thumbnail.get("height")
+        size = max(width, height) if (type(width) is int and type(height) is int
+                                     and 0 < width <= 8192 and 0 < height <= 8192) else 8192
+        candidates.append((abs(size - 120), size, url))
+    return min(candidates)[2] if candidates else None
+
+
+def artist_names(item):
+    artists = item.get("artists") or item.get("author") or []
+    if not isinstance(artists, list):
+        return ""
+    names = [clean(artist.get("name")) for artist in artists[:30] if isinstance(artist, dict)]
+    return clean(", ".join(name for name in names if name))
+
+
+def tracks(items, limit=MAX_TRACKS, exclude=(), deduplicate=False):
+    result = []
+    if not isinstance(items, list):
+        return result
+    seen = set(exclude)
+    for item in items[:MAX_TRACKS]:
+        if not isinstance(item, dict) or item.get("isAvailable") is False:
+            continue
+        video = identifier(item.get("videoId"), True)
+        if not video or video in seen:
+            continue
+        if deduplicate:
+            seen.add(video)
         album = item.get("album") or {}
         result.append({
             "title": clean(item.get("title")),
-            "artist": clean(", ".join(a.get("name", "") for a in item.get("artists", []) or [])),
+            "artist": artist_names(item),
             "album": clean(album.get("name") if isinstance(album, dict) else ""),
             "source": "https://www.youtube.com/watch?v=" + video,
+            "artwork_url": artwork_url(item),
         })
+        if len(result) >= limit:
+            break
     return result
 
 
@@ -333,9 +384,33 @@ def run(client, request):
         playlists = client.get_library_playlists(limit=201)
         return {"type": "library", "account": clean(info.get("accountName") or info.get("name") or "YouTube Music"),
                 "playlists": [{"id": identifier(p.get("playlistId")), "title": clean(p.get("title")),
-                               "subtitle": clean(str(p.get("count") or "") + " tracks")}
-                              for p in playlists[:200] if identifier(p.get("playlistId"))],
+                               "subtitle": clean(str(p.get("count") or "") + " tracks"),
+                               "artwork_url": artwork_url(p)}
+                              for p in playlists[:200] if isinstance(p, dict) and identifier(p.get("playlistId"))],
                 "truncated": len(playlists) > 200}
+    if action == "radio":
+        video = identifier(request.get("video_id"), True)
+        empty = {"type": "tracks", "tracks": [], "truncated": False}
+        if not video:
+            return empty
+        try:
+            # The API's limit is a minimum; normalize and cap the actual output.
+            # This read does not call any history, rating, or library write API.
+            data = client.get_watch_playlist(videoId=video, limit=MAX_RADIO_TRACKS, radio=True)
+            items = data.get("tracks", []) if isinstance(data, dict) else []
+            if not isinstance(items, list):
+                return empty
+            return {"type": "tracks", "tracks": tracks(items, MAX_RADIO_TRACKS, (video,), True),
+                    "truncated": len(items) > MAX_RADIO_TRACKS}
+        except Exception as error:
+            response = getattr(error, "response", None)
+            status = getattr(response, "status_code", None) or getattr(error, "status_code", None)
+            # ytmusicapi 1.12.3 wraps HTTP errors without preserving response.
+            # Inspect only its fixed status prefix, never return exception text.
+            message = error.args[0] if error.args and isinstance(error.args[0], str) else ""
+            if status in (401, 403) or re.match(r"Server returned HTTP (401|403):", message[:32]):
+                return {"type": "error", "code": "session"}
+            return empty
     if action in ("playlist", "liked"):
         if action == "playlist":
             playlist = identifier(request.get("id"))
@@ -372,12 +447,10 @@ def run(client, request):
                         kind = "artist"
                 if not item_id:
                     continue
-                artists = item.get("artists") or item.get("author") or []
-                if not isinstance(artists, list):
-                    artists = []
                 cards.append({"id": item_id, "title": clean(item.get("title")),
-                              "subtitle": clean(", ".join(clean(a.get("name")) for a in artists if isinstance(a, dict))),
-                              "kind": kind, "shelf": clean(shelf.get("title"))})
+                              "subtitle": artist_names(item),
+                              "kind": kind, "shelf": clean(shelf.get("title")),
+                              "artwork_url": artwork_url(item)})
         return {"type": "home", "cards": cards}
     raise ValueError("unsupported action")
 

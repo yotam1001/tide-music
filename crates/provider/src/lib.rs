@@ -22,6 +22,8 @@ pub struct Playlist {
     pub id: String,
     pub title: String,
     pub subtitle: String,
+    #[serde(default)]
+    pub artwork_url: Option<String>,
 }
 #[derive(Clone, Deserialize, Serialize)]
 pub struct Card {
@@ -30,6 +32,8 @@ pub struct Card {
     pub subtitle: String,
     pub kind: String,
     pub shelf: String,
+    #[serde(default)]
+    pub artwork_url: Option<String>,
 }
 #[derive(Clone, Serialize)]
 #[serde(tag = "action", rename_all = "lowercase")]
@@ -38,6 +42,7 @@ pub enum Request {
     SwitchAccount { index: u32 },
     Library,
     Playlist { id: String },
+    Radio { video_id: String },
     Liked,
     Home,
 }
@@ -680,6 +685,39 @@ fn unprotect(_: &[u8]) -> Result<Vec<u8>, &'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn radio_request_matches_helper_contract() {
+        let request = Request::Radio {
+            video_id: "K4DyBUG242c".into(),
+        };
+        assert_eq!(
+            serde_json::to_value(request).unwrap(),
+            serde_json::json!({
+                "action": "radio", "video_id": "K4DyBUG242c"
+            })
+        );
+    }
+    #[test]
+    fn older_metadata_without_artwork_still_deserializes() {
+        let response: Response = serde_json::from_value(serde_json::json!({
+            "type": "tracks", "tracks": [{"title":"Song", "artist":"", "album":"", "source":"fixture"}],
+            "truncated":false
+        })).unwrap();
+        let Response::Tracks { tracks, .. } = response else {
+            panic!("expected tracks")
+        };
+        assert_eq!(tracks[0].artwork_url, None);
+        let playlist: Playlist = serde_json::from_value(serde_json::json!({
+            "id":"PLfixture", "title":"Mix", "subtitle":""
+        }))
+        .unwrap();
+        let card: Card = serde_json::from_value(serde_json::json!({
+            "id":"PLfixture", "title":"Mix", "subtitle":"", "kind":"playlist", "shelf":"For you"
+        }))
+        .unwrap();
+        assert_eq!(playlist.artwork_url, None);
+        assert_eq!(card.artwork_url, None);
+    }
     #[test]
     fn only_needed_headers_are_retained() {
         let headers = parse_headers(

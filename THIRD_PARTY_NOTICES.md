@@ -12,3 +12,6 @@ Tide's original application code uses the MIT license in LICENSE. Dependencies a
 YTerMusic informed the architecture investigation. Its source has not been vendored into Tide. Reused code in future contributions must preserve applicable upstream license and attribution notices.
 
 This source repository does not bundle the playback runtimes. A future binary distribution must include its required notices, licenses and any source-offer obligations for the particular builds it ships.
+
+
+The thumbnail fetcher also uses ureq, url and the image crate (JPEG/WebP enabled); Windows icon embedding uses winresource. Their dependency licenses and those of transitive packages are retained in Cargo package metadata and the installed crates. These crates are obtained through Cargo rather than vendored here.

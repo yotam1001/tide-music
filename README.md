@@ -2,20 +2,23 @@
 
 A Windows-first native Rust music player designed to leave resources available for games.
 
-**Working early prototype:** native interface, local/YouTube music playback, search, queue controls and Windows media controls. Optional account integration reads playlists, Liked Songs and recommendations and supplies your signed-in session to playback. Live account/Premium verification requires your local session and is still pending. YouTube features use unofficial tooling and can fail when YouTube changes. This is not an official YouTube product.
+**Working early prototype:** native interface, local/YouTube music playback, search, queue controls and Windows media controls. Optional account integration reads playlists, Liked Songs and recommendations and supplies your signed-in session to playback. Local signed-in library, Premium extraction and muted native playback have been verified; each installation still needs its own session. YouTube features use unofficial tooling and can fail when YouTube changes. This is not an official YouTube product.
 
 ## Design
 
-- Full charcoal/burgundy library view.
-- Earthy compact player with a text-first queue.
-- Collapsed transport strip using the same queue and playback engine.
+- Home recommendations, account Library and a dedicated Queue with persistent playback controls.
+- Independent dark/light themes and full/compact sizing; the light palette uses warm grey, terracotta and muted purple.
+- A mini player with a visible Restore button using the same queue and playback engine.
+- Playlist shuffle, upcoming-track shuffle/removal, song radio and recommendation autoplay.
+- Small real thumbnails with a bounded memory cache and no generic artwork banner.
 - Native Slint interface; no embedded browser or Electron runtime.
 
 ![Full native interface](docs/screenshots/full.png)
-![Compact native interface](docs/screenshots/light.png)
-![Native account library](docs/screenshots/library-full.png)
+![Light native interface](docs/screenshots/light.png)
+![Queue](docs/screenshots/queue.png)
+![Native account library](docs/screenshots/library.png)
 
-These are native screenshots with explicitly selected visual-test metadata; playback is inactive in the screenshots. Abstract cover art is a vector placeholder, not fetched album artwork. Earlier design references are in `docs/concepts/`.
+These are native screenshots with explicitly selected visual-test metadata; playback is inactive in the screenshots. The screenshot fixtures omit artwork URLs; the live app fetches small provider thumbnails when available. Earlier design references are in `docs/concepts/`.
 
 ## Build and run
 
@@ -28,7 +31,7 @@ cargo run -p tide-music
 
 The setup script downloads mpv, yt-dlp and Deno into `.tools/runtime`; it does not alter system PATH, register startup tasks or read browser credentials. Alternatively place trusted binaries in `tools/` beside the application, set `TIDE_RUNTIME_DIR` to their directory, or use PATH. mpv is the native audio engine; yt-dlp/Deno handle the current YouTube extraction requirements. Ordinary local playback only needs mpv.
 
-Paste a supported http/https media link, enter a YouTube search query, or open an audio file. Search currently adds up to eight results to the queue; select a row to play. Use mode controls to switch between full, compact and collapsed views. The prototype saves queue metadata and preferences under the current user's application-data directory. For account features, install the optional helper with `scripts/setup-provider.ps1`, then choose **Library → Connect account** and select `cookies.sqlite` from your existing Zen profile. A manual session import is available as a fallback. See [local account setup](docs/ACCOUNT_SETUP.md). Sessions are encrypted with Windows DPAPI; your regular browser stays open and audio is streamed rather than downloaded as a library.
+Paste a supported http/https media link, enter a YouTube search query, or open an audio file. Search currently adds up to eight results to the queue; select a row to play. Use Light/Dark to change brightness, Compact/Full size to change density, and Mini/Restore to change the window layout. Theme changes preserve window size. Library playlists have separate Play and Shuffle actions. Queue exposes upcoming tracks, removal, shuffle, repeat, Autoplay and Start radio. Autoplay requests recommendations from the current song when the queue is nearly finished; it requires a connected account and an available provider. The prototype saves queue metadata and preferences under the current user's application-data directory. For account features, install the optional helper with `scripts/setup-provider.ps1`, then choose **Library → Connect account** and select `cookies.sqlite` from your existing Zen profile. A manual session import is available as a fallback. See [local account setup](docs/ACCOUNT_SETUP.md). Sessions are encrypted with Windows DPAPI; your regular browser stays open and audio is streamed rather than downloaded as a library.
 
 ## Resource use
 
@@ -44,7 +47,7 @@ python scripts/check_public_files.py
 python -m unittest discover -s helpers -p "test_*.py"
 ```
 
-Native screenshots: `cargo run -p tide-music -- --smoke-ui .local/screens --smoke-populated`. Add `--smoke-library` for the account screen with synthetic metadata. This shows and captures full, compact and collapsed views, then exits. Smoke/benchmark modes never load your saved account session.
+Native screenshots: `cargo run -p tide-music -- --smoke-ui .local/screens --smoke-populated`. Add `--smoke-library` for the account screen with synthetic metadata. This shows and captures Home, Library, Queue, light/dark, compact and mini/restore views, then exits. UI smoke/benchmark modes never load your saved account session. The opt-in `--smoke-autoplay` check uses the existing encrypted session, mutes audio, tests native EOF advancing into song recommendations, then exits without saving its temporary queue or volume.
 
 ## Privacy and credentials
 

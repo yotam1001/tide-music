@@ -1,4 +1,7 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
+
+pub const MAX_QUEUE_TRACKS: usize = 2000;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Track {
@@ -6,6 +9,8 @@ pub struct Track {
     pub artist: String,
     pub album: String,
     pub source: String,
+    #[serde(default)]
+    pub artwork_url: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -39,6 +44,49 @@ pub struct Queue {
 }
 
 impl Queue {
+    /// Remove a row and keep the active track selected when it still exists.
+    /// Removing the active row selects its successor, or the final predecessor.
+    pub fn remove(&mut self, index: usize) -> Option<Track> {
+        if index >= self.tracks.len() {
+            return None;
+        }
+        let removed = self.tracks.remove(index);
+        self.current = self.current.and_then(|current| {
+            if self.tracks.is_empty() {
+                None
+            } else if index < current {
+                Some(current.saturating_sub(1).min(self.tracks.len() - 1))
+            } else {
+                Some(current.min(self.tracks.len() - 1))
+            }
+        });
+        Some(removed)
+    }
+
+    /// Append recommendations once per source without changing the selection.
+    /// Examine at most one queue's worth of inputs, even from an unbounded iterator.
+    pub fn append_deduplicated(&mut self, tracks: impl IntoIterator<Item = Track>) -> usize {
+        let mut sources: HashSet<String> = self.tracks.iter().map(|t| t.source.clone()).collect();
+        let mut appended = 0;
+        for track in tracks.into_iter().take(MAX_QUEUE_TRACKS) {
+            if self.tracks.len() >= MAX_QUEUE_TRACKS {
+                break;
+            }
+            if !track.source.trim().is_empty() && sources.insert(track.source.clone()) {
+                self.tracks.push(track);
+                appended += 1;
+            }
+        }
+        appended
+    }
+
+    /// Randomize a freshly loaded playlist, including its first track.
+    pub fn shuffle_all(&mut self, seed: u64) {
+        self.current = None;
+        self.shuffle_upcoming(seed);
+        self.current = (!self.tracks.is_empty()).then_some(0);
+    }
+
     /// Randomize upcoming tracks while keeping the current and played prefix.
     pub fn shuffle_upcoming(&mut self, mut seed: u64) {
         let start = self.current.map_or(0, |i| i + 1);
@@ -82,6 +130,7 @@ mod tests {
             artist: String::new(),
             album: String::new(),
             source: title.into(),
+            artwork_url: None,
         }
     }
     #[test]
@@ -119,5 +168,88 @@ mod tests {
         let mut upcoming: Vec<_> = q.tracks[2..].iter().map(|t| t.title.as_str()).collect();
         upcoming.sort();
         assert_eq!(upcoming, vec!["c", "d", "e"]);
+    }
+    #[test]
+    fn removal_preserves_active_identity_and_reselects_deleted_current() {
+        let mut q = Queue {
+            tracks: vec![track("a"), track("b"), track("c"), track("d")],
+            current: Some(1),
+        };
+        assert_eq!(q.remove(3).unwrap().source, "d");
+        assert_eq!(q.current, Some(1));
+        assert_eq!(q.tracks[q.current.unwrap()].source, "b");
+        assert_eq!(q.remove(0).unwrap().source, "a");
+        assert_eq!(q.current, Some(0));
+        assert_eq!(q.tracks[q.current.unwrap()].source, "b");
+        assert_eq!(q.remove(0).unwrap().source, "b");
+        assert_eq!(q.current, Some(0));
+        assert_eq!(q.tracks[q.current.unwrap()].source, "c");
+        assert!(q.remove(1).is_none());
+        assert_eq!(q.current, Some(0));
+        assert_eq!(q.remove(0).unwrap().source, "c");
+        assert!(q.tracks.is_empty());
+        assert_eq!(q.current, None);
+    }
+    #[test]
+    fn removal_of_final_current_selects_previous_and_unselected_queue_stays_unselected() {
+        let mut q = Queue {
+            tracks: vec![track("a"), track("b")],
+            current: Some(1),
+        };
+        q.remove(1);
+        assert_eq!(q.current, Some(0));
+        q.current = None;
+        q.remove(0);
+        assert_eq!(q.current, None);
+    }
+    #[test]
+    fn append_skips_existing_and_incoming_duplicates_and_respects_capacity() {
+        let mut q = Queue {
+            tracks: vec![track("a")],
+            current: Some(0),
+        };
+        assert_eq!(
+            q.append_deduplicated([track("a"), track("b"), track("b"), track("")]),
+            1
+        );
+        assert_eq!(q.current, Some(0));
+        assert_eq!(
+            q.append_deduplicated((0..MAX_QUEUE_TRACKS).map(|i| track(&format!("new-{i}")))),
+            MAX_QUEUE_TRACKS - 2
+        );
+        assert_eq!(q.tracks.len(), MAX_QUEUE_TRACKS);
+        assert_eq!(q.append_deduplicated([track("overflow")]), 0);
+        assert_eq!(q.current, Some(0));
+    }
+    #[test]
+    fn append_bounds_duplicate_only_iterators() {
+        let mut q = Queue {
+            tracks: vec![track("a")],
+            current: Some(0),
+        };
+        assert_eq!(q.append_deduplicated(std::iter::repeat(track("a"))), 0);
+    }
+    #[test]
+    fn shuffle_all_is_reproducible_and_can_change_first_track() {
+        let mut q = Queue {
+            tracks: vec![track("a"), track("b"), track("c"), track("d"), track("e")],
+            current: Some(3),
+        };
+        let mut copy = q.clone();
+        q.shuffle_all(123);
+        copy.shuffle_all(123);
+        assert_eq!(q.tracks, copy.tracks);
+        assert_eq!(q.current, Some(0));
+        let mut titles: Vec<_> = q.tracks.iter().map(|t| t.title.as_str()).collect();
+        titles.sort();
+        assert_eq!(titles, vec!["a", "b", "c", "d", "e"]);
+        assert!((0..10).any(|seed| {
+            let mut other = copy.clone();
+            other.shuffle_all(seed);
+            other.tracks[0].source != "a"
+        }));
+        let mut empty = Queue::default();
+        empty.shuffle_all(1);
+        assert_eq!(empty.current, None);
     }
 }

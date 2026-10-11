@@ -69,3 +69,20 @@ Live-service smoke tests are separate from deterministic CI because provider ava
 Account switching validates the selected signed-in Google account before encrypted replacement. Tests cover unavailable slots, input bounds, dropping previous brand-channel selection, and cancellation preserving the previous encrypted session. Home parsing skips unsupported mixed content. Windows selected-profile tests cover canonical short-path aliases.
 
 A local authenticated check verified the requested second Google account, its library, liked songs and Home response. A public YouTube audio extraction with selected-account headers and webpage/config skips succeeded and the extractor detected a Premium subscription. Credentials, private account identities and collection contents are not part of this repository.
+
+
+## Navigation, queue and artwork revision
+
+The revision passes 40 deterministic Rust tests (two separate manual/live tests remain ignored), 29 Python helper tests and strict Clippy. Eight native screenshot states cover Home, Library, Queue, light/dark, compact, mini and restore; theme switching asserts that the window dimensions stay unchanged, and volume changing asserts the displayed value updates immediately. A second populated fixture checks long titles and queue alignment. The release PE contains multi-size ICON/GROUP_ICON resources.
+
+Short process-tree measurements of the new release, without account access:
+
+| Scenario | Settled private MiB | Settled total working set MiB |
+| --- | ---: | ---: |
+| Full, empty queue | 7.66 | 28.33 |
+| Compact, empty queue | 6.14 | 25.13 |
+| Compact, muted public YouTube playback | 49.92 | 69.80 |
+
+Idle samples lasted 12 seconds, excluding the first four samples. Playback lasted 20 seconds; the settled median uses the final eight samples and includes mpv. The highest observed startup/extraction working set was 136.29 MiB. These measurements exclude album artwork and signed-in library contents and do not prove long-session behavior or gaming frame-time impact. Decoded artwork cache pixels are capped at about 1.27 MiB, with extra temporary fetch/decode buffers.
+
+A live song-radio read returned 25 usable recommendation tracks with thumbnail URLs. The opt-in muted `--smoke-autoplay` test then found that the saved session no longer passed account verification, and timed out before starting playback. Direct account/library reads confirmed the session needed renewal. End-to-end authenticated recommendation playback is therefore pending a fresh local connection; the radio response, queue operations and native playback checks are separate evidence, not a completed autoplay handoff test. No session values, account names or private library contents are included in these results.

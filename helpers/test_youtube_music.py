@@ -9,7 +9,7 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import MagicMock, patch
-from youtube_music import (LOGIN_SECONDS, MUSIC_URL, connect, connect_existing, create_client, main,
+from youtube_music import (LOGIN_SECONDS, MAX_RADIO_TRACKS, MUSIC_URL, artwork_url, connect, connect_existing, create_client, main,
                           music_cookies, read_music_cookies, remove_login_profile, run,
                           selected_zen_database, session_headers, switch_account, tracks,
                           validate_session, wait_for_login, zen_executable)
@@ -37,6 +37,78 @@ class FakeClient:
 
 
 class ProviderTests(unittest.TestCase):
+    def test_radio_filters_seed_duplicates_malformed_and_unavailable_tracks(self):
+        client = FakeClient()
+        items = [None, "unsupported", {}, {"videoId": "bad/id"}, {"videoId": 12345678901},
+                 {"videoId": "K4DyBUG242c", "title": "Seed"},
+                 {"videoId": "00000000001", "title": "Unavailable", "isAvailable": False},
+                 {"videoId": "00000000002", "title": "First", "artists": [None, {}, {"name": "Artist"}]},
+                 {"videoId": "00000000002", "title": "Duplicate"},
+                 {"videoId": "00000000003", "title": "Second", "artists": "unsupported", "album": "unsupported"}]
+        client.get_watch_playlist = MagicMock(return_value={"tracks": items})
+        result = run(client, {"action": "radio", "video_id": "K4DyBUG242c"})
+        client.get_watch_playlist.assert_called_once_with(videoId="K4DyBUG242c", limit=25, radio=True)
+        self.assertEqual([track["title"] for track in result["tracks"]], ["First", "Second"])
+        self.assertEqual(result["tracks"][0]["artist"], "Artist")
+        self.assertEqual(result["tracks"][1]["artist"], "")
+        self.assertEqual(result["tracks"][1]["album"], "")
+        self.assertEqual(result["tracks"][0]["source"], "https://www.youtube.com/watch?v=00000000002")
+        self.assertFalse(result["truncated"])
+
+    def test_radio_caps_api_overshoot_and_only_uses_read_endpoint(self):
+        client = SimpleNamespace(get_watch_playlist=MagicMock(return_value={"tracks": [
+            {"videoId": f"{i:011}", "title": f"Track {i}"} for i in range(1, 201)]}))
+        result = run(client, {"action": "radio", "video_id": "K4DyBUG242c"})
+        self.assertEqual(len(result["tracks"]), MAX_RADIO_TRACKS)
+        self.assertEqual(result["tracks"][-1]["title"], "Track 25")
+        self.assertTrue(result["truncated"])
+        client.get_watch_playlist.assert_called_once()
+
+    def test_radio_empty_and_failures_are_bounded_generic_results(self):
+        client = SimpleNamespace(get_watch_playlist=MagicMock())
+        empty = {"type": "tracks", "tracks": [], "truncated": False}
+        for invalid in [None, 12345678901, "bad", "https://other.test"]:
+            self.assertEqual(run(client, {"action": "radio", "video_id": invalid}), empty)
+        client.get_watch_playlist.assert_not_called()
+        for malformed in [None, [], {}, {"tracks": None}, {"tracks": "unsupported"}, {"tracks": []}]:
+            client.get_watch_playlist.return_value = malformed
+            self.assertEqual(run(client, {"action": "radio", "video_id": "K4DyBUG242c"}), empty)
+        client.get_watch_playlist.side_effect = ValueError("private headers must not be returned")
+        self.assertEqual(run(client, {"action": "radio", "video_id": "K4DyBUG242c"}), empty)
+        for status in [401, 403]:
+            failure = RuntimeError("private headers must not be returned")
+            failure.response = SimpleNamespace(status_code=status)
+            client.get_watch_playlist.side_effect = failure
+            self.assertEqual(run(client, {"action": "radio", "video_id": "K4DyBUG242c"}),
+                             {"type": "error", "code": "session"})
+            client.get_watch_playlist.side_effect = RuntimeError(f"Server returned HTTP {status}: private fixture")
+            self.assertEqual(run(client, {"action": "radio", "video_id": "K4DyBUG242c"}),
+                             {"type": "error", "code": "session"})
+
+    def test_artwork_chooses_small_safe_public_thumbnail_and_watch_variant(self):
+        candidates = [{"url": "https://i.ytimg.com/large.jpg", "width": 512, "height": 512},
+                      {"url": "https://lh3.googleusercontent.com/small", "width": 96, "height": 96},
+                      {"url": "https://yt3.ggpht.com/exact", "width": 120, "height": 120}]
+        self.assertEqual(artwork_url({"thumbnails": candidates}), "https://yt3.ggpht.com/exact")
+        self.assertEqual(artwork_url({"thumbnail": candidates[:2]}), "https://lh3.googleusercontent.com/small")
+        self.assertEqual(tracks([{"videoId": "K4DyBUG242c", "thumbnail": candidates}])[0]["artwork_url"],
+                         "https://yt3.ggpht.com/exact")
+        client = FakeClient()
+        client.get_library_playlists = lambda limit: [{"playlistId": "PLfixture", "thumbnails": candidates}]
+        client.get_home = lambda limit: [{"contents": [{"videoId": "K4DyBUG242c", "thumbnails": candidates}]}]
+        self.assertEqual(run(client, {"action": "library"})["playlists"][0]["artwork_url"], "https://yt3.ggpht.com/exact")
+        self.assertEqual(run(client, {"action": "home"})["cards"][0]["artwork_url"], "https://yt3.ggpht.com/exact")
+
+    def test_artwork_rejects_unsafe_urls_and_malformed_thumbnails(self):
+        for url in ["http://i.ytimg.com/a", "https://i.ytimg.com.evil.test/a", "https://evilytimg.com/a",
+                    "https://user:password@i.ytimg.com/a", "https://127.0.0.1/a", "https://i.ytimg.com:8080/a",
+                    "https://i.ytimg.com:bad/a", "https://i.ytimg.com/a\nheader", "https://[bad/a",
+                    "https://i.ytimg.com/" + "x" * 2048]:
+            self.assertIsNone(artwork_url({"thumbnails": [{"url": url, "width": 120, "height": 120}]}))
+        for thumbnails in [None, {}, "unsupported", [None, "unsupported", {}]]:
+            self.assertIsNone(artwork_url({"thumbnails": thumbnails}))
+        self.assertIsNone(artwork_url({"thumbnails": [{}] * 32 + [{"url": "https://i.ytimg.com/a"}]}))
+
     def test_library_limit_and_identity(self):
         result = run(FakeClient(), {"action": "library"})
         self.assertEqual(result["account"], "Fixture listener")

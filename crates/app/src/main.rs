@@ -12,16 +12,48 @@ use std::{
     time::{Duration, Instant},
 };
 use tide_core::{PlaybackCommand, Queue, Track};
+mod artwork;
 slint::include_modules!();
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 struct Settings {
     queue: Queue,
     light_mode: bool,
+    #[serde(default)]
+    compact_mode: bool,
+    #[serde(default = "enabled_by_default")]
+    autoplay: bool,
     volume: Option<f64>,
     repeat: bool,
     #[serde(skip)]
     transient: bool,
+}
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            queue: Queue::default(),
+            light_mode: false,
+            compact_mode: false,
+            autoplay: true,
+            volume: None,
+            repeat: false,
+            transient: false,
+        }
+    }
+}
+fn enabled_by_default() -> bool {
+    true
+}
+#[derive(Clone, Default)]
+enum LibraryAction {
+    #[default]
+    Replace,
+    Shuffle,
+    Radio {
+        seed: String,
+        generation: u64,
+        replace_upcoming: bool,
+    },
 }
 struct State {
     settings: Settings,
@@ -39,6 +71,11 @@ struct State {
     library_playlists: Vec<tide_provider::Playlist>,
     recommendations: Vec<tide_provider::Card>,
     account_verified: bool,
+    library_action: LibraryAction,
+    shuffle_request: bool,
+    radio_attempted_generation: Option<u64>,
+    radio_resume_when_ready: bool,
+    artwork: RefCell<artwork::ArtworkCache>,
 }
 
 type LibraryResult = Result<tide_provider::Response, String>;
@@ -67,6 +104,15 @@ fn request_library(
         request,
         tide_provider::Request::Connect { .. } | tide_provider::Request::SwitchAccount { .. }
     );
+    let action = match &request {
+        tide_provider::Request::Radio { video_id } => LibraryAction::Radio {
+            seed: video_id.clone(),
+            generation: s.generation,
+            replace_upcoming: false,
+        },
+        tide_provider::Request::Playlist { .. } if s.shuffle_request => LibraryAction::Shuffle,
+        _ => LibraryAction::Replace,
+    };
     let Some(provider) = s
         .provider
         .clone()
@@ -76,6 +122,8 @@ fn request_library(
         return;
     };
     s.library_cancel.store(false, Ordering::Release);
+    s.library_action = action;
+    s.shuffle_request = false;
     let cancel = s.library_cancel.clone();
     let tx = tx.clone();
     u.set_account_busy(true);
@@ -92,10 +140,65 @@ fn request_library(
     }));
 }
 
+fn current_video_id(s: &State) -> Option<String> {
+    let track = s
+        .settings
+        .queue
+        .current
+        .and_then(|index| s.settings.queue.tracks.get(index))?;
+    let url = url::Url::parse(&track.source).ok()?;
+    if !is_youtube_source(&track.source) {
+        return None;
+    }
+    let id = if url.host_str() == Some("youtu.be") {
+        url.path().trim_start_matches('/').to_string()
+    } else {
+        url.query_pairs()
+            .find(|(key, _)| key == "v")?
+            .1
+            .into_owned()
+    };
+    (id.len() == 11
+        && id
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_'))
+    .then_some(id)
+}
+fn request_radio(s: &mut State, u: &AppWindow, tx: &mpsc::SyncSender<LibraryResult>, force: bool) {
+    if s.library_worker.is_some() || !s.account_verified || (!force && !s.settings.autoplay) {
+        return;
+    }
+    let Some(index) = s.settings.queue.current else {
+        return;
+    };
+    if !force
+        && (s.settings.queue.tracks.len().saturating_sub(index + 1) > 2
+            || s.radio_attempted_generation == Some(s.generation))
+    {
+        return;
+    }
+    let Some(seed) = current_video_id(s) else {
+        return;
+    };
+    s.radio_attempted_generation = Some(s.generation);
+    request_library(s, u, tx, tide_provider::Request::Radio { video_id: seed });
+    if force {
+        if let LibraryAction::Radio {
+            replace_upcoming, ..
+        } = &mut s.library_action
+        {
+            *replace_upcoming = true;
+        }
+    }
+}
+
 fn configure_account_playback(s: &mut State, u: &AppWindow) -> bool {
     s.engine.take(); // Drop/join helpers before releasing their cookie lease.
     s.cookie_lease.take();
     s.active_playback = false;
+    s.radio_resume_when_ready = false;
+    s.radio_attempted_generation = None;
+    s.artwork.borrow_mut().clear();
     s.account_verified = false;
     u.set_paused(true);
     u.set_position(0.0);
@@ -133,25 +236,40 @@ fn configure_account_playback(s: &mut State, u: &AppWindow) -> bool {
 }
 
 fn refresh_library_models(s: &State, u: &AppWindow) {
+    let mut artwork = s.artwork.borrow_mut();
     let playlists: Vec<PlaylistRow> = s
         .library_playlists
         .iter()
-        .map(|p| PlaylistRow {
+        .enumerate()
+        .map(|(index, p)| PlaylistRow {
             id: p.id.clone().into(),
             title: p.title.clone().into(),
             subtitle: p.subtitle.clone().into(),
+            artwork: p
+                .artwork_url
+                .as_deref()
+                .filter(|_| index < 12)
+                .map(|url| artwork.get_or_request(url))
+                .unwrap_or_default(),
         })
         .collect();
     u.set_library_playlists(ModelRc::new(VecModel::from(playlists)));
     let cards: Vec<RecommendationRow> = s
         .recommendations
         .iter()
-        .map(|p| RecommendationRow {
+        .enumerate()
+        .map(|(index, p)| RecommendationRow {
             id: p.id.clone().into(),
             title: p.title.clone().into(),
             subtitle: p.subtitle.clone().into(),
             kind: p.kind.clone().into(),
             shelf: p.shelf.clone().into(),
+            artwork: p
+                .artwork_url
+                .as_deref()
+                .filter(|_| index < 12)
+                .map(|url| artwork.get_or_request(url))
+                .unwrap_or_default(),
         })
         .collect();
     u.set_recommendations(ModelRc::new(VecModel::from(cards)));
@@ -201,16 +319,33 @@ fn sanitize_queue(queue: &mut Queue) -> bool {
     changed
 }
 fn refresh(ui: &AppWindow, state: &State) {
+    let mut artwork = state.artwork.borrow_mut();
+    let current = state.settings.queue.current.unwrap_or(0);
+    let current_art = state
+        .settings
+        .queue
+        .tracks
+        .get(current)
+        .and_then(|track| track.artwork_url.as_deref())
+        .map(|url| artwork.get_or_request(url))
+        .unwrap_or_default();
     let rows: Vec<TrackRow> = state
         .settings
         .queue
         .tracks
         .iter()
-        .map(|t| TrackRow {
+        .enumerate()
+        .map(|(index, t)| TrackRow {
             title: t.title.clone().into(),
             artist: t.artist.clone().into(),
             album: t.album.clone().into(),
             duration: "—".into(),
+            artwork: t
+                .artwork_url
+                .as_deref()
+                .filter(|_| index.abs_diff(current) <= 8)
+                .map(|url| artwork.get_or_request(url))
+                .unwrap_or_default(),
         })
         .collect();
     ui.set_rows(ModelRc::new(VecModel::from(rows)));
@@ -224,10 +359,12 @@ fn refresh(ui: &AppWindow, state: &State) {
         ui.set_track_title(t.title.clone().into());
         ui.set_track_artist(t.artist.clone().into());
         ui.set_track_album(t.album.clone().into());
+        ui.set_track_artwork(current_art);
     } else {
         ui.set_track_title("Nothing playing".into());
         ui.set_track_artist("Add a file or paste a music link".into());
         ui.set_track_album("".into());
+        ui.set_track_artwork(slint::Image::default());
     }
 }
 fn report_error(state: &mut State, ui: &AppWindow, error: String) {
@@ -304,6 +441,7 @@ fn play(state: &mut State, ui: &AppWindow) -> bool {
         return false;
     }
     state.command_error = None;
+    state.radio_resume_when_ready = false;
     refresh(ui, state);
     ui.set_status_text("Loading…".into());
     ui.set_position(0.0);
@@ -362,6 +500,7 @@ fn add(state: &mut State, ui: &AppWindow, source: String) -> bool {
             .into()
     };
     state.settings.queue.tracks.push(Track {
+        artwork_url: None,
         title,
         artist: String::new(),
         album: String::new(),
@@ -490,6 +629,7 @@ fn search(query: String, cancel: Arc<AtomicBool>) -> Result<Vec<Track>, String> 
                 return None;
             }
             Some(Track {
+                artwork_url: None,
                 title: e["title"].as_str().unwrap_or("Untitled").into(),
                 artist: e["uploader"].as_str().unwrap_or("").into(),
                 album: String::new(),
@@ -505,9 +645,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok()
         .and_then(|b| serde_json::from_slice(&b).ok())
         .unwrap_or_default();
-    if std::env::args().any(|a| a == "--smoke-ui" || a == "--benchmark-mode") {
+    let smoke_autoplay = std::env::args().any(|a| a == "--smoke-autoplay");
+    if smoke_autoplay || std::env::args().any(|a| a == "--smoke-ui" || a == "--benchmark-mode") {
         settings = Settings {
             transient: true,
+            volume: smoke_autoplay.then_some(0.0),
             ..Settings::default()
         };
     }
@@ -568,6 +710,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         library_playlists: Vec::new(),
         recommendations: Vec::new(),
         account_verified: false,
+        library_action: LibraryAction::default(),
+        shuffle_request: false,
+        radio_attempted_generation: None,
+        radio_resume_when_ready: false,
+        artwork: RefCell::new(if test_mode {
+            artwork::ArtworkCache::new_disabled()
+        } else {
+            artwork::ArtworkCache::new()
+        }),
     }));
     ui.set_account_connected(
         state
@@ -585,6 +736,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .into(),
     );
     ui.set_light_mode(state.borrow().settings.light_mode);
+    ui.set_compact_mode(state.borrow().settings.compact_mode);
+    ui.set_autoplay_enabled(state.borrow().settings.autoplay);
     ui.set_volume(state.borrow().settings.volume.unwrap_or(70.0) as f32);
     ui.set_repeat_enabled(state.borrow().settings.repeat);
     ui.set_paused(true);
@@ -601,6 +754,42 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     let (tx, rx) = mpsc::sync_channel(2);
     let (library_tx, library_rx) = mpsc::sync_channel::<LibraryResult>(2);
+    {
+        let state = state.clone();
+        let weak = ui.as_weak();
+        let tx = library_tx.clone();
+        ui.on_play_radio(move || {
+            if let Some(u) = weak.upgrade() {
+                request_radio(&mut state.borrow_mut(), &u, &tx, true);
+            }
+        });
+    }
+    {
+        let state = state.clone();
+        let weak = ui.as_weak();
+        let tx = library_tx.clone();
+        ui.on_shuffle_playlist(move |index| {
+            if let Some(u) = weak.upgrade() {
+                let mut s = state.borrow_mut();
+                if s.library_worker.is_some() {
+                    return;
+                }
+                if let Some(playlist) = usize::try_from(index)
+                    .ok()
+                    .and_then(|index| s.library_playlists.get(index))
+                    .cloned()
+                {
+                    s.shuffle_request = true;
+                    request_library(
+                        &mut s,
+                        &u,
+                        &tx,
+                        tide_provider::Request::Playlist { id: playlist.id },
+                    );
+                }
+            }
+        });
+    }
     ui.set_account_index(
         state
             .borrow()
@@ -812,6 +1001,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             &u,
                             format!("https://www.youtube.com/watch?v={}", card.id),
                         ) {
+                            if let Some(track) = s
+                                .settings
+                                .queue
+                                .current
+                                .and_then(|index| s.settings.queue.tracks.get_mut(index))
+                            {
+                                track.title = card.title;
+                                track.artist = card.subtitle;
+                                track.artwork_url = card.artwork_url;
+                            }
+                            refresh(&u, &s);
+                            save(&s.settings);
+                            u.set_home_open(false);
+                            u.set_queue_open(true);
                             u.set_library_open(false);
                         }
                     } else if card.kind == "playlist" {
@@ -948,14 +1151,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             send(&mut s, &u, PlaybackCommand::TogglePause);
         }
     });
-    bind!(on_next_track, |s, u| {
-        let repeat = s.settings.repeat;
-        let previous = s.settings.queue.current;
-        if s.settings.queue.next_track(repeat).is_some() && !play(&mut s, &u) {
-            s.settings.queue.current = previous;
-            refresh(&u, &s);
-        }
-    });
+    {
+        let state = state.clone();
+        let weak = ui.as_weak();
+        let tx = library_tx.clone();
+        ui.on_next_track(move || {
+            if let Some(u) = weak.upgrade() {
+                let mut s = state.borrow_mut();
+                let repeat = s.settings.repeat;
+                let previous = s.settings.queue.current;
+                if s.settings.queue.next_track(repeat).is_some() {
+                    if !play(&mut s, &u) {
+                        s.settings.queue.current = previous;
+                        refresh(&u, &s);
+                    }
+                } else if s.settings.autoplay && s.account_verified {
+                    send(&mut s, &u, PlaybackCommand::Stop);
+                    s.active_playback = false;
+                    s.radio_resume_when_ready = true;
+                    s.radio_attempted_generation = None;
+                    request_radio(&mut s, &u, &tx, false);
+                    u.set_paused(true);
+                    u.set_status_text("Finding the next recommended song...".into());
+                }
+            }
+        });
+    }
     bind!(on_previous_track, |s, u| {
         let previous = s.settings.queue.current;
         if s.settings.queue.previous_track().is_some() && !play(&mut s, &u) {
@@ -980,20 +1201,67 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     bind!(on_switch_mode, |s, u| {
         s.settings.light_mode = !u.get_light_mode();
         u.set_light_mode(s.settings.light_mode);
-        u.set_collapsed(false);
-        u.window().set_size(if s.settings.light_mode {
-            slint::LogicalSize::new(490.0, 680.0)
-        } else {
-            slint::LogicalSize::new(1200.0, 800.0)
-        });
         save(&s.settings);
     });
-    bind!(on_clear_queue, |s, u| {
-        if !send(&mut s, &u, PlaybackCommand::Stop) {
-            return;
+    bind!(on_toggle_compact, |s, u| {
+        s.settings.compact_mode = !u.get_compact_mode();
+        u.set_compact_mode(s.settings.compact_mode);
+        if !u.get_collapsed() {
+            u.window().set_size(if s.settings.compact_mode {
+                slint::LogicalSize::new(780.0, 720.0)
+            } else {
+                slint::LogicalSize::new(1140.0, 800.0)
+            });
         }
+        save(&s.settings);
+    });
+    bind!(on_toggle_autoplay, |s, u| {
+        s.settings.autoplay = !s.settings.autoplay;
+        u.set_autoplay_enabled(s.settings.autoplay);
+        if s.settings.autoplay {
+            s.radio_attempted_generation = None;
+        } else {
+            s.radio_resume_when_ready = false;
+        }
+        save(&s.settings);
+    });
+    {
+        let state = state.clone();
+        let weak = ui.as_weak();
+        ui.on_remove_queue_track(move |index| {
+            if let Some(u) = weak.upgrade() {
+                let mut s = state.borrow_mut();
+                let Ok(index) = usize::try_from(index) else {
+                    return;
+                };
+                let was_current = s.settings.queue.current == Some(index);
+                if s.settings.queue.remove(index).is_none() {
+                    return;
+                }
+                if was_current {
+                    s.radio_resume_when_ready = false;
+                }
+                if was_current && s.active_playback {
+                    if s.settings.queue.tracks.get(index).is_some() {
+                        play(&mut s, &u);
+                    } else {
+                        send(&mut s, &u, PlaybackCommand::Stop);
+                        s.active_playback = false;
+                        u.set_paused(true);
+                        u.set_position(0.0);
+                        u.set_duration(0.0);
+                    }
+                }
+                refresh(&u, &s);
+                save(&s.settings);
+            }
+        });
+    }
+    bind!(on_clear_queue, |s, u| {
+        send(&mut s, &u, PlaybackCommand::Stop);
         s.settings.queue = Queue::default();
         s.active_playback = false;
+        s.radio_resume_when_ready = false;
         refresh(&u, &s);
         u.set_position(0.0);
         u.set_duration(0.0);
@@ -1003,15 +1271,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     {
         let weak = ui.as_weak();
+        let restored_size = Rc::new(RefCell::new(slint::LogicalSize::new(1140.0, 800.0)));
         ui.on_collapse_player(move || {
             if let Some(u) = weak.upgrade() {
                 let c = !u.get_collapsed();
+                if c {
+                    *restored_size.borrow_mut() =
+                        u.window().size().to_logical(u.window().scale_factor());
+                }
                 u.set_collapsed(c);
                 u.window().set_size(if c {
-                    slint::LogicalSize::new(650.0, 170.0)
+                    slint::LogicalSize::new(700.0, 132.0)
                 } else {
-                    slint::LogicalSize::new(490.0, 680.0)
+                    let size = *restored_size.borrow();
+                    slint::LogicalSize::new(
+                        size.width
+                            .max(if u.get_compact_mode() { 700.0 } else { 950.0 }),
+                        size.height.max(660.0),
+                    )
                 });
+                u.window().request_redraw();
             }
         });
     }
@@ -1080,6 +1359,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 5 => {
                     if send(&mut s, &u, PlaybackCommand::Stop) {
                         s.active_playback = false;
+                        s.radio_resume_when_ready = false;
                         u.set_paused(true);
                         u.set_position(0.0);
                         u.set_duration(0.0);
@@ -1099,6 +1379,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ui.on_change_volume(move |v| {
             if let Some(u) = weak.upgrade() {
                 let mut s = state.borrow_mut();
+                let v = if v.is_finite() {
+                    v.clamp(0.0, 100.0)
+                } else {
+                    return;
+                };
+                u.set_volume(v);
                 s.settings.volume = Some(v as f64);
                 send(&mut s, &u, PlaybackCommand::SetVolume(v as f64));
                 save(&s.settings);
@@ -1226,6 +1512,44 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         })
                                 })
                                 .collect();
+                            if let LibraryAction::Radio {
+                                seed,
+                                generation,
+                                replace_upcoming,
+                            } = s.library_action.clone()
+                            {
+                                if generation != s.generation
+                                    || current_video_id(&s).as_deref() != Some(seed.as_str())
+                                    || (!s.settings.autoplay && !replace_upcoming)
+                                {
+                                    continue;
+                                }
+                                if tracks.is_empty() {
+                                    s.radio_resume_when_ready = false;
+                                    u.set_account_status(
+                                        "No further song recommendations available".into(),
+                                    );
+                                    continue;
+                                }
+                                if replace_upcoming {
+                                    let keep =
+                                        s.settings.queue.current.map_or(0, |index| index + 1);
+                                    s.settings.queue.tracks.truncate(keep);
+                                }
+                                let old_len = s.settings.queue.tracks.len();
+                                let added = s.settings.queue.append_deduplicated(tracks);
+                                if added > 0 && !s.active_playback && s.radio_resume_when_ready {
+                                    s.settings.queue.select(old_len);
+                                    play(&mut s, &u);
+                                }
+                                s.radio_resume_when_ready = false;
+                                refresh(&u, &s);
+                                save(&s.settings);
+                                u.set_account_status(
+                                    format!("Added {added} recommended songs to the queue").into(),
+                                );
+                                continue;
+                            }
                             if tracks.is_empty() {
                                 u.set_account_status(
                                     "No playable tracks were returned for this playlist".into(),
@@ -1236,7 +1560,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     tracks,
                                     current: Some(0),
                                 };
+                                if matches!(s.library_action, LibraryAction::Shuffle) {
+                                    let seed = std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .unwrap_or_default()
+                                        .as_nanos()
+                                        as u64;
+                                    s.settings.queue.shuffle_all(seed);
+                                }
                                 if play(&mut s, &u) {
+                                    u.set_home_open(false);
+                                    u.set_library_open(false);
+                                    u.set_queue_open(true);
                                     u.set_library_open(false);
                                     u.set_account_status(
                                         if truncated {
@@ -1258,11 +1593,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         Ok(
                             tide_provider::Response::Error { .. }
                             | tide_provider::Response::Session { .. },
-                        ) => u.set_account_status(
-                            "Account request failed; reconnect and retry".into(),
-                        ),
-                        Err(error) => u.set_account_status(error.into()),
+                        ) => {
+                            s.radio_resume_when_ready = false;
+                            u.set_account_status(
+                                "Account request failed; reconnect and retry".into(),
+                            );
+                            u.set_status_text(
+                                "Open Library to reconnect your YouTube Music account".into(),
+                            );
+                        }
+                        Err(error) => {
+                            s.radio_resume_when_ready = false;
+                            u.set_account_status(error.into());
+                            u.set_status_text(
+                                "Account request failed; open Library to reconnect or retry".into(),
+                            );
+                        }
                     }
+                }
+                let artwork_changed = s.artwork.borrow_mut().poll();
+                if artwork_changed {
+                    refresh(&u, &s);
+                    refresh_library_models(&s, &u);
+                }
+                if s.active_playback {
+                    request_radio(&mut s, &u, &library_tx, false);
                 }
                 if let Some(session) = media.borrow_mut().as_mut() {
                     let _ = session.update(
@@ -1290,6 +1645,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 .tracks
                                 .extend(tracks.into_iter().take(remaining));
                             refresh(&u, &s);
+                            u.set_home_open(false);
+                            u.set_library_open(false);
+                            u.set_queue_open(true);
                             save(&s.settings);
                             u.set_status_text(
                                 format!("Added {count} results · choose a track to play").into(),
@@ -1335,6 +1693,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                         } else {
                             s.active_playback = false;
+                            s.radio_resume_when_ready = s.settings.autoplay;
+                            request_radio(&mut s, &u, &library_tx, false);
                             if !failed {
                                 u.set_status_text("Queue finished".into());
                             }
@@ -1346,8 +1706,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
         );
     }
-    if state.borrow().settings.light_mode {
-        ui.window().set_size(slint::LogicalSize::new(490.0, 680.0));
+    if state.borrow().settings.compact_mode {
+        ui.window().set_size(slint::LogicalSize::new(780.0, 720.0));
     }
     let smoke_timer = slint::Timer::default();
     if let Some(mode) = std::env::args()
@@ -1355,11 +1715,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .nth(1)
     {
         ui.set_light_mode(mode != "full");
+        ui.set_compact_mode(mode != "full" && mode != "collapsed");
         ui.set_collapsed(mode == "collapsed");
         let (width, height) = match mode.as_str() {
             "full" => (1200.0, 800.0),
-            "collapsed" => (650.0, 170.0),
-            _ => (490.0, 680.0),
+            "collapsed" => (700.0, 132.0),
+            _ => (780.0, 720.0),
         };
         ui.window().set_size(slint::LogicalSize::new(width, height));
         if let Some(source) = std::env::args()
@@ -1379,11 +1740,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut s = state.borrow_mut();
             s.library_playlists = vec![
                 tide_provider::Playlist {
+                    artwork_url: None,
                     id: "PLfixture".into(),
                     title: "Late night focus".into(),
                     subtitle: "24 tracks".into(),
                 },
                 tide_provider::Playlist {
+                    artwork_url: None,
                     id: "PLfixture2".into(),
                     title: "Weekend favourites".into(),
                     subtitle: "56 tracks".into(),
@@ -1391,6 +1754,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ];
             s.recommendations = vec![
                 tide_provider::Card {
+                    artwork_url: None,
                     id: "fixture0001".into(),
                     title: "A Quiet Sun".into(),
                     subtitle: "True North".into(),
@@ -1398,6 +1762,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     shelf: "Listen again".into(),
                 },
                 tide_provider::Card {
+                    artwork_url: None,
                     id: "PLfixture".into(),
                     title: "Your evening mix".into(),
                     subtitle: "A mix for you".into(),
@@ -1405,6 +1770,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     shelf: "For you".into(),
                 },
                 tide_provider::Card {
+                    artwork_url: None,
                     id: "MPREfixture".into(),
                     title: "Midnight Geometry".into(),
                     subtitle: "Echo Frame".into(),
@@ -1423,18 +1789,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             s.settings.queue = Queue {
                 tracks: vec![
                     Track {
+                        artwork_url: None,
                         title: "Tide Lines".into(),
                         artist: "Nova Wells".into(),
                         album: "Red Terrain".into(),
                         source: String::new(),
                     },
                     Track {
+                        artwork_url: None,
                         title: "Hollow Coast".into(),
                         artist: "Echo Frame".into(),
                         album: "Midnight Geometry".into(),
                         source: String::new(),
                     },
                     Track {
+                        artwork_url: None,
                         title: "A Quiet Sun / An intentionally long title for layout verification"
                             .into(),
                         artist: "True North".into(),
@@ -1442,12 +1811,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         source: String::new(),
                     },
                     Track {
+                        artwork_url: None,
                         title: "Still Here".into(),
                         artist: "Maris".into(),
                         album: "Still Here".into(),
                         source: String::new(),
                     },
                     Track {
+                        artwork_url: None,
                         title: "Drift".into(),
                         artist: "Nova Wells".into(),
                         album: "Red Terrain".into(),
@@ -1464,6 +1835,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let step = Rc::new(RefCell::new(0));
         let weak = ui.as_weak();
         ui.set_light_mode(false);
+        ui.set_home_open(true);
+        ui.set_library_open(false);
+        ui.set_queue_open(false);
+        ui.invoke_change_volume(33.0);
+        assert_eq!(
+            ui.get_volume(),
+            33.0,
+            "Volume display must follow the slider"
+        );
         ui.window().set_size(slint::LogicalSize::new(1200.0, 800.0));
         smoke_timer.start(
             slint::TimerMode::Repeated,
@@ -1476,7 +1856,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let name = match *i {
                     0 => "full.png",
                     1 => "light.png",
-                    _ => "collapsed.png",
+                    2 => "compact-queue.png",
+                    3 => "compact-library.png",
+                    4 => "queue.png",
+                    5 => "library.png",
+                    6 => "collapsed.png",
+                    _ => "restored.png",
                 };
                 if let Ok(pixels) = u.window().take_snapshot() {
                     if let Some(image) = image::RgbaImage::from_raw(
@@ -1491,12 +1876,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 match *i {
                     0 => {
-                        u.set_light_mode(true);
-                        u.window().set_size(slint::LogicalSize::new(490.0, 680.0));
+                        let size = u.window().size();
+                        u.invoke_switch_mode();
+                        assert_eq!(size, u.window().size(), "Theme must preserve window size");
                     }
                     1 => {
-                        u.set_collapsed(true);
-                        u.window().set_size(slint::LogicalSize::new(650.0, 170.0));
+                        u.invoke_toggle_compact();
+                        u.set_home_open(false);
+                        u.set_queue_open(true);
+                    }
+                    2 => {
+                        u.set_queue_open(false);
+                        u.set_library_open(true);
+                    }
+                    3 => {
+                        u.invoke_toggle_compact();
+                        u.invoke_switch_mode();
+                        u.set_library_open(false);
+                        u.set_queue_open(true);
+                    }
+                    4 => {
+                        u.set_queue_open(false);
+                        u.set_library_open(true);
+                    }
+                    5 => {
+                        u.invoke_collapse_player();
+                    }
+                    6 => {
+                        u.invoke_collapse_player();
+                        u.set_library_open(false);
+                        u.set_home_open(true);
                     }
                     _ => {
                         let _ = u.hide();
@@ -1506,6 +1915,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 *i += 1;
             },
         );
+    }
+    let autoplay_passed = Rc::new(RefCell::new(!smoke_autoplay));
+    if smoke_autoplay {
+        let state = state.clone();
+        let weak = ui.as_weak();
+        let passed = autoplay_passed.clone();
+        let started = std::time::Instant::now();
+        let mut stage = 0;
+        smoke_timer.start(slint::TimerMode::Repeated, Duration::from_secs(1), move || {
+            let Some(u) = weak.upgrade() else { return; };
+            let mut s = state.borrow_mut();
+            if stage == 0 && s.account_verified && s.library_worker.is_none() {
+                if add(&mut s, &u, "https://www.youtube.com/watch?v=K4DyBUG242c".into()) {
+                    stage = 1;
+                }
+            } else if stage == 1 && s.settings.queue.tracks.len() > 1 && u.get_duration() > 2.0 {
+                let near_end = f64::from(u.get_duration()) - 0.2;
+                send(&mut s, &u, PlaybackCommand::Seek(near_end));
+                stage = 2;
+            } else if stage == 2 && s.generation >= 2 && u.get_position() > 0.0 {
+                *passed.borrow_mut() = true;
+                println!("PASS: recommendations appended and native EOF advanced to the next song; muted playback");
+                let _ = u.hide();
+                let _ = slint::quit_event_loop();
+            }
+            if started.elapsed() > Duration::from_secs(120) {
+                eprintln!("Autoplay smoke timed out at stage {stage}");
+                let _ = u.hide();
+                let _ = slint::quit_event_loop();
+            }
+        });
     }
     let result = ui.run();
     timer.stop();
@@ -1523,6 +1963,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let _ = e.send(PlaybackCommand::Shutdown);
     }
     result?;
+    if !*autoplay_passed.borrow() {
+        return Err("Live autoplay verification did not complete".into());
+    }
     Ok(())
 }
 
@@ -1550,6 +1993,7 @@ mod tests {
 
     fn track(source: &str) -> Track {
         Track {
+            artwork_url: None,
             title: source.into(),
             artist: String::new(),
             album: String::new(),
