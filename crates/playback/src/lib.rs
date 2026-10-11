@@ -16,6 +16,9 @@ use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader, WriteHa
 use tokio::sync::{mpsc, watch};
 use url::Url;
 
+mod prefetch;
+use prefetch::{Preparation, PreparedStream};
+
 #[cfg(windows)]
 mod owned_process;
 #[cfg(windows)]
@@ -46,6 +49,7 @@ pub struct PlaybackHandle {
     send_gate: Arc<Mutex<()>>,
     worker: Option<thread::JoinHandle<()>>,
     yt_dlp_available: bool,
+    preparation: Arc<Preparation>,
 }
 
 /// Start the native playback worker. mpv is located at runtime but is not
@@ -95,12 +99,14 @@ pub fn start_with_account(
     let desired_volume = Arc::new(AtomicU64::new(100.0_f64.to_bits()));
     let shutdown_requested = Arc::new(AtomicBool::new(false));
     let send_gate = Arc::new(Mutex::new(()));
+    let (preparation, preparation_rx) = Preparation::new();
 
     let worker_snapshot = Arc::clone(&snapshot);
     let worker_generation = Arc::clone(&desired_generation);
     let worker_epoch = Arc::clone(&supersede_epoch);
     let worker_gate = Arc::clone(&send_gate);
     let worker_volume = Arc::clone(&desired_volume);
+    let worker_preparation = Arc::clone(&preparation);
     let worker = thread::Builder::new()
         .name("tide-playback".into())
         .spawn(move || {
@@ -114,6 +120,8 @@ pub fn start_with_account(
                     supersede_epoch: worker_epoch,
                     send_gate: worker_gate,
                     desired_volume: worker_volume,
+                    preparation: worker_preparation,
+                    preparation_rx,
                 },
             ));
         })
@@ -130,6 +138,7 @@ pub fn start_with_account(
         send_gate,
         worker: Some(worker),
         yt_dlp_available,
+        preparation,
     })
 }
 
@@ -180,6 +189,7 @@ impl PlaybackHandle {
                 let epoch = next_epoch(self.supersede_epoch.load(Ordering::Acquire));
                 self.command_tx
                     .try_send(WorkerCommand::Load(PendingLoad {
+                        prepared: self.preparation.take_for(&validated.source),
                         source: validated.source,
                         generation,
                         epoch,
@@ -247,6 +257,7 @@ impl PlaybackHandle {
                     .try_send(WorkerCommand::Stop { epoch })
                     .map_err(command_queue_error)?;
                 self.supersede_epoch.store(epoch, Ordering::Release);
+                self.preparation.clear();
                 reset_snapshot(&mut self.snapshot_write());
                 Ok(())
             }
@@ -276,6 +287,7 @@ impl PlaybackHandle {
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner());
                 self.shutdown_requested.store(true, Ordering::Release);
+                self.preparation.close();
                 self.shutdown_tx.send_replace(true);
                 Ok(())
             }
@@ -285,6 +297,29 @@ impl PlaybackHandle {
     /// Return a copy of the most recently observed playback state.
     pub fn snapshot(&self) -> PlaybackSnapshot {
         self.snapshot_read().clone()
+    }
+
+    /// Resolve at most one upcoming YouTube track while the current track plays.
+    /// Repeated calls with the same source are cheap. No media is downloaded;
+    /// stream URLs stay in memory briefly and failures use ordinary loading.
+    /// Pass `None` when the queue has no upcoming song or changes account.
+    pub fn prepare_next(&self, source: Option<&str>) -> Result<(), String> {
+        let _gate = self.send_gate.lock().unwrap_or_else(|p| p.into_inner());
+        if self.shutdown_requested.load(Ordering::Acquire) {
+            return Err("The playback engine is shutting down.".into());
+        }
+        let source = source.map(validate_source).transpose()?;
+        self.preparation.set(
+            source
+                .filter(|s| s.is_youtube && self.yt_dlp_available)
+                .map(|s| s.source),
+        );
+        Ok(())
+    }
+
+    /// Whether the requested upcoming track has a fresh, prepared stream.
+    pub fn next_is_prepared(&self, source: &str) -> bool {
+        validate_source(source).is_ok_and(|source| self.preparation.is_ready(&source.source))
     }
 
     fn try_send(&self, command: ActionCommand) -> Result<(), String> {
@@ -312,6 +347,7 @@ impl PlaybackHandle {
 impl Drop for PlaybackHandle {
     fn drop(&mut self) {
         self.shutdown_requested.store(true, Ordering::Release);
+        self.preparation.close();
         self.shutdown_tx.send_replace(true);
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
@@ -353,6 +389,8 @@ struct WorkerControls {
     supersede_epoch: Arc<AtomicU64>,
     desired_volume: Arc<AtomicU64>,
     send_gate: Arc<Mutex<()>>,
+    preparation: Arc<Preparation>,
+    preparation_rx: watch::Receiver<prefetch::Request>,
 }
 
 #[derive(Clone, Debug)]
@@ -588,11 +626,12 @@ impl Drop for OwnedJob {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 struct PendingLoad {
     source: String,
     generation: u64,
     epoch: u64,
+    prepared: Option<PreparedStream>,
 }
 
 #[cfg(windows)]
@@ -604,6 +643,7 @@ struct PlayerState {
     awaiting_start: Option<u64>,
     next_request_id: i64,
     requests: HashMap<i64, RequestPurpose>,
+    prepared_fallback: Option<PendingLoad>,
 }
 
 #[cfg(windows)]
@@ -636,11 +676,18 @@ async fn run_worker(
         supersede_epoch,
         desired_volume,
         send_gate,
+        preparation,
+        preparation_rx,
     } = controls;
     let (ipc_event_tx, mut ipc_event_rx) = mpsc::channel(IPC_EVENT_CAPACITY);
     let mut player: Option<RunningPlayer> = None;
     let mut state = PlayerState::default();
     let mut next_session_id = 1_u64;
+    let preparation_task = tokio::spawn(prefetch::run(
+        runtimes.clone(),
+        Arc::clone(&preparation),
+        preparation_rx,
+    ));
 
     loop {
         tokio::select! {
@@ -655,7 +702,10 @@ async fn run_worker(
                     Some(IpcEvent::Line { session_id, line })
                         if player.as_ref().is_some_and(|running| running.session_id == session_id) => {
                                 if let Ok(message) = serde_json::from_str::<Value>(&line) {
+                                    let fallback = {
                                     let _gate = send_gate.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                                    let fallback = take_prepared_fallback(&mut state, &message,
+                                        desired_generation.load(Ordering::Acquire), supersede_epoch.load(Ordering::Acquire));
                                     apply_ipc_message(
                                         &mut state,
                                         &mut snapshot_write(&snapshot),
@@ -668,6 +718,23 @@ async fn run_worker(
                                     // overwrite a newer queued volume control.
                                     snapshot_write(&snapshot).volume =
                                         f64::from_bits(desired_volume.load(Ordering::Acquire));
+                                    if fallback.is_some() {
+                                        let mut snapshot = snapshot_write(&snapshot);
+                                        snapshot.loading = true;
+                                        snapshot.ended = false;
+                                        snapshot.paused = false;
+                                        snapshot.error = None;
+                                    }
+                                    fallback
+                                    };
+                                    if let (Some(load), Some(running)) = (fallback, player.as_mut()) {
+                                        let generation = load.generation;
+                                        let epoch = load.epoch;
+                                        if let Err(error) = begin_load(running, &mut state, load).await {
+                                            set_generation_error(&snapshot, &desired_generation, &supersede_epoch,
+                                                &send_gate, generation, epoch, error.to_string());
+                                        }
+                                    }
                                 }
                     }
                     Some(IpcEvent::Closed { session_id, error })
@@ -842,6 +909,8 @@ async fn run_worker(
     if let Some(mut running) = player.take() {
         terminate_player(&mut running).await;
     }
+    preparation.close();
+    let _ = preparation_task.await;
     let _gate = send_gate
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -1111,6 +1180,18 @@ async fn begin_load(
     state: &mut PlayerState,
     load: PendingLoad,
 ) -> io::Result<()> {
+    let command = if let Some(prepared) = &load.prepared {
+        state.prepared_fallback = Some(PendingLoad {
+            source: load.source.clone(),
+            generation: load.generation,
+            epoch: load.epoch,
+            prepared: None,
+        });
+        prepared.load_command()
+    } else {
+        state.prepared_fallback = None;
+        json!(["loadfile", load.source, "replace"])
+    };
     state.active_generation = Some(load.generation);
     state.active_epoch = Some(load.epoch);
     state.active_entry_id = None;
@@ -1123,13 +1204,7 @@ async fn begin_load(
             epoch: load.epoch,
         },
     );
-    if let Err(error) = send_ipc_command(
-        &mut player.writer,
-        json!(["loadfile", load.source, "replace"]),
-        Some(request_id),
-    )
-    .await
-    {
+    if let Err(error) = send_ipc_command(&mut player.writer, command, Some(request_id)).await {
         state.requests.remove(&request_id);
         state.awaiting_start = None;
         state.active_generation = None;
@@ -1206,6 +1281,7 @@ fn apply_ipc_message(
         }
         Some("file-loaded") => {
             if active_is_current(state, desired_generation, desired_epoch) {
+                state.prepared_fallback = None;
                 snapshot.loading = false;
                 snapshot.ended = false;
                 snapshot.error = None;
@@ -1251,6 +1327,36 @@ fn apply_ipc_message(
         }
         _ => {}
     }
+}
+
+/// Retry a rejected prepared URL once via the normal extractor. Compare both
+/// the request/entry and current epoch so superseded tracks never restart.
+#[cfg(windows)]
+fn take_prepared_fallback(
+    state: &mut PlayerState,
+    message: &Value,
+    generation: u64,
+    epoch: u64,
+) -> Option<PendingLoad> {
+    let fallback = state.prepared_fallback.as_ref()?;
+    if fallback.generation != generation || fallback.epoch != epoch {
+        return None;
+    }
+    let rejected_request = message
+        .get("request_id")
+        .and_then(Value::as_i64)
+        .is_some_and(|id| state.requests.contains_key(&id))
+        && message
+            .get("error")
+            .and_then(Value::as_str)
+            .is_some_and(|error| error != "success");
+    let failed_entry = message.get("event").and_then(Value::as_str) == Some("end-file")
+        && message.get("reason").and_then(Value::as_str) == Some("error")
+        && state.active_entry_id.is_some()
+        && message.get("playlist_entry_id").and_then(Value::as_u64) == state.active_entry_id;
+    (rejected_request || failed_entry)
+        .then(|| state.prepared_fallback.take())
+        .flatten()
 }
 
 #[cfg(windows)]
@@ -1373,6 +1479,25 @@ fn set_generation_error(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn prepared_startup_failure_retries_once_and_never_restarts_stale_track() {
+        let mut state = PlayerState {
+            active_entry_id: Some(7),
+            prepared_fallback: Some(PendingLoad {
+                source: "https://www.youtube.com/watch?v=public".into(),
+                generation: 3,
+                epoch: 9,
+                prepared: None,
+            }),
+            ..PlayerState::default()
+        };
+        let message = json!({"event":"end-file", "reason":"error", "playlist_entry_id":7});
+        assert!(take_prepared_fallback(&mut state, &message, 4, 10).is_none());
+        assert!(take_prepared_fallback(&mut state, &message, 3, 9).is_some());
+        assert!(take_prepared_fallback(&mut state, &message, 3, 9).is_none());
+    }
 
     #[cfg(windows)]
     #[tokio::test(flavor = "current_thread")]

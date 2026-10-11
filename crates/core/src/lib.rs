@@ -111,6 +111,31 @@ impl Queue {
         self.tracks.swap(index, target);
         true
     }
+
+    /// Move an upcoming row to its final absolute queue index, shifting intervening rows.
+    /// Both positions must belong to the same contiguous manual or autoplay section.
+    /// Played/current rows, invalid positions, and no-op drops leave the queue unchanged.
+    pub fn move_upcoming_to(&mut self, source: usize, target: usize) -> bool {
+        let start = self.current.map_or(0, |i| i.saturating_add(1));
+        if source == target
+            || source < start
+            || target < start
+            || source >= self.tracks.len()
+            || target >= self.tracks.len()
+        {
+            return false;
+        }
+        let recommended = self.tracks[source].recommended;
+        if self.tracks[source.min(target)..=source.max(target)]
+            .iter()
+            .any(|track| track.recommended != recommended)
+        {
+            return false;
+        }
+        let track = self.tracks.remove(source);
+        self.tracks.insert(target, track);
+        true
+    }
     pub fn remove_autoplay_upcoming(&mut self) {
         let start = self.current.map_or(0, |i| i + 1).min(self.tracks.len());
         let mut next = self.tracks.split_off(start);
@@ -213,6 +238,87 @@ mod tests {
         assert_eq!(q.tracks[1].title, "two");
         assert!(!q.move_upcoming(2, 1));
         assert_eq!(q.current, Some(0));
+    }
+
+    #[test]
+    fn drag_reorder_shifts_rows_both_ways_and_preserves_played_and_current() {
+        let mut q = Queue {
+            tracks: ["played", "current", "a", "b", "c", "d"]
+                .map(track)
+                .to_vec(),
+            current: Some(1),
+        };
+        assert!(q.move_upcoming_to(2, 5));
+        assert_eq!(
+            q.tracks
+                .iter()
+                .map(|t| t.title.as_str())
+                .collect::<Vec<_>>(),
+            ["played", "current", "b", "c", "d", "a"]
+        );
+        assert!(q.move_upcoming_to(5, 2));
+        assert_eq!(
+            q.tracks
+                .iter()
+                .map(|t| t.title.as_str())
+                .collect::<Vec<_>>(),
+            ["played", "current", "a", "b", "c", "d"]
+        );
+        assert_eq!(q.current, Some(1));
+    }
+
+    #[test]
+    fn drag_reorder_rejects_invalid_noop_prefix_and_cross_section_drops() {
+        let mut auto_a = track("auto-a");
+        auto_a.recommended = true;
+        let mut auto_b = track("auto-b");
+        auto_b.recommended = true;
+        let mut q = Queue {
+            tracks: vec![
+                track("played"),
+                track("current"),
+                track("manual"),
+                auto_a,
+                auto_b,
+            ],
+            current: Some(1),
+        };
+        let before = q.tracks.clone();
+        for (source, target) in [
+            (0, 2),
+            (1, 2),
+            (2, 1),
+            (2, 2),
+            (2, 3),
+            (4, 2),
+            (5, 2),
+            (2, 5),
+            (usize::MAX, 2),
+        ] {
+            assert!(!q.move_upcoming_to(source, target));
+            assert_eq!(q.tracks, before);
+            assert_eq!(q.current, Some(1));
+        }
+        assert!(q.move_upcoming_to(4, 3));
+        assert_eq!(q.tracks[3].title, "auto-b");
+        assert_eq!(q.tracks[4].title, "auto-a");
+        assert!(q.tracks[3..].iter().all(|t| t.recommended));
+    }
+
+    #[test]
+    fn drag_reorder_supports_unselected_queues_and_rejects_noncontiguous_groups() {
+        let mut q = Queue {
+            tracks: vec![track("a"), track("b"), track("c")],
+            current: None,
+        };
+        assert!(q.move_upcoming_to(2, 0));
+        assert_eq!(q.tracks[0].title, "c");
+        assert_eq!(q.current, None);
+        q.tracks[1].recommended = true;
+        let before = q.tracks.clone();
+        assert!(!q.move_upcoming_to(0, 2));
+        assert_eq!(q.tracks, before);
+        assert!(!Queue::default().move_upcoming_to(0, 0));
     }
     #[test]
     fn disabling_autoplay_preserves_current_and_manual_choices() {

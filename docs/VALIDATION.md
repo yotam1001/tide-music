@@ -97,3 +97,43 @@ The native UI smoke accepts an optional `--fixture-audio path/to/silent.wav` arg
 These checks establish local playback/control and layout behavior. They do not substitute for the still-pending authenticated live autoplay handoff or a long listening session.
 
 A 12-second full-window idle repeat for the simplified release, excluding the first four samples, measured 7.52 MiB median private memory and 27.85 MiB total working set. No account or audio helper was active; this is a short idle measurement.
+
+## Next-song preparation
+
+The playback worker prepares one YouTube stream at a time, with bounded output,
+timeout, cancellation and a short memory-only lifetime. Deterministic tests cover
+request deduplication, matching consumption, expiry, Stop/Drop invalidation,
+safe CDN/header validation, exclusive cookie-copy cleanup and one-time fallback
+without restarting superseded playback. Both extraction paths use the same best
+audio policy. The app requests preparation during the final minute of unpaused
+playback and follows the current queue order, including repeat wrapping.
+
+Two opt-in muted probes used public YouTube clips without an account session:
+
+| Run | Cold replacement | Prepared replacement | Preparation in background | Drop cleanup |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 2.896 s | 0.304 s | 2.136 s | 0.093 s |
+| 2 | 3.273 s | 0.302 s | 2.303 s | 0.094 s |
+
+Replacement timings include fresh mpv startup and first decoded audio. These are
+two local observations, not guaranteed latency or gapless playback. The second
+probe's debug process family sampled a 127.6 MiB peak across 41 samples; all
+tracked processes were gone after exit. This includes the native player and
+transient extraction helpers, excludes signed-in sessions/artwork, and is not a
+settled playback memory benchmark. Signed-in next-song preparation still needs
+a separate live-service check; numeric account-header routing is covered by a
+synthetic metadata test.
+
+## Queue dragging
+
+The revision passes 54 deterministic Rust tests and strict Clippy; two manual
+tests remain ignored. Native pointer checks cover a short reorder and a longer
+edge drag that scrolls the original row out of view. Both preserve the current
+song and playback generation. Core tests reject invalid moves and moves across
+manual/autoplay groups. Twelve native screenshot states include the insertion
+marker, compact queue and restored player.
+
+With the queue open and 2,000 synthetic tracks, an eight-second release sample
+measured 9.48 MiB private memory and 28.94 MiB working set. Rows remain virtualized.
+No account, artwork or audio helper was active; this is an idle queue measurement,
+not the total cost of signed-in music playback.

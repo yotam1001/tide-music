@@ -506,6 +506,19 @@ fn report_error(state: &mut State, ui: &AppWindow, error: String) {
     ui.set_status_text(error.into());
 }
 
+fn upcoming_source(queue: &Queue, repeat: bool) -> Option<&str> {
+    let current = queue.current?;
+    if current >= queue.tracks.len() {
+        return None;
+    }
+    let next = current + 1;
+    queue
+        .tracks
+        .get(next)
+        .or_else(|| repeat.then(|| queue.tracks.first()).flatten())
+        .map(|track| track.source.as_str())
+}
+
 fn send(state: &mut State, ui: &AppWindow, cmd: PlaybackCommand) -> bool {
     let result = state
         .engine
@@ -776,6 +789,15 @@ fn search(query: String, cancel: Arc<AtomicBool>) -> Result<Vec<Track>, String> 
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if std::env::args().any(|arg| arg == "--smoke-ui") {
+        let panic_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            panic_hook(info);
+            // A failed assertion in a native event callback must fail the smoke
+            // process, rather than leave it waiting inside the event loop.
+            std::process::exit(1);
+        }));
+    }
     let ui = AppWindow::new()?;
     let mut settings: Settings = std::fs::read(settings_path())
         .ok()
@@ -1371,11 +1393,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let state = state.clone();
         let weak = ui.as_weak();
-        ui.on_move_queue_track(move |index, direction| {
+        ui.on_reorder_queue_track(move |index, target| {
             if let Some(u) = weak.upgrade() {
                 let mut s = state.borrow_mut();
-                if let Ok(index) = usize::try_from(index) {
-                    if s.settings.queue.move_upcoming(index, direction) {
+                if let (Ok(index), Ok(target)) = (usize::try_from(index), usize::try_from(target)) {
+                    if s.settings.queue.move_upcoming_to(index, target) {
                         refresh(&u, &s);
                         save(&s.settings);
                     }
@@ -2019,6 +2041,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     u.set_duration(p.duration as f32);
                     u.set_paused(p.paused);
                     let failed = p.error.is_some();
+                    let prepare = !p.loading && !p.ended && !failed && !p.paused
+                        && p.duration > 0.0 && p.duration - p.position <= 60.0;
+                    let _ = engine.prepare_next(if prepare {
+                        upcoming_source(&s.settings.queue, s.settings.repeat)
+                    } else {
+                        None
+                    });
                     if let Some(e) = p.error {
                         u.set_status_text(e.into());
                     } else if let Some(error) = &s.command_error {
@@ -2079,6 +2108,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             _ => (780.0, 720.0),
         };
         ui.window().set_size(slint::LogicalSize::new(width, height));
+        if let Some(count) = std::env::args()
+            .skip_while(|a| a != "--benchmark-queue-count")
+            .nth(1)
+            .and_then(|count| count.parse::<usize>().ok())
+        {
+            let mut s = state.borrow_mut();
+            s.settings.queue = Queue {
+                tracks: (0..count.min(tide_core::MAX_QUEUE_TRACKS))
+                    .map(|index| Track {
+                        title: format!("Fixture song {}", index + 1),
+                        artist: "Fixture artist".into(),
+                        album: "Fixture album".into(),
+                        source: String::new(),
+                        artwork_url: None,
+                        recommended: false,
+                    })
+                    .collect(),
+                current: (count > 0).then_some(0),
+            };
+            refresh(&ui, &s);
+            ui.set_queue_open(true);
+        }
         if let Some(source) = std::env::args()
             .skip_while(|a| a != "--benchmark-source")
             .nth(1)
@@ -2268,7 +2319,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ui.invoke_shuffle_detail();
             assert_eq!(state.borrow().settings.queue.current, Some(0));
             let title = state.borrow().settings.queue.tracks[2].title.clone();
-            ui.invoke_move_queue_track(2, -1);
+            ui.invoke_reorder_queue_track(2, 1);
             assert_eq!(state.borrow().settings.queue.tracks[1].title, title);
             ui.invoke_remove_queue_track(1);
             assert_eq!(state.borrow().settings.queue.tracks.len(), 4);
@@ -2293,6 +2344,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let output = PathBuf::from(dir);
         std::fs::create_dir_all(&output)?;
         let step = Rc::new(RefCell::new(0));
+        let smoke_state = state.clone();
         let weak = ui.as_weak();
         ui.set_light_mode(false);
         ui.set_home_open(true);
@@ -2366,8 +2418,95 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         u.set_queue_open(true);
                     }
                     6 => {
-                        u.set_queue_open(false);
-                        u.set_settings_open(true);
+                        if smoke_state.borrow().settings.queue.tracks.len() < 3 {
+                            u.set_queue_open(false);
+                            u.set_settings_open(true);
+                            *i += 1;
+                            return;
+                        }
+                        use slint::platform::{PointerEventButton, WindowEvent};
+                        let (title, generation) = {
+                            let s = smoke_state.borrow();
+                            (s.settings.queue.tracks[1].title.clone(), s.generation)
+                        };
+                        let window_width = u.window().size().width as f32 / u.window().scale_factor();
+                        let start = slint::LogicalPosition::new(window_width - 306.0, 277.0);
+                        let target = slint::LogicalPosition::new(window_width - 300.0, 363.0);
+                        u.window().dispatch_event(WindowEvent::PointerMoved { position: start });
+                        u.window().dispatch_event(WindowEvent::PointerPressed {
+                            position: start, button: PointerEventButton::Left,
+                        });
+                        let drag_output = output.clone();
+                        let weak = u.as_weak();
+                        let drag_state = smoke_state.clone();
+                        slint::Timer::single_shot(Duration::from_millis(30), move || {
+                        let Some(u) = weak.upgrade() else { return; };
+                        u.window().dispatch_event(WindowEvent::PointerMoved { position: target });
+                        let weak = u.as_weak();
+                        slint::Timer::single_shot(Duration::from_millis(30), move || {
+                        let Some(u) = weak.upgrade() else { return; };
+                        if let Ok(pixels) = u.window().take_snapshot() {
+                            if let Some(image) = image::RgbaImage::from_raw(pixels.width(), pixels.height(), pixels.as_bytes().to_vec()) {
+                                image.save(drag_output.join("queue-drag.png")).expect("Save drag marker snapshot");
+                            }
+                        }
+                        u.window().dispatch_event(WindowEvent::PointerReleased {
+                            position: target, button: PointerEventButton::Left,
+                        });
+                        let weak = u.as_weak();
+                        slint::Timer::single_shot(Duration::from_millis(50), move || {
+                            let s = drag_state.borrow();
+                            assert_eq!(s.settings.queue.tracks[2].title, title, "Dragging must move the selected song to the drop position");
+                            assert_eq!(s.settings.queue.current, Some(0), "Dragging must keep the playing song fixed");
+                            assert_eq!(s.generation, generation, "Dragging must not start playback");
+                            println!("PASS: native pointer drag reorders upcoming songs without starting playback");
+                            drop(s);
+                            if let Some(u) = weak.upgrade() {
+                                let saved_queue = drag_state.borrow().settings.queue.clone();
+                                {
+                                    let mut s = drag_state.borrow_mut();
+                                    s.settings.queue = Queue {
+                                        tracks: (0..100).map(|index| Track {
+                                            title: format!("Drag fixture {index}"),
+                                            artist: "Fixture artist".into(), album: String::new(),
+                                            source: String::new(), artwork_url: None, recommended: false,
+                                        }).collect(),
+                                        current: Some(0),
+                                    };
+                                    refresh(&u, &s);
+                                }
+                                let _ = u.window().take_snapshot();
+                                u.window().dispatch_event(WindowEvent::PointerMoved { position: start });
+                                u.window().dispatch_event(WindowEvent::PointerPressed { position: start, button: PointerEventButton::Left });
+                                let _ = u.window().take_snapshot();
+                                let edge = slint::LogicalPosition::new(start.x, 590.0);
+                                u.window().dispatch_event(WindowEvent::PointerMoved { position: edge });
+                                let weak = u.as_weak();
+                                slint::Timer::single_shot(Duration::from_millis(1000), move || {
+                                    if let Some(u) = weak.upgrade() {
+                                        u.window().dispatch_event(WindowEvent::PointerReleased { position: edge, button: PointerEventButton::Left });
+                                        let weak = u.as_weak();
+                                        slint::Timer::single_shot(Duration::from_millis(50), move || {
+                                            let mut s = drag_state.borrow_mut();
+                                            let target = s.settings.queue.tracks.iter().position(|track| track.title == "Drag fixture 1").unwrap();
+                                            assert!(target > 5, "Edge drag must continue after its source scrolls out of view: {target}");
+                                            assert_eq!(s.settings.queue.current, Some(0));
+                                            assert_eq!(s.generation, generation);
+                                            assert_eq!(s.settings.queue.tracks.len(), 100);
+                                            println!("PASS: native long drag survives row recycling and edge autoscroll");
+                                            s.settings.queue = saved_queue;
+                                            if let Some(u) = weak.upgrade() {
+                                                refresh(&u, &s);
+                                                u.set_queue_open(false);
+                                                u.set_settings_open(true);
+                                            }
+                                        });
+                                    }
+                                });
+                            }
+                        });
+                        });
+                        });
                     }
                     7 => {
                         u.set_settings_open(false);
@@ -2482,6 +2621,24 @@ mod tests {
             album: String::new(),
             source: source.into(),
         }
+    }
+
+    #[test]
+    fn prepare_follows_queue_order_and_wraps_only_with_repeat() {
+        let mut queue = Queue {
+            tracks: vec![track("current"), track("next"), track("last")],
+            current: Some(0),
+        };
+        assert_eq!(upcoming_source(&queue, false), Some("next"));
+        queue.tracks.swap(1, 2);
+        assert_eq!(upcoming_source(&queue, false), Some("last"));
+        queue.current = Some(2);
+        assert_eq!(upcoming_source(&queue, false), None);
+        assert_eq!(upcoming_source(&queue, true), Some("current"));
+        queue.current = Some(99);
+        assert_eq!(upcoming_source(&queue, true), None);
+        queue.current = None;
+        assert_eq!(upcoming_source(&queue, true), None);
     }
 
     #[test]
