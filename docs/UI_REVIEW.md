@@ -39,3 +39,6 @@ song retains its accent. Larger headings, consistent text contrast, restrained
 button outlines and matching dark/cream surfaces clarify the visual hierarchy.
 Menu and close icons are drawn as vectors, and empty artwork uses a music note.
 No new status panels, illustrations, background textures or animations are added.
+The playback transport is centered independently of title length in full,
+compact and mini layouts. Mini uses a small expand icon in place of the wide
+Restore button; its accessible label describes returning to the full window.

@@ -820,22 +820,33 @@ component PlayerBar inherits Rectangle {
         padding-top: 10px;
         padding-bottom: 10px;
         spacing: 5px;
-        HorizontalLayout {
+        Rectangle {
             height: 52px;
-            spacing: 12px;
-            cross-axis-alignment: center;
-            Cover { width: 44px; height: 44px; artwork: root.artwork; light-mode: root.light-mode; }
-            VerticalLayout {
-                horizontal-stretch: 1;
-                min-width: 84px;
-                spacing: 4px;
-                Text { text: root.track-title == "" ? "Nothing playing" : root.track-title; color: root.foreground; font-size: 14px; font-weight: 600; overflow: elide; }
-                Text { text: root.track-artist; color: root.secondary; font-size: 12px; overflow: elide; }
+            HorizontalLayout {
+                x: 0px;
+                width: max(120px, parent.width / 2 - 94px);
+                height: parent.height;
+                spacing: 12px;
+                cross-axis-alignment: center;
+                Cover { width: 44px; height: 44px; artwork: root.artwork; light-mode: root.light-mode; }
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    spacing: 4px;
+                    Text { text: root.track-title == "" ? "Nothing playing" : root.track-title; color: root.foreground; font-size: 14px; font-weight: 600; overflow: elide; }
+                    Text { text: root.track-artist; color: root.secondary; font-size: 12px; overflow: elide; }
+                }
             }
-            TransportButtons { width: 144px; height: 48px; paused: root.paused; light-mode: root.light-mode; show-repeat: false; show-shuffle: false; toggle-pause => { root.toggle-pause(); } previous-track => { root.previous-track(); } next-track => { root.next-track(); } }
-            if !root.collapsed : LibraryButton { width: 80px; light-mode: root.light-mode; caption: "Queue"; label: root.queue-open ? "Close queue drawer" : "Open queue drawer"; active: root.queue-open; clicked => { root.toggle-queue(); } }
-            if !root.collapsed : LibraryButton { width: 56px; light-mode: root.light-mode; caption: "Mini"; label: "Collapse to mini player"; clicked => { root.mini(); } }
-            if root.collapsed : LibraryButton { width: 94px; light-mode: root.light-mode; caption: "Restore"; label: "Restore full Tide window"; clicked => { root.restore(); } }
+            TransportButtons { x: (parent.width - self.width) / 2; y: 2px; width: 150px; height: 48px; paused: root.paused; light-mode: root.light-mode; show-repeat: false; show-shuffle: false; toggle-pause => { root.toggle-pause(); } previous-track => { root.previous-track(); } next-track => { root.next-track(); } }
+            HorizontalLayout {
+                x: parent.width - self.width;
+                y: 8px;
+                width: root.collapsed ? 38px : 148px;
+                height: 36px;
+                spacing: 12px;
+                if !root.collapsed : LibraryButton { width: 80px; light-mode: root.light-mode; caption: "Queue"; label: root.queue-open ? "Close queue drawer" : "Open queue drawer"; active: root.queue-open; clicked => { root.toggle-queue(); } }
+                if !root.collapsed : LibraryButton { width: 56px; light-mode: root.light-mode; caption: "Mini"; label: "Collapse to mini player"; clicked => { root.mini(); } }
+                if root.collapsed : LibraryButton { width: 38px; light-mode: root.light-mode; caption: "↗"; label: "Expand to full Tide window"; clicked => { root.restore(); } }
+            }
         }
         HorizontalLayout {
             height: 25px;
