@@ -1120,7 +1120,7 @@ export component AppWindow inherits Window {
             if root.queue-open && !root.wide : Rectangle {
                 width: parent.width;
                 height: parent.height;
-                Rectangle { width: max(0px, parent.width - 340px); height: parent.height; background: #00000060; TouchArea { clicked => { root.queue-open = false; } } }
+                Rectangle { x: 0px; y: 0px; width: max(0px, parent.width - 340px); height: parent.height; background: #00000060; TouchArea { clicked => { root.queue-open = false; } } }
                 QueueDrawer {
                     x: max(0px, parent.width - 340px);
                     width: 340px;
@@ -1145,7 +1145,7 @@ export component AppWindow inherits Window {
             if root.settings-open : Rectangle {
                 width: parent.width;
                 height: parent.height;
-                Rectangle { width: max(0px, parent.width - 420px); height: parent.height; background: #00000060; TouchArea { clicked => { root.settings-open = false; } } }
+                Rectangle { x: 0px; y: 0px; width: max(0px, parent.width - 420px); height: parent.height; background: #00000060; TouchArea { clicked => { root.settings-open = false; } } }
                 Rectangle {
                     x: max(0px, parent.width - 420px);
                     width: 420px;

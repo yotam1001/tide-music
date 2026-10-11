@@ -42,3 +42,6 @@ No new status panels, illustrations, background textures or animations are added
 The playback transport is centered independently of title length in full,
 compact and mini layouts. Mini uses a small expand icon in place of the wide
 Restore button; its accessible label describes returning to the full window.
+Account and compact Queue backdrops are explicitly anchored to the content area's
+left/top edges. Slint's default centering of their narrower rectangles previously
+left an unintended undimmed strip and a visible rectangular boundary.
