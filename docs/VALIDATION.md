@@ -210,3 +210,15 @@ a successful real reconnect. A read-only health probe currently reports rejected
 authentication for the saved session. The sustained signed-in listening test
 could not start, so repeated natural transitions and recommendation refills are
 still an outstanding release gate.
+
+A release build subsequently passed a muted five-minute local queue run with
+15 natural transitions, acknowledged pause/resume, skip and seek. The completion
+poll runs every 250 ms; volume persistence stays capped at once per second.
+Process-tree samples excluding startup measured a median working set of 79.0 MiB
+and peak 81.8 MiB, with median private bytes of 51.2 MiB and peak 53.5 MiB. The
+first and last 30 settled working-set medians were 80.1 and 74.7 MiB respectively;
+there was no increasing memory trend in this short run. All observed helpers
+ended after successful app exit. CPU readings were zero throughout and are not
+accepted as useful CPU evidence. This test used three queue entries referencing
+one short local silence file, without accounts, thumbnails or extraction; it
+does not prove long-session YouTube stability or gaming impact.
