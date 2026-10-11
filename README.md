@@ -8,7 +8,7 @@ A Windows-first native Rust music player designed to leave resources available f
 
 - Home and Library as the two main destinations, with search in the header and an optional Queue drawer.
 - Independent dark/light themes and full/compact sizing; the light palette uses warm grey, terracotta and muted purple.
-- A mini player with a visible Restore button using the same queue and playback engine.
+- A mini player with an expand icon using the same queue and playback engine.
 - Playlist previews with Play/Shuffle, song menus, upcoming-track reordering/removal, song radio and recommendation autoplay.
 - Small real thumbnails with a bounded memory cache and no generic artwork banner.
 - Native Slint interface; no embedded browser or Electron runtime.
@@ -57,6 +57,14 @@ python -m unittest discover -s helpers -p "test_*.py"
 ```
 
 Native screenshots: `cargo run -p tide-music -- --smoke-ui .local/screens --smoke-populated`. Add `--smoke-library` for synthetic account/library metadata, and optionally `--fixture-audio path/to/silent.wav` to run native interaction assertions with a silent local file. This shows and captures Home, Library, playlist detail, search, account settings, Queue drawer, light/dark, compact and mini/restore views, then exits. UI smoke/benchmark modes never load your saved account session. The opt-in `--smoke-autoplay` check uses the existing encrypted session, mutes audio, tests native EOF advancing into song recommendations, then exits without saving its temporary queue or volume.
+
+For a muted five-minute local continuity check, use
+`cargo run -p tide-music -- --smoke-local-listening 300 path/to/short-audio.wav`.
+Choose a file about 18 seconds long: the check requires ten natural transitions
+and exercises pause/resume, skip and seek. It uses temporary settings, bypasses
+saved accounts and does not register a Windows media session. The separate
+`--smoke-listening-session 1200` check uses the saved verified account and tests
+live recommendation playback; the local check cannot prove YouTube reliability.
 
 ## Privacy and credentials
 

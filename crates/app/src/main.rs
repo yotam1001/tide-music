@@ -13,6 +13,8 @@ use std::{
 };
 use tide_core::{PlaybackCommand, Queue, Track};
 mod artwork;
+mod listening;
+mod radio;
 slint::include_modules!();
 
 #[derive(Serialize, Deserialize)]
@@ -48,6 +50,7 @@ fn enabled_by_default() -> bool {
 enum LibraryAction {
     #[default]
     Replace,
+    Connect,
     Shuffle,
     Preview {
         title: String,
@@ -79,13 +82,14 @@ struct State {
     account_verified: bool,
     library_action: LibraryAction,
     shuffle_request: bool,
-    radio_attempted_generation: Option<u64>,
+    radio_requests: radio::RadioRequests,
     radio_resume_when_ready: bool,
+    volume_save_pending: bool,
     artwork: RefCell<artwork::ArtworkCache>,
 }
 
 type LibraryResult = Result<tide_provider::Response, String>;
-fn select_zen_session() -> Option<tide_provider::Request> {
+fn select_zen_session(index: i32) -> Option<tide_provider::Request> {
     let mut dialog = rfd::FileDialog::new()
         .set_title("Connect your Zen session: select cookies.sqlite in your profile")
         .add_filter("Zen cookie database", &["sqlite"])
@@ -95,7 +99,10 @@ fn select_zen_session() -> Option<tide_provider::Request> {
     }
     dialog
         .pick_file()
-        .map(|database| tide_provider::Request::Connect { database })
+        .map(|database| tide_provider::Request::Connect {
+            database,
+            index: index.clamp(0, 9) as u32,
+        })
 }
 fn request_library(
     s: &mut State,
@@ -111,6 +118,9 @@ fn request_library(
         tide_provider::Request::Connect { .. } | tide_provider::Request::SwitchAccount { .. }
     );
     let action = match &request {
+        tide_provider::Request::Connect { .. } | tide_provider::Request::SwitchAccount { .. } => {
+            LibraryAction::Connect
+        }
         tide_provider::Request::Radio { video_id } => LibraryAction::Radio {
             seed: video_id.clone(),
             generation: s.generation,
@@ -204,14 +214,17 @@ fn request_radio(s: &mut State, u: &AppWindow, tx: &mpsc::SyncSender<LibraryResu
     };
     if !force
         && (s.settings.queue.tracks.len().saturating_sub(index + 1) > 2
-            || s.radio_attempted_generation == Some(s.generation))
+            || !s.radio_requests.ready(s.generation, Instant::now()))
     {
         return;
     }
     let Some(seed) = current_video_id(s) else {
         return;
     };
-    s.radio_attempted_generation = Some(s.generation);
+    if force {
+        s.radio_requests.reset();
+    }
+    s.radio_requests.started(s.generation);
     request_library(s, u, tx, tide_provider::Request::Radio { video_id: seed });
     if force {
         if let LibraryAction::Radio {
@@ -223,14 +236,57 @@ fn request_radio(s: &mut State, u: &AppWindow, tx: &mpsc::SyncSender<LibraryResu
     }
 }
 
+fn library_failure(s: &mut State, u: &AppWindow, authentication: bool) {
+    if authentication {
+        s.account_verified = false;
+        u.set_account_verified(false);
+        s.radio_resume_when_ready = false;
+        s.account_error = true;
+        u.set_error_is_account(true);
+        u.set_error_message("Reconnect your YouTube Music account".into());
+        u.set_account_status("YouTube rejected this session. Reconnect using the signed-in Zen profile and selected account.".into());
+        return;
+    }
+    if let LibraryAction::Radio { generation, .. } = &s.library_action {
+        if *generation != s.generation {
+            return;
+        }
+        if s.radio_requests.failed(Instant::now()) {
+            u.set_account_status(
+                "Recommendations unavailable temporarily; retrying shortly".into(),
+            );
+            if s.radio_resume_when_ready {
+                u.set_status_text("Reconnecting recommendations…".into());
+            }
+            return;
+        }
+        s.radio_resume_when_ready = false;
+        s.account_error = false;
+        u.set_error_is_account(false);
+        u.set_error_retryable(true);
+        u.set_error_message("Recommendations unavailable. Retry to continue.".into());
+    } else {
+        s.account_error = true;
+        u.set_error_is_account(true);
+        u.set_error_message("YouTube Music unavailable temporarily. Open Account to retry.".into());
+    }
+    u.set_account_status("Request failed; check your connection and retry".into());
+}
+
 fn configure_account_playback(s: &mut State, u: &AppWindow) -> bool {
     s.engine.take(); // Drop/join helpers before releasing their cookie lease.
     s.cookie_lease.take();
     s.active_playback = false;
     s.radio_resume_when_ready = false;
-    s.radio_attempted_generation = None;
+    s.radio_requests.reset();
+    s.detail_tracks.clear();
+    u.set_detail_open(false);
+    u.set_detail_busy(false);
+    u.set_detail_title("".into());
+    u.set_detail_rows(ModelRc::new(VecModel::default()));
     s.artwork.borrow_mut().clear();
     s.account_verified = false;
+    u.set_account_verified(false);
     s.account_error = false;
     u.set_error_is_account(false);
     u.set_error_message("".into());
@@ -501,6 +557,7 @@ fn refresh(ui: &AppWindow, state: &State) {
     }
 }
 fn report_error(state: &mut State, ui: &AppWindow, error: String) {
+    ui.set_error_retryable(false);
     state.command_error = Some(error.clone());
     ui.set_error_message(error.clone().into());
     ui.set_status_text(error.into());
@@ -804,16 +861,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .and_then(|b| serde_json::from_slice(&b).ok())
         .unwrap_or_default();
     let smoke_autoplay = std::env::args().any(|a| a == "--smoke-autoplay");
+    let local_listening_source = std::env::args()
+        .skip_while(|a| a != "--smoke-local-listening")
+        .nth(2);
+    if let Some(source) = &local_listening_source {
+        let source = tide_playback::validate_playback_source(source)?;
+        if !Path::new(&source).is_file() {
+            return Err("Local listening verification requires an existing audio file".into());
+        }
+    }
+    let listening_seconds = std::env::args()
+        .skip_while(|a| a != "--smoke-listening-session" && a != "--smoke-local-listening")
+        .nth(1)
+        .map(|s| s.parse::<u64>())
+        .transpose()?
+        .map(|seconds| seconds.clamp(300, 3600));
     let smoke_skip_session = std::env::args().any(|a| a == "--smoke-early-skip-session");
     let smoke_early_skip =
         smoke_skip_session || std::env::args().any(|a| a == "--smoke-early-skip");
     if smoke_autoplay
+        || listening_seconds.is_some()
         || smoke_early_skip
         || std::env::args().any(|a| a == "--smoke-ui" || a == "--benchmark-mode")
     {
         settings = Settings {
             transient: true,
-            volume: (smoke_autoplay || smoke_early_skip).then_some(0.0),
+            volume: (smoke_autoplay || smoke_early_skip || listening_seconds.is_some())
+                .then_some(0.0),
             ..Settings::default()
         };
     }
@@ -829,6 +903,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         save(&settings);
     }
     let test_mode = (smoke_early_skip && !smoke_skip_session)
+        || local_listening_source.is_some()
         || std::env::args().any(|a| a == "--smoke-ui" || a == "--benchmark-mode");
     let provider = if test_mode {
         None
@@ -880,8 +955,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         account_verified: false,
         library_action: LibraryAction::default(),
         shuffle_request: false,
-        radio_attempted_generation: None,
+        radio_requests: radio::RadioRequests::default(),
         radio_resume_when_ready: false,
+        volume_save_pending: false,
         artwork: RefCell::new(if test_mode {
             artwork::ArtworkCache::new_disabled()
         } else {
@@ -1017,7 +1093,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if std::env::args().any(|a| a == "--connect-account") && !test_mode {
         ui.set_settings_open(true);
-        if let Some(request) = select_zen_session() {
+        if let Some(request) = select_zen_session(ui.get_account_index()) {
             request_library(&mut state.borrow_mut(), &ui, &library_tx, request);
         }
     }
@@ -1027,7 +1103,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let tx = library_tx.clone();
         ui.on_connect_account(move || {
             if let Some(u) = weak.upgrade() {
-                let Some(request) = select_zen_session() else {
+                let Some(request) = select_zen_session(u.get_account_index()) else {
                     return;
                 };
                 request_library(&mut state.borrow_mut(), &u, &tx, request);
@@ -1351,12 +1427,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let state = state.clone();
         let weak = ui.as_weak();
+        let tx = library_tx.clone();
         ui.on_retry_error(move || {
             if let Some(u) = weak.upgrade() {
-                if state.borrow().account_error {
+                let mut s = state.borrow_mut();
+                if s.account_error {
                     u.set_settings_open(true);
                 } else {
                     u.set_error_message("".into());
+                    if !u.get_error_retryable() {
+                        s.command_error = None;
+                        return;
+                    }
+                    if s.engine
+                        .as_ref()
+                        .is_some_and(|e| e.snapshot().error.is_some())
+                    {
+                        play(&mut s, &u);
+                    } else if matches!(s.library_action, LibraryAction::Radio { .. })
+                        && s.account_verified
+                    {
+                        s.radio_requests.reset();
+                        s.radio_resume_when_ready = !s.active_playback && s.settings.autoplay;
+                        request_radio(&mut s, &u, &tx, false);
+                    } else {
+                        play(&mut s, &u);
+                    }
                 }
             }
         });
@@ -1529,7 +1625,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     send(&mut s, &u, PlaybackCommand::Stop);
                     s.active_playback = false;
                     s.radio_resume_when_ready = true;
-                    s.radio_attempted_generation = None;
+                    s.radio_requests.reset();
                     request_radio(&mut s, &u, &tx, false);
                     u.set_paused(true);
                     u.set_status_text("Finding the next recommended song...".into());
@@ -1579,7 +1675,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         s.settings.autoplay = !s.settings.autoplay;
         u.set_autoplay_enabled(s.settings.autoplay);
         if s.settings.autoplay {
-            s.radio_attempted_generation = None;
+            s.radio_requests.reset();
         } else {
             s.radio_resume_when_ready = false;
             s.settings.queue.remove_autoplay_upcoming();
@@ -1744,7 +1840,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 u.set_volume(v);
                 s.settings.volume = Some(v as f64);
                 send(&mut s, &u, PlaybackCommand::SetVolume(v as f64));
-                save(&s.settings);
+                s.volume_save_pending = true;
             }
         });
     }
@@ -1753,28 +1849,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(windows)]
     {
         use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-        if let Ok(handle) = ui.window().window_handle().window_handle() {
-            if let RawWindowHandle::Win32(handle) = handle.as_raw() {
-                let weak = ui.as_weak();
-                match tide_windows::start(
-                    handle.hwnd.get() as *mut std::ffi::c_void,
-                    move |action| {
-                        let (code, value) = match action {
-                            tide_windows::MediaAction::Play => (0, 0.0),
-                            tide_windows::MediaAction::Pause => (1, 0.0),
-                            tide_windows::MediaAction::Toggle => (2, 0.0),
-                            tide_windows::MediaAction::Next => (3, 0.0),
-                            tide_windows::MediaAction::Previous => (4, 0.0),
-                            tide_windows::MediaAction::Stop => (5, 0.0),
-                            tide_windows::MediaAction::Seek(seconds) => (6, seconds as f32),
-                        };
-                        let _ = weak
-                            .upgrade_in_event_loop(move |u| u.invoke_media_command(code, value));
-                    },
-                ) {
-                    Ok(session) => *media.borrow_mut() = Some(session),
-                    Err(error) => {
-                        ui.set_status_text(format!("Media controls unavailable: {error}").into())
+        if listening_seconds.is_none() {
+            if let Ok(handle) = ui.window().window_handle().window_handle() {
+                if let RawWindowHandle::Win32(handle) = handle.as_raw() {
+                    let weak = ui.as_weak();
+                    match tide_windows::start(
+                        handle.hwnd.get() as *mut std::ffi::c_void,
+                        move |action| {
+                            let (code, value) = match action {
+                                tide_windows::MediaAction::Play => (0, 0.0),
+                                tide_windows::MediaAction::Pause => (1, 0.0),
+                                tide_windows::MediaAction::Toggle => (2, 0.0),
+                                tide_windows::MediaAction::Next => (3, 0.0),
+                                tide_windows::MediaAction::Previous => (4, 0.0),
+                                tide_windows::MediaAction::Stop => (5, 0.0),
+                                tide_windows::MediaAction::Seek(seconds) => (6, seconds as f32),
+                            };
+                            let _ = weak.upgrade_in_event_loop(move |u| {
+                                u.invoke_media_command(code, value)
+                            });
+                        },
+                    ) {
+                        Ok(session) => *media.borrow_mut() = Some(session),
+                        Err(error) => ui
+                            .set_status_text(format!("Media controls unavailable: {error}").into()),
                     }
                 }
             }
@@ -1854,15 +1952,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let weak = ui.as_weak();
         let library_tx = library_tx.clone();
         let mut last_content_view = None;
+        let mut last_volume_save = Instant::now();
         timer.start(
             slint::TimerMode::Repeated,
-            Duration::from_secs(1),
+            Duration::from_millis(250),
             move || {
                 let Some(u) = weak.upgrade() else {
                     return;
                 };
                 let mut s = state.borrow_mut();
-                let content_view = (u.get_library_open(), u.get_detail_open(), u.get_search_open());
+                let content_view = (
+                    u.get_library_open(),
+                    u.get_detail_open(),
+                    u.get_search_open(),
+                );
+                if s.volume_save_pending && last_volume_save.elapsed() >= Duration::from_secs(1) {
+                    s.volume_save_pending = false;
+                    save(&s.settings);
+                    last_volume_save = Instant::now();
+                }
                 if last_content_view != Some(content_view) {
                     refresh_library_models(&s, &u);
                     refresh_content_models(&s, &u);
@@ -1906,6 +2014,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             truncated,
                         }) => {
                             s.account_verified = true;
+                            u.set_account_verified(true);
                             s.account_error = false;
                             u.set_error_is_account(false);
                             u.set_error_message("".into());
@@ -1960,10 +2069,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     continue;
                                 }
                                 if tracks.is_empty() {
-                                    s.radio_resume_when_ready = false;
-                                    u.set_account_status(
-                                        "No further song recommendations available".into(),
-                                    );
+                                    library_failure(&mut s, &u, false);
                                     continue;
                                 }
                                 if replace_upcoming {
@@ -1971,11 +2077,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         s.settings.queue.current.map_or(0, |index| index + 1);
                                     s.settings.queue.tracks.truncate(keep);
                                 }
+                                s.settings.queue.trim_played_history(20);
                                 let old_len = s.settings.queue.tracks.len();
-                                let added = s.settings.queue.append_deduplicated(tracks.into_iter().map(|mut t| {
-                                    t.recommended = true; t
-                                }));
-                                if added > 0 && !s.active_playback && s.radio_resume_when_ready {
+                                let added = s.settings.queue.append_deduplicated(
+                                    tracks.into_iter().map(|mut t| {
+                                        t.recommended = true;
+                                        t
+                                    }),
+                                );
+                                if added == 0 {
+                                    library_failure(&mut s, &u, false);
+                                    continue;
+                                }
+                                s.radio_requests.succeeded();
+                                if !s.active_playback && s.radio_resume_when_ready {
                                     s.settings.queue.select(old_len);
                                     play(&mut s, &u);
                                 }
@@ -1991,9 +2106,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 s.detail_tracks = tracks;
                                 u.set_detail_busy(false);
                                 refresh_content_models(&s, &u);
-                                u.set_account_status(if truncated {
-                                    "Showing the first 2,000 playlist tracks"
-                                } else { "Playlist ready" }.into());
+                                u.set_account_status(
+                                    if truncated {
+                                        "Showing the first 2,000 playlist tracks"
+                                    } else {
+                                        "Playlist ready"
+                                    }
+                                    .into(),
+                                );
                                 continue;
                             }
                             if tracks.is_empty() {
@@ -2032,30 +2152,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                             }
                         }
-                        Ok(
-                            tide_provider::Response::Error { .. }
-                            | tide_provider::Response::Session { .. },
-                        ) => {
-                            s.radio_resume_when_ready = false;
-                            s.account_error = true;
-                            u.set_error_is_account(true);
-                            u.set_error_message("Reconnect your YouTube Music account".into());
-                            u.set_account_status(
-                                "Account request failed; reconnect and retry".into(),
-                            );
-                            u.set_status_text(
-                                "Open Account settings to reconnect YouTube Music".into(),
-                            );
+                        Ok(tide_provider::Response::Error { code }) => {
+                            library_failure(&mut s, &u, code == "session");
                         }
-                        Err(error) => {
-                            s.radio_resume_when_ready = false;
+                        Err(error) if matches!(s.library_action, LibraryAction::Connect) => {
                             s.account_error = true;
                             u.set_error_is_account(true);
-                            u.set_error_message("Account unavailable. Reconnect or retry.".into());
-                            u.set_account_status(error.into());
-                            u.set_status_text(
-                                "Account request failed; open Account settings to reconnect or retry".into(),
+                            u.set_error_message(
+                                "Account connection failed. Open Account for details.".into(),
                             );
+                            u.set_account_status(error.into());
+                        }
+                        Ok(tide_provider::Response::Session { .. }) | Err(_) => {
+                            library_failure(&mut s, &u, false);
                         }
                     }
                 }
@@ -2065,7 +2174,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     refresh_library_models(&s, &u);
                     refresh_content_models(&s, &u);
                 }
-                if s.active_playback {
+                if s.active_playback || s.radio_resume_when_ready {
                     request_radio(&mut s, &u, &library_tx, false);
                 }
                 while let Ok((g, result)) = rx.try_recv() {
@@ -2132,12 +2241,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             s.radio_resume_when_ready = s.settings.autoplay;
                             request_radio(&mut s, &u, &library_tx, false);
                             if !failed {
-                                u.set_status_text("Queue finished".into());
+                                u.set_status_text(
+                                    if s.radio_resume_when_ready && s.account_verified {
+                                        "Finding the next recommended song…"
+                                    } else {
+                                        "Queue finished"
+                                    }
+                                    .into(),
+                                );
                             }
                         }
                     } else if failed {
                         s.active_playback = false;
                         u.set_paused(true);
+                        s.account_error = false;
+                        u.set_error_is_account(false);
+                        u.set_error_retryable(true);
+                        u.set_error_message(
+                            "Playback interrupted. Check your connection and retry.".into(),
+                        );
                     }
                 }
             },
@@ -2709,12 +2831,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         });
     }
+    let listening = listening_seconds
+        .map(|seconds| listening::start(state.clone(), &ui, seconds, local_listening_source));
     let result = ui.run();
     timer.stop();
     preparation_timer.stop();
     media_timer.stop();
     smoke_timer.stop();
+    if let Some((timer, _)) = &listening {
+        timer.stop();
+    }
     let mut s = state.borrow_mut();
+    if s.volume_save_pending {
+        save(&s.settings);
+    }
     s.search_cancel.store(true, Ordering::Release);
     s.library_cancel.store(true, Ordering::Release);
     if let Some(worker) = s.library_worker.take() {
@@ -2727,6 +2857,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let _ = e.send(PlaybackCommand::Shutdown);
     }
     result?;
+    if listening
+        .as_ref()
+        .is_some_and(|(_, passed)| !*passed.borrow())
+    {
+        return Err("Sustained listening verification did not complete".into());
+    }
     if !*early_skip_passed.borrow() {
         return Err("Early-skip verification did not complete".into());
     }

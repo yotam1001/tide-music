@@ -32,7 +32,8 @@ in the protected lease directory that is removed after process cleanup.
 Preparation selects the same `bestaudio/best` policy as ordinary playback. It
 accepts supported HTTPS YouTube media CDN addresses, preserves required safe
 headers, and never persists signed stream URLs. An unavailable result uses
-ordinary extraction; a rejected prepared load retries that extraction once.
+ordinary extraction; a rejected prepared load joins the bounded reconnect
+policy and refreshes through the original source.
 It avoids resolving the next song at EOF when preparation succeeds, but still
 starts a fresh mpv session and is not guaranteed gapless playback.
 
@@ -63,6 +64,30 @@ releases its buffers; the next `Load` starts a fresh helper process. Pause and
 seek commands queued for an old track are discarded. Volume is an accepted
 target shared by all sessions, and new mpv processes receive it before loading.
 
+Unexpected IPC loss, source read errors, and early EOF of a known finite track
+reconnect the same original source at most twice consecutively, after one
+and three seconds. Sixty seconds of confirmed forward playback restores the
+retry budget for a later outage; pause and seek jumps do not restore it.
+Reconnects discard prepared stream URLs and resume from the
+last confirmed position using mpv's per-file `start` option. Explicit pause and
+seek targets accepted during loading/reconnect take precedence, and the new
+file starts paused until those controls are applied. Replacements, Stop and
+shutdown cancel recovery through the same generation/epoch/session checks.
+Natural EOF and unknown-duration EOF retain normal completion behavior; an
+EOF more than the larger of three seconds or one percent before known duration
+is treated as premature. The full-duration estimate retains its largest finite
+observation because some demuxers shrink duration to bytes received just
+before an interrupted EOF. This tolerance accommodates delayed position events.
+
+A 250 ms watchdog bounds each file-loading attempt to sixty seconds and
+reconnects after thirty seconds without position progress while playback is
+intended. Paused files are exempt from the progress watchdog; loading remains
+bounded while paused. Retry exhaustion leaves a visible error with `ended`
+false, so the app can offer retry without advancing the queue. These limits
+bound silent loading; they cannot restore an unavailable source or network.
+Recovery state stays in memory and diagnostics never include source URLs,
+headers, cookie paths, session details or library contents.
+
 Process startup has a five second IPC-connect deadline and checks shutdown or
 superseding loads every 30 ms. Shutdown first requests `quit`, allows 900 ms
 for mpv to exit, then forces termination. Dropping the handle joins its worker;
@@ -74,6 +99,7 @@ an idle handle owns no mpv process. Source arguments never pass through a shell.
 .\scripts\cargo-local.ps1 -CargoArgs @('test','-p','tide-playback')
 .\scripts\cargo-local.ps1 -CargoArgs @('clippy','-p','tide-playback','--all-targets','--','-D','warnings')
 .\scripts\cargo-local.ps1 -CargoArgs @('run','-p','tide-playback','--example','smoke','--','.local/test-tone.wav')
+.\scripts\cargo-local.ps1 -CargoArgs @('test','-p','tide-playback','native_recovery_fault_probe','--','--ignored','--nocapture')
 ```
 
 The smoke example accepts a seekable local audio file or an HTTP(S) URL of at
@@ -94,6 +120,18 @@ superseded events, Stop epochs, bounded IPC reads, and actual process-tree
 termination: a contained test process spawns a descendant, and dropping the
 owner must signal the descendant's termination. The ignored `job_tree_probe`
 test is an internal subprocess helper invoked by that cleanup test.
+
+The opt-in native recovery probe creates its own muted local silence and kills
+only the mpv owned by its test handle. It checks resume, pause/seek preservation
+during reconnect, retry exhaustion, replacement and Stop cancellation. A
+loopback HTTP server then truncates a WAV whose header advertises sixty
+seconds and rejects internal Range refill until Tide starts recovery; the
+probe checks original-source
+reconnect and position preservation against subsequent complete responses.
+It uses no account session, external network, persisted queue or running app
+music. Deterministic tests also cover source read-error events, stale entries,
+natural/unknown EOF boundaries, pending-seek observations, retry limits and
+loading/stall/pause watchdog deadlines.
 
 ## Known limitations
 

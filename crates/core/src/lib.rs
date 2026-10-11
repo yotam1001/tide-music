@@ -160,6 +160,18 @@ impl Queue {
         appended
     }
 
+    /// Keep a bounded recent history while retaining the current and all upcoming
+    /// songs. Long radio sessions must not fill the queue with already-played rows.
+    pub fn trim_played_history(&mut self, keep: usize) {
+        if let Some(current) = self.current.filter(|i| *i < self.tracks.len()) {
+            let removed = current.saturating_sub(keep);
+            if removed > 0 {
+                self.tracks.drain(..removed);
+                self.current = Some(current - removed);
+            }
+        }
+    }
+
     /// Randomize a freshly loaded playlist, including its first track.
     pub fn shuffle_all(&mut self, seed: u64) {
         self.current = None;
@@ -489,5 +501,27 @@ mod tests {
         let mut empty = Queue::default();
         empty.shuffle_all(1);
         assert_eq!(empty.current, None);
+    }
+    #[test]
+    fn long_radio_sessions_free_history_without_losing_current_or_manual_upcoming() {
+        let mut queue = Queue {
+            tracks: (0..MAX_QUEUE_TRACKS)
+                .map(|i| track(&format!("song-{i}")))
+                .collect(),
+            current: Some(MAX_QUEUE_TRACKS - 2),
+        };
+        let current = queue.tracks[MAX_QUEUE_TRACKS - 2].clone();
+        let upcoming = queue.tracks[MAX_QUEUE_TRACKS - 1].clone();
+        queue.trim_played_history(20);
+        assert_eq!(queue.current, Some(20));
+        assert_eq!(queue.tracks[20], current);
+        assert_eq!(queue.tracks[21], upcoming);
+        assert_eq!(
+            queue.append_deduplicated([track("new"), current, upcoming]),
+            1
+        );
+        assert_eq!(queue.tracks.len(), 23);
+        // A distant heard song can return; immediate repeats remain deduplicated.
+        assert_eq!(queue.append_deduplicated([track("song-0")]), 1);
     }
 }

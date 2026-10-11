@@ -38,7 +38,7 @@ pub struct Card {
 #[derive(Clone, Serialize)]
 #[serde(tag = "action", rename_all = "lowercase")]
 pub enum Request {
-    Connect { database: PathBuf },
+    Connect { database: PathBuf, index: u32 },
     SwitchAccount { index: u32 },
     Library,
     Playlist { id: String },
@@ -247,13 +247,21 @@ impl Provider {
 
     #[cfg(windows)]
     pub fn execute(&self, request: Request, cancel: Arc<AtomicBool>) -> Result<Response, String> {
-        if let Request::Connect { ref database } = request {
+        if let Request::Connect {
+            ref database,
+            index,
+        } = request
+        {
+            if index > 9 {
+                return Err("Choose an account between 1 and 10".into());
+            }
             let input = serde_json::to_vec(
-                &serde_json::json!({"action":"connect_existing", "database": database}),
+                &serde_json::json!({"action":"connect_existing", "database": database, "index": index}),
             )
             .map_err(|_| "Could not prepare account connection")?;
             return match execute_helper(&input, cancel.clone(), Duration::from_secs(600))? {
                 Response::Session { headers } => self.save_verified_session(headers, &cancel),
+                Response::Error { code } => Ok(Response::Error { code }),
                 _ => Err("Account connection did not return a session".into()),
             };
         }
@@ -526,8 +534,14 @@ fn execute_helper(
         Response::Error { code } if code == "profile" => {
             Err("Select cookies.sqlite inside your Zen profile, or use Import session for a custom profile".into())
         }
-        Response::Error { code } if code == "session" => {
-            Err("Sign in to YouTube Music in your Zen profile, then retry Connect account. For another Google account, use Import session".into())
+        Response::Error { code } if code == "profile_read" => {
+            Err("Zen's cookie database could not be read. Close Zen after signing in, then reconnect using the same profile.".into())
+        }
+        Response::Error { code } if code == "container" => {
+            Err("Sign-in was found in a Zen container. Tide currently needs YouTube Music signed in on a tab outside that container.".into())
+        }
+        Response::Error { code } if code == "session" || code == "request" => {
+            Ok(Response::Error { code })
         }
         Response::Error { code } if code == "login_browser" => Err(
             "Could not open the sign-in browser. Install Zen or set TIDE_ZEN_EXE, or use Import session"

@@ -20,6 +20,33 @@ ARTWORK_HOSTS = ("ytimg.com", "ggpht.com", "googleusercontent.com")
 LOGIN_SECONDS = 8 * 60
 LOGIN_RETRY_SECONDS = 15
 MUSIC_URL = "https://music.youtube.com"
+
+
+def request_failure(error):
+    """Keep authentication failure distinct from a temporary service failure."""
+    response = getattr(error, "response", None)
+    status = getattr(response, "status_code", None) or getattr(error, "status_code", None)
+    message = error.args[0] if error.args and isinstance(error.args[0], str) else ""
+    expired = status in (401, 403) or re.match(r"Server returned HTTP (401|403):", message[:32])
+    # The API can return HTTP 200 with an anonymous account menu. The pinned
+    # client's parser then raises KeyError containing the full response. Inspect
+    # only the fixed authentication flag; never return exception text or data.
+    tb = error.__traceback__
+    while tb:
+        if tb.tb_frame.f_code.co_name == "get_account_info":
+            payload = tb.tb_frame.f_locals.get("response")
+            if isinstance(payload, dict):
+                context = payload.get("responseContext", {})
+                if isinstance(context, dict):
+                    services = context.get("serviceTrackingParams", [])
+                    for service in services if isinstance(services, list) else []:
+                        params = service.get("params", []) if isinstance(service, dict) else []
+                        for param in params if isinstance(params, list) else []:
+                            if isinstance(param, dict) and param.get("key") == "logged_in" and param.get("value") == "0":
+                                expired = True
+        tb = tb.tb_next
+    return {"type": "error", "code": "session" if expired else "request"}
+
 COOKIE_DOMAINS = (".youtube.com", "youtube.com", "music.youtube.com", ".music.youtube.com")
 SESSION_HEADERS = {
     "accept": 1024, "accept-language": 1024, "content-type": 256,
@@ -88,7 +115,11 @@ def read_music_cookies(profile, directory):
     return read_cookie_database(database)
 
 
-def read_cookie_database(database):
+class CookieReadError(Exception):
+    pass
+
+
+def read_cookie_database(database, strict=False):
     """Caller must authorize and confine the file before this bounded read."""
     try:
         with closing(sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True, timeout=0.1)) as connection:
@@ -102,12 +133,22 @@ def read_cookie_database(database):
                 + context_filter + " ORDER BY host, name LIMIT 201",
                 (*COOKIE_DOMAINS, int(time.time())),
             ).fetchall()
+            if strict and "originAttributes" in columns and not any(row[0] == "__Secure-3PAPISID" for row in rows):
+                container = connection.execute(
+                    "SELECT 1 FROM moz_cookies WHERE host IN (?, ?, ?, ?) "
+                    "AND name = '__Secure-3PAPISID' AND originAttributes != '' AND expiry > ? LIMIT 1",
+                    (*COOKIE_DOMAINS, int(time.time())),
+                ).fetchone()
+                if container:
+                    raise CookieReadError("container")
         if len(rows) > 200:
             return []
         return [{"name": name, "value": value, "domain": host, "path": path}
                 for name, value, host, path in rows]
     except (sqlite3.Error, OSError):
         # Browser startup, write locks, or shutdown can temporarily prevent a read.
+        if strict:
+            raise CookieReadError("profile_read") from None
         return []
 
 
@@ -124,14 +165,20 @@ def selected_zen_database(value):
     return canonical
 
 
-def connect_existing(database):
+def connect_existing(database, index=0):
     # This path arrives only after the user explicitly selects the cookie file.
     # No browser is opened, no profile is copied, and no files are changed here.
     try:
         database = selected_zen_database(database)
     except (ValueError, OSError, KeyError, TypeError):
         return {"type": "error", "code": "profile"}
-    headers = session_headers({"x-goog-authuser": "0"}, read_cookie_database(database))
+    if type(index) is not int or not 0 <= index <= 9:
+        return {"type": "error", "code": "session"}
+    try:
+        cookies = read_cookie_database(database, strict=True)
+    except CookieReadError as error:
+        return {"type": "error", "code": error.args[0]}
+    headers = session_headers({"x-goog-authuser": str(index)}, cookies)
     if not headers:
         return {"type": "error", "code": "session"}
     try:
@@ -139,8 +186,8 @@ def connect_existing(database):
             return {"type": "session", "headers": headers}
     except ImportError:
         return {"type": "error", "code": "runtime"}
-    except Exception:
-        pass
+    except Exception as error:
+        return request_failure(error)
     return {"type": "error", "code": "session"}
 
 
@@ -157,8 +204,8 @@ def switch_account(headers, index):
             return {"type": "session", "headers": candidate}
     except ImportError:
         return {"type": "error", "code": "runtime"}
-    except Exception:
-        pass
+    except Exception as error:
+        return request_failure(error)
     return {"type": "error", "code": "session"}
 
 
@@ -403,14 +450,7 @@ def run(client, request):
             return {"type": "tracks", "tracks": tracks(items, MAX_RADIO_TRACKS, (video,), True),
                     "truncated": len(items) > MAX_RADIO_TRACKS}
         except Exception as error:
-            response = getattr(error, "response", None)
-            status = getattr(response, "status_code", None) or getattr(error, "status_code", None)
-            # ytmusicapi 1.12.3 wraps HTTP errors without preserving response.
-            # Inspect only its fixed status prefix, never return exception text.
-            message = error.args[0] if error.args and isinstance(error.args[0], str) else ""
-            if status in (401, 403) or re.match(r"Server returned HTTP (401|403):", message[:32]):
-                return {"type": "error", "code": "session"}
-            return empty
+            return request_failure(error)
     if action in ("playlist", "liked"):
         if action == "playlist":
             playlist = identifier(request.get("id"))
@@ -466,7 +506,7 @@ def main():
             print(json.dumps(result, ensure_ascii=True))
             return
         if request.get("action") == "connect_existing":
-            result = connect_existing(request["database"])
+            result = connect_existing(request["database"], request.get("index", 0))
             print(json.dumps(result, ensure_ascii=True))
             return
         if request.get("action") == "connect":
@@ -481,9 +521,9 @@ def main():
         print(json.dumps(result, ensure_ascii=True))
     except ImportError:
         print('{"type":"error","code":"runtime"}')
-    except Exception:
+    except Exception as error:
         # Exceptions can include HTTP headers or request data: never serialize them.
-        print('{"type":"error","code":"request"}')
+        print(json.dumps(request_failure(error)))
 
 
 if __name__ == "__main__":

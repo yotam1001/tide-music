@@ -191,3 +191,22 @@ separate authenticated recommendation handoff described above.
 
 The revision passes 59 deterministic Rust tests; three helper/interactive tests
 remain opt-in. Formatting and strict Clippy also pass.
+
+## Reliability and reconnect follow-up
+
+The subsequent revision passes 67 deterministic Rust tests and 33 Python helper
+tests, plus workspace formatting and strict Clippy. A native playback fault probe
+passed process loss, truncated HTTP recovery, retained pause/seek intent, bounded
+retry exhaustion, replacement and Stop cancellation. A focused native UI harness
+passed 11 slider, accessibility, overlay, minimum-size and scaled-render checks.
+Actual monitor DPI migration and the final hardware media-key regression remain
+to be checked.
+
+Reconnect now preserves the selected Google account instead of always importing
+account index zero. Anonymous account-menu responses, temporary service errors,
+unreadable profile databases and container-only sign-in have distinct safe
+outcomes. Tests use synthetic cookies and account responses; they do not verify
+a successful real reconnect. A read-only health probe currently reports rejected
+authentication for the saved session. The sustained signed-in listening test
+could not start, so repeated natural transitions and recommendation refills are
+still an outstanding release gate.

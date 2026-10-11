@@ -2,16 +2,24 @@ param(
     [Parameter(Mandatory = $true)][string]$Executable,
     [int]$Seconds = 30,
     [string[]]$AppArguments = @(),
-    [string]$Output = '.local/resource-samples.json'
+    [string]$Output = '.local/resource-samples.json',
+    [switch]$RequireSuccessfulExit
 )
 $ErrorActionPreference = 'Stop'
 $taskExe = (Resolve-Path -LiteralPath $Executable).Path
+$taskParent = Split-Path -Parent $Output
+if ($taskParent) { New-Item -ItemType Directory -Force -Path $taskParent | Out-Null }
 $taskStart = @{ FilePath = $taskExe; PassThru = $true; WindowStyle = 'Hidden' }
+if ($RequireSuccessfulExit) {
+    $taskStart.RedirectStandardOutput = "$Output.stdout.log"
+    $taskStart.RedirectStandardError = "$Output.stderr.log"
+}
 if ($AppArguments.Count -gt 0) { $taskStart.ArgumentList = $AppArguments }
 $taskProcess = Start-Process @taskStart
 $taskRows = [Collections.Generic.List[object]]::new()
-$taskPreviousCpu = 0.0
+$taskCpuCounters = @{}
 $taskPreviousTime = Get-Date
+$taskObserved = @{}
 try {
     for ($taskIndex = 0; $taskIndex -lt $Seconds; $taskIndex++) {
         Start-Sleep -Seconds 1
@@ -29,20 +37,36 @@ try {
         $taskPrivate = 0L; $taskWorking = 0L; $taskCpu = 0.0
         foreach ($taskId in $taskIds) {
             $taskChild = Get-Process -Id $taskId -ErrorAction SilentlyContinue
-            if ($taskChild) { $taskPrivate += $taskChild.PrivateMemorySize64; $taskWorking += $taskChild.WorkingSet64; $taskCpu += $taskChild.CPU }
+            if ($taskChild) {
+                $taskObserved[$taskId] = $taskChild.StartTime
+                $taskPrivate += $taskChild.PrivateMemorySize64; $taskWorking += $taskChild.WorkingSet64
+                $taskCounterKey = "$taskId/$($taskChild.StartTime.Ticks)"
+                $taskLastCpu = if ($taskCpuCounters.ContainsKey($taskCounterKey)) { $taskCpuCounters[$taskCounterKey] } else { 0.0 }
+                $taskCpu += [Math]::Max(0, $taskChild.CPU - $taskLastCpu)
+                $taskCpuCounters[$taskCounterKey] = $taskChild.CPU
+            }
         }
         $taskNow = Get-Date
         $taskElapsed = ($taskNow - $taskPreviousTime).TotalSeconds
         # CPU percentage uses one logical core as the denominator.
-        $taskCpuPercent = [Math]::Max(0, ($taskCpu - $taskPreviousCpu) / $taskElapsed * 100)
+        $taskCpuPercent = [Math]::Max(0, $taskCpu / $taskElapsed * 100)
         $taskRows.Add([pscustomobject]@{ second=$taskIndex+1; processes=$taskIds.Count; private_mib=[Math]::Round($taskPrivate/1MB,2); working_set_mib=[Math]::Round($taskWorking/1MB,2); cpu_one_core_percent=[Math]::Round($taskCpuPercent,3) })
-        $taskPreviousCpu = $taskCpu; $taskPreviousTime = $taskNow
+        $taskPreviousTime = $taskNow
     }
 } finally {
     if (-not $taskProcess.HasExited) { $taskProcess.CloseMainWindow() | Out-Null; $taskProcess.WaitForExit(5000) | Out-Null }
     if (-not $taskProcess.HasExited) { Stop-Process -Id $taskProcess.Id }
 }
-$taskParent = Split-Path -Parent $Output
-if ($taskParent) { New-Item -ItemType Directory -Force -Path $taskParent | Out-Null }
 $taskRows | ConvertTo-Json | Set-Content -LiteralPath $Output -Encoding utf8
 $taskRows | Measure-Object private_mib -Minimum -Maximum -Average | Select-Object Minimum,Maximum,Average
+if ($RequireSuccessfulExit) {
+    $taskProcess.Refresh()
+    if ($taskProcess.ExitCode -ne 0) { throw 'Measured app did not finish its verification successfully' }
+    foreach ($taskEntry in $taskObserved.GetEnumerator()) {
+        $taskRemaining = Get-Process -Id $taskEntry.Key -ErrorAction SilentlyContinue
+        if ($taskRemaining -and $taskRemaining.StartTime -eq $taskEntry.Value) {
+            throw 'An observed playback helper remained after the app exited'
+        }
+    }
+    'PASS: verification exited successfully and observed helper processes ended'
+}

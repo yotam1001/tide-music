@@ -10,9 +10,9 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import MagicMock, patch
 from youtube_music import (LOGIN_SECONDS, MAX_RADIO_TRACKS, MUSIC_URL, artwork_url, connect, connect_existing, create_client, main,
-                          music_cookies, read_music_cookies, remove_login_profile, run,
+                          music_cookies, read_cookie_database, CookieReadError, read_music_cookies, remove_login_profile, run,
                           selected_zen_database, session_headers, switch_account, tracks,
-                          validate_session, wait_for_login, zen_executable)
+                          validate_session, wait_for_login, zen_executable, request_failure)
 
 
 class FakeClient:
@@ -37,6 +37,40 @@ class FakeClient:
 
 
 class ProviderTests(unittest.TestCase):
+    def test_anonymous_account_response_is_session_failure_without_private_data(self):
+        def get_account_info(flag):
+            response = {"responseContext": {"serviceTrackingParams": [
+                {"params": [{"key": "logged_in", "value": flag}]}]},
+                "private": "never disclose fixture"}
+            raise KeyError(str(response))
+        for flag, code in [("0", "session"), ("1", "request")]:
+            try:
+                get_account_info(flag)
+            except KeyError as error:
+                self.assertEqual(request_failure(error), {"type": "error", "code": code})
+
+    def test_reconnect_preserves_selected_account_and_classifies_transport_failure(self):
+        with patch("youtube_music.selected_zen_database", return_value=Path("fixture")), \
+                patch("youtube_music.read_cookie_database", return_value=[
+                    {"name": "__Secure-3PAPISID", "value": "fixture", "domain": ".youtube.com"}]), \
+                patch("youtube_music.validate_session", return_value=True) as validate:
+            result = connect_existing("fixture", 1)
+            self.assertEqual(result["headers"]["x-goog-authuser"], "1")
+            validate.assert_called_once_with(result["headers"])
+            validate.reset_mock()
+            for invalid in [-1, 10, True, "1"]:
+                self.assertEqual(connect_existing("fixture", invalid), {"type": "error", "code": "session"})
+            validate.assert_not_called()
+            validate.side_effect = TimeoutError("private")
+            self.assertEqual(connect_existing("fixture", 1), {"type": "error", "code": "request"})
+    def test_temporary_service_failures_keep_credentials_out_of_results(self):
+        for status in [429, 500, 503, None]:
+            error = RuntimeError("private fixture must never appear in output")
+            error.response = SimpleNamespace(status_code=status)
+            result = request_failure(error)
+            self.assertEqual(result, {"type": "error", "code": "request"})
+            self.assertNotIn("private fixture", json.dumps(result))
+
     def test_radio_filters_seed_duplicates_malformed_and_unavailable_tracks(self):
         client = FakeClient()
         items = [None, "unsupported", {}, {"videoId": "bad/id"}, {"videoId": 12345678901},
@@ -74,7 +108,8 @@ class ProviderTests(unittest.TestCase):
             client.get_watch_playlist.return_value = malformed
             self.assertEqual(run(client, {"action": "radio", "video_id": "K4DyBUG242c"}), empty)
         client.get_watch_playlist.side_effect = ValueError("private headers must not be returned")
-        self.assertEqual(run(client, {"action": "radio", "video_id": "K4DyBUG242c"}), empty)
+        self.assertEqual(run(client, {"action": "radio", "video_id": "K4DyBUG242c"}),
+                         {"type": "error", "code": "request"})
         for status in [401, 403]:
             failure = RuntimeError("private headers must not be returned")
             failure.response = SimpleNamespace(status_code=status)
@@ -192,6 +227,22 @@ class LoginTests(unittest.TestCase):
             self.assertTrue(observed[0][0].endswith("?mode=ro"))
             self.assertTrue(observed[0][1]["uri"])
             self.assertLessEqual(observed[0][1]["timeout"], 0.1)
+
+    def test_strict_profile_read_distinguishes_lock_and_container_without_mixing_sessions(self):
+        with tempfile.TemporaryDirectory() as root:
+            profile = self.database(root)
+            database = profile / "cookies.sqlite"
+            self.insert(profile, value="container-private-fixture", attrs="^userContextId=1")
+            with self.assertRaisesRegex(CookieReadError, "^container$"):
+                read_cookie_database(database, strict=True)
+            self.insert(profile, value="default-fixture", attrs="")
+            cookies = read_cookie_database(database, strict=True)
+            self.assertEqual([cookie["value"] for cookie in cookies], ["default-fixture"])
+            with closing(sqlite3.connect(database)) as lock:
+                lock.execute("BEGIN EXCLUSIVE")
+                with self.assertRaisesRegex(CookieReadError, "^profile_read$"):
+                    read_cookie_database(database, strict=True)
+                lock.rollback()
 
     def test_sqlite_old_schema_row_limit_and_missing_database(self):
         with tempfile.TemporaryDirectory() as root:
@@ -367,9 +418,9 @@ class LoginTests(unittest.TestCase):
             self.assertEqual(result["type"], "session")
             self.assertEqual(result["headers"]["x-goog-authuser"], "0")
             validate.assert_called_once_with(result["headers"])
-            for failure in [False, ValueError("fixture error")]:
+            for failure, code in [(False, "session"), (ValueError("fixture error"), "request")]:
                 with patch("youtube_music.validate_session", side_effect=[failure]):
-                    self.assertEqual(connect_existing(str(selected)), {"type": "error", "code": "session"})
+                    self.assertEqual(connect_existing(str(selected)), {"type": "error", "code": code})
             self.assertEqual(selected.read_bytes(), before)
             self.assertEqual([path.name for path in profile.iterdir()], ["cookies.sqlite"])
             spawn.assert_not_called()
@@ -382,7 +433,7 @@ class LoginTests(unittest.TestCase):
         with patch("youtube_music.sys.stdin", stdin), patch("youtube_music.sys.stdout", stdout), \
                 patch("youtube_music.connect_existing", return_value={"type": "error", "code": "profile"}) as handler:
             main()
-        handler.assert_called_once_with("fixture")
+        handler.assert_called_once_with("fixture", 0)
         self.assertEqual(json.loads(stdout.getvalue()), {"type": "error", "code": "profile"})
 
     def test_account_switch_verifies_zero_and_one_without_mutating_current_headers(self):
@@ -401,9 +452,9 @@ class LoginTests(unittest.TestCase):
             with patch("youtube_music.validate_session") as validate:
                 self.assertEqual(switch_account(current, index), {"type": "error", "code": "session"})
             validate.assert_not_called()
-        for failure in [False, ValueError("fixture error")]:
+        for failure, code in [(False, "session"), (ValueError("fixture error"), "request")]:
             with patch("youtube_music.validate_session", side_effect=[failure]):
-                self.assertEqual(switch_account(current, 1), {"type": "error", "code": "session"})
+                self.assertEqual(switch_account(current, 1), {"type": "error", "code": code})
         self.assertEqual(current["x-goog-authuser"], "0")
         self.assertEqual(switch_account({"cookie": "invalid"}, 1), {"type": "error", "code": "session"})
 
