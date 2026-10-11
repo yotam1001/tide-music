@@ -2,6 +2,9 @@
 //!
 //! Create, update, and drop the session on the window's UI thread. Callbacks
 //! arrive from Windows and must dispatch their work onto the app's event loop.
+//! SMTC routes hardware media keys even while another app has focus. Keep this
+//! as the only media-key handler: disable media keys in the playback backend
+//! rather than also registering a keyboard hook or global media hotkeys.
 
 use std::ffi::c_void;
 

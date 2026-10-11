@@ -26,6 +26,16 @@ YouTube access is unofficial and can change. Radio can return no usable recommen
 
 The previous revision still gave setup, appearance and playback too many permanent controls. The current shell has only Home and Library in the left navigation, one search field and Account menu in the header, and one persistent playback bar. The queue drawer is closed initially, docks beside content at wide widths and overlays content at narrow widths. Playing music does not navigate to Queue.
 
-Library entries open playlist details rather than starting playback. Details show tracks and one Play/Shuffle action group. Search results remain separate from the queue; selecting a search or Home song starts a fresh song seed. Playlist playback follows the selected playlist and then recommendations. Song menus expose Play next, Add to queue and explicit replacement with song radio. Queue menus move existing upcoming tracks rather than duplicating them; current-song repeat actions deliberately create a repeat. Reordering stays within the manual/autoplay groups. Manual choices are inserted before automatic suggestions; disabling autoplay removes upcoming suggestions while retaining the current song and manual choices. Played queue history is omitted from the drawer.
+Library entries open playlist details rather than starting playback. Details show tracks and one Play/Shuffle action group. Search results remain separate from the queue; selecting a search or Home song starts a fresh song seed. Playlist playback follows the selected playlist and then recommendations. Song menus expose Play next, Add to queue and explicit replacement with song radio. Queue drag handles move existing upcoming tracks rather than duplicating them; current-song repeat actions deliberately create a repeat. Reordering stays within the manual/autoplay groups. Manual choices are inserted before automatic suggestions; disabling autoplay removes upcoming suggestions while retaining the current song and manual choices. Played queue history is omitted from the drawer.
 
 Account state and appearance options appear only in the Account panel; Import/Disconnect/Help are under collapsed Advanced. Failed requests show one actionable banner, with Account settings for connection errors and Dismiss otherwise. Settings scroll at small window heights. Playlist/search metadata is bounded and transient; thumbnail fetching prioritizes the active browsing screen to prevent cache churn across hidden screens.
+
+## Visual refinement
+
+The current destinations and control placement stay intact. Home/Library use
+small vector icons and a quiet tinted selection. Track and playlist lists use
+thin inset separators instead of a filled card around every row; the current
+song retains its accent. Larger headings, consistent text contrast, restrained
+button outlines and matching dark/cream surfaces clarify the visual hierarchy.
+Menu and close icons are drawn as vectors, and empty artwork uses a music note.
+No new status panels, illustrations, background textures or animations are added.

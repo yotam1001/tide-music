@@ -1677,6 +1677,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let Some(u) = weak.upgrade() else {
                 return;
             };
+            // Hardware transport controls follow exactly the same path as the
+            // player buttons, including autoplay when Next reaches queue end.
+            match action {
+                2 => {
+                    u.invoke_toggle_pause();
+                    return;
+                }
+                3 => {
+                    u.invoke_next_track();
+                    return;
+                }
+                4 => {
+                    u.invoke_previous_track();
+                    return;
+                }
+                _ => {}
+            }
             let mut s = state.borrow_mut();
             match action {
                 0 => {
@@ -1688,28 +1705,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 1 => {
                     send(&mut s, &u, PlaybackCommand::SetPaused(true));
-                }
-                2 => {
-                    if !s.active_playback && s.settings.queue.current.is_some() {
-                        play(&mut s, &u);
-                    } else {
-                        send(&mut s, &u, PlaybackCommand::TogglePause);
-                    }
-                }
-                3 => {
-                    let repeat = s.settings.repeat;
-                    let previous = s.settings.queue.current;
-                    if s.settings.queue.next_track(repeat).is_some() && !play(&mut s, &u) {
-                        s.settings.queue.current = previous;
-                        refresh(&u, &s);
-                    }
-                }
-                4 => {
-                    let previous = s.settings.queue.current;
-                    if s.settings.queue.previous_track().is_some() && !play(&mut s, &u) {
-                        s.settings.queue.current = previous;
-                        refresh(&u, &s);
-                    }
                 }
                 5 => {
                     if send(&mut s, &u, PlaybackCommand::Stop) {
@@ -1778,11 +1773,50 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
+    // Publish confirmed playback state promptly so Windows chooses the correct
+    // Play/Pause action even when the user presses a media key twice quickly.
+    // Metadata and timeline writes are cached inside MediaSession.
+    let media_timer = slint::Timer::default();
+    if media.borrow().is_some() {
+        let state = state.clone();
+        let weak = ui.as_weak();
+        let media = media.clone();
+        media_timer.start(
+            slint::TimerMode::Repeated,
+            Duration::from_millis(100),
+            move || {
+                let Some(u) = weak.upgrade() else {
+                    return;
+                };
+                let s = state.borrow();
+                let snapshot = s
+                    .engine
+                    .as_ref()
+                    .map(|engine| engine.snapshot())
+                    .filter(|p| s.active_playback && p.generation == s.generation);
+                let (playing, position, duration) = if let Some(p) = snapshot {
+                    u.set_paused(p.paused);
+                    (!p.paused && !p.ended, p.position, p.duration)
+                } else {
+                    (false, u.get_position() as f64, u.get_duration() as f64)
+                };
+                if let Some(session) = media.borrow_mut().as_mut() {
+                    let _ = session.update(
+                        &u.get_track_title(),
+                        &u.get_track_artist(),
+                        &u.get_track_album(),
+                        playing,
+                        position,
+                        duration,
+                    );
+                }
+            },
+        );
+    }
     let timer = slint::Timer::default();
     {
         let state = state.clone();
         let weak = ui.as_weak();
-        let media = media.clone();
         let library_tx = library_tx.clone();
         let mut last_content_view = None;
         timer.start(
@@ -1998,16 +2032,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 if s.active_playback {
                     request_radio(&mut s, &u, &library_tx, false);
-                }
-                if let Some(session) = media.borrow_mut().as_mut() {
-                    let _ = session.update(
-                        &u.get_track_title(),
-                        &u.get_track_artist(),
-                        &u.get_track_album(),
-                        !u.get_paused() && s.active_playback,
-                        u.get_position() as f64,
-                        u.get_duration() as f64,
-                    );
                 }
                 while let Ok((g, result)) = rx.try_recv() {
                     if let Some(worker) = s.search_worker.take() {
@@ -2318,6 +2342,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             assert_eq!(state.borrow().settings.queue.current, Some(2));
             ui.invoke_shuffle_detail();
             assert_eq!(state.borrow().settings.queue.current, Some(0));
+            ui.invoke_media_command(3, 0.0);
+            assert_eq!(
+                state.borrow().settings.queue.current,
+                Some(1),
+                "Media Next advances once"
+            );
+            assert!(ui.get_detail_open(), "Media Next preserves browsing");
+            ui.invoke_media_command(4, 0.0);
+            assert_eq!(
+                state.borrow().settings.queue.current,
+                Some(0),
+                "Media Previous moves back once"
+            );
             let title = state.borrow().settings.queue.tracks[2].title.clone();
             ui.invoke_reorder_queue_track(2, 1);
             assert_eq!(state.borrow().settings.queue.tracks[1].title, title);
@@ -2340,6 +2377,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ui.set_paused(true);
             ui.set_status_text("Visual test data · playback inactive".into());
             println!("PASS: native song/playlist play preserves browsing; search seed, queue priority, autoplay off, shuffle, reorder and removal");
+            println!("PASS: media Next/Previous share player actions and preserve browsing");
         }
         let output = PathBuf::from(dir);
         std::fs::create_dir_all(&output)?;

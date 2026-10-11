@@ -449,6 +449,170 @@ mod tests {
         drop(window);
     }
 
+    /// Exercises the real Windows broker with an unfocused, hidden owner
+    /// window. It deliberately targets only this test's unique metadata, so
+    /// running it cannot pause or skip somebody else's active media session.
+    #[test]
+    #[ignore = "requires an interactive Windows desktop and the system media broker"]
+    fn broker_commands_reach_unfocused_window_once() {
+        use std::sync::mpsc;
+        use std::time::{Duration, Instant};
+        use windows::core::w;
+        use windows::Media::Control::GlobalSystemMediaTransportControlsSessionManager;
+        use windows::Win32::UI::WindowsAndMessaging::{
+            CreateWindowExW, DestroyWindow, DispatchMessageW, GetForegroundWindow, PeekMessageW,
+            TranslateMessage, MSG, PM_REMOVE, WINDOW_EX_STYLE, WS_OVERLAPPEDWINDOW,
+        };
+
+        struct TestWindow(HWND);
+        impl Drop for TestWindow {
+            fn drop(&mut self) {
+                // SAFETY: This test owns the HWND on its creating thread.
+                let _ = unsafe { DestroyWindow(self.0) };
+            }
+        }
+        // SAFETY: STATIC is a built-in class; no Rust pointers are retained.
+        let window = TestWindow(
+            unsafe {
+                CreateWindowExW(
+                    WINDOW_EX_STYLE(0),
+                    w!("STATIC"),
+                    w!("Tide unfocused media broker test"),
+                    WS_OVERLAPPEDWINDOW,
+                    0,
+                    0,
+                    1,
+                    1,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+            }
+            .unwrap(),
+        );
+        // The owner is never shown or activated; another window keeps focus.
+        assert_ne!(unsafe { GetForegroundWindow() }, window.0);
+        let title = format!("Tide broker test {}", std::process::id());
+        let (action_tx, action_rx) = mpsc::channel();
+        let mut session = start(window.0 .0, move |action| {
+            let _ = action_tx.send(action);
+        })
+        .unwrap();
+        session
+            .update(&title, "Test", "Test", true, 1.0, 30.0)
+            .unwrap();
+
+        let expected = [
+            MediaAction::Pause,
+            MediaAction::Play,
+            MediaAction::Next,
+            MediaAction::Previous,
+        ];
+        let (done_tx, done_rx) = mpsc::channel();
+        let (ack_tx, ack_rx) = mpsc::channel();
+        let worker_title = title.clone();
+        let worker = std::thread::spawn(move || {
+            let result = (|| -> Result<(), String> {
+                let _apartment = Apartment::initialize()?;
+                let manager = GlobalSystemMediaTransportControlsSessionManager::RequestAsync()
+                    .map_err(media_error)?
+                    .join()
+                    .map_err(media_error)?;
+                let deadline = Instant::now() + Duration::from_secs(5);
+                let remote = loop {
+                    let sessions = manager.GetSessions().map_err(media_error)?;
+                    let mut found = None;
+                    for index in 0..sessions.Size().map_err(media_error)? {
+                        let candidate = sessions.GetAt(index).map_err(media_error)?;
+                        let metadata = candidate
+                            .TryGetMediaPropertiesAsync()
+                            .map_err(media_error)?
+                            .join()
+                            .map_err(media_error)?;
+                        if metadata.Title().map_err(media_error)? == worker_title {
+                            found = Some(candidate);
+                            break;
+                        }
+                    }
+                    if let Some(found) = found {
+                        break found;
+                    }
+                    if Instant::now() >= deadline {
+                        return Err(
+                            "Test media session did not appear in the Windows broker.".into()
+                        );
+                    }
+                    std::thread::sleep(Duration::from_millis(20));
+                };
+                for action in expected {
+                    let request = match action {
+                        MediaAction::Pause => remote.TryPauseAsync(),
+                        MediaAction::Play => remote.TryPlayAsync(),
+                        MediaAction::Next => remote.TrySkipNextAsync(),
+                        MediaAction::Previous => remote.TrySkipPreviousAsync(),
+                        _ => unreachable!(),
+                    }
+                    .map_err(media_error)?;
+                    if !request.join().map_err(media_error)? {
+                        return Err(format!("Windows rejected {action:?}."));
+                    }
+                    // Wait for actual delivery and its published state before
+                    // asking the broker to send the next command.
+                    let received = ack_rx
+                        .recv_timeout(Duration::from_secs(2))
+                        .map_err(|error| format!("No callback for {action:?}: {error}"))?;
+                    if received != action {
+                        return Err(format!("Expected {action:?}, received {received:?}."));
+                    }
+                }
+                // Detect extra dispatches after the final acknowledged event.
+                if let Ok(action) = ack_rx.recv_timeout(Duration::from_millis(200)) {
+                    return Err(format!(
+                        "Duplicate callback after final command: {action:?}."
+                    ));
+                }
+                Ok(())
+            })();
+            let _ = done_tx.send(result);
+        });
+        let deadline = Instant::now() + Duration::from_secs(15);
+        let mut received = Vec::new();
+        loop {
+            let mut message = MSG::default();
+            // SAFETY: Pump only the current thread's window messages.
+            while unsafe { PeekMessageW(&mut message, None, 0, 0, PM_REMOVE) }.as_bool() {
+                unsafe {
+                    let _ = TranslateMessage(&message);
+                    DispatchMessageW(&message);
+                }
+            }
+            while let Ok(action) = action_rx.try_recv() {
+                received.push(action);
+                let playing = action != MediaAction::Pause;
+                session
+                    .update(&title, "Test", "Test", playing, 1.0, 30.0)
+                    .unwrap();
+                ack_tx.send(action).unwrap();
+            }
+            if let Ok(result) = done_rx.try_recv() {
+                result.unwrap();
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "Windows media broker timed out; received {received:?}"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        worker.join().unwrap();
+        assert_eq!(
+            received, expected,
+            "Commands must dispatch exactly once and in order."
+        );
+        assert_ne!(unsafe { GetForegroundWindow() }, window.0);
+    }
+
     #[test]
     fn timeline_clamps_to_track_and_coalesces_timer_ticks() {
         let first = Timeline::from_seconds(1.01, 8.0, true).unwrap();

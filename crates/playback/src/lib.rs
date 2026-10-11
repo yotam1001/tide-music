@@ -937,6 +937,9 @@ async fn launch_player(
         .arg("--idle=yes")
         .arg("--terminal=no")
         .arg("--input-terminal=no")
+        // Tide owns the Windows media session; its helper must not process the
+        // same hardware key independently and cause double pause/skip actions.
+        .arg("--input-media-keys=no")
         .arg("--force-window=no")
         .arg("--vid=no")
         .arg("--vo=null")

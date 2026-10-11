@@ -137,3 +137,25 @@ With the queue open and 2,000 synthetic tracks, an eight-second release sample
 measured 9.48 MiB private memory and 28.94 MiB working set. Rows remain virtualized.
 No account, artwork or audio helper was active; this is an idle queue measurement,
 not the total cost of signed-in music playback.
+
+## Media keys and visual refinement
+
+Windows media-control integration was exercised on a real interactive desktop:
+the system broker sent Pause, Play, Next and Previous to a hidden, unfocused
+test window. Each action arrived exactly once and in order; the test left other
+media sessions untouched. All six Windows tests, including lifecycle and broker
+tests, passed with ignored interactive tests enabled. This validates Windows
+broker delivery, not the keyboard firmware's Fn layer or exclusive fullscreen
+game behavior. The interactive tests remain opt-in in CI.
+
+The audio helper explicitly disables its own media-key input, leaving Tide as
+the handler. Media Next/Previous use the same callbacks as the visible controls,
+including Next's recommendation handling at queue end. A cached media-state
+timer publishes the latest playback snapshot every 100 ms rather than a UI
+snapshot from the previous one-second tick. The native silent-audio smoke also
+checks media Next/Previous advance exactly once and preserve browsing.
+
+The visual pass retains layout dimensions and navigation. Native screenshots
+cover dark/light Home, Library, playlist details, search, both queue layouts,
+insertion feedback, settings, mini and restore. Real pointer drag checks remain
+part of that smoke test.
