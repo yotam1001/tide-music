@@ -1,5 +1,30 @@
 # Prototype validation
 
+## Latest authenticated continuity check (2026-10-13)
+
+Revision 5e49e9b passed a muted 1,800-second signed-in listening run with
+eight natural song transitions, ten recommendation refills, pause/resume,
+skip and seek. Sixteen native cookie updates were persisted. A separate account
+library check after the run passed without importing another session.
+The session was imported from a private Zen login; regular Zen was allowed to
+remain open. This does not establish weekly session longevity.
+
+Natural transitions still took approximately 3.75-4.75 seconds to decoded audio;
+the initial load took 5.266 seconds and the explicit skip took 0.749 seconds.
+Timing uses 250 ms sampling. A subsequent source review found that the preparation
+timer discards the ready next stream at EOF before the queue timer consumes it.
+Preserving preparation through EOF is under validation; this run predates that fix.
+
+After excluding five startup samples, process-tree median working set was
+79.90 MiB (p95 86.76, peak 407.33), and median private bytes were 54.16 MiB
+(p95 60.90, peak 341.25). Extraction causes transient peaks. Median CPU was
+1.386% of one logical core, p95 5.837%. These are muted test observations,
+not gaming frame-time measurements.
+
+The same revision's extracted portable package passed five-minute local continuity
+outside the checkout. Both Windows CI jobs and fresh public-clone privacy audits
+passed. The historical sections below describe earlier builds and failures.
+
 Validated on Windows 11 Pro 10.0.26200, Ryzen 5 7600X, approximately 15.1 GiB usable RAM and Radeon RX 9060 XT graphics. Release builds use Rust 1.99.0 for x86_64-pc-windows-gnu. Measurements below are one-machine observations, not product guarantees.
 
 ## Functional evidence

@@ -655,6 +655,12 @@ fn report_error(state: &mut State, ui: &AppWindow, error: String) {
     ui.set_status_text(error.into());
 }
 
+fn preparation_eligible(active: bool, generation: u64, p: &tide_core::PlaybackSnapshot) -> bool {
+    // EOF is a handoff: the queue timer still needs to consume the prepared
+    // next stream. Clearing it here makes timer ordering trigger extraction again.
+    active && p.generation == generation && !p.loading && p.error.is_none()
+}
+
 fn upcoming_source(queue: &Queue, repeat: bool) -> Option<&str> {
     let current = queue.current?;
     if current >= queue.tracks.len() {
@@ -1990,11 +1996,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     return;
                 };
                 let p = engine.snapshot();
-                let eligible = s.active_playback
-                    && p.generation == s.generation
-                    && !p.loading
-                    && !p.ended
-                    && p.error.is_none();
+                let eligible = preparation_eligible(s.active_playback, s.generation, &p);
                 let _ = engine.prepare_next(if eligible {
                     upcoming_source(&s.settings.queue, s.settings.repeat)
                 } else {
@@ -3047,6 +3049,23 @@ mod tests {
             album: String::new(),
             source: source.into(),
         }
+    }
+
+    #[test]
+    fn preparation_survives_eof_until_queue_handoff_but_not_stop_or_failure() {
+        let mut p = tide_core::PlaybackSnapshot {
+            generation: 7,
+            ended: true,
+            ..Default::default()
+        };
+        assert!(preparation_eligible(true, 7, &p));
+        assert!(!preparation_eligible(false, 7, &p));
+        assert!(!preparation_eligible(true, 8, &p));
+        p.error = Some("failure".into());
+        assert!(!preparation_eligible(true, 7, &p));
+        p.error = None;
+        p.loading = true;
+        assert!(!preparation_eligible(true, 7, &p));
     }
 
     #[test]
