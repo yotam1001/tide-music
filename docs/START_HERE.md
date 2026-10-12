@@ -31,11 +31,14 @@ available as `python`, run:
 powershell -ExecutionPolicy Bypass -File scripts/setup-provider.ps1
 ```
 
-Sign in to YouTube Music in your existing Zen profile. In Tide, open Account,
-select the appropriate account number and choose Connect/Reconnect. Select
-`cookies.sqlite` from that Zen profile. Tide verifies the account before showing
-Connected. Reconnect preserves the selected account number. See
-[the account guide](docs/ACCOUNT_SETUP.md) for profile selection and manual import.
+For an isolated session, sign into your existing account in a private Zen window
+and use the local request-header import in
+[the account guide](docs/ACCOUNT_SETUP.md). Close that private window without
+signing out after copying the request. Zen does not need to stay open.
+Alternatively, Account → Connect/Reconnect can import `cookies.sqlite` from your
+regular Zen profile. Tide verifies access before showing Connected; if browser
+import is rejected, use the manual method. Reconnect preserves the selected
+account number. Weekly session lifetime is still under validation.
 
 Credentials remain on your computer, encrypted for your Windows user. Never
 upload cookies, session files or your browser profile to GitHub or send them in

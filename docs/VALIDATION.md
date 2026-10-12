@@ -15,6 +15,23 @@ strict app Clippy and formatting checks pass.
 
 ## Latest authenticated continuity check (2026-10-13)
 
+Revision 5809a9c passed another muted 1,800-second signed-in run using the same
+private-window session, without another import: seven natural transitions,
+nine recommendation refills, pause/resume, skip and seek. Ten native session
+updates were persisted. Preserving prepared audio through EOF reduced sampled
+natural handoff delays to 250-750 ms; the initial cold load took 4.259 seconds.
+After five startup samples, median working set was 69.77 MiB (p95 76.77,
+peak 420.05); median private bytes were 52.23 MiB (p95 58.81, peak 360.29).
+CPU median was 0% of one core, p95 4.424%. These are process-tree samples.
+
+The subsequent app build also passed the targeted queue-depletion probe:
+removing every upcoming row through the real callback, without restarting the
+current song, allowed recommendations to refill and decoded playback to advance
+at EOF. That test seeks to EOF; it is recovery evidence, not natural listening
+duration. A one-hour follow-up on revision 8c86152 is pending.
+
+Earlier authenticated check:
+
 Revision 5e49e9b passed a muted 1,800-second signed-in listening run with
 eight natural song transitions, ten recommendation refills, pause/resume,
 skip and seek. Sixteen native cookie updates were persisted. A separate account
@@ -46,7 +63,7 @@ account verification and generation-scoped radio retries retain their own paths.
 All eighteen app tests and strict app Clippy pass. The optional muted
 `--smoke-autoplay-depletion` probe removes upcoming rows through the real app
 callback, seeks to EOF and requires decoded playback in the next generation.
-Its live result is pending; this targeted seek test does not substitute for
+Its live result passed; this targeted seek test does not substitute for
 natural listening coverage.
 
 Validated on Windows 11 Pro 10.0.26200, Ryzen 5 7600X, approximately 15.1 GiB usable RAM and Radeon RX 9060 XT graphics. Release builds use Rust 1.99.0 for x86_64-pc-windows-gnu. Measurements below are one-machine observations, not product guarantees.

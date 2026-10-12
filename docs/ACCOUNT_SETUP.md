@@ -16,7 +16,21 @@ Python runs only while a library request is active and exits afterward. The nati
 
 ## Import a session locally
 
-**Recommended:** sign in to YouTube Music in your existing Zen browser. Open Tide's **Account** menu and choose **Connect account**. The file picker opens the normal Zen Profiles directory. Open your profile folder and select **cookies.sqlite**. Tide reads only scoped YouTube cookies from that selected file using read-only SQLite, verifies account access and encrypts the session locally. Your regular Zen browser stays open; no new profile or Google account is required.
+For the most isolated session, use the manual request-header import below from a
+private Zen window signed into your existing Google account. Select the intended
+YouTube Music identity, copy a successful request, then close the private window
+without signing out. This path passed the current signed-in continuity checks;
+weekly session lifetime is still being verified. It does not require a new account
+or keeping Zen open.
+
+Alternatively, sign in to YouTube Music in your existing regular Zen browser.
+Open Tide's **Account** menu and choose **Connect account**. The file picker opens
+the normal Zen Profiles directory. Open your profile folder and select
+**cookies.sqlite**. Tide reads only scoped YouTube cookies from that selected file
+using read-only SQLite, verifies account access and encrypts the session locally.
+Regular-browser import can be rejected when saved cookies differ from an active
+request; use manual import if this happens. Continued browser cookie rotation can
+also invalidate an exported session.
 
 The initial connection defaults to your first signed-in Google account. **Reconnect preserves the account selected in the menu**: Account 2 selects your second signed-in account, and so on. You can also use **Switch** to verify a different selection before saving it; an unavailable account leaves the stored connection unchanged. The heading says **Connected** only after account verification; a saved session alone is not proof of access. Brand channels and custom Zen profile locations can use the manual import below. If you are unsure which profile is active, Zen's `about:support` page shows its Profile Folder. Do not share the cookie database or its contents.
 
@@ -25,7 +39,7 @@ to the root host `youtube.com` are excluded. If matching authentication cookies
 contain conflicting values, Tide asks for manual request-header import rather
 than guessing which sign-in the browser uses.
 
-Manual import fallback:
+Manual request-header import:
 
 1. Open [YouTube Music](https://music.youtube.com/) in your browser and sign in to the account with your Premium subscription. Confirm the correct identity and that official playback is ad-free.
 2. Follow the request-header instructions in the [ytmusicapi browser authentication guide](https://ytmusicapi.readthedocs.io/en/stable/setup/browser.html): open browser developer tools, select Network, filter for `browse`, and navigate inside YouTube Music until a request appears. Copy its **request headers**. Tide also accepts the browser authentication JSON produced by that guide.
