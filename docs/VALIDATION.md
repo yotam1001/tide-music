@@ -1,5 +1,18 @@
 # Prototype validation
 
+## Production media controls and closing (2026-10-13)
+
+Windows media registration now runs after the UI event loop starts, with bounded
+retries while the native window becomes available. The previous startup attempt
+could silently skip registration before Winit created that window.
+An isolated, muted production app accepted Windows broker Play, Pause, Resume,
+Next and Previous commands and advanced decoded local playback. Normal closing
+during decoded playback and extractor loading took 119 ms and 112 ms respectively;
+both app processes exited successfully and their owned helpers ended.
+These checks used synthetic local settings, not the user's running window.
+Physical Fn keys with a game focused remain unverified. All eighteen app tests,
+strict app Clippy and formatting checks pass.
+
 ## Latest authenticated continuity check (2026-10-13)
 
 Revision 5e49e9b passed a muted 1,800-second signed-in listening run with

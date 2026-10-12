@@ -691,6 +691,38 @@ fn report_error(state: &mut State, ui: &AppWindow, error: String) {
     ui.set_status_text(error.into());
 }
 
+fn start_window_media(ui: &AppWindow) -> Result<tide_windows::MediaSession, String> {
+    #[cfg(windows)]
+    {
+        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        let window = ui.window().window_handle();
+        let handle = window
+            .window_handle()
+            .map_err(|_| "Native window is not ready".to_string())?;
+        let RawWindowHandle::Win32(handle) = handle.as_raw() else {
+            return Err("Windows media controls need a native window".into());
+        };
+        let weak = ui.as_weak();
+        tide_windows::start(handle.hwnd.get() as *mut std::ffi::c_void, move |action| {
+            let (code, value) = match action {
+                tide_windows::MediaAction::Play => (0, 0.0),
+                tide_windows::MediaAction::Pause => (1, 0.0),
+                tide_windows::MediaAction::Toggle => (2, 0.0),
+                tide_windows::MediaAction::Next => (3, 0.0),
+                tide_windows::MediaAction::Previous => (4, 0.0),
+                tide_windows::MediaAction::Stop => (5, 0.0),
+                tide_windows::MediaAction::Seek(seconds) => (6, seconds as f32),
+            };
+            let _ = weak.upgrade_in_event_loop(move |u| u.invoke_media_command(code, value));
+        })
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = ui;
+        Err("Windows media controls are unavailable on this platform".into())
+    }
+}
+
 fn preparation_eligible(active: bool, generation: u64, p: &tide_core::PlaybackSnapshot) -> bool {
     // EOF is a handoff: the queue timer still needs to consume the prepared
     // next stream. Clearing it here makes timer ordering trigger extraction again.
@@ -2000,38 +2032,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     ui.show()?;
     let media = Rc::new(RefCell::new(None::<tide_windows::MediaSession>));
-    #[cfg(windows)]
-    {
-        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-        if !test_mode && listening_seconds.is_none() && !smoke_autoplay {
-            if let Ok(handle) = ui.window().window_handle().window_handle() {
-                if let RawWindowHandle::Win32(handle) = handle.as_raw() {
-                    let weak = ui.as_weak();
-                    match tide_windows::start(
-                        handle.hwnd.get() as *mut std::ffi::c_void,
-                        move |action| {
-                            let (code, value) = match action {
-                                tide_windows::MediaAction::Play => (0, 0.0),
-                                tide_windows::MediaAction::Pause => (1, 0.0),
-                                tide_windows::MediaAction::Toggle => (2, 0.0),
-                                tide_windows::MediaAction::Next => (3, 0.0),
-                                tide_windows::MediaAction::Previous => (4, 0.0),
-                                tide_windows::MediaAction::Stop => (5, 0.0),
-                                tide_windows::MediaAction::Seek(seconds) => (6, seconds as f32),
-                            };
-                            let _ = weak.upgrade_in_event_loop(move |u| {
-                                u.invoke_media_command(code, value)
-                            });
-                        },
-                    ) {
-                        Ok(session) => *media.borrow_mut() = Some(session),
-                        Err(error) => ui
-                            .set_status_text(format!("Media controls unavailable: {error}").into()),
-                    }
-                }
-            }
-        }
-    }
+    let media_enabled =
+        cfg!(windows) && !test_mode && listening_seconds.is_none() && !smoke_autoplay;
     // Prepare as soon as current playback is loaded, rather than waiting until
     // EOF approaches. Keep the candidate through Pause so an early skip can
     // use it. The resolver deduplicates requests and retains only one stream.
@@ -2061,10 +2063,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Play/Pause action even when the user presses a media key twice quickly.
     // Metadata and timeline writes are cached inside MediaSession.
     let media_timer = slint::Timer::default();
-    if media.borrow().is_some() {
+    if media_enabled {
         let state = state.clone();
         let weak = ui.as_weak();
         let media = media.clone();
+        let mut registration_attempts = 0;
         media_timer.start(
             slint::TimerMode::Repeated,
             Duration::from_millis(100),
@@ -2072,6 +2075,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let Some(u) = weak.upgrade() else {
                     return;
                 };
+                // Winit creates the native window after the event loop starts.
+                // ui.show() alone does not make its handle available at startup.
+                if media.borrow().is_none() && registration_attempts < 20 {
+                    registration_attempts += 1;
+                    match start_window_media(&u) {
+                        Ok(session) => *media.borrow_mut() = Some(session),
+                        Err(error) if registration_attempts == 20 => {
+                            u.set_status_text(format!("Media controls unavailable: {error}").into())
+                        }
+                        Err(_) => {}
+                    }
+                }
                 let s = state.borrow();
                 let snapshot = s
                     .engine
