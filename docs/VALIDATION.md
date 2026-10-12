@@ -260,12 +260,26 @@ Native extraction receives an exclusive private cookie snapshot for each load
 and recovery. A synthetic regression verifies that a late extractor save cannot
 overwrite the newer canonical playback lease, and that subsequent snapshots use
 the newer lease. Cookie snapshots are capped at 64 KiB and removed after their
-owned helpers end. Extractor cookie rotations are still not returned to encrypted
-storage, so these checks do not prove a minimum session lifetime.
+owned helpers end. The subsequent revision returns extractor cookie changes
+through a bounded, zeroized queue. Scoped deltas merge against the original
+account and cookie snapshot; a conflicting authentication cohort is rejected.
+API saves also compare their original snapshot, and a Windows mutex serializes
+protected session writes. Missing cookie rows do not erase stored credentials.
+The combined revision passes 77 deterministic Rust tests and strict Clippy.
+These checks do not prove a minimum session lifetime.
 
 A fresh manual session import verified the intended profile and library with Zen
 closed. An initial live listening run reached one natural transition and three
 recommendation refills, but its supervising command disappeared without a final
 result or resource report. It is not accepted as a sustained-run pass. The saved
-account passed another library check afterward. A new run must use explicit
-completion reporting and the executable containing the cookie-isolation change.
+account passed another library check afterward. The explicitly supervised
+cookie-isolation run then failed after approximately five minutes, one natural
+transition and three recommendation refills. A separate health probe confirmed
+rejected authentication afterward. Cookie isolation alone was insufficient.
+
+That failed run collected 288 process-tree samples: settled median working set
+68.1 MiB, peak 354.7 MiB; settled median private bytes 50.6 MiB, peak 293.6 MiB.
+Mean sampled CPU use was 3.83% of one logical core, including startup and retries.
+These preliminary failed-run figures are not stable-session or gaming evidence.
+The revision that persists native updates still needs a fresh real session and
+sustained verification with Zen closed.

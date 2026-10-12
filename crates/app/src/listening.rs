@@ -25,6 +25,7 @@ pub(super) fn start(
     let mut skip_generation = None;
     let mut seek_done = false;
     let mut last_minute = 0;
+    let mut last_cookie_updates = 0;
     let local = local_source.is_some();
     timer.start(slint::TimerMode::Repeated, Duration::from_millis(250), move || {
         let Some(u) = weak.upgrade() else { return; };
@@ -60,12 +61,19 @@ pub(super) fn start(
         }
         let Some(engine) = s.engine.as_ref() else { fail("engine unavailable"); return; };
         let p = engine.snapshot();
+        if s.cookie_updates_applied != last_cookie_updates {
+            last_cookie_updates = s.cookie_updates_applied;
+            println!("Listening check: persisted native session update {last_cookie_updates}");
+        }
         if p.volume != 0.0 {
             eprintln!("Listening check: volume={}, requested={}, generation={}, loading={}",
                       p.volume, u.get_volume(), p.generation, p.loading);
             fail("probe must remain muted"); return;
         }
-        if p.error.is_some() { fail("terminal playback error"); return; }
+        if p.error.is_some() {
+            eprintln!("Listening check: terminal error; generation={}, account_verified={}, account_error={}, loading={}", p.generation, s.account_verified, s.account_error, p.loading);
+            fail("terminal playback error"); return;
+        }
         if !local && (s.account_error || !s.account_verified) { fail("account access failed"); return; }
         recommendations_seen |= s.settings.queue.tracks.iter().any(|t| t.recommended);
         if !local {

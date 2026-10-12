@@ -3,8 +3,12 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+#[cfg(windows)]
+use super::cookie_updates::{CookieUpdate, CookieUpdates, MAX_COOKIE_BYTES};
 use serde_json::{json, Value};
 use tokio::sync::watch;
+#[cfg(windows)]
+use zeroize::Zeroizing;
 
 const FRESH_FOR: Duration = Duration::from_secs(10 * 60);
 const EXPIRY_MARGIN: Duration = Duration::from_secs(30);
@@ -13,8 +17,6 @@ const RETRY_DELAY: Duration = Duration::from_secs(20);
 const RESOLVE_TIMEOUT: Duration = Duration::from_secs(45);
 #[cfg(windows)]
 const MAX_OUTPUT_BYTES: u64 = 2 * 1024 * 1024;
-#[cfg(windows)]
-const MAX_COOKIE_BYTES: u64 = 65536;
 
 #[derive(Clone, Default)]
 pub(super) struct Request {
@@ -143,16 +145,20 @@ pub(super) async fn run(
     runtimes: super::RuntimePaths,
     preparation: Arc<Preparation>,
     requests: watch::Receiver<Request>,
+    cookie_updates: Arc<CookieUpdates>,
 ) {
     let resolver_preparation = Arc::clone(&preparation);
     run_with_resolver(preparation, requests, move |request| {
         let resolver_preparation = Arc::clone(&resolver_preparation);
         let runtimes = runtimes.clone();
+        let cookie_updates = Arc::clone(&cookie_updates);
         async move {
-            tokio::task::spawn_blocking(move || resolve(&runtimes, &request, &resolver_preparation))
-                .await
-                .ok()
-                .flatten()
+            tokio::task::spawn_blocking(move || {
+                resolve(&runtimes, &request, &resolver_preparation, &cookie_updates)
+            })
+            .await
+            .ok()
+            .flatten()
         }
     })
     .await;
@@ -189,6 +195,7 @@ fn resolve(
     runtimes: &super::RuntimePaths,
     request: &Request,
     preparation: &Preparation,
+    cookie_updates: &CookieUpdates,
 ) -> Option<PreparedStream> {
     use std::io::Read;
     use std::process::{Command, Stdio};
@@ -213,7 +220,7 @@ fn resolve(
         .env("PATH", super::child_path(runtimes).ok()?);
     // yt-dlp rewrites its cookie jar. Give this resolver an exclusive copy
     // beside the caller's private lease, inheriting its protected directory ACL.
-    let cookie_copy = match runtimes
+    let mut cookie_copy = match runtimes
         .cookies
         .as_ref()
         .map(|path| CookieCopy::create(path))
@@ -223,7 +230,7 @@ fn resolve(
         Err(_) => return None,
     };
     if let Some(cookies) = &cookie_copy {
-        command.arg("--cookies").arg(&cookies.0);
+        command.arg("--cookies").arg(cookies.path());
         if runtimes.account_index > 0 {
             command
                 .arg("--add-header")
@@ -252,31 +259,44 @@ fn resolve(
         Some(bytes)
     });
     let started = Instant::now();
-    let success = loop {
+    let completed_status = loop {
         match child.try_wait() {
-            Ok(Some(status)) => break status.success(),
+            Ok(Some(status)) => break Some(status),
             Ok(None)
                 if started.elapsed() < RESOLVE_TIMEOUT && preparation.current(request.token) =>
             {
                 thread::sleep(Duration::from_millis(25))
             }
-            _ => break false,
+            _ => break None,
         }
     };
     // A launcher may exit before descendants release stdout. Kill the whole
     // owned job even on successful exit, then join the bounded reader.
-    if child.terminate_tree().is_err() {
+    let stopped = child.terminate_tree().is_ok();
+    if !stopped {
         drop(child);
     }
+    // Cookie rotation belongs to the account even if the prepared track was
+    // superseded or its stream metadata cannot be used anymore.
+    if completed_status.is_some() && stopped {
+        if let Some(copy) = &mut cookie_copy {
+            copy.publish_update(runtimes.account_index, cookie_updates);
+        }
+    }
     let bytes = output.join().ok()??;
-    if !success || !preparation.current(request.token) {
+    if !completed_status.is_some_and(|status| status.success())
+        || !preparation.current(request.token)
+    {
         return None;
     }
     parse_stream(&bytes)
 }
 
 #[cfg(windows)]
-pub(super) struct CookieCopy(std::path::PathBuf);
+pub(super) struct CookieCopy {
+    path: std::path::PathBuf,
+    baseline: Zeroizing<Vec<u8>>,
+}
 
 #[cfg(windows)]
 impl CookieCopy {
@@ -294,13 +314,19 @@ impl CookieCopy {
             .write(true)
             .create_new(true)
             .open(&path)?;
-        let copy = Self(path);
+        let mut copy = Self {
+            path,
+            baseline: Zeroizing::new(Vec::new()),
+        };
         let result = (|| {
-            let mut input = std::fs::File::open(source)?.take(MAX_COOKIE_BYTES + 1);
-            let size = std::io::copy(&mut input, &mut destination)?;
-            if size > MAX_COOKIE_BYTES {
+            std::fs::File::open(source)?
+                .take(MAX_COOKIE_BYTES as u64 + 1)
+                .read_to_end(&mut copy.baseline)?;
+            if copy.baseline.len() > MAX_COOKIE_BYTES {
                 return Err(std::io::Error::other("Cookie lease exceeds size limit"));
             }
+            use std::io::Write;
+            destination.write_all(&copy.baseline)?;
             Ok(())
         })();
         drop(destination);
@@ -309,7 +335,34 @@ impl CookieCopy {
     }
 
     pub(super) fn path(&self) -> &std::path::Path {
-        &self.0
+        &self.path
+    }
+
+    pub(super) fn publish_update(&mut self, account_index: u32, queue: &CookieUpdates) -> bool {
+        use std::io::Read;
+        let mut updated = Zeroizing::new(Vec::new());
+        let Ok(file) = std::fs::File::open(&self.path) else {
+            return false;
+        };
+        if file
+            .take(MAX_COOKIE_BYTES as u64 + 1)
+            .read_to_end(&mut updated)
+            .is_err()
+            || updated.is_empty()
+            || updated.len() > MAX_COOKIE_BYTES
+        {
+            return false;
+        }
+        let Some(update) =
+            CookieUpdate::new(account_index, self.baseline.to_vec(), updated.to_vec())
+        else {
+            return false;
+        };
+        if !queue.push(update) {
+            return false;
+        }
+        self.baseline = updated;
+        true
     }
 }
 
@@ -319,7 +372,7 @@ impl Drop for CookieCopy {
         // Windows may need a moment to release descendants' handles after the
         // owning job is cancelled. Keep cleanup bounded to the owned file.
         for attempt in 0..5 {
-            match std::fs::remove_file(&self.0) {
+            match std::fs::remove_file(&self.path) {
                 Ok(()) => break,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
                 Err(_) if attempt < 4 => std::thread::sleep(Duration::from_millis(25)),
@@ -670,7 +723,7 @@ mod tests {
         let source = directory.join("session.txt");
         std::fs::write(&source, b"fixture-only session").unwrap();
         let copy = CookieCopy::create(&source).unwrap();
-        let path = copy.0.clone();
+        let path = copy.path().to_owned();
         assert_eq!(
             std::fs::read(&source).unwrap(),
             std::fs::read(&path).unwrap()
@@ -718,9 +771,55 @@ mod tests {
             std::fs::read(&canonical).unwrap(),
             b"new canonical synthetic session"
         );
-        std::fs::write(&canonical, vec![b'x'; MAX_COOKIE_BYTES as usize + 1]).unwrap();
+        std::fs::write(&canonical, vec![b'x'; MAX_COOKIE_BYTES + 1]).unwrap();
         assert!(CookieCopy::create(&canonical).is_err());
         assert_eq!(std::fs::read_dir(&directory).unwrap().count(), 1);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn completed_cookie_rotation_survives_superseded_stream_and_is_not_published_twice() {
+        let directory = std::env::temp_dir().join(format!(
+            "tide-cookie-publish-test-{}-{}",
+            std::process::id(),
+            super::super::PIPE_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        let canonical = directory.join("session.txt");
+        std::fs::write(&canonical, b"synthetic baseline").unwrap();
+        let mut copy = CookieCopy::create(&canonical).unwrap();
+        let private_path = copy.path().to_owned();
+        let queue = CookieUpdates::default();
+        let (preparation, _) = Preparation::new();
+        preparation.set(Some("old track".into()));
+        let token = preparation.token.load(Ordering::Acquire);
+        preparation.set(Some("new track".into()));
+        // A completed extractor can rotate credentials even though its stream
+        // is no longer the requested next track. Publish before stream filtering.
+        std::fs::write(copy.path(), b"synthetic rotated").unwrap();
+        assert!(copy.publish_update(2, &queue));
+        preparation.complete(token, Some(stream()), Instant::now());
+        assert!(preparation.state.lock().unwrap().ready.is_none());
+        let updates = queue.take();
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].account_index, 2);
+        assert_eq!(updates[0].baseline(), b"synthetic baseline");
+        assert_eq!(updates[0].updated(), b"synthetic rotated");
+        assert!(!copy.publish_update(2, &queue));
+        // Final termination observes a further change against the advanced
+        // baseline, rather than repeating the file-loaded update.
+        std::fs::write(copy.path(), b"synthetic second rotation").unwrap();
+        assert!(copy.publish_update(2, &queue));
+        let updates = queue.take();
+        assert_eq!(updates[0].baseline(), b"synthetic rotated");
+        assert_eq!(updates[0].updated(), b"synthetic second rotation");
+        std::fs::write(copy.path(), vec![b'x'; MAX_COOKIE_BYTES + 1]).unwrap();
+        assert!(!copy.publish_update(2, &queue));
+        assert!(queue.take().is_empty());
+        drop(copy);
+        assert!(!private_path.exists());
+        assert_eq!(std::fs::read(&canonical).unwrap(), b"synthetic baseline");
         std::fs::remove_dir_all(directory).unwrap();
     }
 }

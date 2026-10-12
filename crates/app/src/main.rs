@@ -88,6 +88,9 @@ struct State {
     search_worker: Option<std::thread::JoinHandle<()>>,
     provider: Option<tide_provider::Provider>,
     cookie_lease: Option<tide_provider::CookieLease>,
+    pending_cookie_updates: std::collections::VecDeque<tide_playback::CookieUpdate>,
+    cookie_update_retry_at: Option<Instant>,
+    cookie_updates_applied: u64,
     library_worker: Option<std::thread::JoinHandle<()>>,
     library_cancel: Arc<AtomicBool>,
     library_playlists: Vec<tide_provider::Playlist>,
@@ -304,8 +307,62 @@ fn library_failure(s: &mut State, u: &AppWindow, authentication: bool) {
     u.set_account_status("Request failed; check your connection and retry".into());
 }
 
+fn sync_playback_cookies(s: &mut State) -> bool {
+    if s.library_worker.is_some()
+        || s.cookie_update_retry_at
+            .is_some_and(|at| Instant::now() < at)
+    {
+        return false;
+    }
+    let (Some(provider), Some(engine)) = (&s.provider, &s.engine) else {
+        return false;
+    };
+    if s.pending_cookie_updates.is_empty() {
+        s.pending_cookie_updates
+            .extend(engine.take_cookie_updates());
+    }
+    if s.pending_cookie_updates.is_empty() && s.cookie_update_retry_at.is_none() {
+        return false;
+    }
+    let mut refresh_needed = s.cookie_update_retry_at.is_some();
+    let mut session_updated = false;
+    while let Some(update) = s.pending_cookie_updates.front() {
+        match provider.merge_playback_cookies(
+            update.account_index,
+            update.baseline(),
+            update.updated(),
+        ) {
+            Ok(changed) => {
+                refresh_needed |= changed;
+                session_updated |= changed;
+                if changed {
+                    s.cookie_updates_applied = s.cookie_updates_applied.saturating_add(1);
+                }
+                s.pending_cookie_updates.pop_front();
+            }
+            Err(_) => {
+                // Keep the bounded credential batch for the next attempt;
+                // transient file sharing must not silently discard rotation.
+                s.cookie_update_retry_at = Some(Instant::now() + Duration::from_secs(2));
+                return session_updated;
+            }
+        }
+    }
+    if let Some(lease) = s.cookie_lease.as_ref().filter(|_| refresh_needed) {
+        if provider.refresh_cookie_lease(lease).is_err() {
+            s.cookie_update_retry_at = Some(Instant::now() + Duration::from_secs(2));
+            return session_updated;
+        }
+    }
+    s.cookie_update_retry_at = None;
+    session_updated
+}
+
 fn configure_account_playback(s: &mut State, u: &AppWindow) -> bool {
+    s.pending_cookie_updates.clear();
+    s.cookie_update_retry_at = None;
     s.engine.take(); // Drop/join helpers before releasing their cookie lease.
+    s.cookie_updates_applied = 0;
     s.cookie_lease.take();
     s.active_playback = false;
     s.radio_resume_when_ready = false;
@@ -976,6 +1033,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         search_worker: None,
         provider,
         cookie_lease,
+        pending_cookie_updates: std::collections::VecDeque::new(),
+        cookie_update_retry_at: None,
+        cookie_updates_applied: 0,
         library_worker: None,
         library_cancel: Arc::new(AtomicBool::new(false)),
         library_playlists: Vec::new(),
@@ -1919,7 +1979,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             slint::TimerMode::Repeated,
             Duration::from_millis(250),
             move || {
-                let s = state.borrow();
+                let mut s = state.borrow_mut();
+                sync_playback_cookies(&mut s);
                 let Some(engine) = &s.engine else {
                     return;
                 };
@@ -2013,6 +2074,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     u.set_account_busy(false);
                     u.set_detail_busy(false);
+                    let playback_session_updated = sync_playback_cookies(&mut s);
                     if matches!(
                         &result,
                         Ok(tide_provider::Response::Library { .. }
@@ -2196,7 +2258,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                         }
                         Ok(tide_provider::Response::Error { code }) => {
-                            library_failure(&mut s, &u, code == "session");
+                            library_failure(&mut s, &u, code == "session" && !playback_session_updated);
                         }
                         Err(error) if matches!(s.library_action, LibraryAction::Connect) => {
                             if s.account_verified {

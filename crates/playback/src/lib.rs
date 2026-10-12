@@ -16,7 +16,10 @@ use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader, WriteHa
 use tokio::sync::{mpsc, watch};
 use url::Url;
 
+mod cookie_updates;
 mod prefetch;
+pub use cookie_updates::CookieUpdate;
+use cookie_updates::CookieUpdates;
 #[cfg(windows)]
 mod recovery;
 use prefetch::{Preparation, PreparedStream};
@@ -53,6 +56,7 @@ pub struct PlaybackHandle {
     worker: Option<thread::JoinHandle<()>>,
     yt_dlp_available: bool,
     preparation: Arc<Preparation>,
+    cookie_updates: Arc<CookieUpdates>,
 }
 
 /// Start the native playback worker. mpv is located at runtime but is not
@@ -104,6 +108,7 @@ pub fn start_with_account(
     let shutdown_requested = Arc::new(AtomicBool::new(false));
     let send_gate = Arc::new(Mutex::new(()));
     let (preparation, preparation_rx) = Preparation::new();
+    let cookie_updates = Arc::new(CookieUpdates::default());
 
     let worker_snapshot = Arc::clone(&snapshot);
     let worker_generation = Arc::clone(&desired_generation);
@@ -112,6 +117,7 @@ pub fn start_with_account(
     let worker_volume = Arc::clone(&desired_volume);
     let worker_intent = Arc::clone(&intent);
     let worker_preparation = Arc::clone(&preparation);
+    let worker_cookie_updates = Arc::clone(&cookie_updates);
     let worker = thread::Builder::new()
         .name("tide-playback".into())
         .spawn(move || {
@@ -128,6 +134,7 @@ pub fn start_with_account(
                     intent: worker_intent,
                     preparation: worker_preparation,
                     preparation_rx,
+                    cookie_updates: worker_cookie_updates,
                 },
             ));
         })
@@ -146,6 +153,7 @@ pub fn start_with_account(
         worker: Some(worker),
         yt_dlp_available,
         preparation,
+        cookie_updates,
     })
 }
 
@@ -345,6 +353,11 @@ impl PlaybackHandle {
         validate_source(source).is_ok_and(|source| self.preparation.is_ready(&source.source))
     }
 
+    /// Drain at most four owned updates. Credential buffers zeroize on drop.
+    pub fn take_cookie_updates(&self) -> Vec<CookieUpdate> {
+        self.cookie_updates.take()
+    }
+
     fn try_send(&self, command: ActionCommand) -> Result<(), String> {
         self.command_tx
             .try_send(WorkerCommand::Action {
@@ -429,6 +442,7 @@ struct WorkerControls {
     send_gate: Arc<Mutex<()>>,
     preparation: Arc<Preparation>,
     preparation_rx: watch::Receiver<prefetch::Request>,
+    cookie_updates: Arc<CookieUpdates>,
 }
 
 #[derive(Clone, Debug)]
@@ -581,9 +595,18 @@ struct RunningPlayer {
     // and close its descendant job before deleting its private cookie snapshot.
     child: OwnedChild,
     _cookie_copy: Option<prefetch::CookieCopy>,
+    cookie_updates: Arc<CookieUpdates>,
+    account_index: u32,
     writer: PipeWriter,
     reader_task: tokio::task::JoinHandle<()>,
     session_id: u64,
+}
+
+#[cfg(windows)]
+struct PlayerLaunch {
+    session_id: u64,
+    epoch: u64,
+    cookie_updates: Arc<CookieUpdates>,
 }
 
 /// std::process::Child does not kill the child when dropped. This guard makes
@@ -608,6 +631,12 @@ impl OwnedChild {
     fn wait(&mut self) -> io::Result<std::process::ExitStatus> {
         self.process.wait()
     }
+
+    fn terminate_tree(&mut self) -> io::Result<()> {
+        self._job.terminate_and_wait()?;
+        self.process.wait()?;
+        Ok(())
+    }
 }
 
 #[cfg(windows)]
@@ -625,6 +654,44 @@ struct OwnedJob(windows_sys::Win32::Foundation::HANDLE);
 
 #[cfg(windows)]
 impl OwnedJob {
+    fn terminate_and_wait(&self) -> io::Result<()> {
+        use windows_sys::Win32::System::JobObjects::{
+            JobObjectBasicAccountingInformation, QueryInformationJobObject, TerminateJobObject,
+            JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
+        };
+        // SAFETY: live uniquely owned job handle and correctly sized writable
+        // accounting structure. Only descendants of our owned task are killed.
+        unsafe {
+            if TerminateJobObject(self.0, 1) == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            let deadline = Instant::now() + SHUTDOWN_GRACE;
+            loop {
+                let mut info = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION::default();
+                if QueryInformationJobObject(
+                    self.0,
+                    JobObjectBasicAccountingInformation,
+                    (&mut info as *mut JOBOBJECT_BASIC_ACCOUNTING_INFORMATION).cast(),
+                    std::mem::size_of_val(&info) as u32,
+                    std::ptr::null_mut(),
+                ) == 0
+                {
+                    return Err(io::Error::last_os_error());
+                }
+                if info.ActiveProcesses == 0 {
+                    return Ok(());
+                }
+                if Instant::now() >= deadline {
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "Owned helper tree did not exit",
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+    }
+
     fn attach(process: &Child) -> io::Result<Self> {
         use std::os::windows::io::AsRawHandle;
         use windows_sys::Win32::System::JobObjects::{
@@ -714,6 +781,7 @@ async fn run_worker(
         send_gate,
         preparation,
         preparation_rx,
+        cookie_updates,
     } = controls;
     let (ipc_event_tx, mut ipc_event_rx) = mpsc::channel(IPC_EVENT_CAPACITY);
     let mut player: Option<RunningPlayer> = None;
@@ -726,6 +794,7 @@ async fn run_worker(
         runtimes.clone(),
         Arc::clone(&preparation),
         preparation_rx,
+        Arc::clone(&cookie_updates),
     ));
 
     loop {
@@ -848,6 +917,11 @@ async fn run_worker(
                                 view.paused = intent.lock().unwrap_or_else(|p| p.into_inner()).paused || view.ended;
                             }
                             if loaded && !fault {
+                                if let Some(running) = player.as_mut() {
+                                    if let Some(copy) = &mut running._cookie_copy {
+                                        copy.publish_update(running.account_index, &running.cookie_updates);
+                                    }
+                                }
                                 let accepted = intent.lock().unwrap_or_else(|p| p.into_inner()).clone();
                                 if let (Some(current), Some(running)) = (track.as_mut(), player.as_mut()) {
                                     if let Some(seconds) = current.apply_seek(&accepted, Instant::now()) {
@@ -886,7 +960,8 @@ async fn run_worker(
                         current.session_started(now);
                         let volume = f64::from_bits(desired_volume.load(Ordering::Acquire));
                         match launch_player(&runtimes, volume, &mut shutdown_rx, &ipc_event_tx,
-                            next_session_id, &supersede_epoch, current.load.epoch).await {
+                            &supersede_epoch, PlayerLaunch { session_id: next_session_id,
+                                epoch: current.load.epoch, cookie_updates: Arc::clone(&cookie_updates) }).await {
                             Ok(Some(mut running)) => {
                                 next_session_id = next_session_id.wrapping_add(1).max(1);
                                 if observe_properties(&mut running).await.is_err() {
@@ -956,12 +1031,16 @@ async fn launch_player(
     volume: f64,
     shutdown_rx: &mut watch::Receiver<bool>,
     ipc_event_tx: &mpsc::Sender<IpcEvent>,
-    session_id: u64,
     desired_epoch: &AtomicU64,
-    epoch: u64,
+    launch: PlayerLaunch,
 ) -> Result<Option<RunningPlayer>, String> {
     use std::os::windows::process::CommandExt;
     use tokio::net::windows::named_pipe::ClientOptions;
+    let PlayerLaunch {
+        session_id,
+        epoch,
+        cookie_updates,
+    } = launch;
 
     // Each load/recovery launches a new player. Its extractor may rewrite only
     // this snapshot; API refreshes retain ownership of the caller's lease.
@@ -1110,6 +1189,8 @@ async fn launch_player(
     let mut running = RunningPlayer {
         child,
         _cookie_copy: cookie_copy,
+        cookie_updates,
+        account_index: runtimes.account_index,
         writer,
         reader_task,
         session_id,
@@ -1473,6 +1554,11 @@ async fn terminate_player(player: &mut RunningPlayer) {
     }
     player.reader_task.abort();
     let _ = (&mut player.reader_task).await;
+    if player.child.terminate_tree().is_ok() {
+        if let Some(copy) = &mut player._cookie_copy {
+            copy.publish_update(player.account_index, &player.cookie_updates);
+        }
+    }
 }
 
 fn reset_snapshot(snapshot: &mut PlaybackSnapshot) {
