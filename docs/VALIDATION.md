@@ -13,6 +13,14 @@ These checks used synthetic local settings, not the user's running window.
 Physical Fn keys with a game focused remain unverified. All eighteen app tests,
 strict app Clippy and formatting checks pass.
 
+An additional isolated production fixture passed fifty Mini/Expand pairs during
+muted local playback. Every resize retained the same native window, the mpv
+process remained unchanged, and decoded position advanced beyond fourteen
+seconds. App private memory was 7.797 MiB before and 7.805 MiB after the cycles;
+this short two-point observation is not a general leak test. Normal closing
+afterward took 118 ms and removed the owned helper. The test sent pointer
+messages only to its owned synthetic window, without moving the user's cursor.
+
 ## Latest authenticated continuity check (2026-10-13)
 
 Revision 5809a9c passed another muted 1,800-second signed-in run using the same
