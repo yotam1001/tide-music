@@ -21,6 +21,25 @@ this short two-point observation is not a general leak test. Normal closing
 afterward took 118 ms and removed the owned helper. The test sent pointer
 messages only to its owned synthetic window, without moving the user's cursor.
 
+An isolated production fixture also reinitialized its own WASAPI output ten
+times between automatic selection and an available explicit device. Decoded
+progress continued in the same player; pausing through Tide's own button stayed
+paused after reinitialization and resumed through that button. This does not
+simulate hardware removal or prove device migration. Direct mpv pause changes
+are not equivalent to accepted Tide pause intent. Position can rebase when an
+output is reinitialized; the pause check requires stable position after settling.
+
+The 8c86152 portable ZIP passed payload, checksum and privacy scans. A fresh
+runtime and optional-helper installation outside the checkout then passed five
+minutes of muted local playback: fifteen natural transitions, controls and
+seventeen decoded starts, with longest sampled start delay 501 ms. Median
+process-tree working set was 81.74 MiB, peak 82.98; median private bytes 47.04 MiB,
+peak 48.32. This local test excludes authenticated extraction costs.
+
+Opt-in listening verification accepts 300-21,600 seconds so an overnight run can
+exercise continuous playback without hourly restarts. No regular app behavior
+or test pass criteria change with that duration bound.
+
 ## Latest authenticated continuity check (2026-10-13)
 
 Revision 5809a9c passed another muted 1,800-second signed-in run using the same

@@ -1043,7 +1043,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .nth(1)
         .map(|s| s.parse::<u64>())
         .transpose()?
-        .map(|seconds| seconds.clamp(300, 3600));
+        // Allow an overnight continuity run without restarting the player each
+        // hour. This limit applies only to the opt-in muted verification mode.
+        .map(|seconds| seconds.clamp(300, 21_600));
     let smoke_skip_session = std::env::args().any(|a| a == "--smoke-early-skip-session");
     let smoke_early_skip =
         smoke_skip_session || std::env::args().any(|a| a == "--smoke-early-skip");
