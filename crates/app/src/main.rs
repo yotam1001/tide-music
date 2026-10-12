@@ -2,7 +2,7 @@
 use serde::{Deserialize, Serialize};
 use slint::{ComponentHandle, ModelRc, VecModel};
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     path::{Path, PathBuf},
     rc::Rc,
     sync::{
@@ -111,8 +111,8 @@ struct State {
 }
 
 type LibraryResult = Result<tide_provider::Response, String>;
-fn select_zen_session(index: i32) -> Option<tide_provider::Request> {
-    let mut dialog = rfd::FileDialog::new()
+async fn select_zen_session(index: i32) -> Option<tide_provider::Request> {
+    let mut dialog = rfd::AsyncFileDialog::new()
         .set_title("Connect your Zen session: select cookies.sqlite in your profile")
         .add_filter("Zen cookie database", &["sqlite"])
         .set_file_name("cookies.sqlite");
@@ -121,10 +121,74 @@ fn select_zen_session(index: i32) -> Option<tide_provider::Request> {
     }
     dialog
         .pick_file()
+        .await
         .map(|database| tide_provider::Request::Connect {
-            database,
+            database: database.path().to_owned(),
             index: index.clamp(0, 9) as u32,
         })
+}
+// Native pickers run on rfd's COM worker, so the Slint event loop keeps
+// advancing the queue and delivering media commands while selection is open.
+#[derive(Default)]
+struct PickerState {
+    busy: Cell<bool>,
+    account_revision: Cell<u64>,
+}
+impl PickerState {
+    fn cancel_account(&self) {
+        self.account_revision
+            .set(self.account_revision.get().wrapping_add(1));
+    }
+}
+struct PickerPermit(Rc<PickerState>);
+impl Drop for PickerPermit {
+    fn drop(&mut self) {
+        self.0.busy.set(false);
+    }
+}
+fn spawn_picker(
+    busy: &Rc<PickerState>,
+    future: impl std::future::Future<Output = ()> + 'static,
+) -> Result<(), String> {
+    if busy.busy.replace(true) {
+        return Err("A file picker is already open".into());
+    }
+    let permit = PickerPermit(busy.clone());
+    slint::spawn_local(async move {
+        let _permit = permit;
+        future.await;
+    })
+    .map(|_| ())
+    .map_err(|_| "Could not open the file picker".into())
+}
+fn connect_picker(
+    busy: &Rc<PickerState>,
+    state: Rc<RefCell<State>>,
+    ui: &AppWindow,
+    tx: mpsc::SyncSender<LibraryResult>,
+) {
+    let weak = ui.as_weak();
+    let index = ui.get_account_index();
+    let revision = busy.account_revision.get();
+    let selection = busy.clone();
+    let state = Rc::downgrade(&state);
+    if let Err(error) = spawn_picker(busy, async move {
+        let request = select_zen_session(index).await;
+        if selection.account_revision.get() != revision {
+            return;
+        }
+        if let (Some(request), Some(u), Some(state)) = (request, weak.upgrade(), state.upgrade()) {
+            if state.borrow().library_worker.is_some() {
+                u.set_account_status(
+                    "A request is still in progress. Try connecting again.".into(),
+                );
+                return;
+            }
+            request_library(&mut state.borrow_mut(), &u, &tx, request);
+        }
+    }) {
+        ui.set_account_status(error.into());
+    }
 }
 fn request_library(
     s: &mut State,
@@ -1172,6 +1236,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &ui,
         PlaybackCommand::SetVolume(ui.get_volume() as f64),
     );
+    let picker_busy = Rc::new(PickerState::default());
     let (tx, rx) = mpsc::sync_channel(2);
     let (library_tx, library_rx) = mpsc::sync_channel::<LibraryResult>(2);
     {
@@ -1252,9 +1317,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let state = state.clone();
         let weak = ui.as_weak();
         let tx = library_tx.clone();
+        let picker_busy = picker_busy.clone();
         ui.on_switch_account(move |index| {
             if let Some(u) = weak.upgrade() {
                 if (0..10).contains(&index) {
+                    picker_busy.cancel_account();
                     request_library(
                         &mut state.borrow_mut(),
                         &u,
@@ -1269,26 +1336,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if std::env::args().any(|a| a == "--connect-account") && !test_mode {
         ui.set_settings_open(true);
-        if let Some(request) = select_zen_session(ui.get_account_index()) {
-            request_library(&mut state.borrow_mut(), &ui, &library_tx, request);
-        }
+        connect_picker(&picker_busy, state.clone(), &ui, library_tx.clone());
     }
     {
         let state = state.clone();
         let weak = ui.as_weak();
         let tx = library_tx.clone();
+        let picker_busy = picker_busy.clone();
         ui.on_connect_account(move || {
             if let Some(u) = weak.upgrade() {
-                let Some(request) = select_zen_session(u.get_account_index()) else {
-                    return;
-                };
-                request_library(&mut state.borrow_mut(), &u, &tx, request);
+                connect_picker(&picker_busy, state.clone(), &u, tx.clone());
             }
         });
     }
     {
         let state = state.clone();
+        let picker_busy = picker_busy.clone();
         ui.on_cancel_account(move || {
+            picker_busy.cancel_account();
             state.borrow().library_cancel.store(true, Ordering::Release);
         });
     }
@@ -1296,41 +1361,59 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let state = state.clone();
         let weak = ui.as_weak();
         let tx = library_tx.clone();
+        let picker_busy = picker_busy.clone();
         ui.on_import_account(move || {
-            let file = rfd::FileDialog::new()
-                .add_filter(
-                    "Browser request headers / authentication JSON",
-                    &["txt", "json"],
-                )
-                .pick_file();
-            let (Some(file), Some(u)) = (file, weak.upgrade()) else {
-                return;
-            };
-            let mut s = state.borrow_mut();
-            if s.library_worker.is_some() {
-                return;
-            }
-            let result = s
-                .provider
-                .as_ref()
-                .ok_or("Secure account storage is unavailable".to_string())
-                .and_then(|p| p.import_session(&file));
-            match result {
-                Ok(()) => {
-                    s.library_playlists.clear();
-                    s.recommendations.clear();
-                    refresh_library_models(&s, &u);
-                    u.set_account_connected(true);
-                    u.set_account_name("Session imported".into());
-                    if configure_account_playback(&mut s, &u) {
-                        request_library(&mut s, &u, &tx, tide_provider::Request::Library);
-                    } else {
-                        u.set_account_status(
-                            "Session saved, but signed-in playback could not start".into(),
-                        );
-                    }
+            let state = Rc::downgrade(&state);
+            let revision = picker_busy.account_revision.get();
+            let selection = picker_busy.clone();
+            let weak = weak.clone();
+            let tx = tx.clone();
+            let error_ui = weak.upgrade();
+            let result = spawn_picker(&picker_busy, async move {
+                let file = rfd::AsyncFileDialog::new()
+                    .set_title("Import a local YouTube Music session")
+                    .add_filter(
+                        "Browser request headers / authentication JSON",
+                        &["txt", "json"],
+                    )
+                    .pick_file()
+                    .await;
+                if selection.account_revision.get() != revision {
+                    return;
                 }
-                Err(error) => u.set_account_status(error.into()),
+                let (Some(file), Some(u), Some(state)) = (file, weak.upgrade(), state.upgrade())
+                else {
+                    return;
+                };
+                let mut s = state.borrow_mut();
+                if s.library_worker.is_some() {
+                    return;
+                }
+                let result = s
+                    .provider
+                    .as_ref()
+                    .ok_or("Secure account storage is unavailable".to_string())
+                    .and_then(|p| p.import_session(file.path()));
+                match result {
+                    Ok(()) => {
+                        s.library_playlists.clear();
+                        s.recommendations.clear();
+                        refresh_library_models(&s, &u);
+                        u.set_account_connected(true);
+                        u.set_account_name("Session imported".into());
+                        if configure_account_playback(&mut s, &u) {
+                            request_library(&mut s, &u, &tx, tide_provider::Request::Library);
+                        } else {
+                            u.set_account_status(
+                                "Session saved, but signed-in playback could not start".into(),
+                            );
+                        }
+                    }
+                    Err(error) => u.set_account_status(error.into()),
+                }
+            });
+            if let (Err(error), Some(u)) = (result, error_ui) {
+                u.set_account_status(error.into());
             }
         });
     }
@@ -1436,7 +1519,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let state = state.clone();
         let weak = ui.as_weak();
+        let picker_busy = picker_busy.clone();
         ui.on_disconnect_account(move || {
+            picker_busy.cancel_account();
             if let Some(u) = weak.upgrade() {
                 let mut s = state.borrow_mut();
                 if s.library_worker.is_some() {
@@ -1762,23 +1847,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let state = state.clone();
         let weak = ui.as_weak();
+        let picker_busy = picker_busy.clone();
         ui.on_open_file(move || {
-            // The native dialog can pump window messages. Borrow state only
-            // after it returns so timer/media callbacks can continue safely.
-            if let Some(p) = rfd::FileDialog::new()
-                .add_filter(
-                    "Audio",
-                    &["mp3", "m4a", "ogg", "opus", "flac", "wav", "aac"],
-                )
-                .pick_file()
-            {
-                if let Some(u) = weak.upgrade() {
-                    add(
-                        &mut state.borrow_mut(),
-                        &u,
-                        p.to_string_lossy().into_owned(),
-                    );
+            let state = Rc::downgrade(&state);
+            let weak = weak.clone();
+            let error_ui = weak.upgrade();
+            let result = spawn_picker(&picker_busy, async move {
+                if let Some(file) = rfd::AsyncFileDialog::new()
+                    .set_title("Open audio file in Tide")
+                    .add_filter(
+                        "Audio",
+                        &["mp3", "m4a", "ogg", "opus", "flac", "wav", "aac"],
+                    )
+                    .pick_file()
+                    .await
+                {
+                    if let (Some(u), Some(state)) = (weak.upgrade(), state.upgrade()) {
+                        add(
+                            &mut state.borrow_mut(),
+                            &u,
+                            file.path().to_string_lossy().into_owned(),
+                        );
+                    }
                 }
+            });
+            if let (Err(error), Some(u)) = (result, error_ui) {
+                u.set_status_text(error.into());
             }
         });
     }

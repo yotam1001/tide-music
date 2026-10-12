@@ -2,6 +2,19 @@
 
 ## Production media controls and closing (2026-10-13)
 
+File selection now uses rfd's asynchronous Windows picker and Slint's local
+executor. Synchronous COM dialogs previously blocked Slint's queue timers and
+media callbacks: revision 8c86152 reproduced an EOF handoff stall while an audio
+picker stayed open. The fixed production fixture advanced to a second six-second
+local track with the picker open, accepted Windows Pause/Resume, blocked duplicate
+pickers, and passed cancel/reopen. Closing with the reopened picker still present
+took 122 ms; the process and owned player ended. No private files were selected.
+Only weak UI/state references cross the await, and account Cancel, Disconnect or
+Switch invalidates a delayed account selection before import. A shared RAII guard
+allows one picker and resets on completion, cancellation or spawn failure.
+Eighteen app tests, strict app Clippy and formatting pass for this change; live
+signed-in tests below predate this UI fix until a new revision is explicitly named.
+
 Windows media registration now runs after the UI event loop starts, with bounded
 retries while the native window becomes available. The previous startup attempt
 could silently skip registration before Winit created that window.
