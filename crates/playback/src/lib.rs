@@ -577,7 +577,10 @@ type PipeWriter = WriteHalf<tokio::net::windows::named_pipe::NamedPipeClient>;
 
 #[cfg(windows)]
 struct RunningPlayer {
+    // Rust drops fields in declaration order: terminate/reap the owned process
+    // and close its descendant job before deleting its private cookie snapshot.
     child: OwnedChild,
+    _cookie_copy: Option<prefetch::CookieCopy>,
     writer: PipeWriter,
     reader_task: tokio::task::JoinHandle<()>,
     session_id: u64,
@@ -960,6 +963,14 @@ async fn launch_player(
     use std::os::windows::process::CommandExt;
     use tokio::net::windows::named_pipe::ClientOptions;
 
+    // Each load/recovery launches a new player. Its extractor may rewrite only
+    // this snapshot; API refreshes retain ownership of the caller's lease.
+    let cookie_copy = runtimes
+        .cookies
+        .as_ref()
+        .map(|path| prefetch::CookieCopy::create(path))
+        .transpose()
+        .map_err(|_| "Could not prepare signed-in playback")?;
     let pipe_path = unique_pipe_path();
     let mut command = Command::new(&runtimes.mpv);
     command
@@ -990,8 +1001,8 @@ async fn launch_player(
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .creation_flags(0x08000000);
-    if let Some(cookies) = &runtimes.cookies {
-        let path = cookies.to_string_lossy();
+    if let Some(cookies) = &cookie_copy {
+        let path = cookies.path().to_string_lossy();
         command.arg(format!(
             "--ytdl-raw-options=ignore-config=,cookies=%{}%{}{}",
             path.len(),
@@ -1098,6 +1109,7 @@ async fn launch_player(
     // include user input and use JSON arguments rather than text IPC syntax.
     let mut running = RunningPlayer {
         child,
+        _cookie_copy: cookie_copy,
         writer,
         reader_task,
         session_id,

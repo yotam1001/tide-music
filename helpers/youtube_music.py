@@ -47,11 +47,28 @@ def request_failure(error):
         tb = tb.tb_next
     return {"type": "error", "code": "session" if expired else "request"}
 
+
+def verified_request_failure(error, client):
+    """A content endpoint denial alone does not prove the account expired."""
+    result = request_failure(error)
+    if result["code"] != "session":
+        return result
+    try:
+        info = client.get_account_info()
+        name = (info.get("accountName") or info.get("name")) if isinstance(info, dict) else None
+        if isinstance(name, str) and clean(name):
+            return {"type": "error", "code": "request"}
+    except Exception as verification_error:
+        # Only an identity-endpoint rejection confirms a bad session. A timeout,
+        # outage or changed response shape must not erase a working connection.
+        return request_failure(verification_error)
+    return {"type": "error", "code": "request"}
+
 COOKIE_DOMAINS = (".youtube.com", "youtube.com", "music.youtube.com", ".music.youtube.com")
 SESSION_HEADERS = {
     "accept": 1024, "accept-language": 1024, "content-type": 256,
     "user-agent": 1024, "x-goog-authuser": 8, "x-goog-pageid": 128,
-    "cookie": 32768,
+    "cookie": 32768, "x-goog-visitor-id": 4096,
 }
 warnings.filterwarnings("ignore")
 
@@ -218,11 +235,48 @@ def create_client(auth):
     session.request = partial(session.request, timeout=20)
     headers = initialize_headers()
     headers.update(auth)
+    # Avoid ytmusicapi's unrelated anonymous webpage bootstrap. Captured browser
+    # visitor data is preserved; the authenticated API does not require a visit
+    # to the browser page when no visitor value was captured.
+    headers.setdefault("x-goog-visitor-id", "")
+    current = dict(auth)
+    holder = []
+    session._tide_refreshed_headers = None
+
+    def refresh_cookies(response, *args, **kwargs):
+        if urlsplit(response.url).hostname not in ("music.youtube.com", "www.youtube.com", "youtube.com"):
+            return
+        values = dict(part.strip().split("=", 1) for part in current.get("cookie", "").split(";") if "=" in part)
+        changed = False
+        for cookie in response.cookies:
+            if cookie.domain not in COOKIE_DOMAINS or cookie.path != "/":
+                continue
+            if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", cookie.name):
+                continue
+            if cookie.expires is not None and cookie.expires <= time.time():
+                changed |= cookie.name in values
+                values.pop(cookie.name, None)
+            elif safe_header(cookie.value, 4096) and ";" not in cookie.value:
+                changed |= values.get(cookie.name) != cookie.value
+                values[cookie.name] = cookie.value
+        candidate = session_headers({**current, "cookie": "; ".join(name + "=" + value for name, value in values.items())})
+        if changed and candidate:
+            current.clear()
+            current.update(candidate)
+            session._tide_refreshed_headers = candidate.copy()
+            if holder:
+                holder[0].base_headers["cookie"] = candidate["cookie"]
+                # ytmusicapi caches the signing cookie during construction.
+                holder[0].sapisid = values["__Secure-3PAPISID"]
+
+    session.hooks["response"].append(refresh_cookies)
     # This marker selects browser authentication. ytmusicapi generates the actual
     # current-time signature from __Secure-3PAPISID before sending any request.
     headers["authorization"] = "SAPISIDHASH"
     try:
-        return YTMusic(auth=headers, user=headers.get("x-goog-pageid"), requests_session=session), session
+        client = YTMusic(auth=headers, user=headers.get("x-goog-pageid"), requests_session=session)
+        holder.append(client)
+        return client, session
     except Exception:
         session.close()
         raise
@@ -233,7 +287,15 @@ def validate_session(headers):
     try:
         info = client.get_account_info()
         name = (info.get("accountName") or info.get("name")) if isinstance(info, dict) else None
-        return isinstance(name, str) and bool(clean(name))
+        verified = isinstance(name, str) and bool(clean(name))
+        refreshed = getattr(session, "_tide_refreshed_headers", None)
+        if verified and isinstance(refreshed, dict):
+            candidate = session_headers(refreshed)
+            if (candidate and candidate.get("x-goog-authuser") == headers.get("x-goog-authuser")
+                    and candidate.get("x-goog-pageid") == headers.get("x-goog-pageid")):
+                headers.clear()
+                headers.update(candidate)
+        return verified
     finally:
         session.close()
 
@@ -450,7 +512,7 @@ def run(client, request):
             return {"type": "tracks", "tracks": tracks(items, MAX_RADIO_TRACKS, (video,), True),
                     "truncated": len(items) > MAX_RADIO_TRACKS}
         except Exception as error:
-            return request_failure(error)
+            return verified_request_failure(error, client)
     if action in ("playlist", "liked"):
         if action == "playlist":
             playlist = identifier(request.get("id"))
@@ -515,7 +577,13 @@ def main():
             return
         client, session = create_client(request.pop("headers"))
         try:
-            result = run(client, request)
+            try:
+                result = run(client, request)
+            except Exception as error:
+                result = verified_request_failure(error, client)
+            updated = getattr(session, "_tide_refreshed_headers", None)
+            if updated and result.get("type") != "error":
+                result["refreshed_headers"] = updated
         finally:
             session.close()
         print(json.dumps(result, ensure_ascii=True))

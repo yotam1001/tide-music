@@ -246,3 +246,26 @@ confirmed startup and local playback. The resource script now preserves fraction
 CPU time instead of choosing PowerShell's integer Math.Max overload. This short
 sample reported mean CPU use of 1.59% of one logical core including startup,
 with a 20.62% peak. These figures do not measure authenticated playback or gaming.
+
+## Session continuity follow-up
+
+The helper distinguishes a content HTTP 401/403 from an identity rejection by
+checking the same authenticated account before requesting reconnect. Stale radio
+errors and failed connection candidates cannot invalidate a newer verified
+account. Successful requests persist validated, scoped cookie updates in DPAPI
+storage and refresh the playback lease; reconnect verification also retains its
+cookie updates. Python regression checks pass 37 tests.
+
+Native extraction receives an exclusive private cookie snapshot for each load
+and recovery. A synthetic regression verifies that a late extractor save cannot
+overwrite the newer canonical playback lease, and that subsequent snapshots use
+the newer lease. Cookie snapshots are capped at 64 KiB and removed after their
+owned helpers end. Extractor cookie rotations are still not returned to encrypted
+storage, so these checks do not prove a minimum session lifetime.
+
+A fresh manual session import verified the intended profile and library with Zen
+closed. An initial live listening run reached one natural transition and three
+recommendation refills, but its supervising command disappeared without a final
+result or resource report. It is not accepted as a sustained-run pass. The saved
+account passed another library check afterward. A new run must use explicit
+completion reporting and the executable containing the cookie-isolation change.

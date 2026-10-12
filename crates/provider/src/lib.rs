@@ -70,6 +70,60 @@ pub enum Response {
     },
 }
 
+// Keep refreshed credentials inside the provider; callers receive metadata only.
+struct HelperReply {
+    response: Response,
+    refreshed: RefreshedHeaders,
+}
+#[derive(Default)]
+struct RefreshedHeaders(Option<BTreeMap<String, String>>);
+impl Drop for RefreshedHeaders {
+    fn drop(&mut self) {
+        if let Some(headers) = &mut self.0 {
+            for value in headers.values_mut() {
+                value.zeroize();
+            }
+        }
+    }
+}
+
+fn decode_helper_reply(bytes: &[u8]) -> Result<HelperReply, &'static str> {
+    // Parse data independently so an invalid optional update cannot hide valid
+    // library results or turn a transient error into a rejected session.
+    let response: Response = serde_json::from_slice(bytes)
+        .map_err(|_| "Account helper returned an unsupported response")?;
+    let mut refreshed = RefreshedHeaders::default();
+    if matches!(
+        response,
+        Response::Library { .. } | Response::Tracks { .. } | Response::Home { .. }
+    ) {
+        let mut document: serde_json::Value = serde_json::from_slice(bytes)
+            .map_err(|_| "Account helper returned an unsupported response")?;
+        if let Some(value) = document.get_mut("refreshed_headers") {
+            let mut encoded = serde_json::to_vec(value).unwrap_or_default();
+            zeroize_json(value);
+            if encoded.len() <= MAX_SESSION {
+                refreshed.0 = parse_headers(&encoded).ok();
+            }
+            encoded.zeroize();
+        }
+        zeroize_json(&mut document);
+    }
+    Ok(HelperReply {
+        response,
+        refreshed,
+    })
+}
+
+fn zeroize_json(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::String(value) => value.zeroize(),
+        serde_json::Value::Array(values) => values.iter_mut().for_each(zeroize_json),
+        serde_json::Value::Object(values) => values.values_mut().for_each(zeroize_json),
+        _ => {}
+    }
+}
+
 #[derive(Clone)]
 pub struct Provider {
     directory: PathBuf,
@@ -186,11 +240,9 @@ impl Provider {
             let encrypted = encrypted?;
             let temporary = self.directory.join("session.pending");
             fs::write(&temporary, encrypted).map_err(|_| "Could not save protected session")?;
-            // Both files inherit the protected directory ACL. Replace only our own session.
+            // Rename in the same protected directory replaces the destination
+            // atomically; keep the previous session if replacement fails.
             let destination = self.directory.join("session.dpapi");
-            if destination.exists() {
-                fs::remove_file(&destination).map_err(|_| "Could not replace session")?;
-            }
             fs::rename(temporary, destination).map_err(|_| "Could not finish session import")
         })()
         .map_err(str::to_string)
@@ -245,6 +297,100 @@ impl Provider {
         result.map_err(str::to_string)
     }
 
+    pub fn refresh_cookie_lease(&self, lease: &CookieLease) -> Result<(), String> {
+        let root = self
+            .directory
+            .canonicalize()
+            .map_err(|_| "Account storage unavailable")?;
+        let path = lease
+            .path
+            .canonicalize()
+            .map_err(|_| "Playback cookie lease unavailable")?;
+        if lease.path.parent() != Some(self.directory.as_path())
+            || path.parent() != Some(root.as_path())
+            || fs::symlink_metadata(&lease.path)
+                .map_err(|_| "Playback cookie lease unavailable")?
+                .file_type()
+                .is_symlink()
+            || !path.is_file()
+            || !path.file_name().is_some_and(|name| {
+                let name = name.to_string_lossy();
+                name.starts_with(&format!("playback-{}-", std::process::id()))
+                    && name.ends_with(".txt")
+            })
+        {
+            return Err("Playback cookie lease is outside account storage".into());
+        }
+        let mut headers = self.headers()?;
+        let jar = headers
+            .get("cookie")
+            .ok_or("Saved session has no cookie")
+            .and_then(|cookie| cookie_jar(cookie));
+        for value in headers.values_mut() {
+            value.zeroize();
+        }
+        let mut jar = jar.map_err(str::to_string)?;
+        let temporary = self.directory.join(format!(
+            "playback-{}-{}.pending",
+            std::process::id(),
+            LEASE_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        let result = (|| {
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&temporary)
+                .map_err(|_| "Could not update signed-in playback")?;
+            file.write_all(jar.as_bytes())
+                .map_err(|_| "Could not update signed-in playback")?;
+            file.sync_all()
+                .map_err(|_| "Could not update signed-in playback")?;
+            drop(file);
+            fs::rename(&temporary, &lease.path).map_err(|_| "Could not update signed-in playback")
+        })();
+        jar.zeroize();
+        if result.is_err() {
+            let _ = fs::remove_file(&temporary);
+        }
+        result.map_err(str::to_string)
+    }
+
+    fn persist_refreshed_headers(
+        &self,
+        refreshed: &RefreshedHeaders,
+        expected_authuser: Option<&str>,
+        expected_pageid: Option<&str>,
+        cancel: &AtomicBool,
+    ) -> bool {
+        let Some(candidate) = &refreshed.0 else {
+            return false;
+        };
+        if cancel.load(Ordering::Acquire)
+            || candidate.get("x-goog-authuser").map(String::as_str) != expected_authuser
+            || candidate.get("x-goog-pageid").map(String::as_str) != expected_pageid
+        {
+            return false;
+        }
+        let Ok(mut current) = self.headers() else {
+            return false;
+        };
+        let same_identity = current.get("x-goog-authuser").map(String::as_str) == expected_authuser
+            && current.get("x-goog-pageid").map(String::as_str) == expected_pageid;
+        let changed = &current != candidate;
+        for value in current.values_mut() {
+            value.zeroize();
+        }
+        if !same_identity || !changed {
+            return false;
+        }
+        let Ok(mut encoded) = serde_json::to_vec(candidate) else {
+            return false;
+        };
+        let accepted = encoded.len() <= MAX_SESSION && self.import_bytes(&encoded).is_ok();
+        encoded.zeroize();
+        accepted
+    }
+
     #[cfg(windows)]
     pub fn execute(&self, request: Request, cancel: Arc<AtomicBool>) -> Result<Response, String> {
         if let Request::Connect {
@@ -259,7 +405,8 @@ impl Provider {
                 &serde_json::json!({"action":"connect_existing", "database": database, "index": index}),
             )
             .map_err(|_| "Could not prepare account connection")?;
-            return match execute_helper(&input, cancel.clone(), Duration::from_secs(600))? {
+            return match execute_helper(&input, cancel.clone(), Duration::from_secs(600))?.response
+            {
                 Response::Session { headers } => self.save_verified_session(headers, &cancel),
                 Response::Error { code } => Ok(Response::Error { code }),
                 _ => Err("Account connection did not return a session".into()),
@@ -270,6 +417,8 @@ impl Provider {
             return Err("Choose an account between 1 and 10".into());
         }
         let mut headers = self.headers()?;
+        let expected_authuser = headers.get("x-goog-authuser").cloned();
+        let expected_pageid = headers.get("x-goog-pageid").cloned();
         #[derive(Serialize)]
         struct Payload<'a> {
             #[serde(flatten)]
@@ -290,7 +439,16 @@ impl Provider {
         }
         let result = execute_helper(&input, cancel.clone(), Duration::from_secs(60));
         input.zeroize();
-        match result? {
+        let reply = result?;
+        if !switching {
+            self.persist_refreshed_headers(
+                &reply.refreshed,
+                expected_authuser.as_deref(),
+                expected_pageid.as_deref(),
+                &cancel,
+            );
+        }
+        match reply.response {
             Response::Session { headers } if switching => {
                 self.save_verified_session(headers, &cancel)
             }
@@ -380,6 +538,9 @@ fn read_limited(path: &Path, limit: usize) -> Result<Vec<u8>, String> {
 }
 
 fn parse_headers(bytes: &[u8]) -> Result<BTreeMap<String, String>, &'static str> {
+    if bytes.len() > MAX_SESSION {
+        return Err("Account session exceeds the input limit");
+    }
     let text = std::str::from_utf8(bytes)
         .map_err(|_| "Session file must be UTF-8 request headers or browser JSON")?;
     let mut imported: BTreeMap<String, String> = if text.trim_start().starts_with('{') {
@@ -398,12 +559,23 @@ fn parse_headers(bytes: &[u8]) -> Result<BTreeMap<String, String>, &'static str>
             "cookie",
             "x-goog-authuser",
             "x-goog-pageid",
+            "x-goog-visitor-id",
             "accept-language",
             "user-agent",
         ]
         .contains(&key.as_str())
         {
-            if value.chars().any(char::is_control) {
+            let limit = match key.as_str() {
+                "cookie" => 32768,
+                "x-goog-authuser" => 8,
+                "x-goog-pageid" => 128,
+                _ => 1024,
+            };
+            if value.is_empty()
+                || value.len() > limit
+                || !value.is_ascii()
+                || value.chars().any(char::is_control)
+            {
                 value.zeroize();
                 return Err("Session headers contain invalid characters");
             }
@@ -415,11 +587,21 @@ fn parse_headers(bytes: &[u8]) -> Result<BTreeMap<String, String>, &'static str>
     let cookie = selected
         .get("cookie")
         .ok_or("The file needs a Cookie header from a signed-in YouTube Music request")?;
-    if !cookie
-        .split(';')
-        .any(|part| part.trim().starts_with("__Secure-3PAPISID="))
-    {
+    if !cookie.split(';').any(|part| {
+        part.trim()
+            .strip_prefix("__Secure-3PAPISID=")
+            .is_some_and(|value| !value.is_empty())
+    }) {
         return Err("No YouTube Music sign-in cookie found. Follow the connection guide");
+    }
+    let mut jar = cookie_jar(cookie)?;
+    jar.zeroize();
+    for name in ["x-goog-authuser", "x-goog-pageid"] {
+        if let Some(value) = selected.get(name) {
+            if !value.bytes().all(|byte| byte.is_ascii_digit()) {
+                return Err("Session account selection is invalid");
+            }
+        }
     }
     selected.insert("x-origin".into(), "https://music.youtube.com".into());
     // ytmusicapi identifies browser auth from this marker and calculates a
@@ -445,6 +627,10 @@ fn cookie_jar(cookie: &str) -> Result<String, &'static str> {
         jar.push_str(&format!(
             ".youtube.com\tTRUE\t/\tTRUE\t0\t{name}\t{value}\n"
         ));
+        if jar.len() > MAX_SESSION {
+            jar.zeroize();
+            return Err("Playback cookie lease exceeds the size limit");
+        }
     }
     Ok(jar)
 }
@@ -454,7 +640,7 @@ fn execute_helper(
     input: &[u8],
     cancel: Arc<AtomicBool>,
     timeout: Duration,
-) -> Result<Response, String> {
+) -> Result<HelperReply, String> {
     let python = runtime_path(
         "TIDE_PROVIDER_PYTHON",
         ".tools/provider-venv/Scripts/python.exe",
@@ -525,9 +711,10 @@ fn execute_helper(
         bytes.zeroize();
         return Err("Account helper failed or response exceeded the size limit".into());
     }
-    let response = serde_json::from_slice::<Response>(&bytes);
+    let response = decode_helper_reply(&bytes);
     bytes.zeroize();
-    match response.map_err(|_| "Account helper returned an unsupported response")? {
+    let reply = response.map_err(str::to_string)?;
+    let response: Result<Response, String> = match reply.response {
         Response::Error { code } if code == "runtime" => {
             Err("Install the optional account helper with scripts/setup-provider.ps1".into())
         }
@@ -561,7 +748,12 @@ fn execute_helper(
             Err("YouTube Music request failed. Re-import a fresh session and try again".into())
         }
         response => Ok(response),
-    }
+    };
+    let response = response?;
+    Ok(HelperReply {
+        response,
+        refreshed: reply.refreshed,
+    })
 }
 
 fn runtime_path(variable: &str, relative: &str, fallback: &str) -> PathBuf {
@@ -699,6 +891,136 @@ fn unprotect(_: &[u8]) -> Result<Vec<u8>, &'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn refresh_fixture(response_type: &str, refreshed: serde_json::Value) -> HelperReply {
+        let mut response = match response_type {
+            "error" => serde_json::json!({"type":"error", "code":"request"}),
+            "home" => serde_json::json!({"type":"home", "cards":[]}),
+            "library" => {
+                serde_json::json!({"type":"library", "account":"Fixture", "playlists":[], "truncated":false})
+            }
+            _ => serde_json::json!({"type":"tracks", "tracks":[], "truncated":false}),
+        };
+        response["refreshed_headers"] = refreshed;
+        decode_helper_reply(&serde_json::to_vec(&response).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn refreshed_headers_are_optional_bounded_and_ignored_on_errors() {
+        let headers = serde_json::json!({"cookie":"__Secure-3PAPISID=fresh", "x-goog-authuser":"1", "x-goog-visitor-id":"fixturevisitor"});
+        for response_type in ["library", "tracks", "home"] {
+            let reply = refresh_fixture(response_type, headers.clone());
+            assert_eq!(
+                reply.refreshed.0.as_ref().unwrap()["x-goog-visitor-id"],
+                "fixturevisitor"
+            );
+        }
+        assert!(refresh_fixture("error", headers).refreshed.0.is_none());
+        for invalid in [
+            serde_json::json!("invalid"),
+            serde_json::json!({"cookie":12}),
+            serde_json::json!({"cookie":concat!("__Secure-3PAPISID=", "fixture\nInjected:value")}),
+            serde_json::json!({"cookie":format!("__Secure-3PAPISID={}", "x".repeat(MAX_SESSION))}),
+        ] {
+            let reply = refresh_fixture("tracks", invalid);
+            assert!(matches!(reply.response, Response::Tracks { .. }));
+            assert!(reply.refreshed.0.is_none());
+        }
+        let reply = decode_helper_reply(br#"{"type":"home","cards":[]}"#).unwrap();
+        assert!(reply.refreshed.0.is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn successful_refresh_is_encrypted_and_updates_existing_playback_lease() {
+        let directory = std::env::temp_dir().join(format!(
+            "tide-refresh-test-{}-{}",
+            std::process::id(),
+            LEASE_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        private_directory(&directory).unwrap();
+        let provider = Provider {
+            directory: directory.clone(),
+        };
+        provider.import_bytes(br#"{"cookie":"__Secure-3PAPISID=old", "x-goog-authuser":"1", "x-goog-pageid":"123"}"#).unwrap();
+        let lease = provider.cookie_lease().unwrap().unwrap();
+        let lease_path = lease.path().to_owned();
+        let reply = refresh_fixture(
+            "home",
+            serde_json::json!({"cookie":"__Secure-3PAPISID=fresh", "x-goog-authuser":"1", "x-goog-pageid":"123", "x-goog-visitor-id":"fixturevisitor"}),
+        );
+        assert!(provider.persist_refreshed_headers(
+            &reply.refreshed,
+            Some("1"),
+            Some("123"),
+            &AtomicBool::new(false)
+        ));
+        assert_eq!(
+            provider.headers().unwrap()["cookie"],
+            "__Secure-3PAPISID=fresh"
+        );
+        let encrypted = fs::read(directory.join("session.dpapi")).unwrap();
+        assert!(!encrypted
+            .windows(b"fresh".len())
+            .any(|window| window == b"fresh"));
+        provider.refresh_cookie_lease(&lease).unwrap();
+        let jar = fs::read_to_string(&lease_path).unwrap();
+        assert!(jar.contains("fresh"));
+        assert!(!jar.contains("old"));
+        drop(lease);
+        assert!(!lease_path.exists());
+        provider.disconnect().unwrap();
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn rejected_refresh_preserves_session_and_selected_identity() {
+        let directory = std::env::temp_dir().join(format!(
+            "tide-refresh-reject-test-{}-{}",
+            std::process::id(),
+            LEASE_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        private_directory(&directory).unwrap();
+        let provider = Provider {
+            directory: directory.clone(),
+        };
+        provider.import_bytes(br#"{"cookie":"__Secure-3PAPISID=old", "x-goog-authuser":"1", "x-goog-pageid":"123"}"#).unwrap();
+        let original = fs::read(directory.join("session.dpapi")).unwrap();
+        for candidate in [
+            serde_json::json!({"cookie":"__Secure-3PAPISID=fresh", "x-goog-authuser":"2", "x-goog-pageid":"123"}),
+            serde_json::json!({"cookie":"__Secure-3PAPISID=fresh", "x-goog-authuser":"1", "x-goog-pageid":"456"}),
+            serde_json::json!({"cookie":"__Secure-3PAPISID=fresh", "x-goog-authuser":"1"}),
+            serde_json::json!({"cookie":"__Secure-3PAPISID=", "x-goog-authuser":"1", "x-goog-pageid":"123"}),
+        ] {
+            let reply = refresh_fixture("tracks", candidate);
+            assert!(!provider.persist_refreshed_headers(
+                &reply.refreshed,
+                Some("1"),
+                Some("123"),
+                &AtomicBool::new(false)
+            ));
+            assert_eq!(fs::read(directory.join("session.dpapi")).unwrap(), original);
+        }
+        let valid = serde_json::json!({"cookie":"__Secure-3PAPISID=fresh", "x-goog-authuser":"1", "x-goog-pageid":"123"});
+        let error = refresh_fixture("error", valid.clone());
+        assert!(!provider.persist_refreshed_headers(
+            &error.refreshed,
+            Some("1"),
+            Some("123"),
+            &AtomicBool::new(false)
+        ));
+        let cancelled = refresh_fixture("tracks", valid);
+        assert!(!provider.persist_refreshed_headers(
+            &cancelled.refreshed,
+            Some("1"),
+            Some("123"),
+            &AtomicBool::new(true)
+        ));
+        assert_eq!(fs::read(directory.join("session.dpapi")).unwrap(), original);
+        provider.disconnect().unwrap();
+        fs::remove_dir_all(directory).unwrap();
+    }
     #[test]
     fn radio_request_matches_helper_contract() {
         let request = Request::Radio {
@@ -760,6 +1082,7 @@ mod tests {
         let jar = cookie_jar("SAPISID=fixture; PREF=test").unwrap();
         assert!(jar.contains(".youtube.com\tTRUE\t/\tTRUE\t0\tSAPISID\tfixture"));
         assert!(!jar.contains(".google.com"));
+        assert!(cookie_jar(&"a=b;".repeat(MAX_SESSION / 4)).is_err());
     }
     #[cfg(windows)]
     #[test]

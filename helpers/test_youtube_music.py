@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 from youtube_music import (LOGIN_SECONDS, MAX_RADIO_TRACKS, MUSIC_URL, artwork_url, connect, connect_existing, create_client, main,
                           music_cookies, read_cookie_database, CookieReadError, read_music_cookies, remove_login_profile, run,
                           selected_zen_database, session_headers, switch_account, tracks,
-                          validate_session, wait_for_login, zen_executable, request_failure)
+                          validate_session, wait_for_login, zen_executable, request_failure, verified_request_failure)
 
 
 class FakeClient:
@@ -37,6 +37,23 @@ class FakeClient:
 
 
 class ProviderTests(unittest.TestCase):
+    def test_content_denial_requires_identity_rejection_before_reconnect(self):
+        for status in (401, 403):
+            failure = RuntimeError("private content must not be returned")
+            failure.response = SimpleNamespace(status_code=status)
+            client = SimpleNamespace(get_account_info=MagicMock(return_value={"accountName": "Fixture"}))
+            self.assertEqual(verified_request_failure(failure, client)["code"], "request")
+            client.get_account_info.assert_called_once()
+            for unknown in (None, {}, {"accountName": ""}):
+                client.get_account_info.return_value = unknown
+                self.assertEqual(verified_request_failure(failure, client)["code"], "request")
+            for transient in (TimeoutError("private"), KeyError("private"), RuntimeError("Server returned HTTP 500:")):
+                client.get_account_info.side_effect = transient
+                self.assertEqual(verified_request_failure(failure, client)["code"], "request")
+            rejected = RuntimeError("Server returned HTTP 401: private")
+            client.get_account_info.side_effect = rejected
+            self.assertEqual(verified_request_failure(failure, client)["code"], "session")
+
     def test_anonymous_account_response_is_session_failure_without_private_data(self):
         def get_account_info(flag):
             response = {"responseContext": {"serviceTrackingParams": [
@@ -99,7 +116,8 @@ class ProviderTests(unittest.TestCase):
         client.get_watch_playlist.assert_called_once()
 
     def test_radio_empty_and_failures_are_bounded_generic_results(self):
-        client = SimpleNamespace(get_watch_playlist=MagicMock())
+        client = SimpleNamespace(get_watch_playlist=MagicMock(),
+                                 get_account_info=MagicMock(return_value={"accountName": "Fixture"}))
         empty = {"type": "tracks", "tracks": [], "truncated": False}
         for invalid in [None, 12345678901, "bad", "https://other.test"]:
             self.assertEqual(run(client, {"action": "radio", "video_id": invalid}), empty)
@@ -115,10 +133,10 @@ class ProviderTests(unittest.TestCase):
             failure.response = SimpleNamespace(status_code=status)
             client.get_watch_playlist.side_effect = failure
             self.assertEqual(run(client, {"action": "radio", "video_id": "K4DyBUG242c"}),
-                             {"type": "error", "code": "session"})
+                             {"type": "error", "code": "request"})
             client.get_watch_playlist.side_effect = RuntimeError(f"Server returned HTTP {status}: private fixture")
             self.assertEqual(run(client, {"action": "radio", "video_id": "K4DyBUG242c"}),
-                             {"type": "error", "code": "session"})
+                             {"type": "error", "code": "request"})
 
     def test_artwork_chooses_small_safe_public_thumbnail_and_watch_variant(self):
         candidates = [{"url": "https://i.ytimg.com/large.jpg", "width": 512, "height": 512},
@@ -311,6 +329,21 @@ class LoginTests(unittest.TestCase):
                 self.assertEqual(validate_session({}), expected)
             session.close.assert_called_once()
 
+    def test_identity_validation_retains_rotation_only_for_verified_same_account(self):
+        original = {"cookie": "__Secure-3PAPISID=fixture", "x-goog-authuser": "1"}
+        refreshed = {**original, "cookie": "__Secure-3PAPISID=fresh"}
+        for info, update, accepted in [({"accountName": "Fixture"}, refreshed, True),
+                                       ({}, refreshed, False),
+                                       ({"accountName": "Fixture"}, {**refreshed, "x-goog-authuser": "2"}, False),
+                                       ({"accountName": "Fixture"}, {**refreshed, "x-goog-pageid": "123"}, False)]:
+            headers = original.copy()
+            session = SimpleNamespace(close=MagicMock(), _tide_refreshed_headers=update)
+            client = SimpleNamespace(get_account_info=MagicMock(return_value=info))
+            with patch("youtube_music.create_client", return_value=(client, session)):
+                validate_session(headers)
+            self.assertEqual(headers["cookie"], refreshed["cookie"] if accepted else original["cookie"])
+            session.close.assert_called_once()
+
     def test_client_sets_browser_auth_marker_and_network_timeout(self):
         api = MagicMock()
         requests = MagicMock()
@@ -319,7 +352,46 @@ class LoginTests(unittest.TestCase):
             create_client({"cookie": "__Secure-3PAPISID=fixture", "x-goog-authuser": "0"})
         options = api.YTMusic.call_args.kwargs
         self.assertEqual(options["auth"]["authorization"], "SAPISIDHASH")
+        self.assertIn("x-goog-visitor-id", options["auth"])
         self.assertEqual(requests.Session.return_value.request.keywords["timeout"], 20)
+
+    def test_cookie_rotation_updates_next_request_and_signing_cookie(self):
+        requests = MagicMock()
+        session = requests.Session.return_value
+        session.hooks = {"response": []}
+        api = SimpleNamespace(YTMusic=lambda **options: SimpleNamespace(
+            base_headers=options["auth"], sapisid="fixture"))
+        helpers = SimpleNamespace(initialize_headers=lambda: {"origin": MUSIC_URL})
+        auth = {"cookie": "__Secure-3PAPISID=fixture", "x-goog-authuser": "1",
+                "x-goog-visitor-id": "visitor-fixture"}
+        with patch.dict("sys.modules", {"ytmusicapi": api, "ytmusicapi.helpers": helpers, "requests": requests}):
+            client, session = create_client(auth)
+        cookie = SimpleNamespace(name="__Secure-3PAPISID", value="fresh", domain=".youtube.com", path="/", expires=None)
+        hook = session.hooks["response"][0]
+        hook(SimpleNamespace(url="https://unrelated.example/", cookies=[cookie]))
+        self.assertEqual(client.sapisid, "fixture")
+        self.assertIsNone(session._tide_refreshed_headers)
+        hook(SimpleNamespace(url=MUSIC_URL + "/youtubei/v1/browse", cookies=[cookie]))
+        self.assertEqual(client.sapisid, "fresh")
+        self.assertIn("__Secure-3PAPISID=fresh", client.base_headers["cookie"])
+        self.assertEqual(session._tide_refreshed_headers["x-goog-authuser"], "1")
+        self.assertEqual(session._tide_refreshed_headers["x-goog-visitor-id"], "visitor-fixture")
+        cookie.domain = ".unrelated.example"
+        cookie.value = "wrong"
+        hook(SimpleNamespace(url=MUSIC_URL, cookies=[cookie]))
+        self.assertEqual(client.sapisid, "fresh")
+
+    def test_refreshed_headers_only_return_with_successful_data(self):
+        for result in [{"type": "home", "cards": []}, {"type": "error", "code": "request"}]:
+            session = SimpleNamespace(close=MagicMock(), _tide_refreshed_headers={"cookie": "fixture"})
+            stdin = SimpleNamespace(buffer=io.BytesIO(b'{"action":"home","headers":{}}'))
+            stdout = io.StringIO()
+            with patch("youtube_music.sys.stdin", stdin), patch("youtube_music.sys.stdout", stdout), \
+                    patch("youtube_music.create_client", return_value=(object(), session)), \
+                    patch("youtube_music.run", return_value=result.copy()):
+                main()
+            self.assertEqual("refreshed_headers" in json.loads(stdout.getvalue()), result["type"] != "error")
+            session.close.assert_called_once()
 
     def test_removal_only_deletes_owned_child_profile(self):
         with tempfile.TemporaryDirectory() as private, tempfile.TemporaryDirectory() as unrelated:

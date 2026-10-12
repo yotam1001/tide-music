@@ -17,6 +17,7 @@ pub(super) fn start(
     let mut last_progress = Instant::now();
     let mut natural_transitions = 0;
     let mut recommendations_seen = false;
+    let mut radio_refills = 0;
     let mut pause_at = None::<Instant>;
     let mut pause_done = false;
     let mut pause_observed = false;
@@ -59,10 +60,24 @@ pub(super) fn start(
         }
         let Some(engine) = s.engine.as_ref() else { fail("engine unavailable"); return; };
         let p = engine.snapshot();
-        if p.volume != 0.0 { fail("probe must remain muted"); return; }
+        if p.volume != 0.0 {
+            eprintln!("Listening check: volume={}, requested={}, generation={}, loading={}",
+                      p.volume, u.get_volume(), p.generation, p.loading);
+            fail("probe must remain muted"); return;
+        }
         if p.error.is_some() { fail("terminal playback error"); return; }
         if !local && (s.account_error || !s.account_verified) { fail("account access failed"); return; }
         recommendations_seen |= s.settings.queue.tracks.iter().any(|t| t.recommended);
+        if !local {
+            // Exercise fresh recommendation handoffs repeatedly instead of
+            // letting one initial 25-track batch mask an exhausted-queue bug.
+            let keep = s.settings.queue.current.map_or(0, |index| index + 3);
+            if keep > 0 && s.settings.queue.tracks.len() > keep {
+                s.settings.queue.tracks.truncate(keep);
+                radio_refills += 1;
+                println!("Listening check: recommendation refill {radio_refills}");
+            }
+        }
         if p.generation != previous.generation {
             if previous.generation > 0 && skip_generation != Some(p.generation)
                 && previous.duration > 0.0 && previous.duration - previous.position <= 3.0 {
@@ -112,7 +127,9 @@ pub(super) fn start(
             println!("Listening check: {minute} minutes, {natural_transitions} natural transitions; decoded progress monitored");
         }
         if elapsed.as_secs() >= seconds {
-            if natural_transitions >= (if local { 10 } else { 2 }) && (local || recommendations_seen) && pause_observed && skip_done && seek_done {
+            if natural_transitions >= (if local { 10 } else { (seconds / 240).clamp(2, 6) })
+                && (local || (recommendations_seen && radio_refills >= 3))
+                && pause_observed && skip_done && seek_done {
                 *result.borrow_mut() = true;
                 println!("PASS listening check: {seconds}s, {natural_transitions} natural transitions, {}, pause/resume, skip and seek", if local { "local queue" } else { "radio" });
                 let _ = slint::quit_event_loop();

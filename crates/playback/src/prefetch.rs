@@ -13,6 +13,8 @@ const RETRY_DELAY: Duration = Duration::from_secs(20);
 const RESOLVE_TIMEOUT: Duration = Duration::from_secs(45);
 #[cfg(windows)]
 const MAX_OUTPUT_BYTES: u64 = 2 * 1024 * 1024;
+#[cfg(windows)]
+const MAX_COOKIE_BYTES: u64 = 65536;
 
 #[derive(Clone, Default)]
 pub(super) struct Request {
@@ -274,11 +276,11 @@ fn resolve(
 }
 
 #[cfg(windows)]
-struct CookieCopy(std::path::PathBuf);
+pub(super) struct CookieCopy(std::path::PathBuf);
 
 #[cfg(windows)]
 impl CookieCopy {
-    fn create(source: &std::path::Path) -> std::io::Result<Self> {
+    pub(super) fn create(source: &std::path::Path) -> std::io::Result<Self> {
         use std::io::Read;
         let parent = source
             .parent()
@@ -294,9 +296,9 @@ impl CookieCopy {
             .open(&path)?;
         let copy = Self(path);
         let result = (|| {
-            let mut input = std::fs::File::open(source)?.take(MAX_OUTPUT_BYTES + 1);
+            let mut input = std::fs::File::open(source)?.take(MAX_COOKIE_BYTES + 1);
             let size = std::io::copy(&mut input, &mut destination)?;
-            if size > MAX_OUTPUT_BYTES {
+            if size > MAX_COOKIE_BYTES {
                 return Err(std::io::Error::other("Cookie lease exceeds size limit"));
             }
             Ok(())
@@ -305,12 +307,25 @@ impl CookieCopy {
         result?;
         Ok(copy)
     }
+
+    pub(super) fn path(&self) -> &std::path::Path {
+        &self.0
+    }
 }
 
 #[cfg(windows)]
 impl Drop for CookieCopy {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
+        // Windows may need a moment to release descendants' handles after the
+        // owning job is cancelled. Keep cleanup bounded to the owned file.
+        for attempt in 0..5 {
+            match std::fs::remove_file(&self.0) {
+                Ok(()) => break,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+                Err(_) if attempt < 4 => std::thread::sleep(Duration::from_millis(25)),
+                Err(_) => break,
+            }
+        }
     }
 }
 
@@ -664,6 +679,48 @@ mod tests {
         drop(copy);
         assert!(!path.exists());
         assert_eq!(std::fs::read(&source).unwrap(), b"fixture-only session");
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn extractor_snapshot_cannot_overwrite_refreshed_canonical_lease() {
+        let directory = std::env::temp_dir().join(format!(
+            "tide-cookie-refresh-race-test-{}-{}",
+            std::process::id(),
+            super::super::PIPE_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        let canonical = directory.join("session.txt");
+        std::fs::write(&canonical, b"old synthetic session").unwrap();
+        let first = CookieCopy::create(&canonical).unwrap();
+        let first_path = first.path().to_owned();
+        let refreshed = directory.join("session.pending");
+        std::fs::write(&refreshed, b"new canonical synthetic session").unwrap();
+        std::fs::rename(&refreshed, &canonical).unwrap();
+        // Simulate yt-dlp saving an earlier in-memory snapshot after API refresh.
+        std::fs::write(first.path(), b"stale extractor synthetic session").unwrap();
+        assert_eq!(
+            std::fs::read(&canonical).unwrap(),
+            b"new canonical synthetic session"
+        );
+        let next = CookieCopy::create(&canonical).unwrap();
+        let next_path = next.path().to_owned();
+        assert_eq!(
+            std::fs::read(next.path()).unwrap(),
+            b"new canonical synthetic session"
+        );
+        drop(first);
+        drop(next);
+        assert!(!first_path.exists());
+        assert!(!next_path.exists());
+        assert_eq!(
+            std::fs::read(&canonical).unwrap(),
+            b"new canonical synthetic session"
+        );
+        std::fs::write(&canonical, vec![b'x'; MAX_COOKIE_BYTES as usize + 1]).unwrap();
+        assert!(CookieCopy::create(&canonical).is_err());
+        assert_eq!(std::fs::read_dir(&directory).unwrap().count(), 1);
         std::fs::remove_dir_all(directory).unwrap();
     }
 }

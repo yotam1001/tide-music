@@ -61,6 +61,22 @@ enum LibraryAction {
         replace_upcoming: bool,
     },
 }
+impl LibraryAction {
+    fn accepts_response(&self, generation: u64, seed: Option<&str>, autoplay: bool) -> bool {
+        match self {
+            Self::Radio {
+                seed: requested_seed,
+                generation: requested_generation,
+                replace_upcoming,
+            } => {
+                *requested_generation == generation
+                    && seed == Some(requested_seed.as_str())
+                    && (autoplay || *replace_upcoming)
+            }
+            _ => true,
+        }
+    }
+}
 struct State {
     settings: Settings,
     engine: Option<tide_playback::PlaybackHandle>,
@@ -237,6 +253,21 @@ fn request_radio(s: &mut State, u: &AppWindow, tx: &mpsc::SyncSender<LibraryResu
 }
 
 fn library_failure(s: &mut State, u: &AppWindow, authentication: bool) {
+    if !s.library_action.accepts_response(
+        s.generation,
+        current_video_id(s).as_deref(),
+        s.settings.autoplay,
+    ) {
+        return;
+    }
+    // Candidate verification does not replace the encrypted session on failure.
+    // Keep the previously verified account and its playback intact.
+    if matches!(s.library_action, LibraryAction::Connect) && s.account_verified {
+        u.set_account_status(
+            "Selected account could not be verified. Your connected account is unchanged.".into(),
+        );
+        return;
+    }
     if authentication {
         s.account_verified = false;
         u.set_account_verified(false);
@@ -1982,6 +2013,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     u.set_account_busy(false);
                     u.set_detail_busy(false);
+                    if matches!(
+                        &result,
+                        Ok(tide_provider::Response::Library { .. }
+                            | tide_provider::Response::Tracks { .. }
+                            | tide_provider::Response::Home { .. })
+                    ) {
+                        if let (Some(provider), Some(lease)) = (&s.provider, &s.cookie_lease) {
+                            if provider.refresh_cookie_lease(lease).is_err() {
+                                u.set_account_status("Account data loaded; playback session update will be retried on the next refresh.".into());
+                            }
+                        }
+                    }
                     match result {
                         Ok(tide_provider::Response::Connected) => {
                             u.set_account_index(
@@ -2156,6 +2199,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             library_failure(&mut s, &u, code == "session");
                         }
                         Err(error) if matches!(s.library_action, LibraryAction::Connect) => {
+                            if s.account_verified {
+                                u.set_account_status(format!("Account connection failed: {error}. Your connected account is unchanged.").into());
+                                continue;
+                            }
                             s.account_error = true;
                             u.set_error_is_account(true);
                             u.set_error_message(
@@ -2835,7 +2882,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let listening = listening_seconds
         .map(|seconds| listening::start(state.clone(), &ui, seconds, local_listening_source));
-    let result = ui.run();
+    // Sustained probes must not expose a second interactive player or compete
+    // with the user's window. Keep timers running without a visible window.
+    let result = if listening_seconds.is_some() {
+        ui.hide()?;
+        slint::run_event_loop_until_quit()
+    } else {
+        ui.run()
+    };
     timer.stop();
     preparation_timer.stop();
     media_timer.stop();
@@ -2877,6 +2931,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn obsolete_radio_responses_cannot_change_current_account_state() {
+        let action = LibraryAction::Radio {
+            seed: "fixture0001".into(),
+            generation: 3,
+            replace_upcoming: false,
+        };
+        assert!(action.accepts_response(3, Some("fixture0001"), true));
+        assert!(!action.accepts_response(4, Some("fixture0001"), true));
+        assert!(!action.accepts_response(3, Some("fixture0002"), true));
+        assert!(!action.accepts_response(3, Some("fixture0001"), false));
+    }
 
     #[test]
     fn older_saved_tracks_default_to_manual() {
