@@ -281,5 +281,26 @@ That failed run collected 288 process-tree samples: settled median working set
 68.1 MiB, peak 354.7 MiB; settled median private bytes 50.6 MiB, peak 293.6 MiB.
 Mean sampled CPU use was 3.83% of one logical core, including startup and retries.
 These preliminary failed-run figures are not stable-session or gaming evidence.
-The revision that persists native updates still needs a fresh real session and
-sustained verification with Zen closed.
+The revision that persists native updates received a fresh verified session with
+Zen closed. A detached supervisor is running a 30-minute muted authenticated
+listening test; early logs confirm native cookie updates were saved. This is
+in-progress evidence, not a completed continuity or session-lifetime pass.
+
+The current revision also passed the focused native UI harness's 11 checks and
+the actual Windows media broker integration checks. Play, pause, next and previous
+reached an unfocused test window exactly once; dropping the media session disabled
+it and removed callbacks. These checks use the application's own test window and
+do not prove that a particular keyboard's physical Fn shortcuts work.
+
+The populated application UI smoke run passed native pointer queue reordering
+and long edge-autoscroll through recycled rows, preserving the playing track and
+playback generation. Its light/dark home, queue and settings snapshots were
+reviewed. Three production-mode app windows using isolated, empty account/settings
+storage closed normally with exit code zero in 8-10 ms. This covers the normal
+Slint and media-session startup/close path without a connected account; it does
+not yet cover closing during an authenticated request or active playback.
+
+Revision aa49e66 passed both Windows CI jobs and a privacy audit of a fresh public
+clone. Its cookie-persistence portable ZIP passed the payload allowlist, checksum
+and credential/private-path scans. Authenticated playback longevity remains a
+release gate regardless of these passing checks.
