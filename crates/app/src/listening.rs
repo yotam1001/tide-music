@@ -26,6 +26,11 @@ pub(super) fn start(
     let mut seek_done = false;
     let mut last_minute = 0;
     let mut last_cookie_updates = 0;
+    let mut last_cookie_updates_not_applied = 0;
+    let mut requested_generation = 0;
+    let mut pending_audio_start = None::<(u64, Instant)>;
+    let mut audio_starts = 0_u64;
+    let mut longest_audio_start = Duration::ZERO;
     let local = local_source.is_some();
     timer.start(slint::TimerMode::Repeated, Duration::from_millis(250), move || {
         let Some(u) = weak.upgrade() else { return; };
@@ -49,9 +54,12 @@ pub(super) fn start(
                     }
                     s.settings.queue.current = Some(0);
                 }
+                let requested_at = Instant::now();
                 if !(if local { play(&mut s, &u) } else { add(&mut s, &u, source) }) {
                     fail("could not start muted source"); return;
                 }
+                requested_generation = s.generation;
+                pending_audio_start = Some((requested_generation, requested_at));
                 playback_started = Some(Instant::now());
                 last_progress = Instant::now();
             } else if started.elapsed() > Duration::from_secs(90) {
@@ -61,9 +69,31 @@ pub(super) fn start(
         }
         let Some(engine) = s.engine.as_ref() else { fail("engine unavailable"); return; };
         let p = engine.snapshot();
+        // Measure the request-to-decoded-progress delay, including extraction
+        // and loading. A generation change alone does not prove audio started.
+        // Sampling introduces up to one timer interval of uncertainty.
+        if s.generation != requested_generation {
+            requested_generation = s.generation;
+            pending_audio_start = Some((requested_generation, Instant::now()));
+        }
+        if let Some((generation, requested_at)) = pending_audio_start {
+            if p.generation == generation && !p.loading && !p.paused && p.position > 0.05 {
+                let delay = requested_at.elapsed();
+                audio_starts += 1;
+                longest_audio_start = longest_audio_start.max(delay);
+                println!("Listening check: decoded audio start {audio_starts}, request delay {} ms (250 ms sampling)", delay.as_millis());
+                pending_audio_start = None;
+            }
+        }
         if s.cookie_updates_applied != last_cookie_updates {
             last_cookie_updates = s.cookie_updates_applied;
             println!("Listening check: persisted native session update {last_cookie_updates}");
+        }
+        if s.cookie_updates_not_applied != last_cookie_updates_not_applied {
+            last_cookie_updates_not_applied = s.cookie_updates_not_applied;
+            // This includes stale/conflicting snapshots and changes that are
+            // already stored. It is not proof of lost credentials by itself.
+            println!("Listening check: native session updates not applied {last_cookie_updates_not_applied} (stale, invalid or already stored)");
         }
         if p.volume != 0.0 {
             eprintln!("Listening check: volume={}, requested={}, generation={}, loading={}",
@@ -120,7 +150,10 @@ pub(super) fn start(
             skip_generation = Some(s.generation + 1);
             previous = p;
             drop(s);
+            let requested_at = Instant::now();
             u.invoke_next_track();
+            requested_generation = state.borrow().generation;
+            pending_audio_start = Some((requested_generation, requested_at));
             return;
         } else if !seek_done && elapsed > Duration::from_secs(120) && !p.loading && p.position > 5.0 {
             seek_done = true;
@@ -139,6 +172,7 @@ pub(super) fn start(
                 && (local || (recommendations_seen && radio_refills >= 3))
                 && pause_observed && skip_done && seek_done {
                 *result.borrow_mut() = true;
+                println!("Listening check: {audio_starts} decoded audio starts; longest sampled request delay {} ms", longest_audio_start.as_millis());
                 println!("PASS listening check: {seconds}s, {natural_transitions} natural transitions, {}, pause/resume, skip and seek", if local { "local queue" } else { "radio" });
                 let _ = slint::quit_event_loop();
             } else { fail("insufficient transition or control coverage"); }

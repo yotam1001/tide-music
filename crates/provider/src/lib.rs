@@ -511,20 +511,84 @@ impl Provider {
         {
             return false;
         }
-        let Ok(mut current) = self.headers() else {
+        let Ok(current_headers) = self.headers() else {
             return false;
         };
-        let same_identity = current.get("x-goog-authuser").map(String::as_str) == expected_authuser
-            && current.get("x-goog-pageid").map(String::as_str) == expected_pageid
-            && current.get("cookie").map(String::as_str) == Some(expected_cookie);
-        let changed = &current != candidate;
-        for value in current.values_mut() {
-            value.zeroize();
-        }
-        if !same_identity || !changed {
+        let mut protected = RefreshedHeaders(Some(current_headers));
+        let Some(headers) = protected.0.as_mut() else {
+            return false;
+        };
+        if headers.get("x-goog-authuser").map(String::as_str) != expected_authuser
+            || headers.get("x-goog-pageid").map(String::as_str) != expected_pageid
+        {
             return false;
         }
-        let Ok(mut encoded) = serde_json::to_vec(candidate) else {
+        let (Ok(before), Ok(after), Ok(mut current)) = (
+            scoped_header_cookies(expected_cookie),
+            scoped_header_cookies(
+                candidate
+                    .get("cookie")
+                    .map(String::as_str)
+                    .unwrap_or_default(),
+            ),
+            scoped_header_cookies(
+                headers
+                    .get("cookie")
+                    .map(String::as_str)
+                    .unwrap_or_default(),
+            ),
+        ) else {
+            return false;
+        };
+        let signing = "__Secure-3PAPISID";
+        if !before.0.contains_key(signing) || before.0.get(signing) != current.0.get(signing) {
+            return false;
+        }
+        let auth_changed = after
+            .0
+            .iter()
+            .any(|(name, value)| authentication_cookie(name) && before.0.get(name) != Some(value));
+        // Concurrent non-authentication updates do not invalidate a response's
+        // authentication baseline. A newer authentication cohort does.
+        if auth_changed
+            && before.0.iter().chain(current.0.iter()).any(|(name, _)| {
+                authentication_cookie(name) && before.0.get(name) != current.0.get(name)
+            })
+        {
+            return false;
+        }
+        let mut changed = false;
+        for (name, value) in &after.0 {
+            // Omitted cookies are preserved: this envelope carries no explicit
+            // deletion information. Each non-authentication change has its own CAS.
+            if before.0.get(name) != Some(value) && current.0.get(name) == before.0.get(name) {
+                if let Some(mut old) = current.0.insert(name.clone(), value.clone()) {
+                    old.zeroize();
+                }
+                changed = true;
+            }
+        }
+        if !changed {
+            return false;
+        }
+        let mut cookie = zeroize::Zeroizing::new(String::new());
+        for (name, value) in &current.0 {
+            if !cookie.is_empty() {
+                cookie.push_str("; ");
+            }
+            cookie.push_str(name);
+            cookie.push('=');
+            cookie.push_str(value);
+        }
+        if cookie.len() > 32768 {
+            return false;
+        }
+        if let Some(mut old) = headers.insert("cookie".into(), std::mem::take(&mut *cookie)) {
+            old.zeroize();
+        }
+        // Only the cookie baseline was captured. Preserve current request
+        // metadata instead of rolling it back to the helper's earlier snapshot.
+        let Ok(mut encoded) = serde_json::to_vec(headers) else {
             return false;
         };
         let accepted = encoded.len() <= MAX_SESSION && self.import_bytes(&encoded).is_ok();
@@ -756,7 +820,7 @@ fn parse_headers(bytes: &[u8]) -> Result<BTreeMap<String, String>, &'static str>
 }
 
 fn cookie_jar(cookie: &str) -> Result<String, &'static str> {
-    let mut jar = String::from("# Netscape HTTP Cookie File\n");
+    let mut jar = zeroize::Zeroizing::new(String::from("# Netscape HTTP Cookie File\n"));
     for pair in cookie.split(';') {
         let Some((name, value)) = pair.trim().split_once('=') else {
             continue;
@@ -769,15 +833,25 @@ fn cookie_jar(cookie: &str) -> Result<String, &'static str> {
         {
             return Err("Session cookie is malformed");
         }
-        jar.push_str(&format!(
-            ".youtube.com\tTRUE\t/\tTRUE\t0\t{name}\t{value}\n"
-        ));
+        jar.push_str(".youtube.com\tTRUE\t/\tTRUE\t0\t");
+        jar.push_str(name);
+        jar.push('\t');
+        jar.push_str(value);
+        jar.push('\n');
         if jar.len() > MAX_SESSION {
             jar.zeroize();
             return Err("Playback cookie lease exceeds the size limit");
         }
     }
-    Ok(jar)
+    Ok(std::mem::take(&mut *jar))
+}
+
+fn scoped_header_cookies(cookie: &str) -> Result<ScopedCookies, &'static str> {
+    if cookie.len() > 32768 {
+        return Err("Session cookie exceeds the size limit");
+    }
+    let jar = zeroize::Zeroizing::new(cookie_jar(cookie)?);
+    scoped_cookie_snapshot(jar.as_bytes())
 }
 
 struct ScopedCookies(BTreeMap<String, String>);
@@ -823,6 +897,15 @@ fn scoped_cookie_snapshot(bytes: &[u8]) -> Result<ScopedCookies, &'static str> {
         .contains(&fields[0])
             || fields[2] != "/"
         {
+            continue;
+        }
+        if !["TRUE", "FALSE"].contains(&fields[1]) {
+            return Err("Playback cookie update is malformed");
+        }
+        // Netscape's include-subdomains flag distinguishes domain cookies
+        // from host-only cookies. A host-only youtube.com cookie is not sent
+        // to music.youtube.com and must not shadow its domain-scoped session.
+        if fields[1] == "FALSE" && fields[0].trim_start_matches('.') != "music.youtube.com" {
             continue;
         }
         let expiry = fields[4]
@@ -947,6 +1030,9 @@ fn execute_helper(
         }
         Response::Error { code } if code == "profile_read" => {
             Err("Zen's cookie database could not be read. Close Zen after signing in, then reconnect using the same profile.".into())
+        }
+        Response::Error { code } if code == "cookie_ambiguity" => {
+            Err("Zen has conflicting YouTube sign-in cookies. Use Account > Advanced > Import session with request headers from the intended YouTube Music account.".into())
         }
         Response::Error { code } if code == "container" => {
             Err("Sign-in was found in a Zen container. Tide currently needs YouTube Music signed in on a tab outside that container.".into())
@@ -1177,12 +1263,197 @@ mod tests {
         fs::remove_dir_all(directory).unwrap();
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn api_auth_rotation_preserves_concurrent_non_auth_cookies_and_metadata() {
+        for concurrent_update in [false, true] {
+            let directory = std::env::temp_dir().join(format!(
+                "tide-api-merge-{}-{}",
+                std::process::id(),
+                LEASE_COUNTER.fetch_add(1, Ordering::Relaxed)
+            ));
+            private_directory(&directory).unwrap();
+            let provider = Provider {
+                directory: directory.clone(),
+            };
+            let baseline = "__Secure-3PAPISID=old; SID=old; PREF=quiet; KEEP=retained";
+            provider
+                .import_bytes(
+                    &serde_json::to_vec(&serde_json::json!({
+                        "cookie":baseline, "x-goog-authuser":"1", "x-goog-pageid":"123",
+                        "x-goog-visitor-id":"visitor-original", "user-agent":"agent-original"
+                    }))
+                    .unwrap(),
+                )
+                .unwrap();
+            if concurrent_update {
+                let before = cookie_jar(baseline).unwrap();
+                let after = cookie_jar(
+                    "__Secure-3PAPISID=old; SID=old; PREF=native; KEEP=retained; NATIVE=added",
+                )
+                .unwrap();
+                assert!(provider
+                    .merge_playback_cookies(1, before.as_bytes(), after.as_bytes())
+                    .unwrap());
+            }
+            // Simulate newer metadata and a different serialization order while
+            // the API request is in flight; neither changes account identity.
+            let mut current = provider.headers().unwrap();
+            if !concurrent_update {
+                current.insert(
+                    "cookie".into(),
+                    "KEEP=retained; __Secure-3PAPISID=old; PREF=quiet; SID=old".into(),
+                );
+            }
+            current.insert("x-goog-visitor-id".into(), "visitor-current".into());
+            current.insert("user-agent".into(), "agent-current".into());
+            provider
+                .import_bytes(&serde_json::to_vec(&current).unwrap())
+                .unwrap();
+            let candidate = refresh_fixture(
+                "home",
+                serde_json::json!({
+                    "cookie":"__Secure-3PAPISID=api-fresh; SID=api-fresh; PREF=api; API=added",
+                    "x-goog-authuser":"1", "x-goog-pageid":"123",
+                    "x-goog-visitor-id":"visitor-stale", "user-agent":"agent-stale"
+                }),
+            );
+            assert!(provider.persist_refreshed_headers(
+                &candidate.refreshed,
+                Some("1"),
+                Some("123"),
+                baseline,
+                &AtomicBool::new(false)
+            ));
+            let saved = provider.headers().unwrap();
+            let cookies = scoped_header_cookies(&saved["cookie"]).unwrap();
+            assert_eq!(cookies.0["__Secure-3PAPISID"], "api-fresh");
+            assert_eq!(cookies.0["SID"], "api-fresh");
+            assert_eq!(
+                cookies.0["PREF"],
+                if concurrent_update { "native" } else { "api" }
+            );
+            assert_eq!(cookies.0["KEEP"], "retained");
+            assert_eq!(cookies.0["API"], "added");
+            assert_eq!(
+                cookies.0.get("NATIVE").map(String::as_str),
+                concurrent_update.then_some("added")
+            );
+            assert_eq!(saved["x-goog-visitor-id"], "visitor-current");
+            assert_eq!(saved["user-agent"], "agent-current");
+            let encrypted = fs::read(directory.join("session.dpapi")).unwrap();
+            assert!(!encrypted
+                .windows(b"api-fresh".len())
+                .any(|bytes| bytes == b"api-fresh"));
+            // Repeating the same completed response must not change storage.
+            assert!(!provider.persist_refreshed_headers(
+                &candidate.refreshed,
+                Some("1"),
+                Some("123"),
+                baseline,
+                &AtomicBool::new(false)
+            ));
+            assert_eq!(
+                fs::read(directory.join("session.dpapi")).unwrap(),
+                encrypted
+            );
+            provider.disconnect().unwrap();
+            fs::remove_dir_all(directory).unwrap();
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn api_refresh_rejects_newer_auth_cohort_even_if_signing_cookie_is_unchanged() {
+        let directory = std::env::temp_dir().join(format!(
+            "tide-api-auth-conflict-{}-{}",
+            std::process::id(),
+            LEASE_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        private_directory(&directory).unwrap();
+        let provider = Provider {
+            directory: directory.clone(),
+        };
+        let baseline = "__Secure-3PAPISID=old; SID=old; PREF=quiet";
+        provider
+            .import_bytes(
+                &serde_json::to_vec(&serde_json::json!({
+                    "cookie":baseline, "x-goog-authuser":"1", "x-goog-pageid":"123"
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+        let before = cookie_jar(baseline).unwrap();
+        let after = cookie_jar("__Secure-3PAPISID=old; SID=native-fresh; PREF=quiet").unwrap();
+        assert!(provider
+            .merge_playback_cookies(1, before.as_bytes(), after.as_bytes())
+            .unwrap());
+        let encrypted = fs::read(directory.join("session.dpapi")).unwrap();
+        let candidate = refresh_fixture(
+            "tracks",
+            serde_json::json!({
+                "cookie":"__Secure-3PAPISID=api-stale; SID=api-stale; PREF=api-stale",
+                "x-goog-authuser":"1", "x-goog-pageid":"123"
+            }),
+        );
+        assert!(!provider.persist_refreshed_headers(
+            &candidate.refreshed,
+            Some("1"),
+            Some("123"),
+            baseline,
+            &AtomicBool::new(false)
+        ));
+        assert_eq!(
+            fs::read(directory.join("session.dpapi")).unwrap(),
+            encrypted
+        );
+        let saved = provider.headers().unwrap();
+        assert_eq!(
+            scoped_header_cookies(&saved["cookie"]).unwrap().0["SID"],
+            "native-fresh"
+        );
+        for (authuser, pageid) in [("2", "123"), ("1", "456")] {
+            // The original authentication cookies do not authorize overwriting
+            // an account or page selection made while the request was in flight.
+            provider
+                .import_bytes(
+                    &serde_json::to_vec(&serde_json::json!({
+                        "cookie":baseline, "x-goog-authuser":authuser, "x-goog-pageid":pageid
+                    }))
+                    .unwrap(),
+                )
+                .unwrap();
+            let selected = fs::read(directory.join("session.dpapi")).unwrap();
+            assert!(!provider.persist_refreshed_headers(
+                &candidate.refreshed,
+                Some("1"),
+                Some("123"),
+                baseline,
+                &AtomicBool::new(false)
+            ));
+            assert_eq!(fs::read(directory.join("session.dpapi")).unwrap(), selected);
+        }
+        provider.disconnect().unwrap();
+        fs::remove_dir_all(directory).unwrap();
+    }
+
     #[test]
     fn native_cookie_scope_and_visitor_bounds_are_enforced() {
         let bytes = b"# Netscape HTTP Cookie File\n#HttpOnly_.youtube.com\tTRUE\t/\tTRUE\t0\tSID\tfixture\n.evil.test\tTRUE\t/\tTRUE\t0\tSID\tforeign\n.youtube.com\tTRUE\t/subpath\tTRUE\t0\tPREF\tforeign\n";
         let cookies = scoped_cookie_snapshot(bytes).unwrap();
         assert_eq!(cookies.0.len(), 1);
         assert_eq!(cookies.0["SID"], "fixture");
+        let scoped = scoped_cookie_snapshot(
+            b".youtube.com\tTRUE\t/\tTRUE\t0\tSID\tdomain-session\nyoutube.com\tFALSE\t/\tTRUE\t0\tSID\troot-host-only\nmusic.youtube.com\tFALSE\t/\tTRUE\t0\tPREF\tmusic-host-only\n",
+        )
+        .unwrap();
+        assert_eq!(scoped.0.len(), 2);
+        assert_eq!(scoped.0["SID"], "domain-session");
+        assert_eq!(scoped.0["PREF"], "music-host-only");
+        assert!(scoped_cookie_snapshot(
+            b"youtube.com\tTRUE\t/\tTRUE\t0\tSID\tdomain-one\n.youtube.com\tTRUE\t/\tTRUE\t0\tSID\tdomain-two\n"
+        )
+        .is_err());
         assert!(scoped_cookie_snapshot(&vec![b'x'; MAX_SESSION + 1]).is_err());
         for length in [4096, 4097] {
             let headers = serde_json::to_vec(&serde_json::json!({"cookie":"__Secure-3PAPISID=fixture", "x-goog-authuser":"1", "x-goog-visitor-id":"v".repeat(length)})).unwrap();

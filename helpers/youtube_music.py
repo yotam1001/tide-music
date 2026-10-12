@@ -64,7 +64,9 @@ def verified_request_failure(error, client):
         return request_failure(verification_error)
     return {"type": "error", "code": "request"}
 
-COOKIE_DOMAINS = (".youtube.com", "youtube.com", "music.youtube.com", ".music.youtube.com")
+# Firefox stores domain cookies with a leading dot, host-only cookies without it.
+# A host-only youtube.com cookie is not sent to music.youtube.com.
+COOKIE_DOMAINS = (".youtube.com", "music.youtube.com", ".music.youtube.com")
 SESSION_HEADERS = {
     "accept": 1024, "accept-language": 1024, "content-type": 256,
     "user-agent": 1024, "x-goog-authuser": 8, "x-goog-pageid": 128,
@@ -78,17 +80,48 @@ def safe_header(value, limit):
             and all(32 <= ord(char) < 127 or char == "\t" for char in value))
 
 
+class CookieSelectionError(Exception):
+    pass
+
+
+def cookie_matches_music(domain, path="/", domain_specified=None, request_path="/"):
+    """RFC domain/path matching; the shared header uses the Music origin path."""
+    if not isinstance(domain, str) or not isinstance(path, str) or not path.startswith("/"):
+        return False
+    host = "music.youtube.com"
+    bare_domain = (domain[1:] if domain.startswith(".") else domain).lower()
+    if bare_domain not in ("youtube.com", host):
+        return False
+    is_domain = domain.startswith(".") if domain_specified is None else domain_specified
+    domain_matches = (host == bare_domain or (is_domain and host.endswith("." + bare_domain)))
+    path_matches = (request_path == path or (request_path.startswith(path)
+                    and (path.endswith("/") or request_path[len(path):].startswith("/"))))
+    return domain_matches and path_matches
+
+
+def authentication_cookie(name):
+    return (name.startswith("__Secure-")
+            or name in {"SID", "HSID", "SSID", "APISID", "SAPISID", "SIDCC", "LOGIN_INFO"})
+
+
 def music_cookies(cookies):
     """Normalize only caller-authorized YouTube cookies."""
     result = []
+    seen = {}
     for cookie in cookies[:200]:
-        if cookie.get("domain") not in COOKIE_DOMAINS:
-            continue
-        if cookie.get("path", "/") != "/":
+        if not cookie_matches_music(cookie.get("domain"), cookie.get("path", "/")):
             continue
         name, value = cookie.get("name", ""), cookie.get("value", "")
         if (re.fullmatch(r"[A-Za-z0-9_-]{1,128}", name)
                 and safe_header(value, 4096) and ";" not in value):
+            if name in seen:
+                if value in seen[name]:
+                    continue
+                # Scope alone cannot establish which conflicting account cookie
+                # the service will use. Require a captured successful request.
+                if authentication_cookie(name):
+                    raise CookieSelectionError("cookie_ambiguity")
+            seen.setdefault(name, set()).add(value)
             result.append(name + "=" + value)
     value = "; ".join(result)
     return value if len(value) <= SESSION_HEADERS["cookie"] else ""
@@ -143,17 +176,20 @@ def read_cookie_database(database, strict=False):
             connection.execute("PRAGMA query_only=ON")
             columns = {row[1] for row in connection.execute("PRAGMA table_info(moz_cookies)")}
             context_filter = " AND originAttributes = ''" if "originAttributes" in columns else ""
+            # All selected cookies have the same path. RFC ordering therefore
+            # uses creation time, never domain specificity. Old schemas lack it.
+            order = "creationTime, rowid" if "creationTime" in columns else "rowid"
             rows = connection.execute(
                 "SELECT name, value, host, path FROM moz_cookies "
-                "WHERE host IN (?, ?, ?, ?) AND path = '/' AND expiry > ? "
+                "WHERE host IN (?, ?, ?) AND path = '/' AND expiry > ? "
                 "AND length(name) BETWEEN 1 AND 128 AND length(value) BETWEEN 1 AND 4096"
-                + context_filter + " ORDER BY host, name LIMIT 201",
+                + context_filter + " ORDER BY " + order + " LIMIT 201",
                 (*COOKIE_DOMAINS, int(time.time())),
             ).fetchall()
             if strict and "originAttributes" in columns and not any(row[0] == "__Secure-3PAPISID" for row in rows):
                 container = connection.execute(
-                    "SELECT 1 FROM moz_cookies WHERE host IN (?, ?, ?, ?) "
-                    "AND name = '__Secure-3PAPISID' AND originAttributes != '' AND expiry > ? LIMIT 1",
+                    "SELECT 1 FROM moz_cookies WHERE host IN (?, ?, ?) "
+                    "AND path = '/' AND name = '__Secure-3PAPISID' AND originAttributes != '' AND expiry > ? LIMIT 1",
                     (*COOKIE_DOMAINS, int(time.time())),
                 ).fetchone()
                 if container:
@@ -193,9 +229,9 @@ def connect_existing(database, index=0):
         return {"type": "error", "code": "session"}
     try:
         cookies = read_cookie_database(database, strict=True)
-    except CookieReadError as error:
+        headers = session_headers({"x-goog-authuser": str(index)}, cookies)
+    except (CookieReadError, CookieSelectionError) as error:
         return {"type": "error", "code": error.args[0]}
-    headers = session_headers({"x-goog-authuser": str(index)}, cookies)
     if not headers:
         return {"type": "error", "code": "session"}
     try:
@@ -248,8 +284,10 @@ def create_client(auth):
             return
         values = dict(part.strip().split("=", 1) for part in current.get("cookie", "").split(";") if "=" in part)
         changed = False
+        received_auth = {}
         for cookie in response.cookies:
-            if cookie.domain not in COOKIE_DOMAINS or cookie.path != "/":
+            if not cookie_matches_music(cookie.domain, cookie.path,
+                                        getattr(cookie, "domain_specified", None)):
                 continue
             if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", cookie.name):
                 continue
@@ -257,6 +295,11 @@ def create_client(auth):
                 changed |= cookie.name in values
                 values.pop(cookie.name, None)
             elif safe_header(cookie.value, 4096) and ";" not in cookie.value:
+                if authentication_cookie(cookie.name):
+                    if cookie.name in received_auth and received_auth[cookie.name] != cookie.value:
+                        # An ambiguous response must not replace the known session.
+                        return
+                    received_auth[cookie.name] = cookie.value
                 changed |= values.get(cookie.name) != cookie.value
                 values[cookie.name] = cookie.value
         candidate = session_headers({**current, "cookie": "; ".join(name + "=" + value for name, value in values.items())})
@@ -343,7 +386,10 @@ def wait_for_login(process, profile, directory, timeout=LOGIN_SECONDS):
     while time.monotonic() < deadline:
         if process.poll() is not None:
             return {"type": "error", "code": "login_closed"}
-        headers = session_headers({"x-goog-authuser": "0"}, read_music_cookies(profile, directory))
+        try:
+            headers = session_headers({"x-goog-authuser": "0"}, read_music_cookies(profile, directory))
+        except CookieSelectionError as error:
+            return {"type": "error", "code": error.args[0]}
         now = time.monotonic()
         if headers and (headers["cookie"] != last_cookie or now >= retry_at):
             last_cookie = headers["cookie"]

@@ -10,7 +10,8 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import MagicMock, patch
 from youtube_music import (LOGIN_SECONDS, MAX_RADIO_TRACKS, MUSIC_URL, artwork_url, connect, connect_existing, create_client, main,
-                          music_cookies, read_cookie_database, CookieReadError, read_music_cookies, remove_login_profile, run,
+                          music_cookies, cookie_matches_music, read_cookie_database, CookieReadError, CookieSelectionError,
+                          read_music_cookies, remove_login_profile, run,
                           selected_zen_database, session_headers, switch_account, tracks,
                           validate_session, wait_for_login, zen_executable, request_failure, verified_request_failure)
 
@@ -204,18 +205,23 @@ class ProviderTests(unittest.TestCase):
 class LoginTests(unittest.TestCase):
     COOKIE = {"name": "__Secure-3PAPISID", "value": "fixture", "domain": ".youtube.com", "path": "/"}
 
-    def database(self, root, origin_attributes=True):
+    def database(self, root, origin_attributes=True, creation_time=False):
         profile = Path(tempfile.mkdtemp(prefix="zen-login-", dir=root))
         database = profile / "cookies.sqlite"
         with closing(sqlite3.connect(database)) as connection, connection:
             extra = ", originAttributes TEXT DEFAULT ''" if origin_attributes else ""
+            if creation_time:
+                extra += ", creationTime INTEGER"
             connection.execute("CREATE TABLE moz_cookies (name TEXT, value TEXT, host TEXT, path TEXT, expiry INTEGER" + extra + ")")
         return profile
 
-    def insert(self, profile, name="__Secure-3PAPISID", value="fixture", host=".youtube.com", path="/", expiry=None, attrs=None):
+    def insert(self, profile, name="__Secure-3PAPISID", value="fixture", host=".youtube.com", path="/", expiry=None, attrs=None,
+               creation_time=None):
         row = [name, value, host, path, expiry if expiry is not None else int(time.time()) + 3600]
         if attrs is not None:
             row.append(attrs)
+        if creation_time is not None:
+            row.append(creation_time)
         with closing(sqlite3.connect(profile / "cookies.sqlite")) as connection, connection:
             connection.execute("INSERT INTO moz_cookies VALUES (" + ",".join("?" for _ in row) + ")", row)
 
@@ -231,20 +237,75 @@ class LoginTests(unittest.TestCase):
             self.insert(profile, name="ContainerSecret", attrs="^userContextId=1")
             self.insert(profile, name="Oversize", value="x" * 4097, attrs="")
             cookies = read_music_cookies(profile, Path(root))
-            self.assertEqual(len(cookies), 4)
+            self.assertEqual(len(cookies), 3)
             self.assertEqual({cookie["name"] for cookie in cookies}, {"__Secure-3PAPISID"})
             self.assertEqual({cookie["domain"] for cookie in cookies},
-                             {".youtube.com", "youtube.com", "music.youtube.com", ".music.youtube.com"})
+                             {".youtube.com", "music.youtube.com", ".music.youtube.com"})
             real_connect = sqlite3.connect
             observed = []
             def readonly_connect(database_uri, **kwargs):
                 observed.append((database_uri, kwargs))
                 return real_connect(database_uri, **kwargs)
             with patch("youtube_music.sqlite3.connect", side_effect=readonly_connect):
-                self.assertEqual(len(read_music_cookies(profile, Path(root))), 4)
+                self.assertEqual(len(read_music_cookies(profile, Path(root))), 3)
             self.assertTrue(observed[0][0].endswith("?mode=ro"))
             self.assertTrue(observed[0][1]["uri"])
             self.assertLessEqual(observed[0][1]["timeout"], 0.1)
+
+    def test_host_only_root_cookie_cannot_shadow_music_signing_cookie(self):
+        with tempfile.TemporaryDirectory() as root:
+            profile = self.database(root)
+            self.insert(profile, value="valid", attrs="")
+            self.insert(profile, value="stale", host="youtube.com", attrs="")
+            cookies = read_cookie_database(profile / "cookies.sqlite", strict=True)
+            self.assertEqual([cookie["domain"] for cookie in cookies], [".youtube.com"])
+            headers = session_headers({"x-goog-authuser": "1"}, cookies)
+            self.assertEqual(headers["cookie"], "__Secure-3PAPISID=valid")
+            for order in ([{**self.COOKIE, "value": "valid"},
+                           {**self.COOKIE, "domain": "youtube.com", "value": "stale"}],
+                          [{**self.COOKIE, "domain": "youtube.com", "value": "stale"},
+                           {**self.COOKIE, "value": "valid"}]):
+                self.assertEqual(music_cookies(order), "__Secure-3PAPISID=valid")
+
+    def test_cookie_matching_uses_domain_flags_and_rfc_path_boundaries(self):
+        for domain in [".youtube.com", "music.youtube.com", ".music.youtube.com"]:
+            self.assertTrue(cookie_matches_music(domain))
+        for domain in ["youtube.com", "www.youtube.com", ".youtube.com.evil.test", "..youtube.com", ".google.com"]:
+            self.assertFalse(cookie_matches_music(domain))
+        self.assertTrue(cookie_matches_music("youtube.com", domain_specified=True))
+        self.assertFalse(cookie_matches_music("youtube.com", domain_specified=False))
+        for path in ["/", "/youtubei", "/youtubei/", "/youtubei/v1/browse"]:
+            self.assertTrue(cookie_matches_music(".youtube.com", path, request_path="/youtubei/v1/browse"))
+        for path in ["/youtube", "/watch", "/youtubei/v1/browse/", "invalid"]:
+            self.assertFalse(cookie_matches_music(".youtube.com", path, request_path="/youtubei/v1/browse"))
+        self.assertFalse(cookie_matches_music(".youtube.com", "/youtubei"))
+
+    def test_conflicting_scoped_authentication_cookies_require_manual_capture(self):
+        for name in ["__Secure-3PAPISID", "__Secure-1PSID", "SID", "LOGIN_INFO"]:
+            cookies = [{**self.COOKIE, "name": name},
+                       {**self.COOKIE, "name": name, "domain": "music.youtube.com", "value": "fixture-other"}]
+            for order in (cookies, list(reversed(cookies))):
+                with self.assertRaisesRegex(CookieSelectionError, "^cookie_ambiguity$"):
+                    music_cookies(order)
+        identical = [self.COOKIE, {**self.COOKIE, "domain": "music.youtube.com"}]
+        self.assertEqual(music_cookies(identical), "__Secure-3PAPISID=fixture")
+        with tempfile.TemporaryDirectory() as root:
+            profile = self.database(root)
+            self.insert(profile, attrs="")
+            self.insert(profile, host="music.youtube.com", value="fixture-other", attrs="")
+            with patch("youtube_music.selected_zen_database", return_value=profile / "cookies.sqlite"), \
+                    patch("youtube_music.validate_session") as validate:
+                result = connect_existing("fixture", 1)
+            self.assertEqual(result, {"type": "error", "code": "cookie_ambiguity"})
+            validate.assert_not_called()
+
+    def test_non_authentication_cookies_preserve_creation_order_without_domain_preference(self):
+        with tempfile.TemporaryDirectory() as root:
+            profile = self.database(root, creation_time=True)
+            self.insert(profile, name="PREF", value="fixture-later", host=".youtube.com", attrs="", creation_time=20)
+            self.insert(profile, name="PREF", value="fixture-earlier", host="music.youtube.com", attrs="", creation_time=10)
+            cookies = read_cookie_database(profile / "cookies.sqlite")
+            self.assertEqual(music_cookies(cookies), "PREF=fixture-earlier; PREF=fixture-later")
 
     def test_strict_profile_read_distinguishes_lock_and_container_without_mixing_sessions(self):
         with tempfile.TemporaryDirectory() as root:
@@ -380,6 +441,38 @@ class LoginTests(unittest.TestCase):
         cookie.value = "wrong"
         hook(SimpleNamespace(url=MUSIC_URL, cookies=[cookie]))
         self.assertEqual(client.sapisid, "fresh")
+        cookie.domain = "youtube.com"
+        cookie.domain_specified = False
+        hook(SimpleNamespace(url="https://youtube.com/", cookies=[cookie]))
+        self.assertEqual(client.sapisid, "fresh")
+        self.assertNotIn("wrong", client.base_headers["cookie"])
+        cookie.domain_specified = True
+        hook(SimpleNamespace(url="https://youtube.com/", cookies=[cookie]))
+        self.assertEqual(client.sapisid, "wrong")
+        cookie.domain = "music.youtube.com"
+        cookie.domain_specified = False
+        cookie.value = "fixture-music"
+        hook(SimpleNamespace(url=MUSIC_URL, cookies=[cookie]))
+        self.assertEqual(client.sapisid, "fixture-music")
+        prior = session._tide_refreshed_headers.copy()
+        cookie.path = "/"
+        conflicting = SimpleNamespace(name=cookie.name, value="fixture-conflicting", domain=".youtube.com",
+                                      path="/", domain_specified=True, expires=None)
+        hook(SimpleNamespace(url=MUSIC_URL, cookies=[cookie, conflicting]))
+        self.assertEqual(client.sapisid, "fixture-music")
+        self.assertEqual(session._tide_refreshed_headers, prior)
+        cookie.path = "/watch"
+        cookie.value = "fixture-path"
+        hook(SimpleNamespace(url=MUSIC_URL, cookies=[cookie]))
+        self.assertEqual(client.sapisid, "fixture-music")
+
+    def test_fresh_login_reports_ambiguous_authentication_cookies_safely(self):
+        cookies = [self.COOKIE, {**self.COOKIE, "domain": "music.youtube.com", "value": "fixture-other"}]
+        with patch("youtube_music.read_music_cookies", return_value=cookies), \
+                patch("youtube_music.validate_session") as validate:
+            result = wait_for_login(SimpleNamespace(poll=lambda: None), Path("fixture"), Path("fixture"), timeout=1)
+        self.assertEqual(result, {"type": "error", "code": "cookie_ambiguity"})
+        validate.assert_not_called()
 
     def test_refreshed_headers_only_return_with_successful_data(self):
         for result in [{"type": "home", "cards": []}, {"type": "error", "code": "request"}]:

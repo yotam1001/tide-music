@@ -281,10 +281,44 @@ That failed run collected 288 process-tree samples: settled median working set
 68.1 MiB, peak 354.7 MiB; settled median private bytes 50.6 MiB, peak 293.6 MiB.
 Mean sampled CPU use was 3.83% of one logical core, including startup and retries.
 These preliminary failed-run figures are not stable-session or gaming evidence.
-The revision that persists native updates received a fresh verified session with
-Zen closed. A detached supervisor is running a 30-minute muted authenticated
-listening test; early logs confirm native cookie updates were saved. This is
-in-progress evidence, not a completed continuity or session-lifetime pass.
+The revision that persists native updates received a fresh verified session.
+The user reported closing Zen before the test. Its detached 30-minute muted
+authenticated listening test failed at approximately 12 minutes, after three
+natural transitions and five recommendation refills. Five native session updates
+were saved before the failure. A separate library health probe then confirmed
+rejected authentication. A process inspection afterward found one Zen window
+and 16 Zen processes, 14 started before the test. The user subsequently confirmed
+closing only YouTube Music, with Zen still open. This does not prove browser
+activity caused the failure; an isolated-session retest remains necessary.
+
+The next revision fixes two code-backed cookie-handling defects. Direct profile
+import and helper response updates exclude host-only `youtube.com` cookies from
+the Music session and report conflicting scoped authentication values instead of
+guessing. Native Netscape updates honor the include-subdomains flag as well.
+API persistence now compares the authentication cohort and individual cookie
+baselines, allowing a valid sign-in refresh after a concurrent non-authentication
+update or cookie reordering. Newer conflicting authentication cohorts still
+reject stale responses; newer non-authentication cookies and current request
+metadata are preserved. Provider checks pass 14 tests and helper checks pass 42.
+These defects are reproducible in synthetic tests; neither is yet proven to be
+the cause of the live failure.
+
+The listening probe now records request-to-decoded-progress delays with 250 ms
+sampling and counts native updates not applied. That count includes stale or
+invalid snapshots and already-stored changes, so it alone does not prove a lost
+rotation. Real track metadata, signed URLs and credential values remain absent
+from these diagnostics.
+
+The timing probe passed a five-minute muted local run with 15 natural transitions,
+17 decoded audio starts, acknowledged pause/resume, skip and seek. Its longest
+sampled request-to-decoded-progress delay was 501 ms, with 250 ms sampling.
+Observed helpers ended after successful exit. This validates the diagnostic
+callback path and local handoffs; it does not measure YouTube extraction delays.
+
+The failed run collected 683 process-tree samples: settled median working set
+69.8 MiB, peak 347.9 MiB; settled median private bytes 53.1 MiB, peak 289.0 MiB.
+Mean sampled CPU was 2.99% of one logical core, including startup and retries.
+These remain preliminary failed-run figures, not stable-session gaming evidence.
 
 The current revision also passed the focused native UI harness's 11 checks and
 the actual Windows media broker integration checks. Play, pause, next and previous

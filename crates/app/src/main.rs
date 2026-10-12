@@ -91,6 +91,7 @@ struct State {
     pending_cookie_updates: std::collections::VecDeque<tide_playback::CookieUpdate>,
     cookie_update_retry_at: Option<Instant>,
     cookie_updates_applied: u64,
+    cookie_updates_not_applied: u64,
     library_worker: Option<std::thread::JoinHandle<()>>,
     library_cancel: Arc<AtomicBool>,
     library_playlists: Vec<tide_provider::Playlist>,
@@ -337,6 +338,8 @@ fn sync_playback_cookies(s: &mut State) -> bool {
                 session_updated |= changed;
                 if changed {
                     s.cookie_updates_applied = s.cookie_updates_applied.saturating_add(1);
+                } else {
+                    s.cookie_updates_not_applied = s.cookie_updates_not_applied.saturating_add(1);
                 }
                 s.pending_cookie_updates.pop_front();
             }
@@ -363,6 +366,7 @@ fn configure_account_playback(s: &mut State, u: &AppWindow) -> bool {
     s.cookie_update_retry_at = None;
     s.engine.take(); // Drop/join helpers before releasing their cookie lease.
     s.cookie_updates_applied = 0;
+    s.cookie_updates_not_applied = 0;
     s.cookie_lease.take();
     s.active_playback = false;
     s.radio_resume_when_ready = false;
@@ -1036,6 +1040,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         pending_cookie_updates: std::collections::VecDeque::new(),
         cookie_update_retry_at: None,
         cookie_updates_applied: 0,
+        cookie_updates_not_applied: 0,
         library_worker: None,
         library_cancel: Arc::new(AtomicBool::new(false)),
         library_playlists: Vec::new(),

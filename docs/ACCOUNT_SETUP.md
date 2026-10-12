@@ -20,6 +20,11 @@ Python runs only while a library request is active and exits afterward. The nati
 
 The initial connection defaults to your first signed-in Google account. **Reconnect preserves the account selected in the menu**: Account 2 selects your second signed-in account, and so on. You can also use **Switch** to verify a different selection before saving it; an unavailable account leaves the stored connection unchanged. The heading says **Connected** only after account verification; a saved session alone is not proof of access. Brand channels and custom Zen profile locations can use the manual import below. If you are unsure which profile is active, Zen's `about:support` page shows its Profile Folder. Do not share the cookie database or its contents.
 
+Profile import selects cookies that apply to `music.youtube.com`; cookies limited
+to the root host `youtube.com` are excluded. If matching authentication cookies
+contain conflicting values, Tide asks for manual request-header import rather
+than guessing which sign-in the browser uses.
+
 Manual import fallback:
 
 1. Open [YouTube Music](https://music.youtube.com/) in your browser and sign in to the account with your Premium subscription. Confirm the correct identity and that official playback is ad-free.
@@ -30,6 +35,11 @@ Manual import fallback:
 Tide encrypts its saved copy with Windows DPAPI for your Windows user and restricts the account directory to its owner and SYSTEM. Connect account reads only the cookie database you explicitly selected from your Zen profile. With manual import, the original file remains under your control: remove it when you no longer need it, or store it securely outside Git. A session may expire or rotate; reconnect when prompted. Disconnect removes Tide's saved session and clears the displayed library.
 
 Zen does not need to remain open after importing. Successful account-helper requests retain scoped cookie updates in the encrypted session and refresh the playback lease. Native extraction returns bounded cookie updates for the same account; Tide merges them only against their original session, preserving newer credentials and unrelated cookies. A content request returning HTTP 401/403 triggers a separate identity check before Tide asks for reconnect; a timeout or temporary content denial leaves the verified account intact. These mechanisms do not guarantee a minimum session lifetime.
+
+API refreshes compare the authentication-cookie baseline rather than rejecting
+every change to the Cookie header. A concurrent non-authentication update is
+preserved while a valid sign-in refresh is saved; a conflicting newer sign-in
+still prevents a stale response from replacing it.
 
 Playback requires a temporary Netscape cookie file restricted to `.youtube.com` in that private directory. Normal shutdown removes it after the owned player processes end. After a crash, the next startup/disconnect removes leases whose owning process has exited; inaccessible or reused process IDs are conservatively retained. The temporary file is plaintext while it exists. Persistent session storage is encrypted.
 
@@ -45,5 +55,13 @@ YouTube playback is gated until the imported account has been verified by a succ
 ## Troubleshooting
 
 Run the provider setup script if a library request reports an unavailable helper. Reimport headers from a new signed-in request if access fails. Browser-authenticated extraction is described in [yt-dlp's YouTube notes](https://github.com/yt-dlp/yt-dlp/wiki/Extractors#exporting-youtube-cookies); cookies alone do not guarantee all formats. OAuth is not the default here because the unofficial Music endpoint's compatibility is unreliable.
+
+The same upstream notes explain that open YouTube tabs can rotate account
+cookies and recommend an isolated private-browser session for stable exports.
+Closing one Music tab does not establish that every browser window or background
+session has ended. Tide's own cookie updates cannot reconcile a separate browser
+rotation it never received. An isolated session still uses your existing Google
+account; it does not require creating a new account. Session longevity remains
+under live verification, so repeated reconnects should be reported as a bug.
 
 Portable copies need the optional helper runtime too. For custom locations, set `TIDE_PROVIDER_PYTHON` to the virtual environment's Python executable and `TIDE_PROVIDER_HELPER` to `helpers/youtube_music.py`. Credentials are passed through stdin, never command-line arguments or application logs. Queue metadata (titles and source URLs) is saved separately under the user application-data directory.
