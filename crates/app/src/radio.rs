@@ -7,6 +7,7 @@ pub(crate) struct RadioRequests {
     attempts: u8,
     retry_at: Option<Instant>,
     complete: bool,
+    filled: bool,
 }
 
 impl RadioRequests {
@@ -39,7 +40,17 @@ impl RadioRequests {
 
     pub(crate) fn succeeded(&mut self) {
         self.complete = true;
+        self.filled = true;
         self.retry_at = None;
+    }
+
+    pub(crate) fn queue_depleted(&mut self, generation: u64) {
+        // Removing upcoming rows can exhaust a previously successful refill
+        // without advancing playback generation. Never reopen failed/exhausted
+        // attempts here: those still need bounded backoff or explicit Retry.
+        if self.generation == Some(generation) && self.complete && self.filled {
+            self.reset();
+        }
     }
 }
 

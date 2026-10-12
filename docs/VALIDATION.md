@@ -25,6 +25,17 @@ The same revision's extracted portable package passed five-minute local continui
 outside the checkout. Both Windows CI jobs and fresh public-clone privacy audits
 passed. The historical sections below describe earlier builds and failures.
 
+Subsequent source regressions cover queue depletion after a successful radio
+refill: removing upcoming rows reopens that generation for recommendations while
+exhausted failures retain their retry limit. Temporary Home, Library and playlist
+errors now retry the saved content request instead of routing to account settings;
+account verification and generation-scoped radio retries retain their own paths.
+All eighteen app tests and strict app Clippy pass. The optional muted
+`--smoke-autoplay-depletion` probe removes upcoming rows through the real app
+callback, seeks to EOF and requires decoded playback in the next generation.
+Its live result is pending; this targeted seek test does not substitute for
+natural listening coverage.
+
 Validated on Windows 11 Pro 10.0.26200, Ryzen 5 7600X, approximately 15.1 GiB usable RAM and Radeon RX 9060 XT graphics. Release builds use Rust 1.99.0 for x86_64-pc-windows-gnu. Measurements below are one-machine observations, not product guarantees.
 
 ## Functional evidence

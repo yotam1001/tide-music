@@ -101,6 +101,8 @@ struct State {
     account_error: bool,
     account_verified: bool,
     library_action: LibraryAction,
+    library_request: Option<tide_provider::Request>,
+    library_retry: Option<(tide_provider::Request, bool)>,
     shuffle_request: bool,
     radio_requests: radio::RadioRequests,
     radio_resume_when_ready: bool,
@@ -184,6 +186,7 @@ fn request_library(
         u.set_detail_rows(ModelRc::new(VecModel::default()));
     }
     s.library_action = action;
+    s.library_request = Some(request.clone());
     s.shuffle_request = false;
     let cancel = s.library_cancel.clone();
     let tx = tx.clone();
@@ -273,6 +276,7 @@ fn library_failure(s: &mut State, u: &AppWindow, authentication: bool) {
         return;
     }
     if authentication {
+        s.library_retry = None;
         s.account_verified = false;
         u.set_account_verified(false);
         s.radio_resume_when_ready = false;
@@ -286,6 +290,7 @@ fn library_failure(s: &mut State, u: &AppWindow, authentication: bool) {
         if *generation != s.generation {
             return;
         }
+        s.library_retry = None;
         if s.radio_requests.failed(Instant::now()) {
             u.set_account_status(
                 "Recommendations unavailable temporarily; retrying shortly".into(),
@@ -300,12 +305,40 @@ fn library_failure(s: &mut State, u: &AppWindow, authentication: bool) {
         u.set_error_is_account(false);
         u.set_error_retryable(true);
         u.set_error_message("Recommendations unavailable. Retry to continue.".into());
-    } else {
+    } else if matches!(s.library_action, LibraryAction::Connect) {
+        s.library_retry = None;
         s.account_error = true;
         u.set_error_is_account(true);
-        u.set_error_message("YouTube Music unavailable temporarily. Open Account to retry.".into());
+        u.set_error_retryable(false);
+        u.set_error_message(
+            "Account verification failed temporarily. Open Account to retry.".into(),
+        );
+    } else {
+        s.library_retry = s
+            .library_request
+            .as_ref()
+            .and_then(content_retry_request)
+            .map(|request| (request, matches!(s.library_action, LibraryAction::Shuffle)));
+        s.account_error = false;
+        u.set_error_is_account(false);
+        u.set_error_retryable(s.library_retry.is_some());
+        u.set_error_message(
+            "YouTube Music unavailable temporarily. Check your connection and retry.".into(),
+        );
     }
     u.set_account_status("Request failed; check your connection and retry".into());
+}
+
+fn content_retry_request(request: &tide_provider::Request) -> Option<tide_provider::Request> {
+    match request {
+        tide_provider::Request::Library
+        | tide_provider::Request::Home
+        | tide_provider::Request::Playlist { .. }
+        | tide_provider::Request::Liked => Some(request.clone()),
+        // Account selection needs explicit account UI; radio retries must retain
+        // their generation and seed checks through request_radio.
+        _ => None,
+    }
 }
 
 fn sync_playback_cookies(s: &mut State) -> bool {
@@ -362,6 +395,8 @@ fn sync_playback_cookies(s: &mut State) -> bool {
 }
 
 fn configure_account_playback(s: &mut State, u: &AppWindow) -> bool {
+    s.library_request = None;
+    s.library_retry = None;
     s.pending_cookie_updates.clear();
     s.cookie_update_retry_at = None;
     s.engine.take(); // Drop/join helpers before releasing their cookie lease.
@@ -649,6 +684,7 @@ fn refresh(ui: &AppWindow, state: &State) {
     }
 }
 fn report_error(state: &mut State, ui: &AppWindow, error: String) {
+    state.library_retry = None;
     ui.set_error_retryable(false);
     state.command_error = Some(error.clone());
     ui.set_error_message(error.clone().into());
@@ -958,7 +994,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok()
         .and_then(|b| serde_json::from_slice(&b).ok())
         .unwrap_or_default();
-    let smoke_autoplay = std::env::args().any(|a| a == "--smoke-autoplay");
+    let smoke_autoplay_depletion = std::env::args().any(|a| a == "--smoke-autoplay-depletion");
+    let smoke_autoplay =
+        smoke_autoplay_depletion || std::env::args().any(|a| a == "--smoke-autoplay");
     let local_listening_source = std::env::args()
         .skip_while(|a| a != "--smoke-local-listening")
         .nth(2);
@@ -1056,6 +1094,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         account_error: false,
         account_verified: false,
         library_action: LibraryAction::default(),
+        library_request: None,
+        library_retry: None,
         shuffle_request: false,
         radio_requests: radio::RadioRequests::default(),
         radio_resume_when_ready: false,
@@ -1536,6 +1576,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if s.account_error {
                     u.set_settings_open(true);
                 } else {
+                    if s.library_worker.is_some() && s.library_retry.is_some() {
+                        return;
+                    }
                     u.set_error_message("".into());
                     if !u.get_error_retryable() {
                         s.command_error = None;
@@ -1546,6 +1589,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .is_some_and(|e| e.snapshot().error.is_some())
                     {
                         play(&mut s, &u);
+                    } else if let Some((request, shuffle)) = s.library_retry.take() {
+                        s.shuffle_request = shuffle;
+                        request_library(&mut s, &u, &tx, request);
                     } else if matches!(s.library_action, LibraryAction::Radio { .. })
                         && s.account_verified
                     {
@@ -1798,6 +1844,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if s.settings.queue.remove(index).is_none() {
                     return;
                 }
+                if s.settings.queue.current.is_some_and(|current| {
+                    s.settings.queue.tracks.len().saturating_sub(current + 1) <= 2
+                }) {
+                    let generation = s.generation;
+                    s.radio_requests.queue_depleted(generation);
+                }
                 if was_current {
                     s.radio_resume_when_ready = false;
                 }
@@ -1951,7 +2003,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(windows)]
     {
         use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-        if !test_mode && listening_seconds.is_none() {
+        if !test_mode && listening_seconds.is_none() && !smoke_autoplay {
             if let Ok(handle) = ui.window().window_handle().window_handle() {
                 if let RawWindowHandle::Win32(handle) = handle.as_raw() {
                     let weak = ui.as_weak();
@@ -2088,6 +2140,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             | tide_provider::Response::Tracks { .. }
                             | tide_provider::Response::Home { .. })
                     ) {
+                        if !matches!(s.library_action, LibraryAction::Radio { .. })
+                            && s.library_retry.take().is_some()
+                            && !s.engine.as_ref().is_some_and(|engine| engine.snapshot().error.is_some())
+                        {
+                            u.set_error_message("".into());
+                            u.set_error_retryable(false);
+                        }
                         if let (Some(provider), Some(lease)) = (&s.provider, &s.cookie_lease) {
                             if provider.refresh_cookie_lease(lease).is_err() {
                                 u.set_account_status("Account data loaded; playback session update will be retried on the next refresh.".into());
@@ -2932,13 +2991,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if add(&mut s, &u, "https://www.youtube.com/watch?v=K4DyBUG242c".into()) {
                     stage = 1;
                 }
-            } else if stage == 1 && s.settings.queue.tracks.len() > 1 && u.get_duration() > 2.0 {
+            } else if stage == 1 && s.settings.queue.tracks.len() > 1 && u.get_duration() > 2.0
+                && s.library_worker.is_none() {
+                if smoke_autoplay_depletion {
+                    let current = s.settings.queue.current.unwrap();
+                    let upcoming = s.settings.queue.tracks.len() - current - 1;
+                    let generation = s.generation;
+                    drop(s);
+                    for _ in 0..upcoming {
+                        u.invoke_remove_queue_track((current + 1) as i32);
+                    }
+                    s = state.borrow_mut();
+                    if s.settings.queue.tracks.len() != current + 1 || s.generation != generation {
+                        eprintln!("Autoplay depletion probe could not remove upcoming tracks safely");
+                        let _ = slint::quit_event_loop();
+                        return;
+                    }
+                    println!("Autoplay depletion check: upcoming rows removed without restarting current playback");
+                }
                 let near_end = f64::from(u.get_duration()) - 0.2;
                 send(&mut s, &u, PlaybackCommand::Seek(near_end));
                 stage = 2;
             } else if stage == 2 && s.generation >= 2 && u.get_position() > 0.0 {
                 *passed.borrow_mut() = true;
-                println!("PASS: recommendations appended and native EOF advanced to the next song; muted playback");
+                if smoke_autoplay_depletion {
+                    println!("PASS: depleted queue refilled and native EOF continued decoded playback; muted playback");
+                } else {
+                    println!("PASS: recommendations appended and native EOF advanced to the next song; muted playback");
+                }
                 let _ = u.hide();
                 let _ = slint::quit_event_loop();
             }
@@ -2953,7 +3033,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(|seconds| listening::start(state.clone(), &ui, seconds, local_listening_source));
     // Sustained probes must not expose a second interactive player or compete
     // with the user's window. Keep timers running without a visible window.
-    let result = if listening_seconds.is_some() {
+    let result = if listening_seconds.is_some() || smoke_autoplay_depletion {
         ui.hide()?;
         slint::run_event_loop_until_quit()
     } else {
@@ -3069,6 +3149,36 @@ mod tests {
     }
 
     #[test]
+    fn content_retries_preserve_playlist_identity_without_repeating_account_actions() {
+        use tide_provider::Request;
+        for request in [
+            Request::Library,
+            Request::Home,
+            Request::Liked,
+            Request::Playlist {
+                id: "fixture-playlist".into(),
+            },
+        ] {
+            assert_eq!(
+                serde_json::to_value(content_retry_request(&request).unwrap()).unwrap(),
+                serde_json::to_value(request).unwrap()
+            );
+        }
+        for request in [
+            Request::Connect {
+                database: "fixture.sqlite".into(),
+                index: 1,
+            },
+            Request::SwitchAccount { index: 1 },
+            Request::Radio {
+                video_id: "fixture0001".into(),
+            },
+        ] {
+            assert!(content_retry_request(&request).is_none());
+        }
+    }
+
+    #[test]
     fn prepare_follows_queue_order_and_wraps_only_with_repeat() {
         let mut queue = Queue {
             tracks: vec![track("current"), track("next"), track("last")],
@@ -3084,6 +3194,33 @@ mod tests {
         assert_eq!(upcoming_source(&queue, true), None);
         queue.current = None;
         assert_eq!(upcoming_source(&queue, true), None);
+    }
+
+    #[test]
+    fn deleting_upcoming_tracks_reopens_successful_radio_without_unbounding_failures() {
+        let mut queue = Queue {
+            tracks: vec![track("current"), track("next")],
+            current: Some(0),
+        };
+        let mut requests = radio::RadioRequests::default();
+        let now = Instant::now();
+        requests.started(7);
+        requests.succeeded();
+        assert!(!requests.ready(7, now));
+        queue.remove(1).unwrap();
+        assert_eq!(upcoming_source(&queue, false), None);
+        requests.queue_depleted(7);
+        assert!(requests.ready(7, now));
+        requests.started(7);
+        assert!(!requests.ready(7, now));
+        for attempt in 1..=3 {
+            if attempt > 1 {
+                requests.started(7);
+            }
+            requests.failed(now);
+        }
+        requests.queue_depleted(7);
+        assert!(!requests.ready(7, now + Duration::from_secs(3600)));
     }
 
     #[test]
