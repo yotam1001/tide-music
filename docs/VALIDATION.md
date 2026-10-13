@@ -570,3 +570,23 @@ fail. Argument paths with spaces are covered. Sampling races are counted, and
 failure stage/type/line are recorded without copying process arguments or account
 data. Helpers whose entire lifetime occurs between samples remain unobserved;
 cleanup evidence applies only to retained instances.
+
+
+### Packaged login adoption (2026-10-13)
+
+GitHub run 38391311608 completed its checks and preview packaging successfully.
+The downloaded artifact represents PR merge be8ad870 (branch source 5677f50).
+Windows ZIP SHA-256:
+`4a5d078aec090959fdc77d5420b5a9c220032d5605ea3ddd8b99faeff87b14a9`.
+The actual ZIP passed its payload/checksum/privacy verifier. Its extracted
+MSVC executables passed the isolated native connection regression, covering
+same-index audio continuity, superseded identity changes, retained pause/seek
+intent and disconnect. Both companion artifacts passed checksum and ZIP/folder
+parity checks. Existing local playback tools were supplied for this test; it
+does not prove a fresh-machine runtime installation.
+
+Authorized real native-host registration exposed missing shared Mozilla registry
+parents, which the installer now creates without rewriting existing parents.
+The registration succeeded after that correction. Mocked registry regressions
+exercise missing parents and rollback. The extension has not yet been loaded or
+used for an authenticated browser import, so real browser login remains pending.

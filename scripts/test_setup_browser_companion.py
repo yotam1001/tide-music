@@ -73,12 +73,11 @@ class PreparationTests(unittest.TestCase):
         harness.write_text(r'''
 param($SetupScript, $Prepared, $FixtureRoot, $Scenario)
 $ErrorActionPreference = 'Stop'
-$global:FixtureRegistry = @{}
+$global:FixtureRegistry = @{'HKCU:\Software'=$null}
 $global:FixtureSetCount = 0
 $global:FixtureRoot = $FixtureRoot
 function Assert-FakeRegistry($Value) {
-    if (!$Value.StartsWith('HKCU:\Software\', [StringComparison]::OrdinalIgnoreCase) -or
-        !$Value.EndsWith('\NativeMessagingHosts\org.tidemusic.session')) { throw 'Unexpected registry fixture operation' }
+    if ($Value -notmatch '^HKCU:\\Software(?:\\(?:Mozilla|Google|Microsoft)(?:\\(?:Chrome|Edge))?(?:\\NativeMessagingHosts(?:\\org\.tidemusic\.session)?)?)?$') { throw 'Unexpected registry fixture operation' }
 }
 function Assert-FixtureFile($Value) {
     $absolute = [IO.Path]::GetFullPath($Value)
@@ -109,6 +108,7 @@ function New-Item {
     param($Path)
     Assert-FakeRegistry $Path
     if ($global:FixtureRegistry.ContainsKey($Path)) { throw 'Registry key already exists' }
+    if (!$global:FixtureRegistry.ContainsKey((Split-Path -Parent $Path))) { throw 'Registry parent missing' }
     $global:FixtureRegistry[$Path] = $null
 }
 function Set-Item {
@@ -131,18 +131,18 @@ $failed = $false
 try { & $SetupScript -Mode Register -Destination $Prepared | Out-Null } catch { $failed = $true }
 switch ($Scenario) {
     'success' {
-        if ($failed -or $global:FixtureRegistry.Count -ne 3) { throw 'Successful registration fixture failed' }
+        if ($failed -or @($global:FixtureRegistry.Keys | Where-Object { $_.EndsWith('\org.tidemusic.session') }).Count -ne 3) { throw 'Successful registration fixture failed' }
         & $SetupScript -Mode Register -Destination $Prepared | Out-Null
         if ($global:FixtureSetCount -ne 3) { throw 'Idempotent registration rewrote keys' }
         & $SetupScript -Mode Unregister -Destination $Prepared | Out-Null
-        if ($global:FixtureRegistry.Count -ne 0) { throw 'Matching registrations not removed' }
+        if (@($global:FixtureRegistry.Keys | Where-Object { $_.EndsWith('\org.tidemusic.session') }).Count -ne 0) { throw 'Matching registrations not removed' }
     }
-    'failure' { if (!$failed -or $global:FixtureRegistry.Count -ne 0) { throw 'Partial registration did not roll back' } }
+    'failure' { if (!$failed -or @($global:FixtureRegistry.Keys | Where-Object { $_.EndsWith('\org.tidemusic.session') }).Count -ne 0) { throw 'Partial registration did not roll back' } }
     'preserve-existing' {
-        if (!$failed -or $global:FixtureRegistry.Count -ne 1 -or $global:FixtureRegistry[$firefoxKey] -ne $firefoxManifest) { throw 'Rollback removed existing registration' }
+        if (!$failed -or @($global:FixtureRegistry.Keys | Where-Object { $_.EndsWith('\org.tidemusic.session') }).Count -ne 1 -or $global:FixtureRegistry[$firefoxKey] -ne $firefoxManifest) { throw 'Rollback removed existing registration' }
     }
     'conflict' {
-        if (!$failed -or $global:FixtureRegistry.Count -ne 1 -or $global:FixtureSetCount -ne 0) { throw 'Conflicting registration was changed' }
+        if (!$failed -or @($global:FixtureRegistry.Keys | Where-Object { $_.EndsWith('\org.tidemusic.session') }).Count -ne 1 -or $global:FixtureSetCount -ne 0) { throw 'Conflicting registration was changed' }
         if (Microsoft.PowerShell.Management\Test-Path -LiteralPath (Join-Path $FixtureRoot 'tide-session-host-policy.json')) { throw 'Conflict wrote policy' }
     }
     default { throw 'Unknown fixture scenario' }

@@ -105,6 +105,24 @@ try {
             }
             continue
         }
+        # Registry New-Item does not create missing ancestor keys. Create only
+        # absent shared parents, without force-writing any existing key/value.
+        $taskMissingParents = [Collections.Generic.List[string]]::new()
+        $taskParentKey = Split-Path -Parent $taskEntry.key
+        while (!(Test-Path -LiteralPath $taskParentKey)) {
+            if ($taskParentKey -eq 'HKCU:\Software') { throw 'Current-user software registry is unavailable' }
+            $taskMissingParents.Add($taskParentKey)
+            $taskParentKey = Split-Path -Parent $taskParentKey
+        }
+        for ($taskParentIndex = $taskMissingParents.Count - 1; $taskParentIndex -ge 0; $taskParentIndex--) {
+            $taskParentKey = $taskMissingParents[$taskParentIndex]
+            if (!(Test-Path -LiteralPath $taskParentKey)) {
+                try { New-Item -Path $taskParentKey | Out-Null }
+                catch { if (!(Test-Path -LiteralPath $taskParentKey)) { throw } }
+            }
+        }
+        # Shared parent keys remain on rollback/removal; another application may
+        # begin using them concurrently. Only Tide's leaf key is owned here.
         New-Item -Path $taskEntry.key | Out-Null
         $taskCreatedEntries += $taskEntry
         Set-Item -LiteralPath $taskEntry.key -Value $taskEntry.manifest
