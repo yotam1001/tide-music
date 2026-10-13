@@ -590,8 +590,8 @@ does not prove a fresh-machine runtime installation.
 Authorized real native-host registration exposed missing shared Mozilla registry
 parents, which the installer now creates without rewriting existing parents.
 The registration succeeded after that correction. Mocked registry regressions
-exercise missing parents and rollback. The extension has not yet been loaded or
-used for an authenticated browser import, so real browser login remains pending.
+exercise missing parents and rollback. The temporary extension has since been
+loaded in Zen; authenticated browser import remains unverified.
 
 
 The six-hour b019b14 process-tree samples (first five discarded) have working-set
@@ -651,3 +651,23 @@ check; do not lower the requirement or infer long-term reliability from the
 absence of a reported error. Its supervisor snapshot predates the nonzero-exit
 cleanup correction, so its initial `helpers_ended: false` is not a completed
 cleanup evaluation. A longer run of the updated source is the next live check.
+
+### Native transport diagnostics (2026-10-13)
+
+The companion now provides an explicit, credential-free host probe and consumes
+Firefox native-port errors as well as Chromium runtime errors. The 27 companion
+tests and five native-host tests pass, including strict replies, unauthorized
+senders, busy-capture preservation, bounded timeout, older-host detection and
+non-disclosure of raw browser errors. Formatting and strict provider Clippy pass.
+
+The registered local host returns a framed `host_ready` directly with Firefox
+arguments. The actual temporary Zen companion reports a missing/unusable native
+application, so browser transport and authenticated import remain failed/pending.
+The probe did not alter the active listening test's account storage. Do not count
+the direct-host or synthetic tests as a successful Zen handoff.
+
+Before these diagnostic changes, the e777f29 PR preview (merge revision
+6e8f9a9c7ef95e0e43337db5a3c21468363ad914) passed both CI jobs. Its downloaded
+MSVC ZIP passed payload, checksum and privacy checks and the isolated native
+adoption regression against its actual app and host executables. ZIP SHA-256:
+`eb29a7b3a86d5d2f0dee90c0383b2a36271d533879814b49e500015d7a0ae9b1`.

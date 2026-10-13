@@ -58,6 +58,16 @@
       && (reply.ok ? reply.code === "imported" : reply.code !== "imported");
   }
 
+  function nativeFailure(error) {
+    // Browser errors may contain paths or other private text. Return fixed
+    // categories only; never retain, display or log the original message.
+    const message = error && typeof error.message === "string" ? error.message.slice(0, 512) : "";
+    if (/No such native application|host.*not found|not registered/i.test(message)) return "native_missing";
+    if (/does not have permission|access.*forbidden|not allowed/i.test(message)) return "native_forbidden";
+    if (/does not exist|not executable|failed to start|error.*launch|invalid application/i.test(message)) return "native_start_failed";
+    return "native_error";
+  }
+
   function install(api, options = {}) {
     const family = options.family || "chromium";
     const now = options.now || Date.now;
@@ -126,31 +136,40 @@
       status = { state: "captured", code: "waiting_response" };
     }
 
-    function transfer(message) {
+    function transfer(message, probe = false) {
       const token = generation;
       // Observation consent has been consumed. The host gets its own bounded verification window.
       arm = null;
       if (timer !== null) unschedule(timer);
-      timer = schedule(() => clear("native_error", "error"), NATIVE_MS);
-      status = { state: "sending", code: "importing" };
+      timer = schedule(() => clear("native_timeout", "error"), probe ? 10000 : NATIVE_MS);
+      status = { state: "sending", code: probe ? "checking_host" : "importing" };
       let port;
       let posted = false;
       try {
         port = api.runtime.connectNative(HOST);
         nativePort = port;
         port.onDisconnect.addListener(() => {
-          // Reading lastError prevents Chromium's diagnostic output; its content is never used.
-          void api.runtime.lastError;
-          if (nativePort === port && token === generation) clear("native_error", "error");
+          // Firefox exposes Port.error; Chromium uses runtime.lastError.
+          const runtimeError = api.runtime.lastError;
+          const error = port.error || runtimeError;
+          if (nativePort === port && token === generation) clear(nativeFailure(error), "error");
         });
         port.onMessage.addListener(reply => {
           if (nativePort !== port || token !== generation) return;
+          if (probe && posted && reply && Object.keys(reply).length === 3
+              && reply.version === 1 && reply.ok === true && reply.code === "host_ready") {
+            clear("host_ready", "success"); return;
+          }
+          if (probe && posted && validReply(reply) && reply.code === "invalid_request") {
+            clear("native_outdated", "error"); return;
+          }
+          if (probe) { clear("native_error", "error"); return; }
           if (!posted || !validReply(reply)) { clear("native_error", "error"); return; }
           clear(reply.ok ? "imported" : reply.code, reply.ok ? "success" : "error");
         });
         posted = true;
         port.postMessage(message);
-      } catch { clear("native_error", "error"); }
+      } catch (error) { clear(nativeFailure(error), "error"); }
       // Neither the message nor its headers are retained after this synchronous send.
     }
 
@@ -195,6 +214,13 @@
         armSelected().then(sendResponse, () => sendResponse(snapshot()));
         return true;
       }
+      if (message.action === "check_host") {
+        if (["armed", "captured", "sending"].includes(status.state)) { sendResponse(snapshot()); return false; }
+        clear("ready");
+        transfer({ version: 1, action: "check_host", headers: {} }, true);
+        sendResponse(snapshot());
+        return false;
+      }
       if (message.action === "cancel") {
         clear(status.state === "sending" ? "native_cancelled" : "cancelled");
         sendResponse(snapshot());
@@ -204,5 +230,5 @@
     });
     return { snapshot }; // Public state contains no URL, header, request ID, or credentials.
   }
-  return { install, collectHeaders, validReply, MUSIC_ORIGIN, HOST, ARM_MS, NATIVE_MS, MESSAGE_BYTES, COOKIE_BYTES };
+  return { install, collectHeaders, validReply, nativeFailure, MUSIC_ORIGIN, HOST, ARM_MS, NATIVE_MS, MESSAGE_BYTES, COOKIE_BYTES };
 });

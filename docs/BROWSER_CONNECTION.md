@@ -38,7 +38,9 @@ with the selected Music identity. It cannot establish playback authentication:
 An optional browser extension and native messaging receiver are implemented as
 a source prototype in [browser-companion](../browser-companion/README.md) and
 `crates/provider/src/bin/tide-session-host.rs`. They are not installed, signed,
-publicly distributed, or verified with a real browser session. Firefox
+publicly distributed, or verified with a real browser session. A temporary Zen
+companion is loaded for local testing, but its real native handoff is not yet
+working. Firefox
 and Chromium families need separately validated manifests, permissions and
 distribution. Browser signing/installation is a real part of release work;
 unpacked developer extensions are not a finished public onboarding solution.
@@ -95,6 +97,33 @@ and erase stored credentials. Temporary failures must preserve the last verified
 session rather than replacing it with an unverified candidate.
 
 ## Acceptance evidence
+
+### Diagnose the local channel without transferring a session
+
+The companion's **Check local connection** button sends only a versioned
+`check_host` message with empty headers. The host answers `host_ready` before
+opening provider/account storage. The check does not arm Music capture, inspect
+a Music tab, read credentials or change a saved session. Success proves the
+native transport works, not that authenticated import or playback works.
+
+Missing/unusable registration, permission, launch, timeout and outdated-host
+errors have fixed messages. Firefox's `Port.error` and Chromium's
+`runtime.lastError` are consumed without retaining or displaying their raw text.
+An older host's valid `invalid_request` response is distinguished from a broken
+transport. Import still requires its separate verified `imported` response.
+
+On 2026-10-13 the real Zen 1.23.2b check reported an unusable/missing native
+application despite a matching current-user Mozilla registration, readable
+manifest, allowed extension ID and executable. The registered executable, run
+from Zen's installation directory with Firefox's manifest/extension arguments,
+returned a valid framed `host_ready`. This narrows the failure to browser lookup
+or validation; it does not establish the exact cause. Zen has an
+[open Windows native-messaging report](https://github.com/zen-browser/desktop/issues/15432)
+with similar symptoms. Treat that as related evidence, not proof that every
+Tide failure has the same cause. Do not change browser security settings or
+replace user profiles to work around it.
+
+### Required release checks
 
 - Default-browser launch on Windows without a browser-specific installation path.
 - Explicit transfer and verified account-name display in Firefox/Zen and

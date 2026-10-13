@@ -95,6 +95,61 @@ test("listener permissions are observational and browser-specific", () => {
     assert.ok(!options.includes("blocking"));
   }
 });
+
+test("explicit host probe sends no credentials and works without a Music tab", async () => {
+  const f = fixture("firefox");
+  f.api.tabs.selected = { id: 7, url: "https://elsewhere.invalid/" };
+  assert.equal(await f.message("check_host", { id: "untrusted", url: "https://elsewhere.invalid" }), undefined);
+  assert.equal(f.ports.length, 0);
+  assert.equal((await f.message("check_host")).code, "checking_host");
+  assert.deepEqual(f.ports[0].sent, [{ version: 1, action: "check_host", headers: {} }]);
+  f.capture(); f.complete();
+  assert.equal(f.ports[0].sent.length, 1);
+  f.ports[0].onMessage.emit({ version: 1, ok: true, code: "host_ready" });
+  assert.equal(f.controller.snapshot().code, "host_ready");
+  assert.equal(f.ports[0].disconnected, true);
+});
+
+test("probe distinguishes old hosts and cannot treat import replies as transport success", async () => {
+  for (const [reply, code] of [
+    [{ version: 1, ok: false, code: "invalid_request" }, "native_outdated"],
+    [{ version: 1, ok: true, code: "imported" }, "native_error"],
+    [{ version: 1, ok: true, code: "host_ready", private: "never retain" }, "native_error"]
+  ]) {
+    const f = fixture(); await f.message("check_host");
+    f.ports[0].onMessage.emit(reply);
+    assert.equal(f.controller.snapshot().code, code);
+    assert.ok(!JSON.stringify(f.controller.snapshot()).includes("never retain"));
+  }
+});
+
+test("host probes time out and cannot cancel an active session capture", async () => {
+  const f = fixture(); await f.message("arm");
+  assert.equal((await f.message("check_host")).state, "armed");
+  assert.equal(f.ports.length, 0);
+  await f.message("cancel"); await f.message("check_host");
+  f.advance(10000);
+  assert.equal(f.controller.snapshot().code, "native_timeout");
+  assert.equal(f.ports[0].disconnected, true);
+});
+
+test("Firefox port and Chromium runtime errors become fixed privacy-safe categories", async () => {
+  const errors = [
+    ["No such native application org.tidemusic.session", "native_missing"],
+    ["Specified native messaging host not found", "native_missing"],
+    ["This extension does not have permission to use native application org.tidemusic.session", "native_forbidden"],
+    ["File at path PRIVATE-PATH does not exist, or is not executable", "native_start_failed"],
+    ["Unknown error PRIVATE-PATH", "native_error"]
+  ];
+  for (const family of ["firefox", "chromium"]) for (const [message, code] of errors) {
+    const f = fixture(family); await f.message("check_host");
+    if (family === "firefox") f.ports[0].error = { message };
+    else f.api.runtime.lastError = { message };
+    f.ports[0].onDisconnect.emit();
+    assert.equal(f.controller.snapshot().code, code);
+    assert.ok(!JSON.stringify(f.controller.snapshot()).includes("PRIVATE-PATH"));
+  }
+});
 test("idle and untrusted messages cannot capture or arm", async () => {
   const f = fixture();
   f.capture(); f.complete();

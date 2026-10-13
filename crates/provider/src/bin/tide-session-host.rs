@@ -147,6 +147,10 @@ fn import_message(payload: &[u8], cancel: Arc<AtomicBool>) -> &'static str {
     let Ok(request) = serde_json::from_slice::<Request>(payload) else {
         return "invalid_request";
     };
+    if request.version == 1 && request.action == "check_host" && request.headers.0.is_empty() {
+        // Credential-free transport probe: no provider, account read or write.
+        return "host_ready";
+    }
     if request.version != 1 || request.action != "import_session" {
         return "invalid_request";
     }
@@ -212,7 +216,7 @@ fn main() {
     }
     let reply = Reply {
         version: 1,
-        ok: code == "imported",
+        ok: matches!(code, "imported" | "host_ready"),
         code,
     };
     if let Ok(reply) = serde_json::to_vec(&reply) {
@@ -259,6 +263,23 @@ mod tests {
                 "invalid_request" | "invalid_headers"
             ));
         }
+    }
+    #[test]
+    fn host_probe_is_credential_free_and_does_not_open_account_storage() {
+        assert_eq!(
+            import_message(
+                br#"{"version":1,"action":"check_host","headers":{}}"#,
+                Arc::new(AtomicBool::new(false))
+            ),
+            "host_ready"
+        );
+        assert_eq!(
+            import_message(
+                br#"{"version":1,"action":"check_host","headers":{"cookie":"fixture"}}"#,
+                Arc::new(AtomicBool::new(false))
+            ),
+            "invalid_request"
+        );
     }
     #[test]
     fn browser_origins_are_exact_and_never_wildcards() {

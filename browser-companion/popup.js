@@ -2,6 +2,7 @@
 const api = typeof browser === "object" ? browser : chrome;
 const importButton = document.getElementById("import");
 const cancelButton = document.getElementById("cancel");
+const checkHostButton = document.getElementById("check-host");
 const statusNode = document.getElementById("status");
 const messages = {
   ready: "Ready. Import the selected YouTube Music tab when you choose.",
@@ -21,6 +22,13 @@ const messages = {
   too_large: "The session exceeds the import size limit. Capture stopped.",
   request_failed: "The Music request did not succeed. Check the tab and retry.",
   native_error: "The local Tide host did not return a valid reply. Check its setup and retry.",
+  native_missing: "The browser could not find or accept Tide's local host registration. Check the setup and browser compatibility, then retry.",
+  native_forbidden: "The local host does not allow this companion's extension ID. Check the matching host setup.",
+  native_start_failed: "The browser found Tide's host but could not start it. Check its executable and setup.",
+  native_timeout: "Tide's local host did not reply before the time limit. Check its setup and retry.",
+  native_outdated: "The local host is an older version. Update Tide's host, then retry.",
+  checking_host: "Checking the local Tide connection without reading your Music session…",
+  host_ready: "The browser can reach Tide's local host. No session was read or imported by this check.",
   invalid_request: "The local host rejected the import request. Check its version and retry.",
   session_rejected: "The local host could not verify this session. Check the selected account and retry.",
   session_changed: "Tide's saved session changed during import. Retry manually.",
@@ -40,6 +48,7 @@ function render(reply) {
   importButton.disabled = Boolean(busy);
   importButton.textContent = reply && reply.state === "idle" && reply.code === "ready" ? "Import selected tab" : "Retry import";
   cancelButton.disabled = !busy;
+  checkHostButton.disabled = Boolean(busy);
 }
 async function update(action) {
   try { render(await send(action)); }
@@ -47,6 +56,7 @@ async function update(action) {
 }
 importButton.addEventListener("click", () => update("arm"));
 cancelButton.addEventListener("click", () => update("cancel"));
+checkHostButton.addEventListener("click", () => update("check_host"));
 update("status");
 const poll = setInterval(() => update("status"), 1000);
 window.addEventListener("pagehide", () => clearInterval(poll));
