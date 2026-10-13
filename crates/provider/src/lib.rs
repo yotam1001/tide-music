@@ -1792,8 +1792,12 @@ mod tests {
         };
         // Verification takes place outside the storage lock. Its eventual result
         // cannot replace an account imported/disconnected in the meantime.
-        let first = parse_headers(b"Cookie: __Secure-3PAPISID=fixture-first").unwrap();
-        let second = parse_headers(b"Cookie: __Secure-3PAPISID=fixture-second").unwrap();
+        let first =
+            parse_headers(concat!("Cookie: __Secure-3PAPISID=", "fixture-first").as_bytes())
+                .unwrap();
+        let second =
+            parse_headers(concat!("Cookie: __Secure-3PAPISID=", "fixture-second").as_bytes())
+                .unwrap();
         let baseline = provider.import_baseline().unwrap();
         let cancel = AtomicBool::new(false);
         provider
@@ -1801,7 +1805,7 @@ mod tests {
             .unwrap();
         let baseline = provider.import_baseline().unwrap();
         provider
-            .import_bytes(b"Cookie: __Secure-3PAPISID=fixture-newer")
+            .import_bytes(concat!("Cookie: __Secure-3PAPISID=", "fixture-newer").as_bytes())
             .unwrap();
         let newer = provider.import_baseline().unwrap();
         assert_eq!(

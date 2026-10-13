@@ -666,7 +666,8 @@ class LoginTests(unittest.TestCase):
                 self.assertEqual(result, {"type": "error", "code": "session"})
 
     def test_browser_import_failure_never_returns_exception_credentials(self):
-        stdin = SimpleNamespace(buffer=io.BytesIO(b'{"action":"verify_import","headers":{"cookie":"__Secure-3PAPISID=fixture","x-goog-authuser":"1"}}'))
+        headers = {"cookie": "__Secure-3PAPISID=" + "fixture", "x-goog-authuser": "1"}
+        stdin = SimpleNamespace(buffer=io.BytesIO(json.dumps({"action": "verify_import", "headers": headers}).encode()))
         stdout = io.StringIO()
         with patch("youtube_music.sys.stdin", stdin), patch("youtube_music.sys.stdout", stdout), \
                 patch("youtube_music.validate_session", side_effect=RuntimeError("private fixture cookie")):
