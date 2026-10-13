@@ -492,3 +492,18 @@ Revision aa49e66 passed both Windows CI jobs and a privacy audit of a fresh publ
 clone. Its cookie-persistence portable ZIP passed the payload allowlist, checksum
 and credential/private-path scans. Authenticated playback longevity remains a
 release gate regardless of these passing checks.
+
+# GitHub-built Windows preview follow-up
+
+The e32f41f GitHub MSVC preview passed ZIP payload, checksum and privacy checks.
+Binary import inspection found no Visual C++ runtime redistributable dependency.
+Its fresh portable installation passed native media transport, DPI/mode fitting,
+and playback/control/close checks with a file picker open.
+
+The first five-minute local listening run reported 15 natural transitions and
+exit code zero, but its supervisor rejected helper cleanup without recording
+which process remained. That failure remains unresolved evidence. A diagnostic
+replay with explicit process identity and live-state checks passed 15 natural
+transitions, exit code zero, and no observed remaining helpers. The revised
+measurement also rejected a deliberately surviving test child. This replay does
+not establish the cause of the original failure or replace live service testing.

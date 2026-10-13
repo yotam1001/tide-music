@@ -1,0 +1,36 @@
+name: Bug report
+description: Report a playback, account, or interface problem
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Never include request headers, cookies, tokens, signed media URLs, account files, or private playlists. Review and redact screenshots and diagnostics before uploading them. Report security vulnerabilities privately as described in SECURITY.md.
+  - type: input
+    id: version
+    attributes:
+      label: Tide version or commit
+      description: Include whether you used a downloaded preview or built from source.
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: What happened, and how can we reproduce it?
+      description: For playback failures, say whether music stopped during a song or between songs, and roughly how long playback had been running. Use generic examples rather than private library contents.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Relevant window mode, display scale, audio device, network changes, or redacted error text. Do not attach account imports or raw browser/network logs.

@@ -66,12 +66,17 @@ if ($RequireSuccessfulExit) {
     $taskProcess.Refresh()
     @{exit_code=$taskProcess.ExitCode;helpers_ended=$false} | ConvertTo-Json | Set-Content -LiteralPath "$Output.exit.json" -Encoding utf8
     if ($taskProcess.ExitCode -ne 0) { throw 'Measured app did not finish its verification successfully' }
+    $taskCleanupObservations = @()
     foreach ($taskEntry in $taskObserved.GetEnumerator()) {
         $taskRemaining = Get-Process -Id $taskEntry.Key -ErrorAction SilentlyContinue
         if ($taskRemaining -and $taskRemaining.StartTime -eq $taskEntry.Value) {
-            throw 'An observed playback helper remained after the app exited'
+            $taskCleanupObservations += @{process_id=$taskRemaining.Id;start_ticks=$taskRemaining.StartTime.Ticks;name=$taskRemaining.ProcessName;is_root=($taskRemaining.Id -eq $taskProcess.Id);has_exited=$taskRemaining.HasExited}
         }
     }
-    @{exit_code=$taskProcess.ExitCode;helpers_ended=$true} | ConvertTo-Json | Set-Content -LiteralPath "$Output.exit.json" -Encoding utf8
+    # The root's exit is checked above. A retained Windows process object is
+    # not evidence of a running helper; require a matching, non-exited child.
+    $taskLiveHelpers = @($taskCleanupObservations | Where-Object { !$_.is_root -and !$_.has_exited })
+    @{exit_code=$taskProcess.ExitCode;helpers_ended=($taskLiveHelpers.Count -eq 0);cleanup_observations=$taskCleanupObservations} | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath "$Output.exit.json" -Encoding utf8
+    if ($taskLiveHelpers.Count -gt 0) { throw 'An observed live playback helper remained after the app exited' }
     'PASS: verification exited successfully and observed helper processes ended'
 }
