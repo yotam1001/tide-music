@@ -677,3 +677,38 @@ Before these diagnostic changes, the e777f29 PR preview (merge revision
 MSVC ZIP passed payload, checksum and privacy checks and the isolated native
 adoption regression against its actual app and host executables. ZIP SHA-256:
 `eb29a7b3a86d5d2f0dee90c0383b2a36271d533879814b49e500015d7a0ae9b1`.
+
+### Completed current one-hour listening and Windows package (2026-10-13)
+
+The e777f29 GNU release app completed 3,600 seconds of authenticated listening:
+17 natural transitions, 19 decoded starts, 18 recommendation refills and 19
+persisted session updates. Radio and observed pause/resume, skip and seek passed.
+The enclosing sampler exited zero and recorded root exit zero, all 156 observed
+helpers ended and zero sampling races. Standard error was empty. This is a
+completed passing run, unlike the historical supervisor failures. The provider
+Library health example subsequently passed on the same saved session without a
+fresh import. App, playback, provider library and lockfile source are unchanged
+between e777f29 and 369f8a1; the intervening changes concern host diagnostics,
+the fixture and documentation. This does not prove weekly session longevity.
+
+After discarding the first five samples, 3,264 process-tree samples show working
+set median/p95/peak 70.20/76.807/408.52 MiB and private bytes
+52.54/58.89/348.70 MiB. CPU, with one logical core as denominator, is
+1.395/5.663/108.29 percent. Percentiles use linear interpolation. The 19 sampled
+decoded-start delays have median 500 ms, p95 and maximum 5,004 ms; cold startup
+and controls are included, with 250 ms sampling. These are not skip-only latency
+or gaming frame-time measurements.
+
+Both 369f8a1 CI jobs passed. Its downloaded Windows MSVC app and host passed the
+credential-free storage-untouched probe and isolated adoption/intent regression.
+The ZIP passed payload/checksum/privacy gates; SHA-256:
+`8f79ac787f879a11cd37d952eac8a834e98163f99ebe07ebb0a929b34bb4be33`.
+Both downloaded companion packages passed exact folder/ZIP payload and checksum
+checks and matched committed source after normalizing Windows checkout line
+endings. The fresh public clone at 369f8a1 passed its privacy audit with zero
+findings. The preceding 911a0f5 MSVC package passed the same native probes too.
+
+Actual Zen testing still fails native lookup with that downloaded MSVC host as
+well as the local GNU host; direct registered-host framing succeeds for both.
+Authenticated browser import, signed distribution, physical media keys with
+game focus, monitor migration and normal authenticated GUI close remain open.
