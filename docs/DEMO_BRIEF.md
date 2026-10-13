@@ -1,10 +1,24 @@
 # Tide demo video brief
 
 Create a 45–60 second demo for **Tide**, an open-source Windows music player built
-for people who listen to YouTube Music while gaming. Its purpose is to offer a
-clear, compact desktop player with native audio playback and modest resource
-use. It is built with Rust and Slint, with mpv handling audio. The current build
-is a preview under reliability testing, not a finished stable release.
+for people who listen to YouTube Music while gaming. Focus on why someone would
+choose it: easy access to their music, less interface clutter, and a compact
+player that fits beside a game. Low resource use is a design goal under testing.
+The current build is a preview, not a finished stable release.
+
+The central message is **“Your music. More room for your game.”** Explain the
+benefit before showing controls. Tide offers a dedicated music interface, with
+Home, playlists and recommendations together; a visible queue that can be
+reordered by dragging; and a mini player for the times when the game deserves
+most of the screen. Open source also means people can inspect the code, report
+problems and contribute improvements. These are reasons to choose Tide, rather
+than a claim that it is universally better than every music app.
+
+Show the contrast through the experience: move from a full browsing view into
+the compact player beside gameplay, arrange the next songs with one drag, and
+show recommendations extending the listening session. Avoid an engineering
+explanation or a long feature checklist. Do not claim higher game FPS, lower RAM
+than a named competitor, or better audio quality without matched measurements.
 
 Use actual screen recordings from the supplied build. Make the edit calm,
 polished and easy to follow: readable captions, short cursor movements, clean
@@ -12,7 +26,7 @@ cuts and subtle transitions. Let the interface do most of the explaining.
 
 ## Suggested sequence
 
-- **0–5 seconds:** Tide logo and a short hook: “Music beside your game.” Show
+- **0–5 seconds:** Tide logo and a short hook: “Your music. More room for your game.” Show
   the full player briefly, followed by its small mini-player view.
 - **5–15 seconds:** Show Home, search for a song, then start playback. Highlight
   the centered playback controls and the clear browsing layout.
@@ -25,7 +39,7 @@ cuts and subtle transitions. Let the interface do most of the explaining.
 - **40–50 seconds:** Switch between light and dark themes without changing
   window size. Show Mini as a separate layout control, then place the mini
   player beside gameplay or a neutral game scene.
-- **50–60 seconds:** End with “Open source. Built for listening while gaming.”
+- **50–60 seconds:** End with “Made for your music. Built around your game.”
   Add “Preview — in development” and the repository link:
   https://github.com/yotam1001/tide-music
 
