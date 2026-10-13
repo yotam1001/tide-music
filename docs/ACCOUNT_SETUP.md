@@ -4,6 +4,12 @@ Tide can read your existing playlists, Liked Songs and Home recommendations and 
 
 ## Install the optional library helper
 
+For a packaged Windows preview, double-click **Install Tide.cmd** in the extracted
+ZIP. Setup provisions a private Python runtime and the helper dependencies; no
+system Python is required. See [installation and removal](INSTALLATION.md).
+
+The commands below are for a development checkout.
+
 From the project directory, with Python 3.10 or newer installed:
 
 ```powershell

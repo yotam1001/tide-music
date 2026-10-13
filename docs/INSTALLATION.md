@@ -1,0 +1,65 @@
+# Windows preview installation
+
+Extract the complete Windows preview ZIP, then double-click **Install Tide.cmd**.
+Setup needs internet access and Windows x64. It installs for the current user in
+`%LOCALAPPDATA%\Programs\Tide`, without administrator privileges, PATH changes,
+system Python or manual PowerShell commands. Launch **Tide** from the Start menu.
+The installed release contains its own mpv, yt-dlp, Deno and private account-helper
+Python runtime. The extracted download can be removed after setup succeeds.
+
+Setup validates the packaged SHA-256 manifest before copying its explicit payload.
+Playback downloads use exact upstream release versions and require upstream
+SHA-256 digests matching the checksums pinned in the setup script; a missing digest
+or mismatch stops setup. Embedded CPython 3.14.0
+uses the checksum from the [official Windows release index](https://www.python.org/ftp/python/3.14.0/windows-3.14.0.json).
+The exactly pinned helper dependencies are universal wheels fetched from PyPI;
+each wheel must match both its published and script-pinned SHA-256 digest. No existing Python environment,
+browser profile or saved account data is copied into the installation. Upstream
+archives, Python license and wheel license metadata remain in the owned release.
+
+## Optional browser companion
+
+If the ZIP includes `tide-session-host.exe`, setup can register the native helper
+for one selected browser under the current user's registry. Install the separate
+Tide companion extension in that browser first. Choose Chrome or Edge at the setup
+prompt, then paste the **actual extension ID displayed by that browser**. Setup
+accepts only a complete 32-letter Chromium ID; it never guesses an ID or grants
+wildcard origins. An existing different Tide native-host registration is preserved
+and causes setup to stop.
+
+Firefox registration uses the companion's fixed add-on ID. Zen's real native-host
+lookup is still unresolved, and signed public companion distribution remains an
+open release gate. A prepared registration does not prove that a browser can use
+the helper. Choosing None skips first-install registration. On update, the existing
+browser choice is retained unless another browser is explicitly selected.
+The browser extension itself is installed and removed in the browser; setup owns
+only its Tide native-host registration. Manual import remains available in
+[ACCOUNT_SETUP.md](ACCOUNT_SETUP.md).
+
+## Update
+
+Close Tide and let any pending companion request finish. Extract the new ZIP and
+run **Install Tide.cmd** again. Setup refuses to stop running processes. It builds
+a fresh private release and verifies dependencies before changing Start menu
+shortcuts or native-host registration. A failed preparation leaves the previous
+installation usable. Registration/shortcut failures restore the previous links
+and matching helper registration. Successful updates remove previous owned files;
+additional files placed there by the user are preserved. Sessions and preferences
+stay in Tide's application-data directory, outside the install directory.
+
+## Remove
+
+Choose **Uninstall Tide** in the Start menu, or double-click **Uninstall Tide.cmd**
+from a downloaded ZIP. Close Tide first. Removal deletes recorded app/runtime files
+and only shortcuts and native-host keys that still point to that installation.
+Different registrations, modified shortcuts and additional unowned files are
+preserved. Paths containing junctions or symbolic links are rejected. Removal
+does not inspect or delete saved preferences or encrypted sessions. To remove
+a saved session, use **Disconnect** in Tide before uninstalling. Remove the browser
+companion extension through the browser's extension manager separately.
+
+This is an unsigned preview setup launcher, not a signed Windows installer or a
+verified stable release. Windows may display an unsigned-download warning.
+Enterprise PowerShell policy may prevent the launcher from running. Fresh
+installation with real downloads, public companion distribution and longer
+playback/session reliability remain release validation requirements.

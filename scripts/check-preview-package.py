@@ -10,6 +10,8 @@ PAYLOAD = {
     "tide-music.exe", "LICENSE", "THIRD_PARTY_NOTICES.md", "DEPENDENCIES.md",
     "START_HERE.md", "docs/ACCOUNT_SETUP.md", "scripts/setup-runtime.ps1",
     "scripts/setup-provider.ps1", "helpers/youtube_music.py", "helpers/requirements.txt",
+    "scripts/install-common.ps1", "scripts/install-windows.ps1", "Install Tide.cmd",
+    "Uninstall Tide.cmd", "docs/INSTALLATION.md",
 }
 BROWSER_HOST_PAYLOAD = {
     "tide-session-host.exe", "scripts/setup-browser-companion.ps1",

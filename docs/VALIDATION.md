@@ -762,3 +762,27 @@ It passes without retaining either previous cover. Tests also cover viewport
 scrolling beyond the former cap, bounded requests and priority promotion, stale
 account completions, and stable model identity during row updates. This evidence
 does not measure live network image latency or total application memory.
+
+The optimized local build passed its populated UI smoke with native pointer drag
+and long-drag autoscroll, without starting playback. Twelve fixture screenshots
+cover the rendered layouts and panels. The normal authenticated app was reopened,
+and actual covers were observed farther down Home after scrolling past the old
+loading cap. Account contents and screenshots are excluded from public artifacts.
+
+### Per-user preview installation (2026-10-13)
+
+The packaged setup launcher provisions an owned versioned release, private
+playback/helper runtimes and Start menu shortcuts without administrator access.
+Its isolated lifecycle tests cover first install, upgrade, removal, dependency
+and shortcut/registration rollback, busy processes, conflicting registrations,
+modified shortcuts, unowned files, checksums, traversal, reparse paths and locks.
+PowerShell 5.1 cases and the actual ZIP payload allowlist integration pass. A real
+shortcut roundtrip was confined to a temporary directory.
+
+`python scripts/verify-managed-runtime.py --download` passed real provisioning in
+a disposable fixture: isolated CPython 3.14.0 with six exact helper package
+versions/imports, and mpv 0.41.0, yt-dlp 2026.08.19 and Deno 2.9.7 downloads,
+pinned checksums and executable version checks. The fixture was removed. No
+account, native-host registration or installed application was changed by this
+check. Full fresh-machine installation/upgrade/removal and signed distribution
+remain open; the launcher is a preview, not evidence of stable-release readiness.
