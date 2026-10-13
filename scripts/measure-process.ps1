@@ -100,7 +100,6 @@ try {
         $taskStage = 'checking_exit'
         $taskProcess.Refresh()
         @{exit_code=$taskProcess.ExitCode;helpers_ended=$false} | ConvertTo-Json | Set-Content -LiteralPath "$Output.exit.json" -Encoding utf8
-        if ($taskProcess.ExitCode -ne 0) { throw 'Measured app did not finish its verification successfully' }
         $taskStage = 'checking_helpers'
         $taskCleanupObservations = @()
         foreach ($taskEntry in $taskObserved.Values) {
@@ -110,6 +109,10 @@ try {
         # not evidence of a running helper; require a matching, non-exited child.
         $taskLiveHelpers = @($taskCleanupObservations | Where-Object { !$_.is_root -and !$_.has_exited })
         @{exit_code=$taskProcess.ExitCode;helpers_ended=($taskLiveHelpers.Count -eq 0);cleanup_observations=$taskCleanupObservations;sampling_races=$taskSamplingRaces} | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath "$Output.exit.json" -Encoding utf8
+        if ($taskProcess.ExitCode -ne 0) {
+            $taskStage = 'checking_exit'
+            throw 'Measured app did not finish its verification successfully'
+        }
         if ($taskLiveHelpers.Count -gt 0) { throw 'An observed live playback helper remained after the app exited' }
         'PASS: verification exited successfully and observed helper processes ended'
     }

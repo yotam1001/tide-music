@@ -602,3 +602,12 @@ matter for gaming and are not represented by settled app-only memory.
 For the 104 individual decoded-start records, sampled request-to-audio delay is
 median 500 ms, p95 751 ms and maximum 5,263 ms, with 250 ms sampling. This combines
 cold start, natural transitions and test controls, not a skip-only latency metric.
+
+
+A subsequent five-minute signed-in check of the downloaded 0e0f674 package ended
+with insufficient transition/control coverage (exit 1): its generic progress
+records show one natural transition before the time limit, below the required
+two. This is a failed test, not a reliability pass. It had decoded progress and
+recommendation refills without a reported reconnect failure. The corrected
+supervisor retained the nonzero exit and recorded failure stage `checking_exit`.
+A longer check is needed to gather the required complete-song coverage.

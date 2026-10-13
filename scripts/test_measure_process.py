@@ -69,6 +69,13 @@ class MeasurementTests(unittest.TestCase):
         self.assertTrue(report["cleanup_observations"])
         self.assertIsNone(failure)
 
+    def test_nonzero_exit_records_cleanup_without_becoming_a_pass(self):
+        result, report, failure = self.run_fixture('Start-Sleep -Seconds 2\nexit 7\n')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(report["exit_code"], 7)
+        self.assertTrue(report["helpers_ended"])
+        self.assertEqual(failure["stage"], "checking_exit")
+
     def test_surviving_helper_is_failure_and_records_stage(self):
         result, report, failure = self.run_fixture(
             '$ErrorActionPreference="Stop"\n'
