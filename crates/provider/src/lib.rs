@@ -15,6 +15,17 @@ use tide_core::Track;
 use zeroize::Zeroize;
 
 const MAX_SESSION: usize = 65536;
+
+/// Fixed, credential-free outcomes for browser-assisted session imports.
+#[derive(Debug, PartialEq, Eq)]
+pub enum SessionImportError {
+    InvalidHeaders,
+    SessionRejected,
+    VerificationUnavailable,
+    SessionChanged,
+    StorageError,
+    Cancelled,
+}
 static LEASE_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 // Serialize read/compare/write across Tide instances. The Windows mutex is
@@ -276,6 +287,108 @@ impl Provider {
         let mut bytes = read_limited(path, MAX_SESSION)?;
         let result = self.import_bytes(&bytes);
         bytes.zeroize();
+        result
+    }
+
+    /// Verify before replacing a saved session. A connection changed while the
+    /// network request was in flight must not be overwritten by its result.
+    #[cfg(windows)]
+    pub fn import_browser_session(
+        &self,
+        bytes: &[u8],
+        cancel: Arc<AtomicBool>,
+    ) -> Result<(), SessionImportError> {
+        if bytes.len() > MAX_SESSION {
+            return Err(SessionImportError::InvalidHeaders);
+        }
+        let baseline = self.import_baseline()?;
+        let mut headers = parse_headers(bytes).map_err(|_| SessionImportError::InvalidHeaders)?;
+        #[derive(Serialize)]
+        struct ImportPayload<'a> {
+            action: &'static str,
+            headers: &'a BTreeMap<String, String>,
+        }
+        let encoded = serde_json::to_vec(&ImportPayload {
+            action: "verify_import",
+            headers: &headers,
+        });
+        for value in headers.values_mut() {
+            value.zeroize();
+        }
+        let mut input = encoded.map_err(|_| SessionImportError::InvalidHeaders)?;
+        if input.len() > MAX_SESSION {
+            input.zeroize();
+            return Err(SessionImportError::InvalidHeaders);
+        }
+        let result = execute_helper(&input, cancel.clone(), Duration::from_secs(60));
+        input.zeroize();
+        match result
+            .map_err(|_| {
+                if cancel.load(Ordering::Acquire) {
+                    SessionImportError::Cancelled
+                } else {
+                    SessionImportError::VerificationUnavailable
+                }
+            })?
+            .response
+        {
+            Response::Session { headers } => {
+                self.commit_browser_session(headers, baseline, &cancel)
+            }
+            Response::Error { code } if code == "session" => {
+                Err(SessionImportError::SessionRejected)
+            }
+            _ => Err(SessionImportError::VerificationUnavailable),
+        }
+    }
+
+    #[cfg(not(windows))]
+    pub fn import_browser_session(
+        &self,
+        _bytes: &[u8],
+        _cancel: Arc<AtomicBool>,
+    ) -> Result<(), SessionImportError> {
+        Err(SessionImportError::StorageError)
+    }
+
+    #[cfg(windows)]
+    fn import_baseline(&self) -> Result<Option<Vec<u8>>, SessionImportError> {
+        let _lock = SessionWriteLock::acquire().map_err(|_| SessionImportError::StorageError)?;
+        let path = self.directory.join("session.dpapi");
+        match fs::metadata(&path) {
+            Ok(_) => read_limited(&path, MAX_SESSION + 8192)
+                .map(Some)
+                .map_err(|_| SessionImportError::StorageError),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            _ => Err(SessionImportError::StorageError),
+        }
+    }
+
+    #[cfg(windows)]
+    fn commit_browser_session(
+        &self,
+        mut headers: BTreeMap<String, String>,
+        baseline: Option<Vec<u8>>,
+        cancel: &AtomicBool,
+    ) -> Result<(), SessionImportError> {
+        let encoded = serde_json::to_vec(&headers);
+        for value in headers.values_mut() {
+            value.zeroize();
+        }
+        let mut encoded = encoded.map_err(|_| SessionImportError::InvalidHeaders)?;
+        let result = (|| {
+            let _lock =
+                SessionWriteLock::acquire().map_err(|_| SessionImportError::StorageError)?;
+            if cancel.load(Ordering::Acquire) {
+                return Err(SessionImportError::Cancelled);
+            }
+            if self.import_baseline()? != baseline {
+                return Err(SessionImportError::SessionChanged);
+            }
+            self.import_bytes(&encoded)
+                .map_err(|_| SessionImportError::StorageError)
+        })();
+        encoded.zeroize();
         result
     }
     fn import_bytes(&self, bytes: &[u8]) -> Result<(), String> {
@@ -1677,6 +1790,38 @@ mod tests {
         let provider = Provider {
             directory: directory.clone(),
         };
+        // Verification takes place outside the storage lock. Its eventual result
+        // cannot replace an account imported/disconnected in the meantime.
+        let first = parse_headers(b"Cookie: __Secure-3PAPISID=fixture-first").unwrap();
+        let second = parse_headers(b"Cookie: __Secure-3PAPISID=fixture-second").unwrap();
+        let baseline = provider.import_baseline().unwrap();
+        let cancel = AtomicBool::new(false);
+        provider
+            .commit_browser_session(first.clone(), baseline, &cancel)
+            .unwrap();
+        let baseline = provider.import_baseline().unwrap();
+        provider
+            .import_bytes(b"Cookie: __Secure-3PAPISID=fixture-newer")
+            .unwrap();
+        let newer = provider.import_baseline().unwrap();
+        assert_eq!(
+            provider.commit_browser_session(second.clone(), baseline, &cancel),
+            Err(SessionImportError::SessionChanged)
+        );
+        assert_eq!(provider.import_baseline().unwrap(), newer);
+        let baseline = provider.import_baseline().unwrap();
+        provider.disconnect().unwrap();
+        assert_eq!(
+            provider.commit_browser_session(second.clone(), baseline, &cancel),
+            Err(SessionImportError::SessionChanged)
+        );
+        assert!(!provider.is_connected());
+        cancel.store(true, Ordering::Release);
+        assert_eq!(
+            provider.commit_browser_session(second, None, &cancel),
+            Err(SessionImportError::Cancelled)
+        );
+        assert!(!provider.is_connected());
         let stale = directory.join("playback-4294967295-1.txt");
         fs::write(&stale, b"public fixture").unwrap();
         let active = directory.join(format!("playback-{}-999.txt", std::process::id()));

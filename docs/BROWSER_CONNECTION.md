@@ -33,12 +33,30 @@ is a candidate for library access, but it still needs compatibility verification
 with the selected Music identity. It cannot establish playback authentication:
 [yt-dlp documents that YouTube OAuth login no longer works](https://github.com/yt-dlp/yt-dlp/wiki/Extractors#logging-in-with-oauth).
 
-## Candidate session handoff
+## Prototype session handoff
 
-Evaluate an optional browser extension with a native messaging bridge. Firefox
+An optional browser extension and native messaging receiver are implemented as
+a source prototype in [browser-companion](../browser-companion/README.md) and
+`crates/provider/src/bin/tide-session-host.rs`. They are not installed, signed,
+publicly distributed, or verified with a real browser session. Firefox
 and Chromium families need separately validated manifests, permissions and
 distribution. Browser signing/installation is a real part of release work;
 unpacked developer extensions are not a finished public onboarding solution.
+
+The receiver accepts one bounded, length-prefixed message from the allowed
+extension identity. It verifies the session through the identity endpoint before
+saving a DPAPI-encrypted copy. A changed saved session or a disconnected native
+port cancels the pending commit. Cancellation after a completed commit cannot
+undo that commit; the user can disconnect in Tide. Protocol, cancellation,
+rejection and encrypted-save probes currently use synthetic credentials and a
+fake identity helper. They do not prove live browser authentication works.
+
+Lavalink's alternative [OAuth handler](https://github.com/lavalink-devs/youtube-source/blob/main/common/src/main/java/dev/lavalink/youtube/http/YoutubeOauth2Handler.java)
+uses hardcoded YouTube client credentials and internal TV authorization endpoints.
+Its documented OAuth playback support is specific to its TV client and does not
+establish compatibility with a Tide-owned OAuth registration or Music library.
+Do not transplant those credentials or replace the working playback backend
+without checking identity selection, refresh, Premium behavior and resource use.
 
 The user must initiate a short-lived transfer. Capture only a successful YouTube
 Music request from the explicitly selected tab, preserving its account/container

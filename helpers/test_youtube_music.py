@@ -648,5 +648,31 @@ class LoginTests(unittest.TestCase):
         self.assertEqual(json.loads(stdout.getvalue()), {"type": "error", "code": "session"})
 
 
+    def test_browser_import_is_verified_before_returning_credentials(self):
+        headers = {"cookie": "__Secure-3PAPISID=fixture", "x-goog-authuser": "1", "x-goog-pageid": "123"}
+        for accepted in (False, True):
+            stdin = SimpleNamespace(buffer=io.BytesIO(json.dumps({"action": "verify_import", "headers": headers}).encode()))
+            stdout = io.StringIO()
+            with patch("youtube_music.sys.stdin", stdin), patch("youtube_music.sys.stdout", stdout), \
+                    patch("youtube_music.validate_session", return_value=accepted) as verify:
+                main()
+            verify.assert_called_once()
+            result = json.loads(stdout.getvalue())
+            if accepted:
+                self.assertEqual(result["type"], "session")
+                self.assertEqual(result["headers"]["x-goog-pageid"], "123")
+                self.assertEqual(result["headers"]["x-goog-authuser"], "1")
+            else:
+                self.assertEqual(result, {"type": "error", "code": "session"})
+
+    def test_browser_import_failure_never_returns_exception_credentials(self):
+        stdin = SimpleNamespace(buffer=io.BytesIO(b'{"action":"verify_import","headers":{"cookie":"__Secure-3PAPISID=fixture","x-goog-authuser":"1"}}'))
+        stdout = io.StringIO()
+        with patch("youtube_music.sys.stdin", stdin), patch("youtube_music.sys.stdout", stdout), \
+                patch("youtube_music.validate_session", side_effect=RuntimeError("private fixture cookie")):
+            main()
+        self.assertEqual(json.loads(stdout.getvalue()), {"type": "error", "code": "request"})
+        self.assertNotIn("fixture", stdout.getvalue())
+
 if __name__ == "__main__":
     unittest.main()

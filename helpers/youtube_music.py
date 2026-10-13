@@ -609,6 +609,14 @@ def main():
         if len(raw) > MAX_INPUT:
             raise ValueError("input limit")
         request = json.loads(raw)
+        if request.get("action") == "verify_import":
+            headers = session_headers(request.get("headers", {}))
+            if headers and validate_session(headers):
+                result = {"type": "session", "headers": headers}
+            else:
+                result = {"type": "error", "code": "session"}
+            print(json.dumps(result, ensure_ascii=True))
+            return
         if request.get("action") == "switchaccount":
             result = switch_account(request.get("headers"), request.get("index"))
             print(json.dumps(result, ensure_ascii=True))
