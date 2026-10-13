@@ -22,6 +22,10 @@ class PackageTests(unittest.TestCase):
         self.root = Path(self.temp.name) / "workspace"
         self.source = self.root / "browser-companion"
         self.source.mkdir(parents=True)
+        # Windows CI's TEMP may use an 8.3 alias. Match the production
+        # packager's canonical workspace before targeting lstat mocks.
+        self.root = self.root.resolve(strict=True)
+        self.source = self.root / "browser-companion"
         self.csp = "default-src 'self'; script-src 'self'; object-src 'none'; connect-src 'none'"
         for name in (*packager.COMMON_FILES, "background-firefox.js", "background-chromium.js"):
             (self.source / name).write_bytes(f"synthetic local fixture {name}\n".encode())
