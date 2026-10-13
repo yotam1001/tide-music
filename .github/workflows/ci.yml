@@ -17,3 +17,33 @@ jobs:
       - run: python scripts/check_public_files.py
       - run: python -m unittest discover -s helpers -p "test_*.py"
       - run: python -m unittest discover -s scripts -p "test_*.py"
+  preview:
+    needs: checks
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build preview with remapped development paths
+        shell: pwsh
+        run: ./scripts/build-preview.ps1
+      - name: Generate dependency notices
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force .local | Out-Null
+          cargo metadata --locked --filter-platform x86_64-pc-windows-msvc --format-version 1 | Set-Content .local/windows-metadata.json -Encoding utf8
+          if ($LASTEXITCODE -ne 0) { throw 'Cargo metadata failed' }
+          python scripts/generate-dependency-notices.py .local/windows-metadata.json .local/DEPENDENCIES.md
+          if ($LASTEXITCODE -ne 0) { throw 'Dependency notices failed' }
+      - name: Package and verify preview
+        shell: pwsh
+        run: |
+          ./scripts/package-preview.ps1 -DependenciesNotice .local/DEPENDENCIES.md -StartHere docs/START_HERE.md -Destination dist/tide-windows-preview
+          python scripts/check-preview-package.py dist/tide-windows-preview.zip
+          if ($LASTEXITCODE -ne 0) { throw 'Package validation failed' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tide-windows-preview-${{ github.sha }}
+          path: dist/tide-windows-preview.zip
+          if-no-files-found: error
+          retention-days: 14
