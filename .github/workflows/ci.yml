@@ -26,7 +26,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Build preview with remapped development paths
         shell: pwsh
-        run: ./scripts/build-preview.ps1
+        run: ./scripts/build-preview.ps1 -StaticMsvcRuntime
       - name: Generate dependency notices
         shell: pwsh
         run: |
@@ -38,7 +38,7 @@ jobs:
       - name: Package and verify preview
         shell: pwsh
         run: |
-          ./scripts/package-preview.ps1 -DependenciesNotice .local/DEPENDENCIES.md -StartHere docs/START_HERE.md -Destination dist/tide-windows-preview
+          ./scripts/package-preview.ps1 -Executable target/x86_64-pc-windows-msvc/release/tide-music.exe -DependenciesNotice .local/DEPENDENCIES.md -StartHere docs/START_HERE.md -Destination dist/tide-windows-preview
           python scripts/check-preview-package.py dist/tide-windows-preview.zip
           if ($LASTEXITCODE -ne 0) { throw 'Package validation failed' }
       - uses: actions/upload-artifact@v4

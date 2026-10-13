@@ -12,3 +12,8 @@ patterns before uploading it as a temporary workflow artifact. This is a preview
 for review, not an automatic stable release. Runtime tools and account sessions
 are not bundled. A green package build does not replace the live playback and
 UI evidence required in [docs/RELEASE_READINESS.md](docs/RELEASE_READINESS.md).
+
+GitHub's MSVC preview uses `scripts/build-preview.ps1 -StaticMsvcRuntime` and
+packages `target/x86_64-pc-windows-msvc/release/tide-music.exe`. The explicit
+target keeps static C-runtime flags off host build tools. The local GNU build
+continues using its self-contained linker and normal output location.
