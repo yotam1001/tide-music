@@ -521,6 +521,22 @@ fn adoption_failed(s: &mut State, u: &AppWindow, saved: Option<tide_provider::Sa
         );
     }
 }
+fn stage_current_saved_connection(s: &mut State, u: &AppWindow) {
+    // A successful import may already have been superseded by another Tide
+    // instance. Adopt the current descriptor through the same guarded path as
+    // browser imports, retaining active audio and the user's transport intent.
+    let saved = s
+        .provider
+        .as_ref()
+        .map(|provider| provider.saved_connection())
+        .transpose();
+    let saved = match saved {
+        Ok(saved) => saved.flatten(),
+        // Adoption rereads storage and has bounded retries for a busy file.
+        Err(_) => s.saved_connection.clone(),
+    };
+    stage_saved_connection(s, u, saved);
+}
 fn adopt_saved_connection(s: &mut State, u: &AppWindow, tx: &mpsc::SyncSender<LibraryResult>) {
     if !s.connection_retry.ready() {
         return;
@@ -1565,14 +1581,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let state = state.clone();
         let weak = ui.as_weak();
-        let tx = library_tx.clone();
         let picker_busy = picker_busy.clone();
         ui.on_import_account(move || {
             let state = Rc::downgrade(&state);
             let revision = picker_busy.account_revision.get();
             let selection = picker_busy.clone();
             let weak = weak.clone();
-            let tx = tx.clone();
             let error_ui = weak.upgrade();
             let result = spawn_picker(&picker_busy, async move {
                 let file = rfd::AsyncFileDialog::new()
@@ -1601,18 +1615,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .and_then(|p| p.import_session(file.path()));
                 match result {
                     Ok(()) => {
-                        s.library_playlists.clear();
-                        s.recommendations.clear();
-                        refresh_library_models(&s, &u);
-                        u.set_account_connected(true);
-                        u.set_account_name("Session imported".into());
-                        if configure_account_playback(&mut s, &u) {
-                            request_library(&mut s, &u, &tx, tide_provider::Request::Library);
-                        } else {
-                            u.set_account_status(
-                                "Session saved, but signed-in playback could not start".into(),
-                            );
-                        }
+                        stage_current_saved_connection(&mut s, &u);
                     }
                     Err(error) => u.set_account_status(error.into()),
                 }
@@ -2543,29 +2546,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     match result {
                         Ok(tide_provider::Response::Connected) => {
-                            u.set_account_index(
-                                s.provider
-                                    .as_ref()
-                                    .map(|provider| provider.account_index() as i32)
-                                    .unwrap_or(0),
-                            );
-                            s.library_playlists.clear();
-                            s.recommendations.clear();
-                            refresh_library_models(&s, &u);
-                            u.set_account_connected(true);
-                            u.set_account_name("Verifying account…".into());
-                            if configure_account_playback(&mut s, &u) {
-                                request_library(
-                                    &mut s,
-                                    &u,
-                                    &library_tx,
-                                    tide_provider::Request::Library,
-                                );
-                            } else {
-                                u.set_account_status(
-                                    "Session saved, but playback setup failed".into(),
-                                );
-                            }
+                            stage_current_saved_connection(&mut s, &u);
                         }
                         Ok(tide_provider::Response::Library {
                             account,
@@ -2896,6 +2877,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _connection_smoke_timer = connection_smoke.map(|directory| {
         let timer = slint::Timer::default();
         let state = state.clone();
+        let tx = library_tx.clone();
         let weak = ui.as_weak();
         let began = Instant::now();
         let mut phase = 0;
@@ -2927,34 +2909,43 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     && s.library_worker.is_none() && s.account_verified => {
                     assert_eq!(s.generation, original_generation, "same-account reconnect restarted playback");
                     assert!(snapshot.position > original_position, "audio did not advance during reconnect");
-                    s.provider.as_ref().unwrap().import_session(&Path::new(&directory).join("switch.json")).unwrap();
+                    original_connection = s.saved_connection.clone();
+                    original_position = snapshot.position;
+                    request_library(&mut s, &u, &tx, tide_provider::Request::SwitchAccount { index: 1 });
                     phase = 2;
                 }
-                2 if s.saved_connection.as_ref().is_some_and(|c| c.account_index == 2)
+                2 if s.saved_connection != original_connection && s.pending_saved_connection.is_none()
+                    && s.library_worker.is_none() && s.account_verified => {
+                    assert_eq!(s.generation, original_generation, "in-app reconnect restarted playback");
+                    assert!(snapshot.position > original_position, "audio did not advance during in-app reconnect");
+                    s.provider.as_ref().unwrap().import_session(&Path::new(&directory).join("switch.json")).unwrap();
+                    phase = 3;
+                }
+                3 if s.saved_connection.as_ref().is_some_and(|c| c.account_index == 2)
                     && s.connection_resume.is_some() => {
                     // Supersede verification while preserving the user's latest
                     // pause and seek choices across another account change.
                     send(&mut s, &u, PlaybackCommand::Seek(2.0));
                     send(&mut s, &u, PlaybackCommand::SetPaused(true));
                     s.provider.as_ref().unwrap().import_session(&Path::new(&directory).join("switch-again.json")).unwrap();
-                    phase = 3;
+                    phase = 4;
                 }
-                3 if s.saved_connection.as_ref().is_some_and(|c| c.account_index == 3)
+                4 if s.saved_connection.as_ref().is_some_and(|c| c.account_index == 3)
                     && s.account_verified && s.connection_resume.is_none()
                     && snapshot.position >= 1.9 && snapshot.paused => {
                     assert!(s.generation > original_generation, "account switch did not resume playback");
                     send(&mut s, &u, PlaybackCommand::SetPaused(false));
-                    phase = 4;
-                }
-                4 if snapshot.position > 2.3 && !snapshot.paused => {
-                    s.provider.as_ref().unwrap().disconnect().unwrap();
                     phase = 5;
                 }
-                5 if s.saved_connection.is_none() && s.pending_saved_connection.is_none()
-                    && !s.active_playback && !s.account_verified => {
-                    println!("PASS connection adoption: continuity, superseded switch, pause/seek intent, disconnect");
-                    slint::quit_event_loop().unwrap();
+                5 if snapshot.position > 2.3 && !snapshot.paused => {
+                    s.provider.as_ref().unwrap().disconnect().unwrap();
                     phase = 6;
+                }
+                6 if s.saved_connection.is_none() && s.pending_saved_connection.is_none()
+                    && !s.active_playback && !s.account_verified => {
+                    println!("PASS connection adoption: browser/in-app continuity, superseded switch, pause/seek intent, disconnect");
+                    slint::quit_event_loop().unwrap();
+                    phase = 7;
                 }
                 _ => {}
             }

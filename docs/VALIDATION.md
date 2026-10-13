@@ -611,3 +611,26 @@ two. This is a failed test, not a reliability pass. It had decoded progress and
 recommendation refills without a reported reconnect failure. The corrected
 supervisor retained the nonzero exit and recorded failure stage `checking_exit`.
 A longer check is needed to gather the required complete-song coverage.
+
+### In-app connection continuity (2026-10-13)
+
+The account-control completion and manual-file import paths now stage the same
+guarded connection adoption used for external browser imports. They no longer
+unconditionally replace the active audio engine or reread the displayed account
+index separately from the adopted descriptor. The existing bounds on storage
+retries and identity revalidation still apply.
+
+The rebuilt native application passed the isolated connection regression with
+an additional in-app account request while silent audio was advancing. The check
+requires the same playback generation and an increasing position after both
+external and in-app same-index reconnects. Superseded identity switches, retained
+pause/seek intent and disconnect also passed. App tests (22), formatting and
+strict workspace Clippy passed. These fixtures do not prove real browser import
+or long-term session longevity. The already-running packaged listening test
+predates this change.
+
+Before that source change, the e9ac520 GitHub preview (PR merge 1d5dcc084eb32d5808a5f754689f1ddbcf29646d)
+passed CI checks and packaging. Its downloaded Windows ZIP passed payload,
+checksum and privacy verification and its executables passed the then-current
+isolated adoption regression. ZIP SHA-256:
+`6bf9bb5054c826dc78a8452c9aa416624c249a8e57f60cee4d78fb1ad2aed392`.
