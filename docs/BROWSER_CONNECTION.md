@@ -123,6 +123,14 @@ with similar symptoms. Treat that as related evidence, not proof that every
 Tide failure has the same cause. Do not change browser security settings or
 replace user profiles to work around it.
 
+The authorized Chrome comparison on 2026-10-13 passed the companion's real
+**Check local connection** check using the packaged MSVC receiver from
+`369f8a1`. Its actual unpacked extension ID was observed in Chrome and used for
+an exact allowed origin. Registration was scoped to Chrome using a separate
+host and policy, leaving the Mozilla registration intact. This proves a real
+Chromium-to-host round trip; it does not prove authenticated import, browser
+closure continuity or public extension installation. Those checks remain open.
+
 ### Required release checks
 
 - Default-browser launch on Windows without a browser-specific installation path.

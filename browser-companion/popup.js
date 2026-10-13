@@ -46,7 +46,7 @@ function render(reply) {
   const busy = reply && ["armed", "captured", "sending"].includes(reply.state);
   statusNode.textContent = reply && messages[reply.code] || "Companion unavailable. Reopen this popup to retry.";
   importButton.disabled = Boolean(busy);
-  importButton.textContent = reply && reply.state === "idle" && reply.code === "ready" ? "Import selected tab" : "Retry import";
+  importButton.textContent = reply && ["ready", "host_ready"].includes(reply.code) ? "Import selected tab" : "Retry import";
   cancelButton.disabled = !busy;
   checkHostButton.disabled = Boolean(busy);
 }
