@@ -19,6 +19,25 @@ investigation below is not a claim that every proposed feature is complete.
 
 ## Goal and scope
 
+### Deferred roadmap: synchronized listening rooms
+
+Plan a Jam-style feature for friends listening together while gaming, after
+playback reliability and convenient browser login are established. This is
+deferred work with no implementation or release date committed.
+
+Synchronized playback on each participant's device is a required part of the
+feature. A shared queue with audio playing only on the host does not meet its
+purpose and will not count as the completed feature.
+
+The initial design should use private invite-only rooms, a shared queue and
+host-controlled pause, skip and ordering. Each participant streams independently
+with their own account/session. A coordination service exchanges track IDs,
+queue state and timing; it must not receive account credentials or relay audio.
+Joining late, preloading, buffering, clock drift and reconnects require explicit
+recovery behavior and multi-device tests. Resource use must stay bounded and be
+measured alongside normal playback. Public rooms, chat and mobile clients are
+outside the proposed first version.
+
 Build a Windows-first native Rust desktop music player that leaves resources available for games. The primary experience is reliable music playback with media keys while the main window is minimized. Search, queue management, personal playlists and a compact player follow. Windows x64 is the initial target; other operating systems are later work.
 
 This plan is for a personal prototype first. YouTube playback and account integration are unofficial dependencies, so they must pass a feasibility milestone before the project promises them as reliable features. Local files and permitted test streams let us validate the native player independently.
