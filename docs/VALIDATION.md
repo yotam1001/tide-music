@@ -20,9 +20,11 @@ library check passed without another session import. Its supervisor nevertheless
 recorded failure after application completion without preserving the reason;
 that result is not rewritten as an overall pass, and final exit/cleanup for that
 run is unproven. The measurement harness now retains the process handle and
-records exit code and helper cleanup independently. An independent six-hour
-signed-in test is running on b019b14 using the existing session. Its result and
-weekly session lifetime remain unproven until observed.
+records exit code and helper cleanup independently. The independent six-hour signed-in test on b019b14 completed its playback
+assertions; the application reported PASS, while its supervisor failed after
+completion. Separate retained-handle observations confirmed normal exit and the
+end of observed helpers. See the six-hour observation below for that distinction.
+Weekly session lifetime remains unproven.
 
 The focused UI harness also passes its eleven control/focus/accessibility checks
 at the new 650 by 420 minimum. Captured minimum and simulated 200% renders keep
@@ -590,3 +592,13 @@ parents, which the installer now creates without rewriting existing parents.
 The registration succeeded after that correction. Mocked registry regressions
 exercise missing parents and rollback. The extension has not yet been loaded or
 used for an authenticated browser import, so real browser login remains pending.
+
+
+The six-hour b019b14 process-tree samples (first five discarded) have working-set
+median/p95 79.32/89.43 MiB and peak 457.54 MiB; private bytes median/p95
+53.73/63.93 MiB and peak 411.18 MiB. CPU uses one logical core as its denominator:
+median 0%, p95 4.41%, peak 417.836% during parallel helper work. These peaks
+matter for gaming and are not represented by settled app-only memory.
+For the 104 individual decoded-start records, sampled request-to-audio delay is
+median 500 ms, p95 751 ms and maximum 5,263 ms, with 250 ms sampling. This combines
+cold start, natural transitions and test controls, not a skip-only latency metric.
