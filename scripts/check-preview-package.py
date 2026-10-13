@@ -11,6 +11,10 @@ PAYLOAD = {
     "START_HERE.md", "docs/ACCOUNT_SETUP.md", "scripts/setup-runtime.ps1",
     "scripts/setup-provider.ps1", "helpers/youtube_music.py", "helpers/requirements.txt",
 }
+BROWSER_HOST_PAYLOAD = {
+    "tide-session-host.exe", "scripts/setup-browser-companion.ps1",
+    "docs/BROWSER_COMPANION.md",
+}
 
 # Executables concatenate static strings and contain arbitrary binary bytes.
 # Avoid interpreting the SVG property "mask-..." as an API key or consuming
@@ -24,10 +28,11 @@ BINARY_PATTERNS = [
 ]
 
 
-def check(path):
+def check(path, with_browser_host=False):
+    expected_payload = PAYLOAD | (BROWSER_HOST_PAYLOAD if with_browser_host else set())
     with zipfile.ZipFile(path) as archive:
         names = archive.namelist()
-        if len(names) != len(set(names)) or set(names) != PAYLOAD | {"SHA256SUMS.txt"}:
+        if len(names) != len(set(names)) or set(names) != expected_payload | {"SHA256SUMS.txt"}:
             raise ValueError("Archive contains unexpected, missing or duplicate files")
         manifest = {}
         for line in archive.read("SHA256SUMS.txt").decode("utf-8-sig").splitlines():
@@ -35,7 +40,7 @@ def check(path):
             if not match or match[2] in manifest:
                 raise ValueError("Unsupported or duplicate checksum entry")
             manifest[match[2]] = match[1]
-        if set(manifest) != PAYLOAD:
+        if set(manifest) != expected_payload:
             raise ValueError("Checksum manifest does not cover the exact payload")
         for name in names:
             data = archive.read(name)
@@ -51,9 +56,10 @@ def check(path):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("archive")
+    parser.add_argument("--with-browser-host", action="store_true")
     args = parser.parse_args()
     try:
-        check(args.archive)
+        check(args.archive, args.with_browser_host)
     except (ValueError, zipfile.BadZipFile, OSError) as error:
         parser.exit(1, f"{error}\n")
 

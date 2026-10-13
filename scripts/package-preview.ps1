@@ -19,6 +19,7 @@ param(
     [string]$DependenciesNotice,
     [Parameter(Mandatory = $true)]
     [string]$StartHere,
+    [string]$BrowserHostExecutable,
     [string]$Destination
 )
 
@@ -77,6 +78,14 @@ $taskFiles = @(
     @{ Source = $DependenciesNotice; Relative = 'DEPENDENCIES.md' },
     @{ Source = $StartHere; Relative = 'START_HERE.md' }
 ) | Sort-Object -Property Relative
+if (-not [string]::IsNullOrWhiteSpace($BrowserHostExecutable)) {
+    $taskFiles += @(
+        @{ Source = $BrowserHostExecutable; Relative = 'tide-session-host.exe' },
+        @{ Source = 'scripts/setup-browser-companion.ps1'; Relative = 'scripts/setup-browser-companion.ps1' },
+        @{ Source = 'browser-companion/README.md'; Relative = 'docs/BROWSER_COMPANION.md' }
+    )
+    $taskFiles = $taskFiles | Sort-Object -Property Relative
+}
 
 # Validate the complete input set before creating any package output.
 foreach ($taskFile in $taskFiles) {

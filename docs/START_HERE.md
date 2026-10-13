@@ -44,6 +44,14 @@ Credentials remain on your computer, encrypted for your Windows user. Never
 upload cookies, session files or your browser profile to GitHub or send them in
 chat. Premium playback depends on the supplied account and service compatibility.
 
+Some previews also include `tide-session-host.exe` and a separate browser
+companion prototype artifact. The receiver uses the same optional Python helper
+installed above. It is not registered or installed automatically. Read
+`docs/BROWSER_COMPANION.md` in those previews before preparing native-host
+manifests. The companion still requires real browser validation and signing;
+it is not yet the normal Connect flow. Generated native-host manifests contain
+local installation paths and must not be uploaded to GitHub.
+
 ## Updates and removal
 
 Close Tide before replacing its files. Install each preview into a separate

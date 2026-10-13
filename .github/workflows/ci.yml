@@ -30,7 +30,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Build preview with remapped development paths
         shell: pwsh
-        run: ./scripts/build-preview.ps1 -StaticMsvcRuntime
+        run: ./scripts/build-preview.ps1 -StaticMsvcRuntime -IncludeBrowserHost
       - name: Generate dependency notices
         shell: pwsh
         run: |
@@ -42,12 +42,24 @@ jobs:
       - name: Package and verify preview
         shell: pwsh
         run: |
-          ./scripts/package-preview.ps1 -Executable target/x86_64-pc-windows-msvc/release/tide-music.exe -DependenciesNotice .local/DEPENDENCIES.md -StartHere docs/START_HERE.md -Destination dist/tide-windows-preview
-          python scripts/check-preview-package.py dist/tide-windows-preview.zip
+          ./scripts/package-preview.ps1 -Executable target/x86_64-pc-windows-msvc/release/tide-music.exe -BrowserHostExecutable target/x86_64-pc-windows-msvc/release/tide-session-host.exe -DependenciesNotice .local/DEPENDENCIES.md -StartHere docs/START_HERE.md -Destination dist/tide-windows-preview
+          python scripts/check-preview-package.py dist/tide-windows-preview.zip --with-browser-host
           if ($LASTEXITCODE -ne 0) { throw 'Package validation failed' }
+          python scripts/package-browser-companion.py --family firefox
+          if ($LASTEXITCODE -ne 0) { throw 'Firefox companion packaging failed' }
+          python scripts/package-browser-companion.py --family chromium
+          if ($LASTEXITCODE -ne 0) { throw 'Chromium companion packaging failed' }
       - uses: actions/upload-artifact@v4
         with:
           name: tide-windows-preview-${{ github.sha }}
           path: dist/tide-windows-preview.zip
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tide-browser-companion-prototypes-${{ github.sha }}
+          path: |
+            dist/tide-browser-firefox/
+            dist/tide-browser-chromium/
           if-no-files-found: error
           retention-days: 14
