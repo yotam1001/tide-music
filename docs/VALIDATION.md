@@ -1,5 +1,20 @@
 # Prototype validation
 
+## Restore repaint regression (2026-10-13)
+
+Restoring the native window now invalidates the full scene through an identical
+background layer. This handles Windows discarding software-rendered contents
+while the reused buffer and window dimensions remain unchanged. There is no
+continuous repaint, resize, color change or extra image buffer in this fix.
+
+`cargo test -p tide-music --test restore_repaint --release --locked` passes:
+the actual AppWindow repaints a deliberately cleared reused buffer in eight
+restore cycles across dark and light themes, with exact pixel comparison and
+unchanged dimensions. Formatting, strict app all-target Clippy and the release
+build pass. The rebuilt GNU application also remained fully drawn through two
+native title-bar minimize/restore cycles without resizing. This is focused
+restore coverage, not a claim that every display-driver issue is resolved.
+
 ## Current build and sustained playback (2026-10-13)
 
 Revision b019b14 passes both Windows CI jobs and a fresh public-clone privacy

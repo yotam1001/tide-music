@@ -885,6 +885,7 @@ component PlayerBar inherits Rectangle {
     }
 }
 export component AppWindow inherits Window {
+    private property <bool> restore-repaint: false;
     in-out property <int> account-index;
     callback switch-account(int);
     callback connect-account();
@@ -994,6 +995,20 @@ export component AppWindow inherits Window {
     changed queue-open => { if root.queue-open && !root.wide { app-focus.focus(); } }
     changed wide => { if !root.wide && root.queue-open { app-focus.focus(); } }
     changed light-mode => { Palette.color-scheme = root.light-mode ? light : dark; }
+
+    // Windows may discard the software-rendered window contents on minimize
+    // without reporting a zero-sized surface. A redraw alone then has no dirty
+    // pixels to present. Toggle an identical, full-window background on restore
+    // to invalidate the entire scene, without resizing or changing its colors.
+    changed minimized => {
+        if !root.minimized { root.restore-repaint = !root.restore-repaint; }
+    }
+    Rectangle {
+        width: root.width;
+        height: root.height;
+        background: root.background;
+        visible: root.restore-repaint;
+    }
 
     app-focus := FocusScope {
         key-pressed(event) => {
