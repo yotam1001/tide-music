@@ -1775,13 +1775,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         });
     }
-    ui.on_open_account_help(|| {
-        let zen = std::env::var_os("TIDE_ZEN_EXE").map(PathBuf::from).or_else(|| std::env::var_os("ProgramFiles").map(|p| PathBuf::from(p).join("Zen Browser/zen.exe"))).unwrap_or_else(|| PathBuf::from("zen.exe"));
-        let mut command=std::process::Command::new(zen);
-        command.arg("-new-tab").arg("https://github.com/yotam1001/tide-music/blob/codex/account-library-sync/docs/ACCOUNT_SETUP.md");
-        #[cfg(windows)] { use std::os::windows::process::CommandExt; command.creation_flags(0x08000000); }
-        let _=command.spawn();
-    });
+    {
+        let weak = ui.as_weak();
+        ui.on_open_account_help(move || {
+            if let Err(error) = tide_windows::open_web_page(
+                "https://github.com/yotam1001/tide-music/blob/codex/account-library-sync/docs/ACCOUNT_SETUP.md",
+            ) {
+                if let Some(u) = weak.upgrade() {
+                    u.set_account_status(error.into());
+                }
+            }
+        });
+    }
     {
         let state = state.clone();
         let weak = ui.as_weak();
@@ -3206,8 +3211,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(worker) = s.search_worker.take() {
         let _ = worker.join();
     }
-    if let Some(e) = &s.engine {
-        let _ = e.send(PlaybackCommand::Shutdown);
+    // UI callbacks and async pickers can retain State after the event loop ends.
+    // Join the playback worker now, rather than waiting for the last State owner
+    // to disappear, so native helpers finish before the application returns.
+    if let Some(engine) = s.engine.take() {
+        drop(engine);
     }
     result?;
     if listening

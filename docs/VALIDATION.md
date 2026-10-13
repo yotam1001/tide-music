@@ -507,3 +507,11 @@ replay with explicit process identity and live-state checks passed 15 natural
 transitions, exit code zero, and no observed remaining helpers. The revised
 measurement also rejected a deliberately surviving test child. This replay does
 not establish the cause of the original failure or replace live service testing.
+
+The subsequent shutdown change removes the playback handle from shared UI state
+and joins its worker before returning from the application, even when callbacks
+or an async picker retain that state. Eighteen app tests, formatting and strict
+app Clippy passed. The rebuilt debug app passed automatic EOF and media controls
+with a picker open, duplicate-picker suppression, cancellation/reopening, and
+normal close with the picker still open; the owned app and helpers ended.
+This shutdown-only change is not included in the already-running six-hour binary.

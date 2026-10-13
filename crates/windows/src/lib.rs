@@ -8,6 +8,42 @@
 
 use std::ffi::c_void;
 
+/// Open a web page with Windows' registered default browser, without a shell
+/// command or browser installation-path assumptions.
+#[cfg(windows)]
+pub fn open_web_page(url: &str) -> Result<(), String> {
+    use windows::core::{w, PCWSTR};
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+    if !url.starts_with("https://")
+        || url.len() > 2048
+        || url.chars().any(|c| c.is_control() || c.is_whitespace())
+    {
+        return Err("Only HTTPS web pages can be opened".into());
+    }
+    let url: Vec<u16> = url.encode_utf16().chain(Some(0)).collect();
+    let result = unsafe {
+        ShellExecuteW(
+            None,
+            w!("open"),
+            PCWSTR(url.as_ptr()),
+            PCWSTR::null(),
+            PCWSTR::null(),
+            SW_SHOWNORMAL,
+        )
+    };
+    if result.0 as isize <= 32 {
+        Err("Could not open your default browser. Check Windows default apps settings.".into())
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(not(windows))]
+pub fn open_web_page(_url: &str) -> Result<(), String> {
+    Err("Browser integration is currently available on Windows".into())
+}
+
 /// Current monitor work area, excluding the taskbar. Defer fitting while minimized.
 #[cfg(windows)]
 pub fn window_work_area(hwnd: *mut c_void) -> Result<[i32; 4], String> {

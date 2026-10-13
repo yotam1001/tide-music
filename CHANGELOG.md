@@ -12,6 +12,9 @@ Tide is a Windows preview. A stable release is pending the checks in
 - Prepared next-song handoffs and retries for temporary content failures.
 - Windows media controls and asynchronous file selection that keeps playback
   and queue processing running.
+- Account help opens in the Windows default browser; automatic cross-browser
+  session transfer remains pending.
+- Application shutdown explicitly joins the playback worker before returning.
 - Window fitting for changes in display scale and player mode.
 - Automated Windows preview packaging with checksums and dependency notices.
 

@@ -16,6 +16,12 @@ Python runs only while a library request is active and exits afterward. The nati
 
 ## Import a session locally
 
+Manual request-header import can use your preferred browser; Zen is not required
+for that path. Account help opens in the Windows default browser. Automatic
+session transfer across browser families is still pending the work described in
+[browser connection requirements](BROWSER_CONNECTION.md); opening a browser alone
+does not connect its account to Tide.
+
 For the most isolated session, use the manual request-header import below from a
 private Zen window signed into your existing Google account. Select the intended
 YouTube Music identity, copy a successful request, then close the private window
