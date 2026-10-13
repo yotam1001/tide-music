@@ -1,5 +1,34 @@
 # Prototype validation
 
+## Current build and sustained playback (2026-10-13)
+
+Revision b019b14 passes both Windows CI jobs and a fresh public-clone privacy
+audit. Its portable ZIP passes the payload allowlist, checksums and privacy scan.
+A fresh extraction outside the checkout, runtime/helper setup and five-minute
+muted local test passed fifteen natural transitions, pause/resume, skip and seek.
+The seventeen decoded starts had a longest sampled delay of 501 ms. The harness
+recorded exit code zero and confirmed observed helpers ended. Settled process-tree
+working set was median 81.82 MiB, p95 81.96, peak 83.05; private bytes median
+47.04 MiB, p95 47.16, peak 48.32. This excludes YouTube network extraction.
+
+The preceding 8c86152 one-hour application reported success with fourteen natural
+transitions, sixteen decoded starts, seventeen persisted native session updates,
+recommendation refills and controls. Longest request delay, including cold start,
+was 4006 ms. Settled working set was median 70.79 MiB, p95 77.74, peak 404.59;
+private bytes median 53.30 MiB, p95 61.28, peak 345.28. A separate post-run
+library check passed without another session import. Its supervisor nevertheless
+recorded failure after application completion without preserving the reason;
+that result is not rewritten as an overall pass, and final exit/cleanup for that
+run is unproven. The measurement harness now retains the process handle and
+records exit code and helper cleanup independently. An independent six-hour
+signed-in test is running on b019b14 using the existing session. Its result and
+weekly session lifetime remain unproven until observed.
+
+The focused UI harness also passes its eleven control/focus/accessibility checks
+at the new 650 by 420 minimum. Captured minimum and simulated 200% renders keep
+the transport visible; scrolling reaches the lower Account settings. These are
+synthetic checks, not physical display or gaming-performance verification.
+
 ## Native window sizing (2026-10-13)
 
 An owned, muted production fixture reproduced a native DPI resize that grew the
