@@ -556,3 +556,17 @@ the exact exception was not retained. An independent observer, attached after
 the run began, separately retained process handles and confirmed root exit code
 0 and all 243 helpers it observed ended. That observer does not cover helpers
 that ended before it attached. No clean overall supervisor PASS is claimed.
+
+
+A separate post-run library check, built from 5677f50, subsequently returned
+PASS using the saved session without another header import. This supports session
+continuity beyond the six-hour playback run; it does not establish weekly
+longevity. The original supervisor failure remains recorded.
+
+The resource sampler now retains handles for observed process instances instead
+of reopening PIDs during cleanup. Temporary-process regressions check both a
+successful parent/child shutdown and a genuinely surviving helper, which must
+fail. Argument paths with spaces are covered. Sampling races are counted, and
+failure stage/type/line are recorded without copying process arguments or account
+data. Helpers whose entire lifetime occurs between samples remain unobserved;
+cleanup evidence applies only to retained instances.
