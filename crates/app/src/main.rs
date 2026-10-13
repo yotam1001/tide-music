@@ -417,12 +417,15 @@ fn content_retry_request(request: &tide_provider::Request) -> Option<tide_provid
 
 fn sync_playback_cookies(s: &mut State) -> bool {
     if s.library_worker.is_some()
+        || s.pending_saved_connection.is_some()
         || s.cookie_update_retry_at
             .is_some_and(|at| Instant::now() < at)
     {
         return false;
     }
-    let (Some(provider), Some(engine)) = (&s.provider, &s.engine) else {
+    let (Some(provider), Some(engine), Some(connection)) =
+        (&s.provider, &s.engine, &s.saved_connection)
+    else {
         return false;
     };
     if s.pending_cookie_updates.is_empty() {
@@ -459,7 +462,10 @@ fn sync_playback_cookies(s: &mut State) -> bool {
         }
     }
     if let Some(lease) = s.cookie_lease.as_ref().filter(|_| refresh_needed) {
-        if provider.refresh_cookie_lease(lease).is_err() {
+        if provider
+            .refresh_cookie_lease_for_connection(lease, connection)
+            .is_err()
+        {
             s.cookie_update_retry_at = Some(Instant::now() + Duration::from_secs(2));
             return session_updated;
         }

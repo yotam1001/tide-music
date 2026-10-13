@@ -634,3 +634,20 @@ passed CI checks and packaging. Its downloaded Windows ZIP passed payload,
 checksum and privacy verification and its executables passed the then-current
 isolated adoption regression. ZIP SHA-256:
 `6bf9bb5054c826dc78a8452c9aa416624c249a8e57f60cee4d78fb1ad2aed392`.
+
+The periodic playback-cookie sync now also uses the exact saved-connection lease
+refresh guard and defers updates during pending adoption. This closes a remaining
+unguarded refresh path where another import could change profiles between cookie
+persistence and lease refresh. The provider regression for stale playback leases
+and superseded verified candidates passes, as do formatting and strict app
+Clippy. Live longevity remains a separate verification requirement.
+
+The 1,200-second signed-in check of the 0e0f674 package also ended with
+insufficient coverage (exit 1). Its records show four natural transitions, six
+decoded starts, six recommendation refills and seven persisted session updates,
+without a reported account or playback failure. The required five natural
+transitions were not reached before the time limit. Preserve it as a failed
+check; do not lower the requirement or infer long-term reliability from the
+absence of a reported error. Its supervisor snapshot predates the nonzero-exit
+cleanup correction, so its initial `helpers_ended: false` is not a completed
+cleanup evaluation. A longer run of the updated source is the next live check.
