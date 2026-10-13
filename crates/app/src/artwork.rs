@@ -8,7 +8,7 @@ use std::{
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc::{self, Receiver, SyncSender},
-        Arc,
+        Arc, Condvar, Mutex,
     },
     time::{Duration, Instant},
 };
@@ -24,6 +24,50 @@ const NEGATIVE_TTL: Duration = Duration::from_secs(60);
 struct Request {
     url: String,
     generation: u64,
+}
+
+// One background fetch at a time. The current song jumps ahead of list covers.
+#[derive(Default)]
+struct RequestQueue {
+    items: Mutex<VecDeque<Request>>,
+    wake: Condvar,
+}
+
+impl RequestQueue {
+    fn enqueue(&self, request: Request, priority: bool) -> bool {
+        let mut items = self.items.lock().unwrap();
+        if let Some(index) = items.iter().position(|item| item.url == request.url) {
+            if priority {
+                let existing = items.remove(index).unwrap();
+                items.push_front(existing);
+            }
+            return true;
+        }
+        // Reserve one slot for the playing song even during rapid scrolling.
+        if items.len() >= PENDING_CAPACITY + usize::from(priority) {
+            return false;
+        }
+        if priority {
+            items.push_front(request);
+        } else {
+            items.push_back(request);
+        }
+        self.wake.notify_one();
+        true
+    }
+
+    fn next(&self, stopped: &AtomicBool) -> Option<Request> {
+        let mut items = self.items.lock().unwrap();
+        loop {
+            if stopped.load(Ordering::Acquire) {
+                return None;
+            }
+            if let Some(request) = items.pop_front() {
+                return Some(request);
+            }
+            items = self.wake.wait(items).unwrap();
+        }
+    }
 }
 
 struct Completion {
@@ -45,7 +89,7 @@ struct Entry {
 pub struct ArtworkCache {
     entries: VecDeque<Entry>,
     pending: HashSet<String>,
-    requests: Option<SyncSender<Request>>,
+    requests: Option<Arc<RequestQueue>>,
     results: Receiver<Completion>,
     generation: Arc<AtomicU64>,
     stopped: Arc<AtomicBool>,
@@ -66,7 +110,8 @@ impl ArtworkCache {
     }
 
     pub fn new() -> Self {
-        let (requests, request_rx) = mpsc::sync_channel(PENDING_CAPACITY);
+        let requests = Arc::new(RequestQueue::default());
+        let request_rx = requests.clone();
         let (result_tx, results) = mpsc::sync_channel(PENDING_CAPACITY);
         let generation = Arc::new(AtomicU64::new(0));
         let stopped = Arc::new(AtomicBool::new(false));
@@ -91,6 +136,14 @@ impl ArtworkCache {
     /// Return a shared thumbnail or an empty image (the UI draws its placeholder).
     /// Missing entries enqueue work without blocking, and duplicate requests coalesce.
     pub fn get_or_request(&mut self, url: &str) -> Image {
+        self.request(url, false)
+    }
+
+    pub fn get_or_request_current(&mut self, url: &str) -> Image {
+        self.request(url, true)
+    }
+
+    fn request(&mut self, url: &str, priority: bool) -> Image {
         // Check the cache before reparsing already validated URLs on every refresh.
         if let Some(index) = self.entries.iter().position(|entry| entry.url == url) {
             let entry = self.entries.remove(index).unwrap();
@@ -100,7 +153,19 @@ impl ArtworkCache {
                 return image;
             }
         }
-        if self.pending.len() >= PENDING_CAPACITY || self.pending.contains(url) || !allowed_url(url)
+        if priority && self.pending.contains(url) {
+            if let Some(requests) = &self.requests {
+                let mut items = requests.items.lock().unwrap();
+                if let Some(index) = items.iter().position(|item| item.url == url) {
+                    let request = items.remove(index).unwrap();
+                    items.push_front(request);
+                }
+            }
+            return Image::default();
+        }
+        if !allowed_url(url)
+            || (!priority && (self.pending.len() >= PENDING_CAPACITY || self.pending.contains(url)))
+            || (priority && self.pending.len() > PENDING_CAPACITY && !self.pending.contains(url))
         {
             return Image::default();
         }
@@ -111,7 +176,7 @@ impl ArtworkCache {
         if self
             .requests
             .as_ref()
-            .is_some_and(|sender| sender.try_send(request).is_ok())
+            .is_some_and(|sender| sender.enqueue(request, priority))
         {
             self.pending.insert(url.to_owned());
         }
@@ -141,6 +206,9 @@ impl ArtworkCache {
         self.generation.fetch_add(1, Ordering::AcqRel);
         self.entries.clear();
         self.pending.clear();
+        if let Some(requests) = &self.requests {
+            requests.items.lock().unwrap().clear();
+        }
         while self.results.try_recv().is_ok() {}
     }
 
@@ -162,7 +230,10 @@ impl ArtworkCache {
 impl Drop for ArtworkCache {
     fn drop(&mut self) {
         self.stopped.store(true, Ordering::Release);
-        self.requests.take();
+        if let Some(requests) = self.requests.take() {
+            let _guard = requests.items.lock().unwrap();
+            requests.wake.notify_one();
+        }
     }
 }
 
@@ -192,7 +263,7 @@ fn allowed_url(value: &str) -> bool {
 }
 
 fn worker(
-    requests: Receiver<Request>,
+    requests: Arc<RequestQueue>,
     results: SyncSender<Completion>,
     generation: Arc<AtomicU64>,
     stopped: Arc<AtomicBool>,
@@ -208,7 +279,7 @@ fn worker(
         .max_response_header_size(16 * 1024)
         .build();
     let agent: ureq::Agent = config.into();
-    while let Ok(request) = requests.recv() {
+    while let Some(request) = requests.next(&stopped) {
         if stopped.load(Ordering::Acquire) {
             break;
         }
@@ -382,19 +453,45 @@ mod tests {
     #[test]
     fn requests_coalesce_and_the_pending_queue_stays_bounded() {
         let mut cache = offline_cache();
-        let (sender, receiver) = mpsc::sync_channel(PENDING_CAPACITY);
-        cache.requests = Some(sender);
+        let requests = Arc::new(RequestQueue::default());
+        cache.requests = Some(requests.clone());
         for index in 0..PENDING_CAPACITY + 5 {
             let url = format!("https://i.ytimg.com/{index}");
             cache.get_or_request(&url);
             cache.get_or_request(&url);
         }
         assert_eq!(cache.pending.len(), PENDING_CAPACITY);
-        assert_eq!(receiver.try_iter().count(), PENDING_CAPACITY);
+        assert_eq!(requests.items.lock().unwrap().len(), PENDING_CAPACITY);
         cache.insert("https://i.ytimg.com/failure".into(), None);
         cache.pending.clear();
         cache.get_or_request("https://i.ytimg.com/failure");
-        assert!(receiver.try_recv().is_err());
+        assert_eq!(requests.items.lock().unwrap().len(), PENDING_CAPACITY);
+    }
+
+    #[test]
+    fn current_cover_is_promoted_ahead_of_scrolling_without_unbounding_work() {
+        let mut cache = offline_cache();
+        let requests = Arc::new(RequestQueue::default());
+        cache.requests = Some(requests.clone());
+        for index in 0..PENDING_CAPACITY {
+            cache.get_or_request(&format!("https://i.ytimg.com/{index}"));
+        }
+        cache.get_or_request_current("https://i.ytimg.com/20");
+        assert_eq!(
+            requests.items.lock().unwrap().front().unwrap().url,
+            "https://i.ytimg.com/20"
+        );
+        assert_eq!(requests.items.lock().unwrap().len(), PENDING_CAPACITY);
+        cache.get_or_request_current("https://i.ytimg.com/playing");
+        assert_eq!(
+            requests.items.lock().unwrap().front().unwrap().url,
+            "https://i.ytimg.com/playing"
+        );
+        assert_eq!(cache.pending.len(), PENDING_CAPACITY + 1);
+        cache.get_or_request_current("https://i.ytimg.com/another");
+        assert_eq!(cache.pending.len(), PENDING_CAPACITY + 1);
+        cache.clear();
+        assert!(requests.items.lock().unwrap().is_empty());
     }
 
     #[test]

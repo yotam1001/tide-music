@@ -626,6 +626,8 @@ component QueueItem inherits Rectangle {
 }
 
 component QueueDrawer inherits Rectangle {
+    in-out property <length> artwork-scroll-y;
+    in-out property <length> artwork-view-height;
     in property <bool> enabled: true;
     in property <[TrackRow]> rows;
     in property <int> current-index;
@@ -669,7 +671,7 @@ component QueueDrawer inherits Rectangle {
         root.drag-revision += 1;
     }
     changed rows => { root.cancel-drag(); }
-    changed current-index => { root.cancel-drag(); }
+    changed current-index => { root.cancel-drag(); root.artwork-scroll-y = 0px; }
     changed visible => { if !root.visible { root.cancel-drag(); } }
     background: root.light-mode ? #eee5db : #15181d;
     border-width: 1px;
@@ -722,6 +724,8 @@ component QueueDrawer inherits Rectangle {
                 }
             }
             queue-list := ListView {
+                content-y <=> root.artwork-scroll-y;
+                changed visible-height => { root.artwork-view-height = self.visible-height; }
                 width: parent.width;
                 height: parent.height;
                 accessible-label: "Playback queue including manual choices and autoplay";
@@ -885,6 +889,16 @@ component PlayerBar inherits Rectangle {
     }
 }
 export component AppWindow inherits Window {
+    in-out property <length> library-artwork-y;
+    in-out property <length> library-artwork-height;
+    in-out property <length> home-artwork-y;
+    in-out property <length> home-artwork-height;
+    in-out property <length> queue-artwork-y;
+    in-out property <length> queue-artwork-height;
+    in-out property <length> detail-artwork-y;
+    in-out property <length> detail-artwork-height;
+    in-out property <length> search-artwork-y;
+    in-out property <length> search-artwork-height;
     private property <bool> restore-repaint: false;
     in-out property <int> account-index;
     callback switch-account(int);
@@ -973,7 +987,7 @@ export component AppWindow inherits Window {
     private property <color> secondary: root.light-mode ? #716773 : #a1a5ae;
     private property <color> surface: root.light-mode ? #f9f4ee : #191c22;
     private property <color> outline: root.light-mode ? #ded0c4 : #292e37;
-    private property <image> current-artwork: root.track-artwork != @image-url("") ? root.track-artwork : root.current-index >= 0 && root.current-index < root.rows.length ? root.rows[root.current-index].artwork : @image-url("");
+    private property <image> current-artwork: root.track-artwork;
     private property <bool> wide: true;
     private property <bool> advanced-open: false;
     private property <bool> browsing-enabled: !root.settings-open && !(root.queue-open && !root.wide);
@@ -1091,6 +1105,8 @@ export component AppWindow inherits Window {
                                     Rectangle { horizontal-stretch: 1; }
                                 }
                                 if root.detail-rows.length > 0 : ListView {
+                                    content-y <=> root.detail-artwork-y;
+                                    changed visible-height => { root.detail-artwork-height = self.visible-height; }
                                     vertical-stretch: 1;
                                     accessible-label: "Tracks in " + root.detail-title;
                                     for row[index] in root.detail-rows : SongRow { enabled: root.browsing-enabled; track: row; index: index; light-mode: root.light-mode; select => { root.select-detail-track(index); } queue(next) => { root.queue-detail-track(index, next); } radio => { root.start-track-radio(1, index); } }
@@ -1107,6 +1123,8 @@ export component AppWindow inherits Window {
                                     LibraryButton { width: 62px; light-mode: root.light-mode; enabled: root.browsing-enabled; caption: "Back"; label: "Close search results"; clicked => { root.close-search(); } }
                                 }
                                 if root.search-rows.length > 0 : ListView {
+                                    content-y <=> root.search-artwork-y;
+                                    changed visible-height => { root.search-artwork-height = self.visible-height; }
                                     vertical-stretch: 1;
                                     accessible-label: "Music search results";
                                     for row[index] in root.search-rows : SongRow { enabled: root.browsing-enabled; track: row; index: index; light-mode: root.light-mode; select => { root.select-search-track(index); } queue(next) => { root.queue-search-track(index, next); } radio => { root.start-track-radio(2, index); } }
@@ -1123,6 +1141,8 @@ export component AppWindow inherits Window {
                                 }
                                 LibraryEntry { title: "Liked Songs"; subtitle: "Your favorites in one place"; light-mode: root.light-mode; enabled: root.browsing-enabled && root.account-connected && !root.account-busy; open => { root.play-liked(); } }
                                 if root.library-playlists.length > 0 : ListView {
+                                    content-y <=> root.library-artwork-y;
+                                    changed visible-height => { root.library-artwork-height = self.visible-height; }
                                     vertical-stretch: 1;
                                     accessible-label: "Your saved playlists";
                                     for row[index] in root.library-playlists : LibraryEntry { title: row.title; subtitle: row.subtitle; artwork: row.artwork; light-mode: root.light-mode; enabled: root.browsing-enabled && root.account-connected && !root.account-busy; open => { root.select-library-playlist(index); } }
@@ -1140,6 +1160,8 @@ export component AppWindow inherits Window {
                                     LibraryButton { width: 78px; light-mode: root.light-mode; caption: "Refresh"; label: "Refresh your recommendations"; enabled: root.browsing-enabled && root.account-connected && !root.account-busy; clicked => { root.refresh-recommendations(); } }
                                 }
                                 if root.recommendations.length > 0 : ListView {
+                                    content-y <=> root.home-artwork-y;
+                                    changed visible-height => { root.home-artwork-height = self.visible-height; }
                                     vertical-stretch: 1;
                                     accessible-label: "Home recommendations";
                                     for row[index] in root.recommendations : VerticalLayout {
@@ -1153,6 +1175,8 @@ export component AppWindow inherits Window {
                         }
                     }
                     if root.queue-open && root.wide : QueueDrawer {
+                        artwork-scroll-y <=> root.queue-artwork-y;
+                        artwork-view-height <=> root.queue-artwork-height;
                         enabled: !root.settings-open;
                         width: 340px;
                         rows: root.rows;
@@ -1177,6 +1201,8 @@ export component AppWindow inherits Window {
                     height: parent.height;
                     Rectangle { x: 0px; y: 0px; width: max(0px, parent.width - 340px); height: parent.height; background: #00000060; TouchArea { clicked => { root.queue-open = false; } } }
                     QueueDrawer {
+                        artwork-scroll-y <=> root.queue-artwork-y;
+                        artwork-view-height <=> root.queue-artwork-height;
                         enabled: !root.settings-open;
                         x: max(0px, parent.width - 340px);
                         width: 340px;

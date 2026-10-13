@@ -744,3 +744,21 @@ This closes the normal authenticated GUI-close check above for this tested case;
 it does not prove every close race, physical media-key mapping, game-focus
 behavior or monitor migration. The existing isolated close/race regressions
 remain separate evidence. Real browser import and distribution are still open.
+
+### Progressive artwork and song changes (2026-10-13)
+
+Artwork requests follow the scrolled viewport in Home, Library, playlist details,
+search and Queue, replacing the first-12 and current-plus/minus-eight limits.
+Offscreen model images are released, with two rows of overscan and a maximum
+40-image viewport window. Requests run serially on a background worker; the
+current song is promoted ahead of queued list thumbnails. Requests coalesce and
+remain bounded, including one reserved current-song slot. The memory-only cache
+still holds at most 48 thumbnails of 96 by 96 RGB pixels (about 1.27 MiB of raw
+pixels, excluding decoding and renderer overhead); no disk artwork cache is added.
+
+The song-change software-renderer regression keeps stale row artwork present,
+clears the current cover while the next song loads, then displays the new cover.
+It passes without retaining either previous cover. Tests also cover viewport
+scrolling beyond the former cap, bounded requests and priority promotion, stale
+account completions, and stable model identity during row updates. This evidence
+does not measure live network image latency or total application memory.

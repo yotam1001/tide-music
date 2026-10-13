@@ -1,6 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 use serde::{Deserialize, Serialize};
-use slint::{ComponentHandle, ModelRc, VecModel};
+use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use std::{
     cell::{Cell, RefCell},
     path::{Path, PathBuf},
@@ -13,6 +13,7 @@ use std::{
 };
 use tide_core::{PlaybackCommand, Queue, Track};
 mod artwork;
+mod artwork_view;
 mod connection;
 mod listening;
 mod radio;
@@ -250,6 +251,8 @@ fn request_library(
     if let LibraryAction::Preview { title } = &action {
         s.detail_tracks.clear();
         u.set_detail_title(title.clone().into());
+        u.set_detail_artwork_y(0.0);
+        u.set_detail_artwork_y(0.0);
         u.set_detail_open(true);
         u.set_detail_busy(true);
         u.set_search_open(false);
@@ -713,6 +716,18 @@ fn configure_account_playback(s: &mut State, u: &AppWindow) -> bool {
 
 fn refresh_library_models(s: &State, u: &AppWindow) {
     let mut artwork = s.artwork.borrow_mut();
+    let playlist_images = artwork_view::visible_range(
+        u.get_library_artwork_y(),
+        u.get_library_artwork_height(),
+        s.library_playlists.iter().map(|_| 76.0),
+    );
+    let home_images = artwork_view::visible_range(
+        u.get_home_artwork_y(),
+        u.get_home_artwork_height(),
+        s.recommendations
+            .iter()
+            .map(|p| if p.kind == "song" { 66.0 } else { 76.0 }),
+    );
     let playlists: Vec<PlaylistRow> = s
         .library_playlists
         .iter()
@@ -725,7 +740,7 @@ fn refresh_library_models(s: &State, u: &AppWindow) {
                 .artwork_url
                 .as_deref()
                 .filter(|_| {
-                    index < 12
+                    playlist_images.contains(&index)
                         && u.get_library_open()
                         && !u.get_detail_open()
                         && !u.get_search_open()
@@ -734,7 +749,7 @@ fn refresh_library_models(s: &State, u: &AppWindow) {
                 .unwrap_or_default(),
         })
         .collect();
-    u.set_library_playlists(ModelRc::new(VecModel::from(playlists)));
+    u.set_library_playlists(update_model(u.get_library_playlists(), playlists));
     let cards: Vec<RecommendationRow> = s
         .recommendations
         .iter()
@@ -749,7 +764,7 @@ fn refresh_library_models(s: &State, u: &AppWindow) {
                 .artwork_url
                 .as_deref()
                 .filter(|_| {
-                    index < 12
+                    home_images.contains(&index)
                         && !u.get_library_open()
                         && !u.get_detail_open()
                         && !u.get_search_open()
@@ -758,7 +773,23 @@ fn refresh_library_models(s: &State, u: &AppWindow) {
                 .unwrap_or_default(),
         })
         .collect();
-    u.set_recommendations(ModelRc::new(VecModel::from(cards)));
+    u.set_recommendations(update_model(u.get_recommendations(), cards));
+}
+
+// Keep the model object stable while artwork arrives or its viewport moves.
+// Replacing the queue model cancels pointer capture during drag/autoscroll.
+fn update_model<T: Clone + PartialEq + 'static>(model: ModelRc<T>, rows: Vec<T>) -> ModelRc<T> {
+    if let Some(existing) = model.as_any().downcast_ref::<VecModel<T>>() {
+        if existing.row_count() == rows.len() {
+            for (index, row) in rows.into_iter().enumerate() {
+                if existing.row_data(index).as_ref() != Some(&row) {
+                    existing.set_row_data(index, row);
+                }
+            }
+            return model;
+        }
+    }
+    ModelRc::new(VecModel::from(rows))
 }
 fn settings_path() -> PathBuf {
     std::env::var_os("APPDATA")
@@ -804,31 +835,48 @@ fn sanitize_queue(queue: &mut Queue) -> bool {
     changed |= queue.current != old_current;
     changed
 }
-fn content_rows(tracks: &[Track], s: &State, visible: bool) -> ModelRc<TrackRow> {
+fn content_rows(tracks: &[Track], s: &State, visible: bool, y: f32, height: f32) -> Vec<TrackRow> {
     let mut artwork = s.artwork.borrow_mut();
-    ModelRc::new(VecModel::from(
-        tracks
-            .iter()
-            .enumerate()
-            .map(|(index, t)| TrackRow {
-                title: t.title.clone().into(),
-                artist: t.artist.clone().into(),
-                album: t.album.clone().into(),
-                duration: "—".into(),
-                recommended: t.recommended,
-                artwork: t
-                    .artwork_url
-                    .as_deref()
-                    .filter(|_| visible && index < 12)
-                    .map(|url| artwork.get_or_request(url))
-                    .unwrap_or_default(),
-            })
-            .collect::<Vec<_>>(),
-    ))
+    let images = artwork_view::visible_range(y, height, tracks.iter().map(|_| 66.0));
+    tracks
+        .iter()
+        .enumerate()
+        .map(|(index, t)| TrackRow {
+            title: t.title.clone().into(),
+            artist: t.artist.clone().into(),
+            album: t.album.clone().into(),
+            duration: "—".into(),
+            recommended: t.recommended,
+            artwork: t
+                .artwork_url
+                .as_deref()
+                .filter(|_| visible && images.contains(&index))
+                .map(|url| artwork.get_or_request(url))
+                .unwrap_or_default(),
+        })
+        .collect()
 }
 fn refresh_content_models(s: &State, u: &AppWindow) {
-    u.set_detail_rows(content_rows(&s.detail_tracks, s, u.get_detail_open()));
-    u.set_search_rows(content_rows(&s.search_tracks, s, u.get_search_open()));
+    u.set_detail_rows(update_model(
+        u.get_detail_rows(),
+        content_rows(
+            &s.detail_tracks,
+            s,
+            u.get_detail_open(),
+            u.get_detail_artwork_y(),
+            u.get_detail_artwork_height(),
+        ),
+    ));
+    u.set_search_rows(update_model(
+        u.get_search_rows(),
+        content_rows(
+            &s.search_tracks,
+            s,
+            u.get_search_open(),
+            u.get_search_artwork_y(),
+            u.get_search_artwork_height(),
+        ),
+    ));
 }
 fn recommendation_track(card: &tide_provider::Card) -> Track {
     Track {
@@ -895,13 +943,35 @@ fn queue_choice(s: &mut State, u: &AppWindow, track: Track, play_next: bool) {
 fn refresh(ui: &AppWindow, state: &State) {
     let mut artwork = state.artwork.borrow_mut();
     let current = state.settings.queue.current.unwrap_or(0);
+    let queue_images = artwork_view::visible_range(
+        ui.get_queue_artwork_y(),
+        ui.get_queue_artwork_height(),
+        state
+            .settings
+            .queue
+            .tracks
+            .iter()
+            .enumerate()
+            .skip(current)
+            .map(|(index, track)| {
+                let heading = index == current
+                    || index == current + 1
+                    || track.recommended
+                        != state.settings.queue.tracks[index.saturating_sub(1)].recommended;
+                if heading {
+                    94.0
+                } else {
+                    66.0
+                }
+            }),
+    );
     let current_art = state
         .settings
         .queue
         .tracks
         .get(current)
         .and_then(|track| track.artwork_url.as_deref())
-        .map(|url| artwork.get_or_request(url))
+        .map(|url| artwork.get_or_request_current(url))
         .unwrap_or_default();
     let rows: Vec<TrackRow> = state
         .settings
@@ -918,12 +988,17 @@ fn refresh(ui: &AppWindow, state: &State) {
             artwork: t
                 .artwork_url
                 .as_deref()
-                .filter(|_| index.abs_diff(current) <= 8)
+                .filter(|_| {
+                    index == current
+                        || (ui.get_queue_open()
+                            && index >= current
+                            && queue_images.contains(&(index - current)))
+                })
                 .map(|url| artwork.get_or_request(url))
                 .unwrap_or_default(),
         })
         .collect();
-    ui.set_rows(ModelRc::new(VecModel::from(rows)));
+    ui.set_rows(update_model(ui.get_rows(), rows));
     ui.set_current_index(state.settings.queue.current.map_or(-1, |i| i as i32));
     if let Some(t) = state
         .settings
@@ -2037,6 +2112,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let tx = tx.clone();
                 state.search_cancel.store(false, Ordering::Release);
                 let cancel = state.search_cancel.clone();
+                ui.set_search_artwork_y(0.0);
+                ui.set_search_artwork_y(0.0);
                 ui.set_search_open(true);
                 ui.set_detail_open(false);
                 ui.set_search_busy(true);
@@ -2496,6 +2573,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     u.get_library_open(),
                     u.get_detail_open(),
                     u.get_search_open(),
+                    u.get_queue_open(),
+                    [
+                        (u.get_library_artwork_y(), u.get_library_artwork_height()),
+                        (u.get_home_artwork_y(), u.get_home_artwork_height()),
+                        (u.get_queue_artwork_y(), u.get_queue_artwork_height()),
+                        (u.get_detail_artwork_y(), u.get_detail_artwork_height()),
+                        (u.get_search_artwork_y(), u.get_search_artwork_height()),
+                    ],
                 );
                 if s.volume_save_pending && last_volume_save.elapsed() >= Duration::from_secs(1) {
                     s.volume_save_pending = false;
@@ -2503,6 +2588,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     last_volume_save = Instant::now();
                 }
                 if last_content_view != Some(content_view) {
+                    refresh(&u, &s);
                     refresh_library_models(&s, &u);
                     refresh_content_models(&s, &u);
                     last_content_view = Some(content_view);
@@ -2565,6 +2651,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             u.set_error_is_account(false);
                             u.set_error_message("".into());
                             s.library_playlists = playlists.into_iter().take(200).collect();
+                            u.set_library_artwork_y(0.0);
+                            u.set_library_artwork_y(0.0);
                             u.set_account_name(account.into());
                             refresh_library_models(&s, &u);
                             u.set_account_status(
@@ -2589,6 +2677,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                         Ok(tide_provider::Response::Home { cards }) => {
                             s.recommendations = cards.into_iter().take(120).collect();
+                            u.set_home_artwork_y(0.0);
+                            u.set_home_artwork_y(0.0);
                             refresh_library_models(&s, &u);
                             u.set_account_status(
                                 "Your YouTube Music recommendations are refreshed".into(),
@@ -3549,6 +3639,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn artwork_row_updates_preserve_model_identity_for_dragging() {
+        let rows = Rc::new(VecModel::from(vec![1, 2, 3]));
+        let model = ModelRc::from(rows.clone());
+        let updated = update_model(model, vec![1, 7, 3]);
+        assert!(std::ptr::eq(updated.as_any(), rows.as_any()));
+        assert_eq!(rows.row_data(1), Some(7));
+        let unchanged = update_model(updated, vec![1, 7, 3]);
+        assert!(std::ptr::eq(unchanged.as_any(), rows.as_any()));
+        let shorter = update_model(unchanged, vec![9]);
+        assert_eq!(shorter.row_count(), 1);
+        assert_eq!(shorter.row_data(0), Some(9));
+    }
 
     #[test]
     fn obsolete_radio_responses_cannot_change_current_account_state() {
