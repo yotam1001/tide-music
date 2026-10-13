@@ -413,6 +413,10 @@ impl Provider {
     }
     pub fn disconnect(&self) -> Result<(), String> {
         remove_stale_leases(&self.directory);
+        // Use the same cross-process guard as imports and refreshed-cookie
+        // commits. Otherwise an import can pass its baseline check, race a
+        // disconnect, and recreate the session the user just removed.
+        let _session_lock = SessionWriteLock::acquire().map_err(str::to_string)?;
         let path = self.directory.join("session.dpapi");
         if path.exists() {
             fs::remove_file(path).map_err(|_| "Could not remove the saved session")?;
@@ -1705,6 +1709,46 @@ mod tests {
         ));
         assert_eq!(fs::read(directory.join("session.dpapi")).unwrap(), original);
         provider.disconnect().unwrap();
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn disconnect_waits_for_in_flight_session_commit() {
+        let directory = std::env::temp_dir().join(format!(
+            "tide-disconnect-lock-test-{}-{}",
+            std::process::id(),
+            LEASE_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        private_directory(&directory).unwrap();
+        let provider = Provider {
+            directory: directory.clone(),
+        };
+        provider
+            .import_bytes(br#"{"cookie":"__Secure-3PAPISID=old", "x-goog-authuser":"1"}"#)
+            .unwrap();
+        let guard = SessionWriteLock::acquire().unwrap();
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            ready_tx.send(()).unwrap();
+            done_tx.send(provider.disconnect()).unwrap();
+        });
+        ready_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        let blocked = done_rx.recv_timeout(Duration::from_millis(150));
+        let session_retained = directory.join("session.dpapi").exists();
+        drop(guard);
+        let result = match blocked {
+            Ok(result) => result,
+            Err(_) => done_rx.recv_timeout(Duration::from_secs(2)).unwrap(),
+        };
+        worker.join().unwrap();
+        result.unwrap();
+        assert!(
+            session_retained,
+            "disconnect bypassed the session commit guard"
+        );
+        assert!(!directory.join("session.dpapi").exists());
         fs::remove_dir_all(directory).unwrap();
     }
     #[test]
