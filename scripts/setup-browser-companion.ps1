@@ -78,7 +78,12 @@ foreach ($taskEntry in $taskEntries) {
 }
 if ($Mode -eq 'Unregister') {
     foreach ($taskEntry in $taskEntries) {
-        if (Test-Path -LiteralPath $taskEntry.key) { Remove-Item -LiteralPath $taskEntry.key -Force }
+        if (Test-Path -LiteralPath $taskEntry.key) {
+            if ((Get-Item -LiteralPath $taskEntry.key).GetValue('') -ne $taskEntry.manifest) {
+                throw 'The native-host registration changed during removal; it was left unchanged'
+            }
+            Remove-Item -LiteralPath $taskEntry.key -Force
+        }
     }
     'Removed matching Tide native-host registrations. Files and saved account sessions were left intact.'
     return
@@ -89,8 +94,34 @@ if (Test-Path -LiteralPath $taskInstalledPolicy) {
     $taskOldPolicy = Read-HostJson $taskInstalledPolicy
     if (($taskOldPolicy | ConvertTo-Json -Compress) -ne ($taskPolicy | ConvertTo-Json -Compress)) { throw 'A different native-host policy exists; it was left unchanged' }
 } else { Write-HostJson $taskInstalledPolicy $taskPolicy }
-foreach ($taskEntry in $taskEntries) {
-    New-Item -Path $taskEntry.key -Force | Out-Null
-    Set-Item -LiteralPath $taskEntry.key -Value $taskEntry.manifest
+$taskCreatedEntries = @()
+try {
+    foreach ($taskEntry in $taskEntries) {
+        # Matching existing registrations need no write. Recheck after preflight
+        # and never force-create over a key claimed by another installation.
+        if (Test-Path -LiteralPath $taskEntry.key) {
+            if ((Get-Item -LiteralPath $taskEntry.key).GetValue('') -ne $taskEntry.manifest) {
+                throw 'The native-host registration changed during setup'
+            }
+            continue
+        }
+        New-Item -Path $taskEntry.key | Out-Null
+        $taskCreatedEntries += $taskEntry
+        Set-Item -LiteralPath $taskEntry.key -Value $taskEntry.manifest
+    }
+} catch {
+    # Roll back only this attempt's keys, still empty or pointing to our own
+    # manifest. Preserve pre-existing or concurrently changed registrations.
+    foreach ($taskCreated in $taskCreatedEntries) {
+        try {
+            if (Test-Path -LiteralPath $taskCreated.key) {
+                $taskValue = (Get-Item -LiteralPath $taskCreated.key).GetValue('')
+                if ($null -eq $taskValue -or $taskValue -eq $taskCreated.manifest) {
+                    Remove-Item -LiteralPath $taskCreated.key -Force
+                }
+            }
+        } catch { Write-Warning 'A newly created Tide host key could not be rolled back; retry setup or use Unregister.' }
+    }
+    throw
 }
 'Registered the optional native host for the current user. Install the matching browser companion separately.'

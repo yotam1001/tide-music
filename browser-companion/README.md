@@ -47,7 +47,7 @@ After reviewing the executable path and allowed extension IDs, explicitly regist
 ./scripts/setup-browser-companion.ps1 -Mode Unregister -Destination .local/browser-host-review
 ```
 
-Registration changes only the current user's Tide native-messaging keys for Mozilla, and optionally Chrome/Edge, and writes the matching policy beside the receiver. It refuses conflicting registrations or policies. Unregister removes only registrations still pointing to these exact manifests, leaving saved accounts and files intact. These are persistent device changes; preparation does not authorize executing them. The preparation tests exercise only temporary files, without registry or browser access. Actual registration, browser loading and signed-in imports remain unverified.
+Registration changes only the current user's Tide native-messaging keys for Mozilla, and optionally Chrome/Edge, and writes the matching policy beside the receiver. It refuses conflicting registrations or policies. Matching existing registrations are left untouched; a write failure rolls back only keys created by that attempt and still pointing to its manifest or empty. The non-secret policy file is retained for retry. Unregister removes only registrations still pointing to these exact manifests, leaving saved accounts and files intact. These are persistent device changes; preparation does not authorize executing them. Tests exercise temporary files and an in-memory registry stand-in, without actual registry or browser access. Actual registration, browser loading and signed-in imports remain unverified.
 
 ## Explicit flow
 

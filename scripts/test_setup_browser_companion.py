@@ -1,4 +1,4 @@
-"""Preparation-only checks: never register a host or access browser profiles."""
+"""Temporary-file preparation and in-memory registry checks; no device registration."""
 import json
 import os
 from pathlib import Path
@@ -66,6 +66,107 @@ class PreparationTests(unittest.TestCase):
         self.assertNotEqual(self.prepare().returncode, 0)
         self.assertEqual(sentinel.read_bytes(), b"existing output")
         self.assertEqual(list(self.output.iterdir()), [sentinel])
+
+    def run_mock_registration(self, scenario):
+        self.assertEqual(self.prepare("-ChromiumExtensionId", "a" * 32).returncode, 0)
+        harness = self.root / "mock-registration.ps1"
+        harness.write_text(r'''
+param($SetupScript, $Prepared, $FixtureRoot, $Scenario)
+$ErrorActionPreference = 'Stop'
+$global:FixtureRegistry = @{}
+$global:FixtureSetCount = 0
+$global:FixtureRoot = $FixtureRoot
+function Assert-FakeRegistry($Value) {
+    if (!$Value.StartsWith('HKCU:\Software\', [StringComparison]::OrdinalIgnoreCase) -or
+        !$Value.EndsWith('\NativeMessagingHosts\org.tidemusic.session')) { throw 'Unexpected registry fixture operation' }
+}
+function Assert-FixtureFile($Value) {
+    $absolute = [IO.Path]::GetFullPath($Value)
+    if (!$absolute.StartsWith($global:FixtureRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw 'Unexpected file operation' }
+}
+function Test-Path {
+    param($LiteralPath, $PathType)
+    if ($LiteralPath.StartsWith('HKCU:', [StringComparison]::OrdinalIgnoreCase)) {
+        Assert-FakeRegistry $LiteralPath
+        return $global:FixtureRegistry.ContainsKey($LiteralPath)
+    }
+    Assert-FixtureFile $LiteralPath
+    if ($PathType) { return Microsoft.PowerShell.Management\Test-Path -LiteralPath $LiteralPath -PathType $PathType }
+    return Microsoft.PowerShell.Management\Test-Path -LiteralPath $LiteralPath
+}
+function Get-Item {
+    param($LiteralPath)
+    if ($LiteralPath.StartsWith('HKCU:', [StringComparison]::OrdinalIgnoreCase)) {
+        Assert-FakeRegistry $LiteralPath
+        $item = [pscustomobject]@{ Value=$global:FixtureRegistry[$LiteralPath] }
+        $item | Add-Member -MemberType ScriptMethod -Name GetValue -Value { param($Name) if ($Name -ne '') { throw 'Unexpected value' }; return $this.Value }
+        return $item
+    }
+    Assert-FixtureFile $LiteralPath
+    return Microsoft.PowerShell.Management\Get-Item -LiteralPath $LiteralPath
+}
+function New-Item {
+    param($Path)
+    Assert-FakeRegistry $Path
+    if ($global:FixtureRegistry.ContainsKey($Path)) { throw 'Registry key already exists' }
+    $global:FixtureRegistry[$Path] = $null
+}
+function Set-Item {
+    param($LiteralPath, $Value)
+    Assert-FakeRegistry $LiteralPath
+    $global:FixtureSetCount++
+    if ($Scenario -in @('failure','preserve-existing') -and $global:FixtureSetCount -eq 2) { throw 'Synthetic registry write failure' }
+    $global:FixtureRegistry[$LiteralPath] = $Value
+}
+function Remove-Item {
+    param($LiteralPath, [switch]$Force)
+    Assert-FakeRegistry $LiteralPath
+    $global:FixtureRegistry.Remove($LiteralPath)
+}
+$firefoxKey = 'HKCU:\Software\Mozilla\NativeMessagingHosts\org.tidemusic.session'
+$firefoxManifest = Join-Path $Prepared 'firefox-host.json'
+if ($Scenario -eq 'preserve-existing') { $global:FixtureRegistry[$firefoxKey] = $firefoxManifest }
+if ($Scenario -eq 'conflict') { $global:FixtureRegistry[$firefoxKey] = 'synthetic unrelated registration' }
+$failed = $false
+try { & $SetupScript -Mode Register -Destination $Prepared | Out-Null } catch { $failed = $true }
+switch ($Scenario) {
+    'success' {
+        if ($failed -or $global:FixtureRegistry.Count -ne 3) { throw 'Successful registration fixture failed' }
+        & $SetupScript -Mode Register -Destination $Prepared | Out-Null
+        if ($global:FixtureSetCount -ne 3) { throw 'Idempotent registration rewrote keys' }
+        & $SetupScript -Mode Unregister -Destination $Prepared | Out-Null
+        if ($global:FixtureRegistry.Count -ne 0) { throw 'Matching registrations not removed' }
+    }
+    'failure' { if (!$failed -or $global:FixtureRegistry.Count -ne 0) { throw 'Partial registration did not roll back' } }
+    'preserve-existing' {
+        if (!$failed -or $global:FixtureRegistry.Count -ne 1 -or $global:FixtureRegistry[$firefoxKey] -ne $firefoxManifest) { throw 'Rollback removed existing registration' }
+    }
+    'conflict' {
+        if (!$failed -or $global:FixtureRegistry.Count -ne 1 -or $global:FixtureSetCount -ne 0) { throw 'Conflicting registration was changed' }
+        if (Microsoft.PowerShell.Management\Test-Path -LiteralPath (Join-Path $FixtureRoot 'tide-session-host-policy.json')) { throw 'Conflict wrote policy' }
+    }
+    default { throw 'Unknown fixture scenario' }
+}
+'PASS synthetic registry only'
+''', encoding="utf-8")
+        result = subprocess.run(
+            ["pwsh", "-NoProfile", "-File", str(harness), str(SCRIPT.resolve()),
+             str(self.output), str(self.root), scenario],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
+        self.assertIn(b"PASS synthetic registry only", result.stdout)
+
+    def test_mocked_registration_and_removal_are_idempotent(self):
+        self.run_mock_registration("success")
+
+    def test_mocked_registration_failure_rolls_back_created_keys(self):
+        self.run_mock_registration("failure")
+
+    def test_mocked_failure_preserves_existing_registration(self):
+        self.run_mock_registration("preserve-existing")
+
+    def test_mocked_conflict_changes_nothing(self):
+        self.run_mock_registration("conflict")
 
 
 if __name__ == "__main__":
