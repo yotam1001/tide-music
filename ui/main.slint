@@ -982,8 +982,8 @@ export component AppWindow inherits Window {
     default-font-size: 14px;
     preferred-width: root.collapsed ? 700px : root.compact-mode ? 780px : 1140px;
     preferred-height: root.collapsed ? 132px : root.compact-mode ? 720px : 800px;
-    min-width: root.collapsed ? 650px : root.compact-mode ? 700px : 950px;
-    min-height: root.collapsed ? 112px : 660px;
+    min-width: 650px;
+    min-height: root.collapsed ? 112px : 420px;
     background: root.light-mode ? #f4eee6 : #111318;
     init => { Palette.color-scheme = root.light-mode ? light : dark; root.wide = root.width >= 1050px; }
     changed width => { root.wide = root.width >= 1050px; }

@@ -16,6 +16,9 @@ if ($RequireSuccessfulExit) {
 }
 if ($AppArguments.Count -gt 0) { $taskStart.ArgumentList = $AppArguments }
 $taskProcess = Start-Process @taskStart
+# Retain the native handle while the child is alive, so its exit code remains
+# available after Refresh observes exit. Record it independently of console output.
+$null = $taskProcess.Handle
 $taskRows = [Collections.Generic.List[object]]::new()
 $taskCpuCounters = @{}
 $taskPreviousTime = Get-Date
@@ -61,6 +64,7 @@ $taskRows | ConvertTo-Json | Set-Content -LiteralPath $Output -Encoding utf8
 $taskRows | Measure-Object private_mib -Minimum -Maximum -Average | Select-Object Minimum,Maximum,Average
 if ($RequireSuccessfulExit) {
     $taskProcess.Refresh()
+    @{exit_code=$taskProcess.ExitCode;helpers_ended=$false} | ConvertTo-Json | Set-Content -LiteralPath "$Output.exit.json" -Encoding utf8
     if ($taskProcess.ExitCode -ne 0) { throw 'Measured app did not finish its verification successfully' }
     foreach ($taskEntry in $taskObserved.GetEnumerator()) {
         $taskRemaining = Get-Process -Id $taskEntry.Key -ErrorAction SilentlyContinue
@@ -68,5 +72,6 @@ if ($RequireSuccessfulExit) {
             throw 'An observed playback helper remained after the app exited'
         }
     }
+    @{exit_code=$taskProcess.ExitCode;helpers_ended=$true} | ConvertTo-Json | Set-Content -LiteralPath "$Output.exit.json" -Encoding utf8
     'PASS: verification exited successfully and observed helper processes ended'
 }

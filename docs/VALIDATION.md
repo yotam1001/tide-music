@@ -1,5 +1,24 @@
 # Prototype validation
 
+## Native window sizing (2026-10-13)
+
+An owned, muted production fixture reproduced a native DPI resize that grew the
+window beyond a 1032-pixel monitor work area: 1119 pixels tall at 150% and 1479
+at 200%, hiding the transport. Tide now fits its outer frame to the current
+monitor work area after startup, mode, DPI or work-area changes. The responsive
+minimum is 650 by 420 logical pixels (650 by 112 in Mini), and expanding restores
+the previous size without forcing the former 660-pixel minimum height.
+Minimized/maximized windows defer fitting until restored; fitting does not
+activate or raise the window, or continuously override manual resizing.
+
+The fixed fixture passed native WM_DPICHANGED messages at 150%, 200% and 100%,
+including maximize, DPI change, restore and Mini/Expand at 200%. Outer height
+remained within 1032 pixels; captured full-window renders showed the transport.
+The same window and mpv process retained decoded progress, and normal close took
+107 ms with the owned helper removed. This uses synthetic native messages on
+one monitor, not physical monitor migration. Eighteen app tests and strict app
+Clippy pass. A separate fifty-pair production Mini/Expand regression also passes.
+
 ## Production media controls and closing (2026-10-13)
 
 File selection now uses rfd's asynchronous Windows picker and Slint's local

@@ -2024,11 +2024,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     slint::LogicalSize::new(700.0, 132.0)
                 } else {
                     let size = *restored_size.borrow();
-                    slint::LogicalSize::new(
-                        size.width
-                            .max(if u.get_compact_mode() { 700.0 } else { 950.0 }),
-                        size.height.max(660.0),
-                    )
+                    slint::LogicalSize::new(size.width.max(650.0), size.height.max(420.0))
                 });
                 u.window().request_redraw();
             }
@@ -2158,6 +2154,46 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Publish confirmed playback state promptly so Windows chooses the correct
     // Play/Pause action even when the user presses a media key twice quickly.
     // Metadata and timeline writes are cached inside MediaSession.
+    let window_fit_timer = slint::Timer::default();
+    #[cfg(windows)]
+    if !test_mode && listening_seconds.is_none() && !smoke_autoplay_depletion {
+        let weak = ui.as_weak();
+        let mut fitted = None;
+        window_fit_timer.start(
+            slint::TimerMode::Repeated,
+            Duration::from_millis(100),
+            move || {
+                use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+                let Some(u) = weak.upgrade() else {
+                    return;
+                };
+                let window = u.window().window_handle();
+                let Ok(handle) = window.window_handle() else {
+                    return;
+                };
+                let RawWindowHandle::Win32(handle) = handle.as_raw() else {
+                    return;
+                };
+                let hwnd = handle.hwnd.get() as *mut std::ffi::c_void;
+                let Ok(work) = tide_windows::window_work_area(hwnd) else {
+                    fitted = None;
+                    return;
+                };
+                let mode = (
+                    u.window().scale_factor(),
+                    u.get_compact_mode(),
+                    u.get_collapsed(),
+                    work,
+                );
+                if fitted == Some(mode) {
+                    return;
+                }
+                if tide_windows::fit_window_to_work_area(hwnd, work).is_ok() {
+                    fitted = Some(mode);
+                }
+            },
+        );
+    }
     let media_timer = slint::Timer::default();
     if media_enabled {
         let state = state.clone();
@@ -3153,6 +3189,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     timer.stop();
     preparation_timer.stop();
     media_timer.stop();
+    window_fit_timer.stop();
     smoke_timer.stop();
     if let Some((timer, _)) = &listening {
         timer.stop();
