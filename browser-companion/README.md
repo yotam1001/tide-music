@@ -17,7 +17,37 @@ Run with Node.js (no dependencies):
 node --test browser-companion/tests/background.test.cjs
 ```
 
-To prepare a future reviewable browser package, copy this folder into a staging directory and copy the appropriate `manifest.*.json` to `manifest.json` there. Installation and distribution are not part of this prototype. Firefox release distribution needs the relevant signing process; Chrome/Edge registration needs the actual extension ID and a matching allowed native-host origin.
+To prepare reviewable source prototype packages, run from the workspace:
+
+```text
+python scripts/package-browser-companion.py --family firefox
+python scripts/package-browser-companion.py --family chromium
+```
+
+Each command creates `dist/tide-browser-FAMILY/extension/` with the selected manifest renamed to `manifest.json`, a `tide-browser-FAMILY.zip` containing those same extension files at its root, and `SHA256SUMS` covering the folder payload and ZIP. The exact file allowlist excludes documentation, tests, native-host manifests, local paths and runtime credential files. Unrecognized source additions are ignored. Symlink/reparse-point selected sources and output locations are rejected; staging stays under checked workspace `dist`, publishes by an atomic no-overwrite rename and refuses existing destinations. The packager supports Windows and Linux with `renameat2`; it refuses publication if that safe primitive is unavailable. Use `--destination review-name` for a new folder stem under `dist`; arbitrary output paths are not accepted.
+
+Run packaging tests with `python -m unittest discover -s scripts -p test_browser_companion_package.py`. Installation and distribution are not part of this prototype. Firefox release distribution needs the relevant signing process; Chrome/Edge registration needs the actual extension ID and a matching allowed native-host origin. Producing a ZIP does not validate browser login.
+
+## Prepare the Windows native host
+
+Build the separate receiver with `cargo build -p tide-provider --bin tide-session-host`. It needs the provider's Python helper runtime, so keep the development executable in the workspace's `target/debug` directory for development checks. A standalone release installer must bundle and validate that runtime; copying only this executable is insufficient.
+
+Prepare manifests in a new local directory without registering or installing anything:
+
+```powershell
+./scripts/setup-browser-companion.ps1 -Mode Prepare -Destination .local/browser-host-review -HostExecutable target/debug/tide-session-host.exe
+```
+
+For Chrome/Edge, supply `-ChromiumExtensionId` with the actual installed extension's 32-letter ID. Preparation writes Firefox's fixed-ID manifest, an optional Chromium manifest and a matching origin policy. It refuses an existing destination. Do not register a synthetic test ID.
+
+After reviewing the executable path and allowed extension IDs, explicitly register or remove the prepared registration:
+
+```powershell
+./scripts/setup-browser-companion.ps1 -Mode Register -Destination .local/browser-host-review
+./scripts/setup-browser-companion.ps1 -Mode Unregister -Destination .local/browser-host-review
+```
+
+Registration changes only the current user's Tide native-messaging keys for Mozilla, and optionally Chrome/Edge, and writes the matching policy beside the receiver. It refuses conflicting registrations or policies. Unregister removes only registrations still pointing to these exact manifests, leaving saved accounts and files intact. These are persistent device changes; preparation does not authorize executing them. The preparation tests exercise only temporary files, without registry or browser access. Actual registration, browser loading and signed-in imports remain unverified.
 
 ## Explicit flow
 
