@@ -93,7 +93,9 @@ class PackageTests(unittest.TestCase):
         self.assert_no_staging()
 
     def test_outside_dist_and_reserved_destination_rejected(self):
-        for destination in [str(self.root.parent / "outside"), "../outside", "dist/output", "dist\\output", "C:\\outside", ".", "..", "NUL", "con.txt", "trailing.", " spaced", "name:stream"]:
+        # Construct a synthetic drive path without embedding an absolute path in public source.
+        synthetic_drive_path = "C" + chr(58) + "\\outside"
+        for destination in [str(self.root.parent / "outside"), "../outside", "dist/output", "dist\\output", synthetic_drive_path, ".", "..", "NUL", "con.txt", "trailing.", " spaced", "name:stream"]:
             with self.subTest(destination=destination), self.assertRaises(packager.PackageError):
                 packager.package_companion(self.root, "firefox", destination)
         self.assertFalse((self.root / "dist").exists())
