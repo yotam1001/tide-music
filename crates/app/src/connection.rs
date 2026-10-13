@@ -19,10 +19,10 @@ impl AdoptionRetry {
         }
     }
     pub fn ready(&self) -> bool {
-        self.next_attempt.is_none_or(|next| Instant::now() >= next)
+        self.failures < 3 && self.next_attempt.is_none_or(|next| Instant::now() >= next)
     }
     pub fn failed(&mut self) -> bool {
-        self.failures += 1;
+        self.failures = self.failures.saturating_add(1);
         if self.failures >= 3 {
             self.next_attempt = None;
             return false;
@@ -128,6 +128,23 @@ mod tests {
             account_index,
             page_id: Some(page.into()),
         })
+    }
+    #[test]
+    fn failed_adoption_backs_off_and_requires_explicit_retry_after_three_attempts() {
+        let mut retry = AdoptionRetry::new();
+        assert!(retry.ready());
+        assert!(retry.failed());
+        assert!(!retry.ready());
+        // Advance the deadline without wall-clock sleeps.
+        retry.next_attempt = Some(Instant::now() - Duration::from_secs(1));
+        assert!(retry.ready());
+        assert!(retry.failed());
+        assert!(!retry.ready());
+        assert!(!retry.failed());
+        assert!(!retry.ready());
+        retry = AdoptionRetry::new();
+        assert!(retry.ready());
+        assert!(retry.failed());
     }
     #[test]
     fn reconnect_is_detected_without_changing_identity() {

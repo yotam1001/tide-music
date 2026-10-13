@@ -2931,17 +2931,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     phase = 2;
                 }
                 2 if s.saved_connection.as_ref().is_some_and(|c| c.account_index == 2)
-                    && s.account_verified && s.connection_resume.is_none() && snapshot.position > original_position => {
-                    assert!(s.generation > original_generation, "account switch did not resume playback");
-                    assert!(!snapshot.paused);
-                    s.provider.as_ref().unwrap().disconnect().unwrap();
+                    && s.connection_resume.is_some() => {
+                    // Supersede verification while preserving the user's latest
+                    // pause and seek choices across another account change.
+                    send(&mut s, &u, PlaybackCommand::Seek(2.0));
+                    send(&mut s, &u, PlaybackCommand::SetPaused(true));
+                    s.provider.as_ref().unwrap().import_session(&Path::new(&directory).join("switch-again.json")).unwrap();
                     phase = 3;
                 }
-                3 if s.saved_connection.is_none() && s.pending_saved_connection.is_none()
-                    && !s.active_playback && !s.account_verified => {
-                    println!("PASS connection adoption: same-account continuity, identity switch resume, disconnect");
-                    slint::quit_event_loop().unwrap();
+                3 if s.saved_connection.as_ref().is_some_and(|c| c.account_index == 3)
+                    && s.account_verified && s.connection_resume.is_none()
+                    && snapshot.position >= 1.9 && snapshot.paused => {
+                    assert!(s.generation > original_generation, "account switch did not resume playback");
+                    send(&mut s, &u, PlaybackCommand::SetPaused(false));
                     phase = 4;
+                }
+                4 if snapshot.position > 2.3 && !snapshot.paused => {
+                    s.provider.as_ref().unwrap().disconnect().unwrap();
+                    phase = 5;
+                }
+                5 if s.saved_connection.is_none() && s.pending_saved_connection.is_none()
+                    && !s.active_playback && !s.account_verified => {
+                    println!("PASS connection adoption: continuity, superseded switch, pause/seek intent, disconnect");
+                    slint::quit_event_loop().unwrap();
+                    phase = 6;
                 }
                 _ => {}
             }

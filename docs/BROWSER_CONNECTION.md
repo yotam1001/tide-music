@@ -55,7 +55,7 @@ work. A reconnect of the same identity refreshes playback cookies without
 replacing the active playback engine. Identity changes reconfigure playback and
 clear old account results. Failed local adoption has bounded retries and an
 explicit Library refresh retry. The isolated native application probe now verifies same-index playback
-continuity, account switch resumption and disconnect using silent local audio
+continuity, superseded account switches, retained pause/seek intent and disconnect using silent local audio
 and a fake identity helper. Real browser handoff validation remains unfinished;
 synthetic checks do not prove onboarding works end to end.
 
