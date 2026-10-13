@@ -49,8 +49,21 @@ preserves it. Legacy sessions remain readable without a generation. A
 credential-free descriptor exposes that generation and the selected account and
 Music identity to the application; the internal metadata is removed before any
 headers reach a helper. Provider compatibility and refresh regression tests
-cover this foundation. The running application does not yet consume it to adopt
-companion imports automatically, so that behavior remains unfinished.
+cover this foundation. The application now probes the local connection descriptor
+on a background thread and stages adoption after cancelling obsolete library
+work. A reconnect of the same identity refreshes playback cookies without
+replacing the active playback engine. Identity changes reconfigure playback and
+clear old account results. Failed local adoption has bounded retries and an
+explicit Library refresh retry. The isolated native application probe now verifies same-index playback
+continuity, account switch resumption and disconnect using silent local audio
+and a fake identity helper. Real browser handoff validation remains unfinished;
+synthetic checks do not prove onboarding works end to end.
+
+Run the Windows regression against explicitly selected binaries:
+
+```powershell
+python scripts/native-connection-smoke.py --app target/debug/tide-music.exe --host target/debug/tide-session-host.exe
+```
 
 The receiver accepts one bounded, length-prefixed message from the allowed
 extension identity. It verifies the session through the identity endpoint before

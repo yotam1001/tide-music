@@ -539,3 +539,20 @@ are not included in the b581e5b artifact above. Browser signing, real imports,
 account identity selection and application adoption of an externally imported
 session remain release requirements. The six-hour b019b14 playback test also
 does not cover the companion or these later source changes.
+
+
+### Six-hour playback observation (2026-10-13)
+
+The b019b14 release binary reported PASS after 21,600 seconds of decoded audio
+monitoring, 102 natural transitions and 104 decoded starts, including radio
+refills, pause/resume, skip and seek. It recorded 119 persisted playback session
+updates; the longest sampled request delay was 5,263 ms. This validates that
+specific playback run, not weekly session longevity or later login changes.
+
+The enclosing resource supervisor reported RuntimeException in its listening
+phase after the application PASS. Its initial exit record contains exit code 0
+but no completed cleanup report. Preserve this as an overall supervisor failure;
+the exact exception was not retained. An independent observer, attached after
+the run began, separately retained process handles and confirmed root exit code
+0 and all 243 helpers it observed ended. That observer does not cover helpers
+that ended before it attached. No clean overall supervisor PASS is claimed.

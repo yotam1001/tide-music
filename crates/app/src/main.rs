@@ -13,6 +13,7 @@ use std::{
 };
 use tide_core::{PlaybackCommand, Queue, Track};
 mod artwork;
+mod connection;
 mod listening;
 mod radio;
 slint::include_modules!();
@@ -87,6 +88,11 @@ struct State {
     search_cancel: Arc<AtomicBool>,
     search_worker: Option<std::thread::JoinHandle<()>>,
     provider: Option<tide_provider::Provider>,
+    saved_connection: Option<tide_provider::SavedConnection>,
+    pending_saved_connection: Option<Option<tide_provider::SavedConnection>>,
+    rejected_saved_connection: Option<Option<tide_provider::SavedConnection>>,
+    connection_retry: connection::AdoptionRetry,
+    connection_resume: Option<(u64, String, f64, bool)>,
     cookie_lease: Option<tide_provider::CookieLease>,
     pending_cookie_updates: std::collections::VecDeque<tide_playback::CookieUpdate>,
     cookie_update_retry_at: Option<Instant>,
@@ -196,7 +202,7 @@ fn request_library(
     tx: &mpsc::SyncSender<LibraryResult>,
     request: tide_provider::Request,
 ) {
-    if s.library_worker.is_some() {
+    if s.library_worker.is_some() || s.pending_saved_connection.is_some() {
         return;
     }
     let connecting = matches!(
@@ -293,7 +299,11 @@ fn current_video_id(s: &State) -> Option<String> {
     .then_some(id)
 }
 fn request_radio(s: &mut State, u: &AppWindow, tx: &mpsc::SyncSender<LibraryResult>, force: bool) {
-    if s.library_worker.is_some() || !s.account_verified || (!force && !s.settings.autoplay) {
+    if s.library_worker.is_some()
+        || s.pending_saved_connection.is_some()
+        || !s.account_verified
+        || (!force && !s.settings.autoplay)
+    {
         return;
     }
     let Some(index) = s.settings.queue.current else {
@@ -458,7 +468,182 @@ fn sync_playback_cookies(s: &mut State) -> bool {
     session_updated
 }
 
+fn stage_saved_connection(
+    s: &mut State,
+    u: &AppWindow,
+    saved: Option<tide_provider::SavedConnection>,
+) {
+    s.rejected_saved_connection = None;
+    s.connection_retry = connection::AdoptionRetry::new();
+    s.library_cancel.store(true, Ordering::Release);
+    s.pending_saved_connection = Some(saved.clone());
+    s.library_retry = None;
+    s.library_request = None;
+    s.pending_cookie_updates.clear();
+    s.radio_requests.reset();
+    s.library_playlists.clear();
+    s.recommendations.clear();
+    s.detail_tracks.clear();
+    s.artwork.borrow_mut().clear();
+    u.set_detail_open(false);
+    u.set_detail_busy(false);
+    u.set_detail_rows(ModelRc::new(VecModel::default()));
+    // Account indices are local to a browser profile; matching indices alone
+    // cannot prove this is the same Google identity. Reverify and discard old
+    // account recommendations even when the active audio engine can be reused.
+    s.account_verified = false;
+    u.set_account_verified(false);
+    s.settings.queue.remove_autoplay_upcoming();
+    refresh(u, s);
+    refresh_library_models(s, u);
+    u.set_account_connected(saved.is_some());
+    u.set_account_busy(true);
+    u.set_account_name(
+        if saved.is_some() {
+            "Verifying account…"
+        } else {
+            ""
+        }
+        .into(),
+    );
+    u.set_account_status("Applying the saved account connection…".into());
+}
+
+fn adoption_failed(s: &mut State, u: &AppWindow, saved: Option<tide_provider::SavedConnection>) {
+    if s.connection_retry.failed() {
+        s.pending_saved_connection = Some(saved);
+        u.set_account_status("Saved account storage is busy; retrying shortly…".into());
+    } else {
+        s.rejected_saved_connection = Some(saved);
+        u.set_account_busy(false);
+        u.set_account_status(
+            "Could not apply the saved connection. Refresh Library to retry.".into(),
+        );
+    }
+}
+fn adopt_saved_connection(s: &mut State, u: &AppWindow, tx: &mpsc::SyncSender<LibraryResult>) {
+    if !s.connection_retry.ready() {
+        return;
+    }
+    let Some(saved) = s.pending_saved_connection.take() else {
+        return;
+    };
+    // Read again after cancelling any old helper: a later import may have won.
+    let current = s
+        .provider
+        .as_ref()
+        .map(|p| p.saved_connection())
+        .transpose();
+    let Ok(current) = current else {
+        adoption_failed(s, u, saved);
+        return;
+    };
+    let current = current.flatten();
+    if current != saved {
+        stage_saved_connection(s, u, current);
+        return;
+    }
+    let reuse = connection::same_identity(&s.saved_connection, &saved)
+        && s.engine.is_some()
+        && s.cookie_lease.is_some();
+    if reuse {
+        let refreshed = match (&s.provider, &s.cookie_lease, &saved) {
+            (Some(provider), Some(lease), Some(connection)) => {
+                provider.refresh_cookie_lease_for_connection(lease, connection)
+            }
+            _ => Err("Saved playback connection unavailable".into()),
+        };
+        if refreshed.is_err() {
+            adoption_failed(s, u, saved);
+            return;
+        }
+        if let Some(engine) = &s.engine {
+            let _ = engine.prepare_next(None);
+            let snapshot = engine.snapshot();
+            if snapshot.error.is_some() {
+                s.connection_resume = s
+                    .settings
+                    .queue
+                    .current
+                    .and_then(|index| s.settings.queue.tracks.get(index))
+                    .map(|track| {
+                        (
+                            s.generation,
+                            track.source.clone(),
+                            snapshot.position,
+                            snapshot.paused,
+                        )
+                    });
+            }
+        }
+        s.saved_connection = saved.clone();
+        s.account_error = false;
+        u.set_error_is_account(false);
+        u.set_error_message("".into());
+    } else {
+        let resume = s
+            .engine
+            .as_ref()
+            .map(|engine| engine.snapshot())
+            .filter(|snapshot| s.active_playback || snapshot.error.is_some())
+            .and_then(|snapshot| {
+                s.settings
+                    .queue
+                    .current
+                    .and_then(|index| s.settings.queue.tracks.get(index))
+                    .map(|track| {
+                        (
+                            s.generation,
+                            track.source.clone(),
+                            snapshot.position,
+                            snapshot.paused,
+                        )
+                    })
+            });
+        if resume.is_some() {
+            s.connection_resume = resume;
+        }
+        if saved.is_none() {
+            s.connection_resume = None;
+        }
+        if !configure_account_playback(s, u) {
+            adoption_failed(s, u, saved);
+            return;
+        }
+        if s.saved_connection != saved {
+            stage_saved_connection(s, u, s.saved_connection.clone());
+            return;
+        }
+    }
+    u.set_account_busy(false);
+    u.set_account_index(
+        saved
+            .as_ref()
+            .map_or(0, |connection| connection.account_index as i32),
+    );
+    if saved.is_some() {
+        request_library(s, u, tx, tide_provider::Request::Library);
+    } else {
+        s.connection_resume = None;
+        u.set_account_status("Disconnected · the saved session was removed".into());
+    }
+}
+
 fn configure_account_playback(s: &mut State, u: &AppWindow) -> bool {
+    let connection = s
+        .provider
+        .as_ref()
+        .map(|p| p.playback_connection())
+        .transpose();
+    let (saved_connection, lease) = match connection {
+        Ok(value) => value.unwrap_or((None, None)),
+        Err(error) => {
+            report_error(s, u, error);
+            return false;
+        }
+    };
+    let account_index = saved_connection.as_ref().map_or(0, |c| c.account_index);
+    s.saved_connection = saved_connection;
     s.library_request = None;
     s.library_retry = None;
     s.pending_cookie_updates.clear();
@@ -485,23 +670,11 @@ fn configure_account_playback(s: &mut State, u: &AppWindow) -> bool {
     u.set_position(0.0);
     u.set_duration(0.0);
     u.set_status_text("Ready".into());
-    let lease = s
-        .provider
-        .as_ref()
-        .map(|p| p.cookie_lease())
-        .transpose()
-        .map(|value| value.flatten());
-    let result = lease.and_then(|lease| {
-        let engine = tide_playback::start_with_account(
-            lease.as_ref().map(|l| l.path().to_path_buf()),
-            s.provider
-                .as_ref()
-                .map(|provider| provider.account_index())
-                .unwrap_or(0),
-        )?;
-        s.cookie_lease = lease;
-        Ok(engine)
-    });
+    let result = tide_playback::start_with_account(
+        lease.as_ref().map(|l| l.path().to_path_buf()),
+        account_index,
+    );
+    s.cookie_lease = lease;
     match result {
         Ok(engine) => {
             s.engine = Some(engine);
@@ -807,6 +980,17 @@ fn upcoming_source(queue: &Queue, repeat: bool) -> Option<&str> {
 }
 
 fn send(state: &mut State, ui: &AppWindow, cmd: PlaybackCommand) -> bool {
+    if let Some((_, _, position, paused)) = &mut state.connection_resume {
+        match &cmd {
+            PlaybackCommand::TogglePause => *paused = !*paused,
+            PlaybackCommand::SetPaused(value) => *paused = *value,
+            PlaybackCommand::Seek(value) if value.is_finite() && *value >= 0.0 => {
+                *position = *value
+            }
+            PlaybackCommand::Stop | PlaybackCommand::Shutdown => state.connection_resume = None,
+            _ => {}
+        }
+    }
     let result = state
         .engine
         .as_ref()
@@ -1085,6 +1269,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             std::process::exit(1);
         }));
     }
+    let connection_smoke = std::env::args()
+        .skip_while(|a| a != "--smoke-connection")
+        .nth(1);
+    if let Some(directory) = &connection_smoke {
+        let directory = std::fs::canonicalize(directory)?;
+        let appdata = std::fs::canonicalize(std::env::var("APPDATA")?)?;
+        let helper = std::fs::canonicalize(std::env::var("TIDE_PROVIDER_HELPER")?)?;
+        if directory != appdata
+            || !helper.starts_with(&directory)
+            || !directory.join("synthetic-connection-fixture").is_file()
+        {
+            return Err(
+                "Connection smoke requires an isolated synthetic APPDATA/helper fixture".into(),
+            );
+        }
+    }
     let ui = AppWindow::new()?;
     let mut settings: Settings = std::fs::read(settings_path())
         .ok()
@@ -1113,7 +1313,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let smoke_skip_session = std::env::args().any(|a| a == "--smoke-early-skip-session");
     let smoke_early_skip =
         smoke_skip_session || std::env::args().any(|a| a == "--smoke-early-skip");
-    if smoke_autoplay
+    if connection_smoke.is_some()
+        || smoke_autoplay
         || listening_seconds.is_some()
         || smoke_early_skip
         || std::env::args().any(|a| a == "--smoke-ui" || a == "--benchmark-mode")
@@ -1144,23 +1345,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         tide_provider::Provider::new().ok()
     };
-    let lease_result = provider
+    let connection_result = provider
         .as_ref()
-        .map(|p| p.cookie_lease())
-        .transpose()
-        .map(|value| value.flatten());
-    let (cookie_lease, credential_error) = match lease_result {
-        Ok(lease) => (lease, None),
-        Err(error) => (None, Some(error)),
+        .map(|p| p.playback_connection())
+        .transpose();
+    let (saved_connection, cookie_lease, credential_error) = match connection_result {
+        Ok(value) => {
+            let (connection, lease) = value.unwrap_or((None, None));
+            (connection, lease, None)
+        }
+        Err(error) => (None, None, Some(error)),
     };
     let (engine, error) = match credential_error.map_or_else(
         || {
             tide_playback::start_with_account(
                 cookie_lease.as_ref().map(|l| l.path().to_path_buf()),
-                provider
-                    .as_ref()
-                    .map(|provider| provider.account_index())
-                    .unwrap_or(0),
+                saved_connection.as_ref().map_or(0, |c| c.account_index),
             )
         },
         Err,
@@ -1177,6 +1377,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         search_generation: 0,
         search_cancel: Arc::new(AtomicBool::new(false)),
         search_worker: None,
+        saved_connection,
+        pending_saved_connection: None,
+        rejected_saved_connection: None,
+        connection_retry: connection::AdoptionRetry::new(),
+        connection_resume: None,
         provider,
         cookie_lease,
         pending_cookie_updates: std::collections::VecDeque::new(),
@@ -1423,12 +1628,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let tx = library_tx.clone();
         ui.on_refresh_library(move || {
             if let Some(u) = weak.upgrade() {
-                request_library(
-                    &mut state.borrow_mut(),
-                    &u,
-                    &tx,
-                    tide_provider::Request::Library,
-                );
+                let mut s = state.borrow_mut();
+                if let Some(saved) = s.rejected_saved_connection.take() {
+                    stage_saved_connection(&mut s, &u, saved);
+                    return;
+                }
+                request_library(&mut s, &u, &tx, tide_provider::Request::Library);
             }
         });
     }
@@ -1882,7 +2087,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
     bind!(on_toggle_pause, |s, u| {
-        if !s.active_playback && s.settings.queue.current.is_some() {
+        if s.connection_resume.is_none() && !s.active_playback && s.settings.queue.current.is_some()
+        {
             play(&mut s, &u);
         } else {
             send(&mut s, &u, PlaybackCommand::TogglePause);
@@ -2083,7 +2289,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut s = state.borrow_mut();
             match action {
                 0 => {
-                    if !s.active_playback && s.settings.queue.current.is_some() {
+                    if s.connection_resume.is_none()
+                        && !s.active_playback
+                        && s.settings.queue.current.is_some()
+                    {
                         play(&mut s, &u);
                     } else {
                         send(&mut s, &u, PlaybackCommand::SetPaused(false));
@@ -2256,6 +2465,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let library_tx = library_tx.clone();
         let mut last_content_view = None;
         let mut last_volume_save = Instant::now();
+        let mut connection_monitor = connection::Monitor::new();
+        let picker_busy = picker_busy.clone();
         timer.start(
             slint::TimerMode::Repeated,
             Duration::from_millis(250),
@@ -2264,6 +2475,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     return;
                 };
                 let mut s = state.borrow_mut();
+                if s.pending_saved_connection.is_none() {
+                    if let Some(saved) = connection_monitor.poll(s.provider.as_ref(), &s.saved_connection) {
+                        if s.rejected_saved_connection.as_ref() != Some(&saved) {
+                            picker_busy.cancel_account();
+                            stage_saved_connection(&mut s, &u, saved);
+                        }
+                    }
+                }
                 let content_view = (
                     u.get_library_open(),
                     u.get_detail_open(),
@@ -2283,6 +2502,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if let Some(worker) = s.library_worker.take() {
                         let _ = worker.join();
                     }
+                    if s.pending_saved_connection.is_some() { continue; }
+                    if !matches!(&result, Ok(tide_provider::Response::Connected)) {
+                        match s.provider.as_ref().map(|p| p.saved_connection()).transpose() {
+                            Ok(current) => {
+                                let current = current.flatten();
+                                if current != s.saved_connection {
+                                    stage_saved_connection(&mut s, &u, current);
+                                    continue;
+                                }
+                            }
+                            Err(_) => {
+                                let saved = s.saved_connection.clone();
+                                stage_saved_connection(&mut s, &u, saved);
+                                continue;
+                            }
+                        }
+                    }
                     u.set_account_busy(false);
                     u.set_detail_busy(false);
                     let playback_session_updated = sync_playback_cookies(&mut s);
@@ -2299,8 +2535,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             u.set_error_message("".into());
                             u.set_error_retryable(false);
                         }
-                        if let (Some(provider), Some(lease)) = (&s.provider, &s.cookie_lease) {
-                            if provider.refresh_cookie_lease(lease).is_err() {
+                        if let (Some(provider), Some(lease), Some(connection)) = (&s.provider, &s.cookie_lease, &s.saved_connection) {
+                            if provider.refresh_cookie_lease_for_connection(lease, connection).is_err() {
                                 u.set_account_status("Account data loaded; playback session update will be retried on the next refresh.".into());
                             }
                         }
@@ -2353,6 +2589,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 .into(),
                             );
                             s.command_error = None;
+                            if let Some((generation, source, position, paused)) = s.connection_resume.take() {
+                                let unchanged = generation == s.generation && s.settings.queue.current
+                                    .and_then(|index| s.settings.queue.tracks.get(index))
+                                    .is_some_and(|track| track.source == source);
+                                if unchanged && play(&mut s, &u) {
+                                    send(&mut s, &u, PlaybackCommand::Seek(position));
+                                    send(&mut s, &u, PlaybackCommand::SetPaused(paused));
+                                }
+                            }
                             request_library(&mut s, &u, &library_tx, tide_provider::Request::Home);
                         }
                         Ok(tide_provider::Response::Home { cards }) => {
@@ -2494,6 +2739,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             library_failure(&mut s, &u, false);
                         }
                     }
+                }
+                if s.library_worker.is_none() && s.pending_saved_connection.is_some() {
+                    adopt_saved_connection(&mut s, &u, &library_tx);
                 }
                 let artwork_changed = s.artwork.borrow_mut().poll();
                 if artwork_changed {
@@ -2645,6 +2893,61 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
+    let _connection_smoke_timer = connection_smoke.map(|directory| {
+        let timer = slint::Timer::default();
+        let state = state.clone();
+        let weak = ui.as_weak();
+        let began = Instant::now();
+        let mut phase = 0;
+        let mut original_generation = 0;
+        let mut original_position = 0.0;
+        let mut original_connection = None;
+        timer.start(slint::TimerMode::Repeated, Duration::from_millis(100), move || {
+            if began.elapsed() > Duration::from_secs(45) {
+                let s = state.borrow();
+                eprintln!("FAIL connection adoption phase {phase}; verified={}, active={}, status={}", s.account_verified, s.active_playback, weak.upgrade().map(|u| u.get_account_status()).unwrap_or_default());
+                std::process::exit(1);
+            }
+            let Some(u) = weak.upgrade() else { return; };
+            let mut s = state.borrow_mut();
+            let snapshot = s.engine.as_ref().map(|engine| engine.snapshot()).unwrap();
+            match phase {
+                0 if s.account_verified && snapshot.position > 0.5 => {
+                    original_generation = s.generation;
+                    original_position = snapshot.position;
+                    original_connection = s.saved_connection.clone();
+                    s.provider.as_ref().unwrap().import_session(&Path::new(&directory).join("reconnect.json")).unwrap();
+                    phase = 1;
+                }
+                0 if !s.active_playback => {
+                    send(&mut s, &u, PlaybackCommand::SetVolume(0.0));
+                    add(&mut s, &u, Path::new(&directory).join("silence.wav").to_string_lossy().into_owned());
+                }
+                1 if s.saved_connection != original_connection && s.pending_saved_connection.is_none()
+                    && s.library_worker.is_none() && s.account_verified => {
+                    assert_eq!(s.generation, original_generation, "same-account reconnect restarted playback");
+                    assert!(snapshot.position > original_position, "audio did not advance during reconnect");
+                    s.provider.as_ref().unwrap().import_session(&Path::new(&directory).join("switch.json")).unwrap();
+                    phase = 2;
+                }
+                2 if s.saved_connection.as_ref().is_some_and(|c| c.account_index == 2)
+                    && s.account_verified && s.connection_resume.is_none() && snapshot.position > original_position => {
+                    assert!(s.generation > original_generation, "account switch did not resume playback");
+                    assert!(!snapshot.paused);
+                    s.provider.as_ref().unwrap().disconnect().unwrap();
+                    phase = 3;
+                }
+                3 if s.saved_connection.is_none() && s.pending_saved_connection.is_none()
+                    && !s.active_playback && !s.account_verified => {
+                    println!("PASS connection adoption: same-account continuity, identity switch resume, disconnect");
+                    slint::quit_event_loop().unwrap();
+                    phase = 4;
+                }
+                _ => {}
+            }
+        });
+        timer
+    });
     if let Some(dir) = std::env::args().skip_while(|a| a != "--smoke-ui").nth(1) {
         if std::env::args().any(|a| a == "--smoke-library") {
             let mut s = state.borrow_mut();

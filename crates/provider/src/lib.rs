@@ -27,6 +27,19 @@ pub struct SavedConnection {
     pub account_index: u32,
     pub page_id: Option<String>,
 }
+impl SavedConnection {
+    fn from_headers(headers: &BTreeMap<String, String>, revision: Option<String>) -> Self {
+        Self {
+            revision,
+            account_index: headers
+                .get("x-goog-authuser")
+                .and_then(|value| value.parse::<u32>().ok())
+                .filter(|index| *index < 10)
+                .unwrap_or(0),
+            page_id: headers.get("x-goog-pageid").cloned(),
+        }
+    }
+}
 
 /// Fixed, credential-free outcomes for browser-assisted session imports.
 #[derive(Debug, PartialEq, Eq)]
@@ -47,6 +60,12 @@ struct SessionWriteLock(windows_sys::Win32::Foundation::HANDLE);
 #[cfg(windows)]
 impl SessionWriteLock {
     fn acquire() -> Result<Self, &'static str> {
+        Self::acquire_with_timeout(1000)
+    }
+    fn try_acquire() -> Result<Self, &'static str> {
+        Self::acquire_with_timeout(0)
+    }
+    fn acquire_with_timeout(timeout_ms: u32) -> Result<Self, &'static str> {
         use windows_sys::Win32::{
             Foundation::{CloseHandle, WAIT_ABANDONED, WAIT_OBJECT_0},
             System::Threading::{CreateMutexW, WaitForSingleObject},
@@ -61,7 +80,7 @@ impl SessionWriteLock {
             if handle.is_null() {
                 return Err("Account storage lock unavailable");
             }
-            match WaitForSingleObject(handle, 1000) {
+            match WaitForSingleObject(handle, timeout_ms) {
                 WAIT_OBJECT_0 | WAIT_ABANDONED => Ok(Self(handle)),
                 _ => {
                     CloseHandle(handle);
@@ -86,6 +105,9 @@ struct SessionWriteLock;
 #[cfg(not(windows))]
 impl SessionWriteLock {
     fn acquire() -> Result<Self, &'static str> {
+        Ok(Self)
+    }
+    fn try_acquire() -> Result<Self, &'static str> {
         Ok(Self)
     }
 }
@@ -295,6 +317,26 @@ impl Provider {
         result?;
         Ok(Response::Connected)
     }
+    #[cfg(windows)]
+    fn save_verified_session_for_connection(
+        &self,
+        mut headers: BTreeMap<String, String>,
+        cancel: &AtomicBool,
+        expected: &Option<SavedConnection>,
+    ) -> Result<Response, String> {
+        let lock = SessionWriteLock::acquire().map_err(str::to_string);
+        let current = lock
+            .as_ref()
+            .map_err(|error| error.clone())
+            .and_then(|_| self.saved_connection());
+        if current.as_ref().ok() != Some(expected) {
+            for value in headers.values_mut() {
+                value.zeroize();
+            }
+            return Err("Saved account changed during connection; retry the request".into());
+        }
+        self.save_verified_session(headers, cancel)
+    }
     pub fn import_session(&self, path: &Path) -> Result<(), String> {
         let mut bytes = read_limited(path, MAX_SESSION)?;
         let result = self.import_bytes(&bytes);
@@ -490,19 +532,18 @@ impl Provider {
             return Ok(None);
         }
         let (mut headers, revision) = self.read_session()?;
-        let connection = SavedConnection {
-            revision,
-            account_index: headers
-                .get("x-goog-authuser")
-                .and_then(|value| value.parse::<u32>().ok())
-                .filter(|index| *index < 10)
-                .unwrap_or(0),
-            page_id: headers.get("x-goog-pageid").cloned(),
-        };
+        let connection = SavedConnection::from_headers(&headers, revision);
         for value in headers.values_mut() {
             value.zeroize();
         }
         Ok(Some(connection))
+    }
+    /// Capture identity and playback cookies under the same session guard.
+    pub fn playback_connection(
+        &self,
+    ) -> Result<(Option<SavedConnection>, Option<CookieLease>), String> {
+        let _guard = SessionWriteLock::try_acquire()?;
+        Ok((self.saved_connection()?, self.cookie_lease()?))
     }
     pub fn cookie_lease(&self) -> Result<Option<CookieLease>, String> {
         if !self.is_connected() {
@@ -594,6 +635,20 @@ impl Provider {
             let _ = fs::remove_file(&temporary);
         }
         result.map_err(str::to_string)
+    }
+
+    /// Adopt only the exact connection observed by the application. An import
+    /// racing this refresh must not pair another identity's cookies with it.
+    pub fn refresh_cookie_lease_for_connection(
+        &self,
+        lease: &CookieLease,
+        expected: &SavedConnection,
+    ) -> Result<(), String> {
+        let _session_lock = SessionWriteLock::try_acquire().map_err(str::to_string)?;
+        if self.saved_connection()?.as_ref() != Some(expected) {
+            return Err("Saved connection changed; retry adoption".into());
+        }
+        self.refresh_cookie_lease(lease)
     }
 
     /// Merge only scoped extractor changes based on the still-current session.
@@ -796,13 +851,18 @@ impl Provider {
             if index > 9 {
                 return Err("Choose an account between 1 and 10".into());
             }
+            let expected_connection = self.saved_connection()?;
             let input = serde_json::to_vec(
                 &serde_json::json!({"action":"connect_existing", "database": database, "index": index}),
             )
             .map_err(|_| "Could not prepare account connection")?;
             return match execute_helper(&input, cancel.clone(), Duration::from_secs(600))?.response
             {
-                Response::Session { headers } => self.save_verified_session(headers, &cancel),
+                Response::Session { headers } => self.save_verified_session_for_connection(
+                    headers,
+                    &cancel,
+                    &expected_connection,
+                ),
                 Response::Error { code } => Ok(Response::Error { code }),
                 _ => Err("Account connection did not return a session".into()),
             };
@@ -811,7 +871,8 @@ impl Provider {
         if matches!(request, Request::SwitchAccount { index } if index > 9) {
             return Err("Choose an account between 1 and 10".into());
         }
-        let mut headers = self.headers()?;
+        let (mut headers, revision) = self.read_session()?;
+        let expected_connection = SavedConnection::from_headers(&headers, revision);
         let expected_authuser = headers.get("x-goog-authuser").cloned();
         let expected_pageid = headers.get("x-goog-pageid").cloned();
         let expected_cookie =
@@ -836,7 +897,18 @@ impl Provider {
         }
         let result = execute_helper(&input, cancel.clone(), Duration::from_secs(60));
         input.zeroize();
-        let reply = result?;
+        let mut reply = result?;
+        let _session_lock = SessionWriteLock::acquire().map_err(str::to_string)?;
+        if cancel.load(Ordering::Acquire)
+            || self.saved_connection()?.as_ref() != Some(&expected_connection)
+        {
+            if let Response::Session { headers } = &mut reply.response {
+                for value in headers.values_mut() {
+                    value.zeroize();
+                }
+            }
+            return Err("Saved account changed or request cancelled; refresh to retry".into());
+        }
         if !switching {
             self.persist_refreshed_headers(
                 &reply.refreshed,
@@ -1878,6 +1950,53 @@ mod tests {
         assert_eq!(switched.page_id.as_deref(), Some("456"));
         provider.disconnect().unwrap();
         assert!(provider.saved_connection().unwrap().is_none());
+        fs::remove_dir_all(directory).unwrap();
+    }
+    #[cfg(windows)]
+    #[test]
+    fn reconnect_rejects_stale_playback_lease_and_verified_candidate() {
+        // Isolate this multi-step race scenario from other storage fixtures.
+        let _guard = SessionWriteLock::acquire().unwrap();
+        let directory = std::env::temp_dir().join(format!(
+            "tide-adoption-race-test-{}-{}",
+            std::process::id(),
+            LEASE_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        private_directory(&directory).unwrap();
+        let provider = Provider {
+            directory: directory.clone(),
+        };
+        let old = br#"{"cookie":"__Secure-3PAPISID=old", "x-goog-authuser":"1"}"#;
+        let fresh = br#"{"cookie":"__Secure-3PAPISID=fresh", "x-goog-authuser":"1"}"#;
+        provider.import_bytes(old).unwrap();
+        let (original, lease) = provider.playback_connection().unwrap();
+        let lease = lease.unwrap();
+        let before = fs::read(lease.path()).unwrap();
+        provider.import_bytes(fresh).unwrap();
+        let current = provider.saved_connection().unwrap();
+        assert!(provider
+            .refresh_cookie_lease_for_connection(&lease, original.as_ref().unwrap())
+            .is_err());
+        assert_eq!(fs::read(lease.path()).unwrap(), before);
+        let candidate = serde_json::from_slice(old).unwrap();
+        assert!(provider
+            .save_verified_session_for_connection(candidate, &AtomicBool::new(false), &original)
+            .is_err());
+        assert!(provider.saved_connection().unwrap() == current);
+        provider
+            .refresh_cookie_lease_for_connection(&lease, current.as_ref().unwrap())
+            .unwrap();
+        assert!(fs::read(lease.path()).unwrap() != before);
+        provider.disconnect().unwrap();
+        assert!(provider
+            .save_verified_session_for_connection(
+                serde_json::from_slice(fresh).unwrap(),
+                &AtomicBool::new(false),
+                &current
+            )
+            .is_err());
+        assert!(provider.saved_connection().unwrap().is_none());
+        drop(lease);
         fs::remove_dir_all(directory).unwrap();
     }
     #[test]
