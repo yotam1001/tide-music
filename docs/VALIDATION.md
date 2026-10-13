@@ -515,3 +515,27 @@ app Clippy passed. The rebuilt debug app passed automatic EOF and media controls
 with a picker open, duplicate-picker suppression, cancellation/reopening, and
 normal close with the picker still open; the owned app and helpers ended.
 This shutdown-only change is not included in the already-running six-hour binary.
+
+# Browser companion artifact validation
+
+Windows CI run 38354710202 passed checks and preview packaging for branch revision
+328c649, using pull-request merge revision b581e5b. Its actual downloaded preview
+ZIP included the optional native receiver, setup script and companion guide and
+passed the exact payload, checksum and privacy checks. ZIP SHA-256:
+`e0c7e31dd62e4f03c9173a50812cba30baa5ab7cb89e29f97dea8be9df521ac4`.
+
+Both downloaded Firefox and Chromium packages contained exactly their six
+extension files. Their ZIP contents matched the loadable folders, and every
+published payload/archive checksum passed. The CI-built receiver executed with
+isolated fixture application-data storage and a synthetic verification helper:
+native framing, encrypted save, rejection preserving the baseline and port
+cancellation before save passed. No actual Google session, browser installation,
+registry registration or profile access was involved.
+
+Later source revisions serialize Disconnect with session writes and roll back
+incomplete native-host registrations. Provider concurrency tests and eight
+temporary-file/in-memory-registry installer checks pass locally; those changes
+are not included in the b581e5b artifact above. Browser signing, real imports,
+account identity selection and application adoption of an externally imported
+session remain release requirements. The six-hour b019b14 playback test also
+does not cover the companion or these later source changes.
