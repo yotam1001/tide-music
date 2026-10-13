@@ -37,7 +37,7 @@ with the selected Music identity. It cannot establish playback authentication:
 
 An optional browser extension and native messaging receiver are implemented as
 a source prototype in [browser-companion](../browser-companion/README.md) and
-`crates/provider/src/bin/tide-session-host.rs`. They are not installed, signed,
+`crates/provider/src/bin/tide-session-host.rs`. They are not signed,
 publicly distributed, or verified with a real browser session. A temporary Zen
 companion is loaded for local testing, but its real native handoff is not yet
 working. Firefox

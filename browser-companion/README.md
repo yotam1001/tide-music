@@ -47,7 +47,14 @@ After reviewing the executable path and allowed extension IDs, explicitly regist
 ./scripts/setup-browser-companion.ps1 -Mode Unregister -Destination .local/browser-host-review
 ```
 
-Registration changes only the current user's Tide native-messaging keys for Mozilla, and optionally Chrome/Edge, and writes the matching policy beside the receiver. It refuses conflicting registrations or policies. Missing shared registry parent keys are created without force-writing existing keys or values; these shared parents remain after rollback or removal. Matching existing registrations are left untouched; a write failure rolls back only keys created by that attempt and still pointing to its manifest or empty. The non-secret policy file is retained for retry. Unregister removes only registrations still pointing to these exact manifests, leaving saved accounts and files intact. These are persistent device changes; preparation does not authorize executing them. Tests exercise temporary files and an in-memory registry stand-in, without actual registry or browser access. Actual registration, browser loading and signed-in imports remain unverified.
+Use `-Browser Chrome`, `-Browser Edge` or `-Browser Firefox` on both Register
+and Unregister to operate on only that browser's registration. The default
+`-Browser All` retains the behavior above. Chrome and Edge require a prepared
+Chromium manifest with the actual installed extension ID. For independent
+browser tests, use a separate host directory with its own matching origin
+policy; setup refuses to replace a different policy beside an existing host.
+
+Registration changes only the current user's selected Tide native-messaging keys and writes the matching policy beside the receiver. It refuses conflicting registrations or policies. Missing shared registry parent keys are created without force-writing existing keys or values; these shared parents remain after rollback or removal. Matching existing registrations are left untouched; a write failure rolls back only keys created by that attempt and still pointing to its manifest or empty. The non-secret policy file is retained for retry. Unregister removes only registrations still pointing to these exact manifests, leaving saved accounts and files intact. These are persistent device changes; preparation does not authorize executing them. Tests exercise temporary files and an in-memory registry stand-in, without actual registry or browser access. Authorized local Zen registration and temporary extension loading have been exercised, but Zen's native connection check fails; signed-in companion imports remain unverified.
 
 ## Explicit flow
 

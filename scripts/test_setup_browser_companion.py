@@ -127,9 +127,24 @@ $firefoxKey = 'HKCU:\Software\Mozilla\NativeMessagingHosts\org.tidemusic.session
 $firefoxManifest = Join-Path $Prepared 'firefox-host.json'
 if ($Scenario -eq 'preserve-existing') { $global:FixtureRegistry[$firefoxKey] = $firefoxManifest }
 if ($Scenario -eq 'conflict') { $global:FixtureRegistry[$firefoxKey] = 'synthetic unrelated registration' }
+if ($Scenario -eq 'chrome-only') { $global:FixtureRegistry[$firefoxKey] = 'synthetic unrelated registration' }
+if ($Scenario -eq 'chrome-missing-manifest') { Microsoft.PowerShell.Management\Remove-Item -LiteralPath (Join-Path $Prepared 'chromium-host.json') }
 $failed = $false
-try { & $SetupScript -Mode Register -Destination $Prepared | Out-Null } catch { $failed = $true }
+try {
+    if ($Scenario -in @('chrome-only', 'chrome-missing-manifest')) { & $SetupScript -Mode Register -Destination $Prepared -Browser Chrome | Out-Null }
+    else { & $SetupScript -Mode Register -Destination $Prepared | Out-Null }
+} catch { $failed = $true }
 switch ($Scenario) {
+    'chrome-missing-manifest' {
+        if (!$failed -or $global:FixtureSetCount -ne 0 -or $global:FixtureRegistry.Count -ne 1) { throw 'Missing Chrome identity touched registry' }
+        if (Microsoft.PowerShell.Management\Test-Path -LiteralPath (Join-Path $FixtureRoot 'tide-session-host-policy.json')) { throw 'Missing Chrome identity wrote policy' }
+    }
+    'chrome-only' {
+        $chromeKey = 'HKCU:\Software\Google\Chrome\NativeMessagingHosts\org.tidemusic.session'
+        if ($failed -or $global:FixtureSetCount -ne 1 -or !$global:FixtureRegistry.ContainsKey($chromeKey) -or $global:FixtureRegistry[$firefoxKey] -ne 'synthetic unrelated registration') { throw 'Chrome registration touched another browser' }
+        & $SetupScript -Mode Unregister -Destination $Prepared -Browser Chrome | Out-Null
+        if ($global:FixtureRegistry.ContainsKey($chromeKey) -or $global:FixtureRegistry[$firefoxKey] -ne 'synthetic unrelated registration') { throw 'Chrome removal touched another browser' }
+    }
     'success' {
         if ($failed -or @($global:FixtureRegistry.Keys | Where-Object { $_.EndsWith('\org.tidemusic.session') }).Count -ne 3) { throw 'Successful registration fixture failed' }
         & $SetupScript -Mode Register -Destination $Prepared | Out-Null
@@ -167,6 +182,12 @@ switch ($Scenario) {
 
     def test_mocked_conflict_changes_nothing(self):
         self.run_mock_registration("conflict")
+
+    def test_chrome_only_preserves_a_different_firefox_registration(self):
+        self.run_mock_registration("chrome-only")
+
+    def test_chrome_without_a_manifest_changes_nothing(self):
+        self.run_mock_registration("chrome-missing-manifest")
 
 
 if __name__ == "__main__":

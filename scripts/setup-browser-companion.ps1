@@ -16,6 +16,8 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$Destination,
     [string]$HostExecutable,
+    [ValidateSet('All', 'Firefox', 'Chrome', 'Edge')]
+    [string]$Browser = 'All',
     [ValidatePattern('^[a-p]{32}$')]
     [string]$ChromiumExtensionId
 )
@@ -68,6 +70,20 @@ if (Test-Path -LiteralPath $taskChromiumPath) {
     $taskEntries += @{key="HKCU:\Software\Google\Chrome\NativeMessagingHosts\$taskHostName"; manifest=$taskChromiumPath}
     $taskEntries += @{key="HKCU:\Software\Microsoft\Edge\NativeMessagingHosts\$taskHostName"; manifest=$taskChromiumPath}
 } elseif (@($taskPolicy.allowed_origins).Count -ne 0) { throw 'Unexpected Chromium origin without its manifest' }
+
+# Scope registration and removal to the requested browser. Keep the default
+# compatible with existing installers, but allow independent browser tests.
+if ($Browser -in @('Chrome', 'Edge') -and !(Test-Path -LiteralPath $taskChromiumPath)) {
+    throw 'This browser requires a prepared Chromium extension identity'
+}
+if ($Browser -ne 'All') {
+    $taskBrowserPrefix = switch ($Browser) {
+        'Firefox' { 'HKCU:\Software\Mozilla\' }
+        'Chrome' { 'HKCU:\Software\Google\Chrome\' }
+        'Edge' { 'HKCU:\Software\Microsoft\Edge\' }
+    }
+    $taskEntries = @($taskEntries | Where-Object { $_.key.StartsWith($taskBrowserPrefix, [StringComparison]::OrdinalIgnoreCase) })
+}
 
 # Preflight every key before changing any. Do not replace another registration.
 foreach ($taskEntry in $taskEntries) {
