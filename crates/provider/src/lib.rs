@@ -15,6 +15,18 @@ use tide_core::Track;
 use zeroize::Zeroize;
 
 const MAX_SESSION: usize = 65536;
+// Local encrypted metadata, removed before any headers reach a helper or HTTP.
+const CONNECTION_REVISION: &str = "tide-connection-revision";
+
+/// Opaque login generation and selected identity; contains no credentials.
+/// A normal cookie refresh keeps this generation, while explicit imports
+/// create a new one. Legacy sessions have no generation until reimported.
+#[derive(Clone, PartialEq, Eq)]
+pub struct SavedConnection {
+    pub revision: Option<String>,
+    pub account_index: u32,
+    pub page_id: Option<String>,
+}
 
 /// Fixed, credential-free outcomes for browser-assisted session imports.
 #[derive(Debug, PartialEq, Eq)]
@@ -392,9 +404,30 @@ impl Provider {
         result
     }
     fn import_bytes(&self, bytes: &[u8]) -> Result<(), String> {
+        self.write_session(bytes, true)
+    }
+    fn write_session(&self, bytes: &[u8], new_connection: bool) -> Result<(), String> {
         let _session_lock = SessionWriteLock::acquire().map_err(str::to_string)?;
         (|| {
             let mut headers = parse_headers(bytes)?;
+            let revision = if new_connection {
+                let timestamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_nanos();
+                Some(format!(
+                    "v1-{timestamp}-{}-{}",
+                    std::process::id(),
+                    LEASE_COUNTER.fetch_add(1, Ordering::Relaxed)
+                ))
+            } else {
+                self.saved_connection()
+                    .map_err(|_| "Saved account changed during refresh")?
+                    .and_then(|connection| connection.revision)
+            };
+            if let Some(revision) = revision {
+                headers.insert(CONNECTION_REVISION.into(), revision);
+            }
             let mut clear = serde_json::to_vec(&headers).map_err(|_| "Could not encode session")?;
             for value in headers.values_mut() {
                 value.zeroize();
@@ -424,12 +457,52 @@ impl Provider {
         Ok(())
     }
     fn headers(&self) -> Result<BTreeMap<String, String>, String> {
+        let (headers, _) = self.read_session()?;
+        Ok(headers)
+    }
+    fn read_session(&self) -> Result<(BTreeMap<String, String>, Option<String>), String> {
         let encrypted = read_limited(&self.directory.join("session.dpapi"), MAX_SESSION + 8192)?;
         let mut clear = unprotect(&encrypted).map_err(str::to_string)?;
-        let headers = serde_json::from_slice(&clear)
+        let headers: Result<BTreeMap<String, String>, String> = serde_json::from_slice(&clear)
             .map_err(|_| "Saved session is invalid. Reconnect your account".to_string());
         clear.zeroize();
-        headers
+        let mut headers = headers?;
+        let revision = headers.remove(CONNECTION_REVISION);
+        if revision.as_ref().is_some_and(|value| {
+            let parts: Vec<_> = value.split('-').collect();
+            value.len() > 100
+                || parts.len() != 4
+                || parts[0] != "v1"
+                || parts[1..]
+                    .iter()
+                    .any(|part| part.is_empty() || !part.bytes().all(|c| c.is_ascii_digit()))
+        }) {
+            for value in headers.values_mut() {
+                value.zeroize();
+            }
+            return Err("Saved connection metadata is invalid".into());
+        }
+        Ok((headers, revision))
+    }
+    /// Read only a credential-free descriptor for application adoption checks.
+    pub fn saved_connection(&self) -> Result<Option<SavedConnection>, String> {
+        if !self.is_connected() {
+            return Ok(None);
+        }
+        let (mut headers, revision) = self.read_session()?;
+        let connection = SavedConnection {
+            revision,
+            account_index: headers
+                .get("x-goog-authuser")
+                .and_then(|value| value.parse::<u32>().ok())
+                .filter(|index| *index < 10)
+                .unwrap_or(0),
+            page_id: headers.get("x-goog-pageid").cloned(),
+        };
+        for value in headers.values_mut() {
+            value.zeroize();
+        }
+        Ok(Some(connection))
     }
     pub fn cookie_lease(&self) -> Result<Option<CookieLease>, String> {
         if !self.is_connected() {
@@ -602,7 +675,7 @@ impl Provider {
         }
         let mut encoded =
             serde_json::to_vec(headers).map_err(|_| "Could not prepare playback session")?;
-        let result = self.import_bytes(&encoded);
+        let result = self.write_session(&encoded, false);
         encoded.zeroize();
         result?;
         Ok(true)
@@ -708,7 +781,7 @@ impl Provider {
         let Ok(mut encoded) = serde_json::to_vec(headers) else {
             return false;
         };
-        let accepted = encoded.len() <= MAX_SESSION && self.import_bytes(&encoded).is_ok();
+        let accepted = encoded.len() <= MAX_SESSION && self.write_session(&encoded, false).is_ok();
         encoded.zeroize();
         accepted
     }
@@ -1629,6 +1702,7 @@ mod tests {
             directory: directory.clone(),
         };
         provider.import_bytes(br#"{"cookie":"__Secure-3PAPISID=old", "x-goog-authuser":"1", "x-goog-pageid":"123"}"#).unwrap();
+        let connection_before_refresh = provider.saved_connection().unwrap();
         let lease = provider.cookie_lease().unwrap().unwrap();
         let lease_path = lease.path().to_owned();
         let reply = refresh_fixture(
@@ -1646,6 +1720,7 @@ mod tests {
             provider.headers().unwrap()["cookie"],
             "__Secure-3PAPISID=fresh"
         );
+        assert!(provider.saved_connection().unwrap() == connection_before_refresh);
         let encrypted = fs::read(directory.join("session.dpapi")).unwrap();
         assert!(!encrypted
             .windows(b"fresh".len())
@@ -1749,6 +1824,60 @@ mod tests {
             "disconnect bypassed the session commit guard"
         );
         assert!(!directory.join("session.dpapi").exists());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn login_generation_preserves_legacy_refreshes_and_tracks_explicit_imports() {
+        let directory = std::env::temp_dir().join(format!(
+            "tide-connection-revision-test-{}-{}",
+            std::process::id(),
+            LEASE_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        private_directory(&directory).unwrap();
+        let provider = Provider {
+            directory: directory.clone(),
+        };
+        assert!(provider.saved_connection().unwrap().is_none());
+        let legacy =
+            br#"{"cookie":"__Secure-3PAPISID=old", "x-goog-authuser":"1", "x-goog-pageid":"123"}"#;
+        fs::write(directory.join("session.dpapi"), protect(legacy).unwrap()).unwrap();
+        assert!(provider
+            .saved_connection()
+            .unwrap()
+            .unwrap()
+            .revision
+            .is_none());
+        let refreshed =
+            br#"{"cookie":"__Secure-3PAPISID=fresh", "x-goog-authuser":"1", "x-goog-pageid":"123"}"#;
+        provider.write_session(refreshed, false).unwrap();
+        assert!(provider
+            .saved_connection()
+            .unwrap()
+            .unwrap()
+            .revision
+            .is_none());
+        provider.import_bytes(legacy).unwrap();
+        let imported = provider.saved_connection().unwrap().unwrap();
+        assert!(imported.revision.is_some());
+        assert_eq!(imported.account_index, 1);
+        assert_eq!(imported.page_id.as_deref(), Some("123"));
+        assert!(!provider
+            .headers()
+            .unwrap()
+            .contains_key(CONNECTION_REVISION));
+        provider.write_session(refreshed, false).unwrap();
+        assert!(provider.saved_connection().unwrap().unwrap() == imported);
+        // A reconnect of the same identity must still notify the running player.
+        provider.import_bytes(refreshed).unwrap();
+        assert!(provider.saved_connection().unwrap().unwrap().revision != imported.revision);
+        provider.import_bytes(br#"{"cookie":"__Secure-3PAPISID=fresh", "x-goog-authuser":"2", "x-goog-pageid":"456"}"#).unwrap();
+        let switched = provider.saved_connection().unwrap().unwrap();
+        assert_eq!(switched.account_index, 2);
+        assert_eq!(switched.page_id.as_deref(), Some("456"));
+        provider.disconnect().unwrap();
+        assert!(provider.saved_connection().unwrap().is_none());
         fs::remove_dir_all(directory).unwrap();
     }
     #[test]

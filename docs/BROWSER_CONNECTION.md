@@ -43,6 +43,15 @@ and Chromium families need separately validated manifests, permissions and
 distribution. Browser signing/installation is a real part of release work;
 unpacked developer extensions are not a finished public onboarding solution.
 
+The provider now keeps an opaque connection generation inside encrypted session
+storage. Explicit imports replace it; ordinary API/playback cookie persistence
+preserves it. Legacy sessions remain readable without a generation. A
+credential-free descriptor exposes that generation and the selected account and
+Music identity to the application; the internal metadata is removed before any
+headers reach a helper. Provider compatibility and refresh regression tests
+cover this foundation. The running application does not yet consume it to adopt
+companion imports automatically, so that behavior remains unfinished.
+
 The receiver accepts one bounded, length-prefixed message from the allowed
 extension identity. It verifies the session through the identity endpoint before
 saving a DPAPI-encrypted copy. A changed saved session or a disconnected native
