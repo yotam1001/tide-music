@@ -2,6 +2,8 @@
 
 A Windows-first native Rust music player designed to leave resources available for games.
 
+[Watch the 30-second product demo](docs/media/tide-product-demo.mp4). It uses native screenshots with synthetic visual-test metadata; playback is inactive in the video. The editable [Remotion project](video/README.md) uses [snapcn](https://github.com/shadcn-labs/snapcn) components.
+
 **Working early prototype:** native interface, local/YouTube URL playback, search, queue controls and Windows media controls are implemented. YouTube URL playback and search use unofficial tooling and can fail when YouTube changes. Personal YouTube Music account/library sync is not implemented. This is not an official YouTube product.
 
 ## Design
