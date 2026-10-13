@@ -666,6 +666,12 @@ application, so browser transport and authenticated import remain failed/pending
 The probe did not alter the active listening test's account storage. Do not count
 the direct-host or synthetic tests as a successful Zen handoff.
 
+The executable adoption fixture also runs `check_host` before importing its
+synthetic session and compares every file in its isolated APPDATA tree before
+and after the check. It requires an exact framed success reply, zero host exit,
+empty diagnostic output and no provider directory. This check and the subsequent
+adoption/transport-intent fixture pass against the local release binaries.
+
 Before these diagnostic changes, the e777f29 PR preview (merge revision
 6e8f9a9c7ef95e0e43337db5a3c21468363ad914) passed both CI jobs. Its downloaded
 MSVC ZIP passed payload, checksum and privacy checks and the isolated native

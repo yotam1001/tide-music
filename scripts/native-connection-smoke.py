@@ -18,21 +18,38 @@ with tempfile.TemporaryDirectory(prefix='tide-connection-smoke-') as d:
  with wave.open(str(p/'silence.wav'),'wb') as w:
   w.setnchannels(1);w.setsampwidth(2);w.setframerate(8000);w.writeframes(b'\0\0'*8000*90)
  env=dict(os.environ,APPDATA=str(p),TIDE_PROVIDER_HELPER=str(helper),TIDE_PROVIDER_PYTHON=sys.executable)
- payload=json.dumps({'version':1,'action':'import_session','headers':headers}).encode()
- proc=subprocess.Popen([str(host_exe),str(p/'manifest.json'),'tide-session@tide-music'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,env=env,creationflags=subprocess.CREATE_NO_WINDOW)
- proc.stdin.write(struct.pack('<I',len(payload))+payload);proc.stdin.flush()
- replies=queue.Queue()
- def receive():
+ def native_exchange(action, values, expected_code):
+  payload=json.dumps({'version':1,'action':action,'headers':values}).encode()
+  proc=subprocess.Popen([str(host_exe),str(p/'manifest.json'),'tide-session@tide-music'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,env=env,creationflags=subprocess.CREATE_NO_WINDOW)
+  proc.stdin.write(struct.pack('<I',len(payload))+payload);proc.stdin.flush()
+  replies=queue.Queue()
+  def receive():
+   try:
+    length=struct.unpack('<I',proc.stdout.read(4))[0]
+    assert 0 < length <= 4096
+    replies.put(json.loads(proc.stdout.read(length)))
+   except Exception:
+    replies.put(None)
+  threading.Thread(target=receive,daemon=True).start()
   try:
-   length=struct.unpack('<I',proc.stdout.read(4))[0];replies.put(json.loads(proc.stdout.read(length)))
-  except Exception as error: replies.put(error)
- threading.Thread(target=receive,daemon=True).start()
- try:
-  reply=replies.get(timeout=10);assert isinstance(reply,dict) and reply.get('ok');proc.wait(timeout=10)
-  assert not proc.stderr.read()
- finally:
-  if proc.poll() is None: proc.kill();proc.wait(timeout=5)
-  proc.stdin.close()
+   reply=replies.get(timeout=10)
+   assert reply == {'version':1,'ok':True,'code':expected_code}, 'Invalid native reply'
+   assert proc.wait(timeout=10) == 0
+   assert not proc.stderr.read(), 'Unexpected native diagnostics'
+  finally:
+   if proc.poll() is None: proc.kill();proc.wait(timeout=5)
+   proc.stdin.close()
+
+ # The executable probe must not create provider/account storage, not merely
+ # return the right code. Inspect only this isolated, synthetic APPDATA tree.
+ before_probe={f.relative_to(p):f.read_bytes() for f in p.rglob('*') if f.is_file()}
+ before_directories={f.relative_to(p) for f in p.rglob('*') if f.is_dir()}
+ native_exchange('check_host', {}, 'host_ready')
+ assert {f.relative_to(p):f.read_bytes() for f in p.rglob('*') if f.is_file()} == before_probe
+ assert {f.relative_to(p) for f in p.rglob('*') if f.is_dir()} == before_directories
+ assert not (p/'TideMusic').exists(), 'Host probe opened provider storage'
+ print('PASS credential-free native host probe left isolated account storage untouched')
+ native_exchange('import_session', headers, 'imported')
 
  app=subprocess.run([str(app_exe),'--smoke-connection',str(p)],env=env,capture_output=True,timeout=65)
  print(app.stdout.decode(errors='replace'));print(app.stderr.decode(errors='replace'));assert app.returncode==0,app.returncode

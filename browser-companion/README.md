@@ -1,6 +1,6 @@
 # Optional Tide browser session companion
 
-This is an isolated **source prototype**, not a signed, published, installed, or browser-verified login solution. No extension installation, profile access, native-host registration, or live Google request is performed by this source or its tests. The native receiver is implemented as a separate source prototype in `crates/provider/src/bin/tide-session-host.rs`; installation and registration remain pending. This alternative does not choose the application's default login backend.
+This is an isolated **source prototype**, not a signed, published or browser-verified login solution. A temporary Zen extension and its native-host registration have been installed for an authorized local test, but Zen cannot currently reach the registered host. No extension installation, profile access, native-host registration, or live Google request is performed by the automated tests. The native receiver is implemented in `crates/provider/src/bin/tide-session-host.rs`. This alternative does not choose the application's default login backend.
 
 ## Contents and local tests
 
@@ -8,7 +8,7 @@ This is an isolated **source prototype**, not a signed, published, installed, or
 - `manifest.chromium.json`: Chrome/Edge Manifest V3; the installed extension ID must be explicitly supplied to the native-host installer. There is no guessed or wildcard ID.
 - `background.js`: shared capture controller, native protocol and validation.
 - `background-firefox.js` / `background-chromium.js`: browser-specific entry points.
-- `popup.html`, `popup.js`, `popup.css`: local UI with Import, Retry and Cancel.
+- `popup.html`, `popup.js`, `popup.css`: local UI with Import, Retry, Cancel and Check local connection.
 - `tests/background.test.cjs`: deterministic synthetic events, timers, browser APIs and native ports.
 
 Run with Node.js (no dependencies):
@@ -63,7 +63,17 @@ Existing Firefox container and account selection is preserved implicitly by usin
 
 ## Native protocol
 
-The port posts exactly one object:
+**Check local connection** explicitly sends
+`{"version":1,"action":"check_host","headers":{}}`. Only an exact successful
+`host_ready` reply passes that check. It reads no Music session and opens no
+provider account storage; it cannot be mistaken for a successful import. An
+older receiver's valid `invalid_request` reply prompts a host update. Fixed
+messages distinguish unusable registration, permission, launch and timeout
+errors without displaying raw browser errors. Real Zen testing currently fails
+at native-host lookup/validation despite a valid direct framed-host check; see
+[browser connection evidence](../docs/BROWSER_CONNECTION.md).
+
+For session import, the port posts exactly one object:
 
 ```json
 {"version":1,"action":"import_session","headers":{"cookie":"synthetic only","x-goog-authuser":"2","origin":"https://music.youtube.com"}}
