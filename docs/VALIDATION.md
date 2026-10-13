@@ -712,3 +712,20 @@ Actual Zen testing still fails native lookup with that downloaded MSVC host as
 well as the local GNU host; direct registered-host framing succeeds for both.
 Authenticated browser import, signed distribution, physical media keys with
 game focus, monitor migration and normal authenticated GUI close remain open.
+
+### Normal authenticated GUI close (2026-10-13)
+
+The actual downloaded 369f8a1 MSVC application was opened normally through
+computer control, with no smoke flags or synthetic account. It loaded the saved
+account's Home results. Volume was set to zero through the visible slider; its
+percentage changed correctly. Clicking Play started authenticated playback:
+the UI reported Playing with position advancing to 0:14 and a decoded duration.
+Clicking the native title-bar X closed the window normally. A retained-process
+observer recorded root exit zero and all nine helpers it observed ended.
+The user's settings were restored byte-for-byte after exit, and the temporary
+settings backup was removed. No account was reimported or disconnected.
+
+This closes the normal authenticated GUI-close check above for this tested case;
+it does not prove every close race, physical media-key mapping, game-focus
+behavior or monitor migration. The existing isolated close/race regressions
+remain separate evidence. Real browser import and distribution are still open.
