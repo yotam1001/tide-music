@@ -1,0 +1,11 @@
+{
+  "manifest_version": 2,
+  "name": "Tide session companion (prototype)",
+  "version": "0.1.0",
+  "description": "Explicitly import one YouTube Music session into the local Tide native host.",
+  "permissions": ["activeTab", "webRequest", "nativeMessaging", "https://music.youtube.com/*"],
+  "background": {"scripts": ["background.js", "background-firefox.js"], "persistent": true},
+  "browser_action": {"default_popup": "popup.html", "default_title": "Tide session companion"},
+  "browser_specific_settings": {"gecko": {"id": "tide-session@tide-music"}},
+  "content_security_policy": "default-src 'self'; script-src 'self'; object-src 'none'; connect-src 'none'"
+}

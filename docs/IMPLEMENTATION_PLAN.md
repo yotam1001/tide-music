@@ -1,14 +1,42 @@
 # Lightweight native music app: implementation plan
 
-Prepared 10 October 2026. Status: initial native prototype implemented; validation and publication in progress.
+Prepared 10 October 2026; status updated 13 October. Native playback, account
+library, recommendations and artwork are implemented; release validation is in
+progress. The design choices below retain the original investigation history.
 
 ## Implemented first milestone
 
 The workspace now uses Slint for the native interface, an isolated mpv process for audio, yt-dlp/Deno for YouTube extraction and search, and Windows SMTC for media controls. Local and public YouTube playback passed muted integration tests. All three layouts share one queue and playback engine. Settings use a bounded JSON queue rather than SQLite at this stage. No YTerMusic source was copied.
 
-Remaining milestones include account/library synchronization, fetched artwork, tray behavior, audio-device recovery, extended soak/scaling tests and gaming benchmarks. The original investigation and acceptance goals below remain a roadmap, not a claim that these features are complete. See `VALIDATION.md` for measured evidence.
+Read-only account/library synchronization, automatic recommendation refill and
+bounded thumbnail fetching are now implemented. Full, compact and mini layouts
+share playback; theme and size controls are independent. Fifty production
+Mini/Expand cycles retained the native window and player during local playback.
+Remaining validation includes session longevity, actual audio-device changes,
+monitor DPI migration and gaming impact. Tray behavior remains roadmap work.
+See `RELEASE_READINESS.md` and `VALIDATION.md` for current evidence; the original
+investigation below is not a claim that every proposed feature is complete.
 
 ## Goal and scope
+
+### Deferred roadmap: synchronized listening rooms
+
+Plan a Jam-style feature for friends listening together while gaming, after
+playback reliability and convenient browser login are established. This is
+deferred work with no implementation or release date committed.
+
+Synchronized playback on each participant's device is a required part of the
+feature. A shared queue with audio playing only on the host does not meet its
+purpose and will not count as the completed feature.
+
+The initial design should use private invite-only rooms, a shared queue and
+host-controlled pause, skip and ordering. Each participant streams independently
+with their own account/session. A coordination service exchanges track IDs,
+queue state and timing; it must not receive account credentials or relay audio.
+Joining late, preloading, buffering, clock drift and reconnects require explicit
+recovery behavior and multi-device tests. Resource use must stay bounded and be
+measured alongside normal playback. Public rooms, chat and mobile clients are
+outside the proposed first version.
 
 Build a Windows-first native Rust desktop music player that leaves resources available for games. The primary experience is reliable music playback with media keys while the main window is minimized. Search, queue management, personal playlists and a compact player follow. Windows x64 is the initial target; other operating systems are later work.
 

@@ -9,12 +9,16 @@ build = "build.rs"
 tide-core = { path = "../core" }
 tide-playback = { path = "../playback" }
 tide-windows = { path = "../windows" }
+tide-provider = { path = "../provider" }
 slint = { version = "=1.18.1", default-features = false, features = ["std", "backend-winit", "renderer-software", "software-renderer-path", "compat-1-2", "raw-window-handle-06"] }
 raw-window-handle = "0.6"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rfd = "0.17.2"
-image = { version = "0.25", default-features = false, features = ["png"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+ureq = { version = "3", default-features = false, features = ["rustls"] }
+url = "2"
 
 [build-dependencies]
 slint-build = "=1.18.1"
+winresource = "0.1.31"

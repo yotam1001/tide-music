@@ -2,13 +2,12 @@
 use std::io;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::os::windows::process::CommandExt;
-use std::process::{ChildStderr, ChildStdout, Command, ExitStatus};
+use std::process::{ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus};
 
 use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
 use windows_sys::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
 };
-use windows_sys::Win32::System::JobObjects::TerminateJobObject;
 use windows_sys::Win32::System::Threading::{OpenThread, ResumeThread, THREAD_SUSPEND_RESUME};
 
 use super::{OwnedChild, OwnedJob};
@@ -43,6 +42,9 @@ impl OwnedProcess {
     pub fn take_stdout(&mut self) -> Option<ChildStdout> {
         self.child.process.stdout.take()
     }
+    pub fn take_stdin(&mut self) -> Option<ChildStdin> {
+        self.child.process.stdin.take()
+    }
     pub fn take_stderr(&mut self) -> Option<ChildStderr> {
         self.child.process.stderr.take()
     }
@@ -52,13 +54,7 @@ impl OwnedProcess {
 
     /// Kill every process in the owned job before waiting for pipe readers.
     pub fn terminate_tree(&mut self) -> io::Result<()> {
-        // SAFETY: This is our live, uniquely owned job handle; no global/image
-        // matching is involved. Windows terminates only this job's members.
-        if unsafe { TerminateJobObject(self.child._job.0, 1) } == 0 {
-            return Err(io::Error::last_os_error());
-        }
-        self.child.wait()?;
-        Ok(())
+        self.child.terminate_tree()
     }
 }
 

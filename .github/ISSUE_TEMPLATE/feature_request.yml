@@ -1,0 +1,17 @@
+name: Feature request
+description: Suggest an improvement while preserving lightweight playback
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Describe the listening task that is difficult today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Include any alternatives and likely memory or background-work costs, if known.
+    validations:
+      required: true

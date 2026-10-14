@@ -16,6 +16,14 @@ use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader, WriteHa
 use tokio::sync::{mpsc, watch};
 use url::Url;
 
+mod cookie_updates;
+mod prefetch;
+pub use cookie_updates::CookieUpdate;
+use cookie_updates::CookieUpdates;
+#[cfg(windows)]
+mod recovery;
+use prefetch::{Preparation, PreparedStream};
+
 #[cfg(windows)]
 mod owned_process;
 #[cfg(windows)]
@@ -42,17 +50,43 @@ pub struct PlaybackHandle {
     desired_generation: Arc<AtomicU64>,
     supersede_epoch: Arc<AtomicU64>,
     desired_volume: Arc<AtomicU64>,
+    intent: Arc<Mutex<PlaybackIntent>>,
     snapshot: Arc<RwLock<PlaybackSnapshot>>,
     send_gate: Arc<Mutex<()>>,
     worker: Option<thread::JoinHandle<()>>,
     yt_dlp_available: bool,
+    preparation: Arc<Preparation>,
+    cookie_updates: Arc<CookieUpdates>,
 }
 
 /// Start the native playback worker. mpv is located at runtime but is not
 /// launched until the first real track is loaded.
 #[cfg(windows)]
 pub fn start() -> Result<PlaybackHandle, String> {
-    let runtimes = RuntimePaths::discover()?;
+    start_with_cookie_file(None)
+}
+
+/// Use a caller-owned, private cookie lease for signed-in YouTube playback.
+/// The caller must keep it alive until this handle and its helpers are dropped.
+#[cfg(windows)]
+pub fn start_with_cookie_file(cookies: Option<PathBuf>) -> Result<PlaybackHandle, String> {
+    start_with_account(cookies, 0)
+}
+
+#[cfg(windows)]
+pub fn start_with_account(
+    cookies: Option<PathBuf>,
+    account_index: u32,
+) -> Result<PlaybackHandle, String> {
+    if account_index > 9 {
+        return Err("Invalid signed-in account selection".into());
+    }
+    if cookies.as_ref().is_some_and(|path| !path.is_file()) {
+        return Err("The signed-in session file is unavailable. Reconnect your account.".into());
+    }
+    let mut runtimes = RuntimePaths::discover()?;
+    runtimes.cookies = cookies;
+    runtimes.account_index = account_index;
     let yt_dlp_available = runtimes.yt_dlp.is_some();
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_io()
@@ -70,14 +104,20 @@ pub fn start() -> Result<PlaybackHandle, String> {
     let desired_generation = Arc::new(AtomicU64::new(0));
     let supersede_epoch = Arc::new(AtomicU64::new(0));
     let desired_volume = Arc::new(AtomicU64::new(100.0_f64.to_bits()));
+    let intent = Arc::new(Mutex::new(PlaybackIntent::default()));
     let shutdown_requested = Arc::new(AtomicBool::new(false));
     let send_gate = Arc::new(Mutex::new(()));
+    let (preparation, preparation_rx) = Preparation::new();
+    let cookie_updates = Arc::new(CookieUpdates::default());
 
     let worker_snapshot = Arc::clone(&snapshot);
     let worker_generation = Arc::clone(&desired_generation);
     let worker_epoch = Arc::clone(&supersede_epoch);
     let worker_gate = Arc::clone(&send_gate);
     let worker_volume = Arc::clone(&desired_volume);
+    let worker_intent = Arc::clone(&intent);
+    let worker_preparation = Arc::clone(&preparation);
+    let worker_cookie_updates = Arc::clone(&cookie_updates);
     let worker = thread::Builder::new()
         .name("tide-playback".into())
         .spawn(move || {
@@ -91,6 +131,10 @@ pub fn start() -> Result<PlaybackHandle, String> {
                     supersede_epoch: worker_epoch,
                     send_gate: worker_gate,
                     desired_volume: worker_volume,
+                    intent: worker_intent,
+                    preparation: worker_preparation,
+                    preparation_rx,
+                    cookie_updates: worker_cookie_updates,
                 },
             ));
         })
@@ -103,16 +147,28 @@ pub fn start() -> Result<PlaybackHandle, String> {
         desired_generation,
         supersede_epoch,
         desired_volume,
+        intent,
         snapshot,
         send_gate,
         worker: Some(worker),
         yt_dlp_available,
+        preparation,
+        cookie_updates,
     })
 }
 
 #[cfg(not(windows))]
 pub fn start() -> Result<PlaybackHandle, String> {
     Err("The native mpv named-pipe backend is currently supported on Windows only.".into())
+}
+
+#[cfg(not(windows))]
+pub fn start_with_cookie_file(_: Option<PathBuf>) -> Result<PlaybackHandle, String> {
+    start()
+}
+#[cfg(not(windows))]
+pub fn start_with_account(_: Option<PathBuf>, _: u32) -> Result<PlaybackHandle, String> {
+    start()
 }
 
 impl PlaybackHandle {
@@ -148,6 +204,7 @@ impl PlaybackHandle {
                 let epoch = next_epoch(self.supersede_epoch.load(Ordering::Acquire));
                 self.command_tx
                     .try_send(WorkerCommand::Load(PendingLoad {
+                        prepared: self.preparation.take_for(&validated.source),
                         source: validated.source,
                         generation,
                         epoch,
@@ -156,6 +213,11 @@ impl PlaybackHandle {
 
                 self.supersede_epoch.store(epoch, Ordering::Release);
                 self.desired_generation.store(generation, Ordering::Release);
+                *self.intent.lock().unwrap_or_else(|p| p.into_inner()) = PlaybackIntent {
+                    epoch,
+                    paused: false,
+                    ..PlaybackIntent::default()
+                };
                 let mut snapshot = self.snapshot_write();
                 snapshot.generation = generation;
                 snapshot.position = 0.0;
@@ -178,7 +240,11 @@ impl PlaybackHandle {
                 if self.shutdown_requested.load(Ordering::Acquire) {
                     return Err("The playback engine is shutting down.".into());
                 }
-                self.try_send(ActionCommand::Seek(seconds))
+                self.try_send(ActionCommand::Seek)?;
+                let mut intent = self.intent.lock().unwrap_or_else(|p| p.into_inner());
+                intent.seek = Some(seconds);
+                intent.seek_revision = next_epoch(intent.seek_revision);
+                Ok(())
             }
             PlaybackCommand::SetVolume(volume) => {
                 if !volume.is_finite() || !(0.0..=100.0).contains(&volume) {
@@ -215,6 +281,7 @@ impl PlaybackHandle {
                     .try_send(WorkerCommand::Stop { epoch })
                     .map_err(command_queue_error)?;
                 self.supersede_epoch.store(epoch, Ordering::Release);
+                self.preparation.clear();
                 reset_snapshot(&mut self.snapshot_write());
                 Ok(())
             }
@@ -226,7 +293,10 @@ impl PlaybackHandle {
                 if self.shutdown_requested.load(Ordering::Acquire) {
                     return Err("The playback engine is shutting down.".into());
                 }
-                self.try_send(ActionCommand::SetPaused(paused))
+                self.try_send(ActionCommand::SetPaused)?;
+                self.intent.lock().unwrap_or_else(|p| p.into_inner()).paused = paused;
+                self.snapshot_write().paused = paused;
+                Ok(())
             }
             PlaybackCommand::TogglePause => {
                 let _gate = self
@@ -236,7 +306,11 @@ impl PlaybackHandle {
                 if self.shutdown_requested.load(Ordering::Acquire) {
                     return Err("The playback engine is shutting down.".into());
                 }
-                self.try_send(ActionCommand::TogglePause)
+                let paused = !self.intent.lock().unwrap_or_else(|p| p.into_inner()).paused;
+                self.try_send(ActionCommand::SetPaused)?;
+                self.intent.lock().unwrap_or_else(|p| p.into_inner()).paused = paused;
+                self.snapshot_write().paused = paused;
+                Ok(())
             }
             PlaybackCommand::Shutdown => {
                 let _gate = self
@@ -244,6 +318,7 @@ impl PlaybackHandle {
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner());
                 self.shutdown_requested.store(true, Ordering::Release);
+                self.preparation.close();
                 self.shutdown_tx.send_replace(true);
                 Ok(())
             }
@@ -253,6 +328,34 @@ impl PlaybackHandle {
     /// Return a copy of the most recently observed playback state.
     pub fn snapshot(&self) -> PlaybackSnapshot {
         self.snapshot_read().clone()
+    }
+
+    /// Resolve at most one upcoming YouTube track while the current track plays.
+    /// Repeated calls with the same source are cheap. No media is downloaded;
+    /// stream URLs stay in memory briefly and failures use ordinary loading.
+    /// Pass `None` when the queue has no upcoming song or changes account.
+    pub fn prepare_next(&self, source: Option<&str>) -> Result<(), String> {
+        let _gate = self.send_gate.lock().unwrap_or_else(|p| p.into_inner());
+        if self.shutdown_requested.load(Ordering::Acquire) {
+            return Err("The playback engine is shutting down.".into());
+        }
+        let source = source.map(validate_source).transpose()?;
+        self.preparation.set(
+            source
+                .filter(|s| s.is_youtube && self.yt_dlp_available)
+                .map(|s| s.source),
+        );
+        Ok(())
+    }
+
+    /// Whether the requested upcoming track has a fresh, prepared stream.
+    pub fn next_is_prepared(&self, source: &str) -> bool {
+        validate_source(source).is_ok_and(|source| self.preparation.is_ready(&source.source))
+    }
+
+    /// Drain at most four owned updates. Credential buffers zeroize on drop.
+    pub fn take_cookie_updates(&self) -> Vec<CookieUpdate> {
+        self.cookie_updates.take()
     }
 
     fn try_send(&self, command: ActionCommand) -> Result<(), String> {
@@ -280,6 +383,7 @@ impl PlaybackHandle {
 impl Drop for PlaybackHandle {
     fn drop(&mut self) {
         self.shutdown_requested.store(true, Ordering::Release);
+        self.preparation.close();
         self.shutdown_tx.send_replace(true);
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
@@ -304,15 +408,29 @@ fn next_epoch(current: u64) -> u64 {
 
 enum WorkerCommand {
     Load(PendingLoad),
-    Stop { epoch: u64 },
-    Action { epoch: u64, command: ActionCommand },
+    Stop {
+        epoch: u64,
+    },
+    Action {
+        epoch: u64,
+        command: ActionCommand,
+    },
+    #[cfg(test)]
+    ProbeTerminate(std::sync::mpsc::Sender<()>),
 }
 
 enum ActionCommand {
-    TogglePause,
-    SetPaused(bool),
-    Seek(f64),
+    SetPaused,
+    Seek,
     SetVolume,
+}
+
+#[derive(Clone, Default)]
+struct PlaybackIntent {
+    epoch: u64,
+    paused: bool,
+    seek: Option<f64>,
+    seek_revision: u64,
 }
 
 #[cfg(windows)]
@@ -320,11 +438,17 @@ struct WorkerControls {
     desired_generation: Arc<AtomicU64>,
     supersede_epoch: Arc<AtomicU64>,
     desired_volume: Arc<AtomicU64>,
+    intent: Arc<Mutex<PlaybackIntent>>,
     send_gate: Arc<Mutex<()>>,
+    preparation: Arc<Preparation>,
+    preparation_rx: watch::Receiver<prefetch::Request>,
+    cookie_updates: Arc<CookieUpdates>,
 }
 
 #[derive(Clone, Debug)]
 struct RuntimePaths {
+    cookies: Option<PathBuf>,
+    account_index: u32,
     mpv: PathBuf,
     yt_dlp: Option<PathBuf>,
 }
@@ -336,6 +460,8 @@ impl RuntimePaths {
                 "mpv.exe was not found. Place it in the app's tools directory, .tools/runtime, or add it to PATH.".to_owned()
             })?;
         Ok(Self {
+            cookies: None,
+            account_index: 0,
             mpv,
             yt_dlp: Self::discover_yt_dlp(),
         })
@@ -465,10 +591,22 @@ type PipeWriter = WriteHalf<tokio::net::windows::named_pipe::NamedPipeClient>;
 
 #[cfg(windows)]
 struct RunningPlayer {
+    // Rust drops fields in declaration order: terminate/reap the owned process
+    // and close its descendant job before deleting its private cookie snapshot.
     child: OwnedChild,
+    _cookie_copy: Option<prefetch::CookieCopy>,
+    cookie_updates: Arc<CookieUpdates>,
+    account_index: u32,
     writer: PipeWriter,
     reader_task: tokio::task::JoinHandle<()>,
     session_id: u64,
+}
+
+#[cfg(windows)]
+struct PlayerLaunch {
+    session_id: u64,
+    epoch: u64,
+    cookie_updates: Arc<CookieUpdates>,
 }
 
 /// std::process::Child does not kill the child when dropped. This guard makes
@@ -493,6 +631,12 @@ impl OwnedChild {
     fn wait(&mut self) -> io::Result<std::process::ExitStatus> {
         self.process.wait()
     }
+
+    fn terminate_tree(&mut self) -> io::Result<()> {
+        self._job.terminate_and_wait()?;
+        self.process.wait()?;
+        Ok(())
+    }
 }
 
 #[cfg(windows)]
@@ -510,6 +654,44 @@ struct OwnedJob(windows_sys::Win32::Foundation::HANDLE);
 
 #[cfg(windows)]
 impl OwnedJob {
+    fn terminate_and_wait(&self) -> io::Result<()> {
+        use windows_sys::Win32::System::JobObjects::{
+            JobObjectBasicAccountingInformation, QueryInformationJobObject, TerminateJobObject,
+            JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
+        };
+        // SAFETY: live uniquely owned job handle and correctly sized writable
+        // accounting structure. Only descendants of our owned task are killed.
+        unsafe {
+            if TerminateJobObject(self.0, 1) == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            let deadline = Instant::now() + SHUTDOWN_GRACE;
+            loop {
+                let mut info = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION::default();
+                if QueryInformationJobObject(
+                    self.0,
+                    JobObjectBasicAccountingInformation,
+                    (&mut info as *mut JOBOBJECT_BASIC_ACCOUNTING_INFORMATION).cast(),
+                    std::mem::size_of_val(&info) as u32,
+                    std::ptr::null_mut(),
+                ) == 0
+                {
+                    return Err(io::Error::last_os_error());
+                }
+                if info.ActiveProcesses == 0 {
+                    return Ok(());
+                }
+                if Instant::now() >= deadline {
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "Owned helper tree did not exit",
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+    }
+
     fn attach(process: &Child) -> io::Result<Self> {
         use std::os::windows::io::AsRawHandle;
         use windows_sys::Win32::System::JobObjects::{
@@ -552,11 +734,12 @@ impl Drop for OwnedJob {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 struct PendingLoad {
     source: String,
     generation: u64,
     epoch: u64,
+    prepared: Option<PreparedStream>,
 }
 
 #[cfg(windows)]
@@ -568,6 +751,7 @@ struct PlayerState {
     awaiting_start: Option<u64>,
     next_request_id: i64,
     requests: HashMap<i64, RequestPurpose>,
+    prepared_fallback: Option<PendingLoad>,
 }
 
 #[cfg(windows)]
@@ -577,14 +761,8 @@ enum RequestPurpose {
 
 #[cfg(windows)]
 enum IpcEvent {
-    Line {
-        session_id: u64,
-        line: String,
-    },
-    Closed {
-        session_id: u64,
-        error: Option<String>,
-    },
+    Line { session_id: u64, line: String },
+    Closed { session_id: u64 },
 }
 
 #[cfg(windows)]
@@ -599,216 +777,251 @@ async fn run_worker(
         desired_generation,
         supersede_epoch,
         desired_volume,
+        intent,
         send_gate,
+        preparation,
+        preparation_rx,
+        cookie_updates,
     } = controls;
     let (ipc_event_tx, mut ipc_event_rx) = mpsc::channel(IPC_EVENT_CAPACITY);
     let mut player: Option<RunningPlayer> = None;
     let mut state = PlayerState::default();
+    let mut track: Option<recovery::Track> = None;
     let mut next_session_id = 1_u64;
+    let mut watchdog = tokio::time::interval(Duration::from_millis(250));
+    watchdog.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let preparation_task = tokio::spawn(prefetch::run(
+        runtimes.clone(),
+        Arc::clone(&preparation),
+        preparation_rx,
+        Arc::clone(&cookie_updates),
+    ));
 
     loop {
+        let mut fault = false;
         tokio::select! {
             biased;
             changed = shutdown_rx.changed() => {
-                if changed.is_err() || *shutdown_rx.borrow() {
-                    break;
+                if changed.is_err() || *shutdown_rx.borrow() { break; }
+            }
+            command = command_rx.recv() => {
+                let Some(command) = command else { break; };
+                match command {
+                    WorkerCommand::Load(load) => {
+                        let current = {
+                            let _gate = send_gate.lock().unwrap_or_else(|p| p.into_inner());
+                            load.epoch == supersede_epoch.load(Ordering::Acquire)
+                        };
+                        if !current { continue; }
+                        if let Some(mut old) = player.take() { terminate_player(&mut old).await; }
+                        state = PlayerState::default();
+                        track = Some(recovery::Track::new(load, Instant::now()));
+                    }
+                    WorkerCommand::Stop { epoch } => {
+                        let current = {
+                            let _gate = send_gate.lock().unwrap_or_else(|p| p.into_inner());
+                            epoch == supersede_epoch.load(Ordering::Acquire)
+                        };
+                        if !current { continue; }
+                        track = None;
+                        state = PlayerState::default();
+                        if let Some(mut running) = player.take() { terminate_player(&mut running).await; }
+                    }
+                    WorkerCommand::Action { epoch, command } => {
+                        // Accepted targets are authoritative, including controls queued
+                        // while reconnecting. Pause/seek wait until the file is ready.
+                        let accepted = {
+                            let _gate = send_gate.lock().unwrap_or_else(|p| p.into_inner());
+                            if epoch != supersede_epoch.load(Ordering::Acquire)
+                                && !matches!(command, ActionCommand::SetVolume) { continue; }
+                            intent.lock().unwrap_or_else(|p| p.into_inner()).clone()
+                        };
+                        let ready = accepted.epoch == epoch && track.as_ref().is_some_and(|track| track.loaded);
+                        let command = match command {
+                            ActionCommand::SetPaused if ready => Some(json!(["set_property", "pause", accepted.paused])),
+                            ActionCommand::Seek if ready => track.as_mut().and_then(|track|
+                                track.apply_seek(&accepted, Instant::now()))
+                                .map(|seconds| json!(["seek", seconds, "absolute+exact"])),
+                            ActionCommand::SetVolume => Some(json!(["set_property", "volume",
+                                f64::from_bits(desired_volume.load(Ordering::Acquire))])),
+                            _ => None,
+                        };
+                        if let (Some(command), Some(running)) = (command, player.as_mut()) {
+                            fault = send_ipc_command(&mut running.writer, command, None).await.is_err();
+                        }
+                    }
+                    #[cfg(test)]
+                    WorkerCommand::ProbeTerminate(done) => {
+                        if let Some(running) = player.as_mut() {
+                            let _ = running.child.kill();
+                        }
+                        let _ = done.send(());
+                    }
                 }
             }
             event = ipc_event_rx.recv() => {
                 match event {
                     Some(IpcEvent::Line { session_id, line })
                         if player.as_ref().is_some_and(|running| running.session_id == session_id) => {
-                                if let Ok(message) = serde_json::from_str::<Value>(&line) {
-                                    let _gate = send_gate.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-                                    apply_ipc_message(
-                                        &mut state,
-                                        &mut snapshot_write(&snapshot),
-                                        &message,
-                                        desired_generation.load(Ordering::Acquire),
-                                        supersede_epoch.load(Ordering::Acquire),
-                                    );
-                                    // Display the accepted volume target. An
-                                    // earlier volume property event must not
-                                    // overwrite a newer queued volume control.
-                                    snapshot_write(&snapshot).volume =
-                                        f64::from_bits(desired_volume.load(Ordering::Acquire));
-                                }
-                    }
-                    Some(IpcEvent::Closed { session_id, error })
-                        if player.as_ref().is_some_and(|running| running.session_id == session_id) => {
-                            if let (Some(generation), Some(epoch)) =
-                                (state.active_generation, state.active_epoch)
+                        if let Ok(message) = serde_json::from_str::<Value>(&line) {
+                            let loaded;
                             {
-                                let text = error.map_or_else(
-                                    || "The mpv IPC connection closed unexpectedly.".to_owned(),
-                                    |error| format!("The mpv IPC connection failed: {error}"),
-                                );
-                                set_generation_error(
-                                    &snapshot,
-                                    &desired_generation,
-                                    &supersede_epoch,
-                                    &send_gate,
-                                    generation,
-                                    epoch,
-                                    text,
-                                );
+                                let _gate = send_gate.lock().unwrap_or_else(|p| p.into_inner());
+                                let generation = desired_generation.load(Ordering::Acquire);
+                                let epoch = supersede_epoch.load(Ordering::Acquire);
+                                let current = track.as_ref().is_some_and(|track|
+                                    track.load.generation == generation && track.load.epoch == epoch);
+                                if !current { continue; }
+                                let active = active_is_current(&state, generation, epoch);
+                                let event = message.get("event").and_then(Value::as_str);
+                                let matching_end = active && event == Some("end-file")
+                                    && message.get("playlist_entry_id").and_then(Value::as_u64) == state.active_entry_id;
+                                fault = track.as_ref().is_some_and(|track|
+                                    recovery::message_failed(&state, track, &message, generation, epoch));
+                                // Retain the prepared fallback's generation/entry checks;
+                                // recovery always reloads its original source, never its URL.
+                                let prepared_failed = take_prepared_fallback(&mut state, &message, generation, epoch).is_some();
+                                fault |= prepared_failed;
+                                loaded = active && event == Some("file-loaded");
+                                let mut view = snapshot_write(&snapshot);
+                                // Do not publish an intermediate ended/error state: the app
+                                // may otherwise advance the queue before recovery is scheduled.
+                                if !fault {
+                                    apply_ipc_message(&mut state, &mut view, &message, generation, epoch);
+                                    if let Some(current) = track.as_mut() {
+                                        if loaded { current.file_loaded(Instant::now()); }
+                                        if active && event == Some("property-change") {
+                                            match message.get("name").and_then(Value::as_str) {
+                                                Some("time-pos") => {
+                                                    if let Some(position) = message.get("data").and_then(finite_non_negative) {
+                                                        current.observe_position(position, Instant::now());
+                                                        view.position = current.position;
+                                                    }
+                                                }
+                                                Some("duration") => {
+                                                    if let Some(duration) = message.get("data").and_then(finite_non_negative) {
+                                                        // Some demuxers shorten duration to the
+                                                        // bytes received immediately before EOF.
+                                                        // Keep the known full duration for recovery.
+                                                        current.duration = current.duration.max(duration);
+                                                        view.duration = current.duration;
+                                                    }
+                                                }
+                                                _ => {}
+                                            }
+                                        }
+                                    }
+                                    if matching_end && view.ended { track = None; }
+                                }
+                                view.volume = f64::from_bits(desired_volume.load(Ordering::Acquire));
+                                view.paused = intent.lock().unwrap_or_else(|p| p.into_inner()).paused || view.ended;
                             }
-                            if let Some(mut failed) = player.take() {
-                                terminate_player(&mut failed).await;
+                            if loaded && !fault {
+                                if let Some(running) = player.as_mut() {
+                                    if let Some(copy) = &mut running._cookie_copy {
+                                        copy.publish_update(running.account_index, &running.cookie_updates);
+                                    }
+                                }
+                                let accepted = intent.lock().unwrap_or_else(|p| p.into_inner()).clone();
+                                if let (Some(current), Some(running)) = (track.as_mut(), player.as_mut()) {
+                                    if let Some(seconds) = current.apply_seek(&accepted, Instant::now()) {
+                                        fault = send_ipc_command(&mut running.writer, json!(["seek", seconds, "absolute+exact"]), None).await.is_err();
+                                    }
+                                    if !fault {
+                                        fault = send_ipc_command(&mut running.writer,
+                                            json!(["set_property", "pause", accepted.paused]), None).await.is_err();
+                                    }
+                                }
                             }
-                            state = PlayerState::default();
+                        }
+                    }
+                    Some(IpcEvent::Closed { session_id })
+                        if player.as_ref().is_some_and(|running| running.session_id == session_id) => {
+                        fault = track.is_some();
+                        if !fault {
+                            if let Some(mut failed) = player.take() { terminate_player(&mut failed).await; }
+                        }
                     }
                     _ => {}
                 }
             }
-            command = command_rx.recv() => {
-                let Some(command) = command else { break; };
-                match command {
-                    WorkerCommand::Load(load) => {
-                        let generation = load.generation;
-                        let skip_load = {
-                            let _gate = send_gate.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-                            load.epoch != supersede_epoch.load(Ordering::Acquire)
-                        };
-                        if !skip_load {
-                            // Events have no track token for many properties.
-                            // A separate session per track both cancels slow
-                            // extraction and makes every old event identifiable.
-                            if let Some(mut old) = player.take() {
-                                terminate_player(&mut old).await;
-                            }
-                            state = PlayerState::default();
-                            if player.is_none() {
-                                let volume = f64::from_bits(desired_volume.load(Ordering::Acquire));
-                                match launch_player(
-                                    &runtimes,
-                                    volume,
-                                    &mut shutdown_rx,
-                                    &ipc_event_tx,
-                                    next_session_id,
-                                    &supersede_epoch,
-                                    load.epoch,
-                                ).await {
-                                    Ok(Some(running)) => {
-                                        next_session_id = next_session_id.wrapping_add(1).max(1);
-                                        player = Some(running);
-                                        if let Some(running) = player.as_mut() {
-                                            if let Err(error) = observe_properties(running).await {
-                                                set_generation_error(
-                                                    &snapshot,
-                                                    &desired_generation,
-                                                    &supersede_epoch,
-                                                    &send_gate,
-                                                    generation,
-                                                    load.epoch,
-                                                    error.to_string(),
-                                                );
-                                                terminate_player(running).await;
-                                                player = None;
-                                                continue;
-                                            }
-                                        }
-                                    }
-                                    Ok(None) => {
-                                        if *shutdown_rx.borrow() {
-                                            break;
-                                        }
-                                        continue;
-                                    }
-                                    Err(error) => {
-                                        set_generation_error(
-                                            &snapshot,
-                                            &desired_generation,
-                                            &supersede_epoch,
-                                            &send_gate,
-                                            generation,
-                                            load.epoch,
-                                            error,
-                                        );
-                                        continue;
-                                    }
-                                }
-                            }
-                            // A newer source may have arrived while mpv was
-                            // starting. Leave mpv idle and let that queued
-                            // source become the first load.
-                            let still_current = {
-                                let _gate = send_gate.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-                                generation == desired_generation.load(Ordering::Acquire)
-                                    && load.epoch == supersede_epoch.load(Ordering::Acquire)
-                            };
-                            if !still_current {
-                                continue;
-                            }
-                            if let Some(running) = player.as_mut() {
-                                let epoch = load.epoch;
-                                if let Err(error) = begin_load(running, &mut state, load).await {
-                                    set_generation_error(
-                                        &snapshot,
-                                        &desired_generation,
-                                        &supersede_epoch,
-                                        &send_gate,
-                                        generation,
-                                        epoch,
-                                        error.to_string(),
-                                    );
-                                }
-                            }
-                        }
-                    }
-                    WorkerCommand::Action { epoch, command } => {
-                        let command = {
-                            let _gate = send_gate.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-                            if epoch != supersede_epoch.load(Ordering::Acquire)
-                                && !matches!(command, ActionCommand::SetVolume)
-                            {
-                                continue;
-                            }
-                            match command {
-                                ActionCommand::TogglePause => json!(["cycle", "pause"]),
-                                ActionCommand::SetPaused(paused) => json!(["set_property", "pause", paused]),
-                                ActionCommand::Seek(seconds) => json!(["seek", seconds, "absolute+exact"]),
-                                ActionCommand::SetVolume => json!([
-                                    "set_property", "volume", f64::from_bits(desired_volume.load(Ordering::Acquire))
-                                ]),
-                            }
-                        };
-                        if let Some(running) = player.as_mut() {
-                            if let Err(error) = send_ipc_command(&mut running.writer, command, None).await {
-                                if let (Some(generation), Some(active_epoch)) =
-                                    (state.active_generation, state.active_epoch)
-                                {
-                                    set_generation_error(
-                                        &snapshot, &desired_generation, &supersede_epoch,
-                                        &send_gate, generation, active_epoch,
-                                        format!("Could not send a playback control: {error}"),
-                                    );
-                                }
-                            }
-                        }
-                    }
-                    WorkerCommand::Stop { epoch } => {
-                        let _gate = send_gate.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-                        if epoch != supersede_epoch.load(Ordering::Acquire) {
-                            continue;
-                        }
+            _ = watchdog.tick() => {
+                let accepted = {
+                    let _gate = send_gate.lock().unwrap_or_else(|p| p.into_inner());
+                    intent.lock().unwrap_or_else(|p| p.into_inner()).clone()
+                };
+                if let Some(current) = track.as_mut() {
+                    if current.load.epoch != supersede_epoch.load(Ordering::Acquire) { continue; }
+                    let now = Instant::now();
+                    if current.retry_at.is_some_and(|retry_at| now >= retry_at) {
+                        if let Some(mut old) = player.take() { terminate_player(&mut old).await; }
                         state = PlayerState::default();
-                        drop(_gate);
-                        if let Some(mut running) = player.take() {
-                            terminate_player(&mut running).await;
+                        current.apply_seek(&accepted, now);
+                        current.session_started(now);
+                        let volume = f64::from_bits(desired_volume.load(Ordering::Acquire));
+                        match launch_player(&runtimes, volume, &mut shutdown_rx, &ipc_event_tx,
+                            &supersede_epoch, PlayerLaunch { session_id: next_session_id,
+                                epoch: current.load.epoch, cookie_updates: Arc::clone(&cookie_updates) }).await {
+                            Ok(Some(mut running)) => {
+                                next_session_id = next_session_id.wrapping_add(1).max(1);
+                                if observe_properties(&mut running).await.is_err() {
+                                    fault = true;
+                                } else {
+                                    let mut load = current.load.clone();
+                                    // Resume via mpv's per-file start option before audio starts.
+                                    // Starting paused prevents any accepted pause racing loading.
+                                    fault = begin_load_at(&mut running, &mut state, &mut load, current.position).await.is_err();
+                                }
+                                player = Some(running);
+                            }
+                            Ok(None) => {
+                                if *shutdown_rx.borrow() { break; }
+                                track = None;
+                            }
+                            Err(_) => { fault = true; }
                         }
+                    } else {
+                        fault = current.timed_out(accepted.paused, now);
                     }
                 }
             }
         }
+        if fault {
+            let retry = {
+                let _gate = send_gate.lock().unwrap_or_else(|p| p.into_inner());
+                if let Some(current) = track.as_mut() {
+                    if current.load.generation != desired_generation.load(Ordering::Acquire)
+                        || current.load.epoch != supersede_epoch.load(Ordering::Acquire)
+                    {
+                        continue;
+                    }
+                    let retry = current.schedule_retry(Instant::now());
+                    let mut view = snapshot_write(&snapshot);
+                    view.loading = retry;
+                    view.ended = false;
+                    view.paused = intent.lock().unwrap_or_else(|p| p.into_inner()).paused;
+                    view.position = current.position;
+                    view.error = (!retry).then(|| "Playback could not recover after two reconnect attempts. Try this track again or check your connection.".into());
+                    retry
+                } else {
+                    false
+                }
+            };
+            if let Some(mut failed) = player.take() {
+                terminate_player(&mut failed).await;
+            }
+            state = PlayerState::default();
+            if !retry {
+                track = None;
+            }
+        }
     }
-
     if let Some(mut running) = player.take() {
         terminate_player(&mut running).await;
     }
-    let _gate = send_gate
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    preparation.close();
+    let _ = preparation_task.await;
+    let _gate = send_gate.lock().unwrap_or_else(|p| p.into_inner());
     reset_snapshot(&mut snapshot_write(&snapshot));
 }
 
@@ -818,13 +1031,25 @@ async fn launch_player(
     volume: f64,
     shutdown_rx: &mut watch::Receiver<bool>,
     ipc_event_tx: &mpsc::Sender<IpcEvent>,
-    session_id: u64,
     desired_epoch: &AtomicU64,
-    epoch: u64,
+    launch: PlayerLaunch,
 ) -> Result<Option<RunningPlayer>, String> {
     use std::os::windows::process::CommandExt;
     use tokio::net::windows::named_pipe::ClientOptions;
+    let PlayerLaunch {
+        session_id,
+        epoch,
+        cookie_updates,
+    } = launch;
 
+    // Each load/recovery launches a new player. Its extractor may rewrite only
+    // this snapshot; API refreshes retain ownership of the caller's lease.
+    let cookie_copy = runtimes
+        .cookies
+        .as_ref()
+        .map(|path| prefetch::CookieCopy::create(path))
+        .transpose()
+        .map_err(|_| "Could not prepare signed-in playback")?;
     let pipe_path = unique_pipe_path();
     let mut command = Command::new(&runtimes.mpv);
     command
@@ -832,6 +1057,9 @@ async fn launch_player(
         .arg("--idle=yes")
         .arg("--terminal=no")
         .arg("--input-terminal=no")
+        // Tide owns the Windows media session; its helper must not process the
+        // same hardware key independently and cause double pause/skip actions.
+        .arg("--input-media-keys=no")
         .arg("--force-window=no")
         .arg("--vid=no")
         .arg("--vo=null")
@@ -852,6 +1080,25 @@ async fn launch_player(
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .creation_flags(0x08000000);
+    if let Some(cookies) = &cookie_copy {
+        let path = cookies.path().to_string_lossy();
+        command.arg(format!(
+            "--ytdl-raw-options=ignore-config=,cookies=%{}%{}{}",
+            path.len(),
+            path,
+            if runtimes.account_index > 0 {
+                let args = "youtube:player_skip=webpage,configs";
+                format!(
+                    ",add-headers=X-Goog-AuthUser:{},extractor-args=%{}%{}",
+                    runtimes.account_index,
+                    args.len(),
+                    args
+                )
+            } else {
+                String::new()
+            }
+        ));
+    }
 
     if runtimes.yt_dlp.is_some() {
         command.arg("--script-opts=ytdl_hook-ytdl_path=yt-dlp.exe");
@@ -926,21 +1173,11 @@ async fn launch_player(
                     }
                 }
                 Ok(None) => {
-                    let _ = event_tx
-                        .send(IpcEvent::Closed {
-                            session_id,
-                            error: None,
-                        })
-                        .await;
+                    let _ = event_tx.send(IpcEvent::Closed { session_id }).await;
                     break;
                 }
-                Err(error) => {
-                    let _ = event_tx
-                        .send(IpcEvent::Closed {
-                            session_id,
-                            error: Some(error.to_string()),
-                        })
-                        .await;
+                Err(_) => {
+                    let _ = event_tx.send(IpcEvent::Closed { session_id }).await;
                     break;
                 }
             }
@@ -951,6 +1188,9 @@ async fn launch_player(
     // include user input and use JSON arguments rather than text IPC syntax.
     let mut running = RunningPlayer {
         child,
+        _cookie_copy: cookie_copy,
+        cookie_updates,
+        account_index: runtimes.account_index,
         writer,
         reader_task,
         session_id,
@@ -1051,11 +1291,31 @@ async fn observe_properties(player: &mut RunningPlayer) -> io::Result<()> {
 }
 
 #[cfg(windows)]
-async fn begin_load(
+async fn begin_load_at(
     player: &mut RunningPlayer,
     state: &mut PlayerState,
-    load: PendingLoad,
+    load: &mut PendingLoad,
+    position: f64,
 ) -> io::Result<()> {
+    send_ipc_command(
+        &mut player.writer,
+        json!(["set_property", "pause", true]),
+        None,
+    )
+    .await?;
+    let mut command = if let Some(prepared) = &load.prepared {
+        state.prepared_fallback = Some(PendingLoad {
+            source: load.source.clone(),
+            generation: load.generation,
+            epoch: load.epoch,
+            prepared: None,
+        });
+        prepared.load_command()
+    } else {
+        state.prepared_fallback = None;
+        json!(["loadfile", load.source, "replace", -1, {}])
+    };
+    command[4]["start"] = json!(position.to_string());
     state.active_generation = Some(load.generation);
     state.active_epoch = Some(load.epoch);
     state.active_entry_id = None;
@@ -1068,13 +1328,7 @@ async fn begin_load(
             epoch: load.epoch,
         },
     );
-    if let Err(error) = send_ipc_command(
-        &mut player.writer,
-        json!(["loadfile", load.source, "replace"]),
-        Some(request_id),
-    )
-    .await
-    {
+    if let Err(error) = send_ipc_command(&mut player.writer, command, Some(request_id)).await {
         state.requests.remove(&request_id);
         state.awaiting_start = None;
         state.active_generation = None;
@@ -1151,6 +1405,7 @@ fn apply_ipc_message(
         }
         Some("file-loaded") => {
             if active_is_current(state, desired_generation, desired_epoch) {
+                state.prepared_fallback = None;
                 snapshot.loading = false;
                 snapshot.ended = false;
                 snapshot.error = None;
@@ -1196,6 +1451,36 @@ fn apply_ipc_message(
         }
         _ => {}
     }
+}
+
+/// Retry a rejected prepared URL once via the normal extractor. Compare both
+/// the request/entry and current epoch so superseded tracks never restart.
+#[cfg(windows)]
+fn take_prepared_fallback(
+    state: &mut PlayerState,
+    message: &Value,
+    generation: u64,
+    epoch: u64,
+) -> Option<PendingLoad> {
+    let fallback = state.prepared_fallback.as_ref()?;
+    if fallback.generation != generation || fallback.epoch != epoch {
+        return None;
+    }
+    let rejected_request = message
+        .get("request_id")
+        .and_then(Value::as_i64)
+        .is_some_and(|id| state.requests.contains_key(&id))
+        && message
+            .get("error")
+            .and_then(Value::as_str)
+            .is_some_and(|error| error != "success");
+    let failed_entry = message.get("event").and_then(Value::as_str) == Some("end-file")
+        && message.get("reason").and_then(Value::as_str) == Some("error")
+        && state.active_entry_id.is_some()
+        && message.get("playlist_entry_id").and_then(Value::as_u64) == state.active_entry_id;
+    (rejected_request || failed_entry)
+        .then(|| state.prepared_fallback.take())
+        .flatten()
 }
 
 #[cfg(windows)]
@@ -1269,6 +1554,11 @@ async fn terminate_player(player: &mut RunningPlayer) {
     }
     player.reader_task.abort();
     let _ = (&mut player.reader_task).await;
+    if player.child.terminate_tree().is_ok() {
+        if let Some(copy) = &mut player._cookie_copy {
+            copy.publish_update(player.account_index, &player.cookie_updates);
+        }
+    }
 }
 
 fn reset_snapshot(snapshot: &mut PlaybackSnapshot) {
@@ -1289,35 +1579,256 @@ fn snapshot_write(
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-#[cfg(windows)]
-fn set_generation_error(
-    snapshot: &RwLock<PlaybackSnapshot>,
-    desired_generation: &AtomicU64,
-    desired_epoch: &AtomicU64,
-    send_gate: &Mutex<()>,
-    generation: u64,
-    epoch: u64,
-    error: String,
-) {
-    let _gate = send_gate
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if desired_generation.load(Ordering::Acquire) != generation
-        || desired_epoch.load(Ordering::Acquire) != epoch
-    {
-        return;
-    }
-    let mut snapshot = snapshot_write(snapshot);
-    if snapshot.generation == generation {
-        snapshot.loading = false;
-        snapshot.paused = true;
-        snapshot.error = Some(error);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Opt-in: own muted local silence and only the mpv owned by this test.
+    // No process enumeration, account session, network, or persisted queue.
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "opt-in muted native recovery fault probe requiring mpv"]
+    fn native_recovery_fault_probe() {
+        fn wait(handle: &PlaybackHandle, condition: impl Fn(&PlaybackSnapshot) -> bool) {
+            let deadline = Instant::now() + Duration::from_secs(15);
+            loop {
+                let view = handle.snapshot();
+                assert_eq!(view.volume, 0.0, "Probe must remain muted");
+                if condition(&view) {
+                    return;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "Probe state timed out: loading={} paused={} position={} ended={} error={:?}",
+                    view.loading,
+                    view.paused,
+                    view.position,
+                    view.ended,
+                    view.error
+                );
+                thread::sleep(Duration::from_millis(20));
+            }
+        }
+        fn kill_owned(handle: &PlaybackHandle) {
+            let (tx, rx) = std::sync::mpsc::channel();
+            handle
+                .command_tx
+                .blocking_send(WorkerCommand::ProbeTerminate(tx))
+                .unwrap();
+            rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        }
+        let path = env::temp_dir().join(format!(
+            "tide-recovery-{}-{}.wav",
+            std::process::id(),
+            PIPE_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        let sample_bytes = 8_000_u32 * 2 * 60;
+        let mut wav = Vec::with_capacity(sample_bytes as usize + 44);
+        wav.extend(b"RIFF");
+        wav.extend((sample_bytes + 36).to_le_bytes());
+        wav.extend(b"WAVEfmt ");
+        wav.extend(16_u32.to_le_bytes());
+        wav.extend(1_u16.to_le_bytes());
+        wav.extend(1_u16.to_le_bytes());
+        wav.extend(8_000_u32.to_le_bytes());
+        wav.extend(16_000_u32.to_le_bytes());
+        wav.extend(2_u16.to_le_bytes());
+        wav.extend(16_u16.to_le_bytes());
+        wav.extend(b"data");
+        wav.extend(sample_bytes.to_le_bytes());
+        wav.resize(sample_bytes as usize + 44, 0);
+        fs::write(&path, &wav).unwrap();
+        let handle = start().unwrap();
+        handle.send(PlaybackCommand::SetVolume(0.0)).unwrap();
+        handle
+            .send(PlaybackCommand::Load {
+                source: path.to_string_lossy().into_owned(),
+                generation: 1,
+            })
+            .unwrap();
+        wait(&handle, |s| !s.loading && s.position > 0.1);
+        handle.send(PlaybackCommand::Seek(12.0)).unwrap();
+        wait(&handle, |s| s.position >= 12.0);
+        kill_owned(&handle);
+        wait(&handle, |s| s.loading && s.error.is_none());
+        handle.send(PlaybackCommand::SetPaused(true)).unwrap();
+        handle.send(PlaybackCommand::Seek(7.0)).unwrap();
+        wait(&handle, |s| {
+            !s.loading && s.paused && (s.position - 7.0).abs() < 0.2
+        });
+        thread::sleep(Duration::from_millis(350));
+        assert!((handle.snapshot().position - 7.0).abs() < 0.2);
+        kill_owned(&handle);
+        wait(&handle, |s| s.loading);
+        wait(&handle, |s| {
+            !s.loading && s.paused && (s.position - 7.0).abs() < 0.2
+        });
+        kill_owned(&handle);
+        wait(&handle, |s| !s.loading && s.error.is_some() && !s.ended);
+        handle
+            .send(PlaybackCommand::Load {
+                source: path.to_string_lossy().into_owned(),
+                generation: 2,
+            })
+            .unwrap();
+        wait(&handle, |s| {
+            s.generation == 2 && !s.loading && s.position > 0.1
+        });
+        kill_owned(&handle);
+        wait(&handle, |s| s.loading);
+        handle
+            .send(PlaybackCommand::Load {
+                source: path.to_string_lossy().into_owned(),
+                generation: 3,
+            })
+            .unwrap();
+        wait(&handle, |s| {
+            s.generation == 3 && !s.loading && s.position > 0.1
+        });
+        kill_owned(&handle);
+        wait(&handle, |s| s.loading);
+        handle.send(PlaybackCommand::Stop).unwrap();
+        thread::sleep(Duration::from_millis(1500));
+        let view = handle.snapshot();
+        assert!(!view.loading && !view.ended && view.error.is_none());
+        assert_eq!(view.position, 0.0);
+        println!("PASS owned mpv faults: resume, pause/seek, two reconnects, exhaustion, replacement and Stop");
+
+        // A loopback server deliberately returns only four seconds of a WAV
+        // whose header declares sixty. Internal Range refill fails until Tide
+        // enters recovery, then requests return the whole source. This exercises
+        // real source interruption and demuxer early EOF,
+        // original-source reconnect, and resume without terminating mpv.
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let server_stop = Arc::new(AtomicBool::new(false));
+        let server_done = Arc::clone(&server_stop);
+        let requests = Arc::new(AtomicU64::new(0));
+        let server_requests = Arc::clone(&requests);
+        let allow_reconnect = Arc::new(AtomicBool::new(false));
+        let server_allow = Arc::clone(&allow_reconnect);
+        let server = thread::spawn(move || {
+            while !server_done.load(Ordering::Acquire) {
+                let (mut client, _) = match listener.accept() {
+                    Ok(client) => client,
+                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(10));
+                        continue;
+                    }
+                    Err(_) => break,
+                };
+                client
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
+                client
+                    .set_write_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
+                let mut request = Vec::new();
+                let mut byte = [0_u8];
+                while request.len() < 8 * 1024 {
+                    if client.read(&mut byte).ok() != Some(1) {
+                        break;
+                    }
+                    request.push(byte[0]);
+                    if request.ends_with(b"\r\n\r\n") {
+                        break;
+                    }
+                }
+                let request = String::from_utf8_lossy(&request);
+                let offset = request
+                    .lines()
+                    .find_map(|line| {
+                        line.to_ascii_lowercase()
+                            .strip_prefix("range: bytes=")
+                            .and_then(|value| value.split('-').next()?.parse::<usize>().ok())
+                    })
+                    .unwrap_or(0);
+                let first = server_requests.fetch_add(1, Ordering::AcqRel) == 0;
+                if !first && !server_allow.load(Ordering::Acquire) {
+                    let _ = client.write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                    continue;
+                }
+                let end = if first { 44 + 16_000 * 4 } else { wav.len() };
+                let offset = offset.min(end);
+                let status = if offset > 0 {
+                    "206 Partial Content"
+                } else {
+                    "200 OK"
+                };
+                let mut header = format!("HTTP/1.1 {status}\r\nContent-Type: audio/wav\r\nContent-Length: {}\r\nAccept-Ranges: bytes\r\nConnection: close\r\n", wav.len() - offset);
+                if offset > 0 {
+                    header.push_str(&format!(
+                        "Content-Range: bytes {offset}-{}/{}\r\n",
+                        end - 1,
+                        wav.len()
+                    ));
+                }
+                header.push_str("\r\n");
+                let _ = client.write_all(header.as_bytes());
+                let _ = client.write_all(&wav[offset..end]);
+                // Allow real playback to begin, then close before the promised
+                // Content-Length is satisfied to produce a stream read failure.
+                if first {
+                    thread::sleep(Duration::from_secs(3));
+                }
+            }
+        });
+        handle
+            .send(PlaybackCommand::Load {
+                source: format!("http://{address}/fixture.wav"),
+                generation: 4,
+            })
+            .unwrap();
+        println!("HTTP phase: waiting for initial playback");
+        wait(&handle, |s| {
+            !s.loading && s.position > 0.1 && s.duration > 59.0
+        });
+        println!(
+            "HTTP initial playback at {:.3}s",
+            handle.snapshot().position
+        );
+        wait(&handle, |s| {
+            s.loading && s.position > 2.0 && s.error.is_none() && !s.ended
+        });
+        let resume_position = handle.snapshot().position;
+        allow_reconnect.store(true, Ordering::Release);
+        wait(&handle, |s| {
+            !s.loading && s.position >= resume_position && s.error.is_none()
+        });
+        assert!(requests.load(Ordering::Acquire) >= 2);
+        println!(
+            "PASS HTTP read interruption resumed from {:.3}s; duration {:.3}s",
+            resume_position,
+            handle.snapshot().duration
+        );
+        handle.send(PlaybackCommand::Stop).unwrap();
+        server_stop.store(true, Ordering::Release);
+        server.join().unwrap();
+        drop(handle);
+        fs::remove_file(path).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn prepared_startup_failure_retries_once_and_never_restarts_stale_track() {
+        let mut state = PlayerState {
+            active_entry_id: Some(7),
+            prepared_fallback: Some(PendingLoad {
+                source: "https://www.youtube.com/watch?v=public".into(),
+                generation: 3,
+                epoch: 9,
+                prepared: None,
+            }),
+            ..PlayerState::default()
+        };
+        let message = json!({"event":"end-file", "reason":"error", "playlist_entry_id":7});
+        assert!(take_prepared_fallback(&mut state, &message, 4, 10).is_none());
+        assert!(take_prepared_fallback(&mut state, &message, 3, 9).is_some());
+        assert!(take_prepared_fallback(&mut state, &message, 3, 9).is_none());
+    }
 
     #[cfg(windows)]
     #[tokio::test(flavor = "current_thread")]
