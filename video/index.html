@@ -1,0 +1,383 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=1920, height=1080" />
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+<style>
+@font-face { font-family: "Tide Sans"; src: url(assets/fonts/segoeui.ttf); font-weight: 400; }
+@font-face { font-family: "Tide Sans"; src: url(assets/fonts/seguisb.ttf); font-weight: 600; }
+@font-face { font-family: "Tide Sans"; src: url(assets/fonts/segoeuib.ttf); font-weight: 700; }
+@font-face { font-family: "Tide Sans"; src: url(assets/fonts/seguibl.ttf); font-weight: 900; }
+:root { --ink:#0b0d11; --char:#171a20; --crim:#b33d60; --wine:#8a2547; --ivory:#f8efe3; --terra:#c7605a; --mute:#8b8f99; }
+* { margin:0; padding:0; box-sizing:border-box; }
+html, body { width:1920px; height:1080px; overflow:hidden; background:var(--ink); }
+#root { position:relative; width:1920px; height:1080px; overflow:hidden; background:var(--ink); font-family:"Tide Sans", sans-serif; color:var(--ivory); }
+.scene { position:absolute; inset:0; overflow:hidden; }
+.full { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+.vign { position:absolute; inset:0; background:radial-gradient(120% 95% at 50% 45%, transparent 45%, rgba(5,6,9,.85)); pointer-events:none; }
+.hl { position:absolute; left:160px; font-weight:600; font-size:76px; letter-spacing:-1.5px; line-height:1.1; }
+.hl.c { left:0; right:0; text-align:center; }
+.line { display:block; overflow:hidden; padding-bottom:6px; }
+.line > span { display:inline-block; }
+.chip { display:inline-block; font-weight:600; font-size:24px; padding:12px 22px; border-radius:999px; background:rgba(248,239,227,.06); box-shadow:inset 0 0 0 1.5px rgba(248,239,227,.16); color:var(--ivory); white-space:nowrap; }
+.chip.on { background:rgba(179,61,96,.22); box-shadow:inset 0 0 0 1.5px rgba(179,61,96,.75); }
+.chips { position:absolute; display:flex; gap:14px; flex-wrap:wrap; }
+
+/* S1 */
+#s1-game { position:absolute; inset:0; }
+.scan { position:absolute; left:0; right:0; height:46px; background:rgba(179,61,96,.55); mix-blend-mode:screen; opacity:0; }
+.scan.b { background:rgba(80,190,255,.45); }
+#mon { position:absolute; inset:0; background:radial-gradient(80% 70% at 30% 40%, #141821, #0b0d11); opacity:0; }
+#mon-game { position:absolute; left:120px; top:150px; width:760px; height:428px; border-radius:12px; overflow:hidden; box-shadow:0 0 0 1px rgba(248,239,227,.08), 0 30px 60px rgba(0,0,0,.6); }
+#mon-game video { width:100%; height:100%; object-fit:cover; }
+#mon-panel { position:absolute; left:960px; top:150px; width:820px; padding:34px 38px; border-radius:14px; background:#13161c; box-shadow:0 0 0 1px #262a33, 0 30px 60px rgba(0,0,0,.6); }
+#mon-panel h3 { font-weight:600; font-size:28px; color:#c9c3ba; margin-bottom:24px; display:flex; justify-content:space-between; }
+#mon-panel h3 b { font-weight:700; color:#ff6b6b; font-variant-numeric:tabular-nums; }
+.prow { display:flex; align-items:center; gap:18px; margin-bottom:14px; font-size:20px; color:#9aa0aa; }
+.prow .nm { width:250px; white-space:nowrap; }
+.prow .bar { flex:1; height:16px; border-radius:8px; background:#1d2129; overflow:hidden; }
+.prow .bar i { display:block; height:100%; width:100%; transform-origin:left; background:linear-gradient(90deg,#5a1a2c,#e0484f); border-radius:8px; }
+#crack { position:absolute; inset:0; }
+#crack path { fill:none; stroke:var(--ivory); stroke-width:3; stroke-linecap:round; }
+#flash { position:absolute; inset:0; background:var(--ivory); opacity:0; }
+
+/* S2 */
+#wave2 { position:absolute; left:0; top:440px; width:1920px; height:200px; }
+#wave2 path { fill:none; stroke:var(--ivory); stroke-width:6; stroke-linecap:round; }
+#logo2 { position:absolute; left:830px; top:220px; width:260px; height:260px; }
+#logo2 svg, #logo7 svg { width:100%; height:100%; overflow:visible; }
+
+/* window */
+#win { position:absolute; left:0; top:0; width:1140px; height:800px; border-radius:16px; overflow:hidden; transform-origin:0 0;
+       box-shadow:0 0 0 1.5px rgba(248,239,227,.09), 0 40px 90px rgba(0,0,0,.65), 0 0 120px rgba(179,61,96,.10); background:#14161c; }
+#win video { position:absolute; left:0; top:0; width:1140px; height:800px; }
+
+/* S3 */
+.col-lab { position:absolute; font-weight:700; font-size:22px; letter-spacing:3px; }
+.num { position:absolute; font-weight:700; font-size:120px; letter-spacing:-3px; font-variant-numeric:tabular-nums; line-height:1; }
+.num small { font-size:48px; font-weight:600; letter-spacing:0; margin-left:10px; color:var(--mute); }
+.grid { position:absolute; display:grid; gap:8px; }
+.grid i { display:block; width:40px; height:40px; border-radius:7px; }
+#g-browser { left:160px; top:430px; grid-template-columns:repeat(11, 40px); }
+#g-browser i { background:#3a3f4a; }
+#g-tide { left:1180px; top:430px; grid-template-columns:repeat(11, 40px); }
+#g-tide i { background:var(--crim); box-shadow:0 0 24px rgba(179,61,96,.45); }
+#foot { position:absolute; left:160px; top:960px; width:1500px; font-size:20px; color:rgba(248,239,227,.48); line-height:1.45; }
+#ratio { position:absolute; left:1180px; top:690px; font-weight:600; font-size:44px; color:var(--ivory); }
+#ratio b { color:var(--terra); font-weight:700; }
+
+/* S4 */
+.cover { position:absolute; width:220px; height:220px; border-radius:14px; box-shadow:0 24px 50px rgba(0,0,0,.55); }
+#wave4 { position:absolute; left:0; top:900px; width:1920px; height:120px; }
+#wave4 path { fill:none; stroke:var(--ivory); stroke-width:4; opacity:.75; }
+
+/* S5 */
+#tiles { position:absolute; left:150px; top:330px; display:grid; grid-template-columns:repeat(6, 150px); gap:18px; }
+#tiles i { display:block; width:150px; height:150px; border-radius:12px; }
+
+/* S6/S7 */
+#ww { position:absolute; inset:0; background:var(--ink); clip-path:inset(0 100% 0 0); }
+#ww-line { position:absolute; top:0; bottom:0; width:6px; background:var(--ivory); box-shadow:0 0 40px rgba(248,239,227,.6); left:-10px; }
+#logo7 { position:absolute; left:885px; top:250px; width:150px; height:150px; }
+#name7 { position:absolute; left:0; right:0; top:430px; text-align:center; font-weight:700; font-size:96px; letter-spacing:-2px; }
+#line7 { position:absolute; left:0; right:0; top:560px; text-align:center; font-size:38px; color:#c9c3ba; }
+#gh7 { position:absolute; left:0; right:0; top:660px; display:flex; justify-content:center; align-items:center; gap:16px; font-size:32px; color:#e4dcd0; font-weight:600; }
+#oss7 { position:absolute; left:0; right:0; top:740px; display:flex; justify-content:center; }
+</style>
+</head>
+<body>
+<div data-hf-id="hf-dcj2" id="root" data-composition-id="main" data-start="0" data-duration="48.6" data-width="1920" data-height="1080">
+
+  <!-- ===== S1: the problem (0 – 7.5) ===== -->
+  <div data-hf-id="hf-yihu" id="s1" class="scene">
+    <div data-hf-id="hf-rff0" id="s1-game">
+      <video data-hf-id="hf-8xwu" id="v-s1" class="full clip" src="assets/game/s1-night.mp4" data-start="0" data-duration="2.85" data-media-start="0" data-track-index="1" muted playsinline></video>
+      <div data-hf-id="hf-88x8" class="vign"></div>
+      <div data-hf-id="hf-7yjj" class="scan" style="top:300px"></div><div data-hf-id="hf-yhb5" class="scan b" style="top:520px"></div><div data-hf-id="hf-n8s3" class="scan" style="top:760px;height:24px"></div>
+    </div>
+    <div data-hf-id="hf-jfm5" id="mon">
+      <div data-hf-id="hf-6f8c" id="mon-game"><video data-hf-id="hf-gmtz" id="v-s1b" class="clip" src="assets/game/s1-night.mp4" data-start="2.81" data-duration="2.4" data-media-start="2.85" data-track-index="2" muted playsinline></video></div>
+      <div data-hf-id="hf-tur0" id="mon-panel">
+        <h3 data-hf-id="hf-eq3o"><span data-hf-id="hf-7lj0">Memory · music in a browser</span><span data-hf-id="hf-azf4" id="mon-total" style="display:block;width:180px;height:14px;border-radius:7px;background:#1d2129;overflow:hidden;align-self:center"><i data-hf-id="hf-wu19" id="mon-fill" style="display:block;height:100%;width:100%;background:linear-gradient(90deg,#8a2547,#ff5a5f);transform-origin:left"></i></span></h3>
+        <div data-hf-id="hf-jm1w" class="prow"><span data-hf-id="hf-f0fz" class="nm">Browser · music tab</span><span data-hf-id="hf-flu0" class="bar"><i data-hf-id="hf-hm1z" style="--w:.92"></i></span></div>
+        <div data-hf-id="hf-i7fg" class="prow"><span data-hf-id="hf-ks88" class="nm">Browser · GPU process</span><span data-hf-id="hf-78ow" class="bar"><i data-hf-id="hf-9v1r" style="--w:.74"></i></span></div>
+        <div data-hf-id="hf-h0id" class="prow"><span data-hf-id="hf-gxxm" class="nm">Browser · renderer</span><span data-hf-id="hf-61rt" class="bar"><i data-hf-id="hf-d5da" style="--w:.66"></i></span></div>
+        <div data-hf-id="hf-hete" class="prow"><span data-hf-id="hf-hu7f" class="nm">Browser · utility</span><span data-hf-id="hf-6g2u" class="bar"><i data-hf-id="hf-490j" style="--w:.52"></i></span></div>
+        <div data-hf-id="hf-jecj" class="prow"><span data-hf-id="hf-uovz" class="nm">Browser · extensions</span><span data-hf-id="hf-595r" class="bar"><i data-hf-id="hf-l3qa" style="--w:.44"></i></span></div>
+        <div data-hf-id="hf-jsnk" class="prow"><span data-hf-id="hf-fse5" class="nm">Browser · audio</span><span data-hf-id="hf-5ngs" class="bar"><i data-hf-id="hf-8rfq" style="--w:.31"></i></span></div>
+        <div data-hf-id="hf-ilqh" class="prow"><span data-hf-id="hf-w5kp" class="nm">Browser · crashpad</span><span data-hf-id="hf-4gjp" class="bar"><i data-hf-id="hf-nnad" style="--w:.18"></i></span></div>
+      </div>
+      <svg data-hf-id="hf-qyd6" id="crack" viewBox="0 0 1920 1080">
+        <path data-hf-id="hf-dou2" d="M960 540 L820 300 L760 120 L700 -20" /><path data-hf-id="hf-hpay" d="M960 540 L1180 380 L1420 330 L1980 180" />
+        <path data-hf-id="hf-dym7" d="M960 540 L1060 760 L1010 920 L1080 1100" /><path data-hf-id="hf-11rz" d="M960 540 L700 640 L420 610 L-20 760" />
+        <path data-hf-id="hf-f847" d="M960 540 L1290 620 L1560 820" /><path data-hf-id="hf-ebwo" d="M820 300 L600 330" /><path data-hf-id="hf-e65o" d="M1180 380 L1240 160" />
+        <path data-hf-id="hf-qv46" d="M1060 760 L1300 900" /><path data-hf-id="hf-xr9q" d="M700 640 L660 860" />
+      </svg>
+    </div>
+    <div data-hf-id="hf-1nz5" id="hook" class="hl" style="top:430px"><span data-hf-id="hf-6c9z" class="line"><span data-hf-id="hf-si49">Your music shouldn't</span></span><span data-hf-id="hf-tvt3" class="line"><span data-hf-id="hf-omdt">compete with your game.</span></span></div>
+    <div data-hf-id="hf-hmg5" id="flash"></div>
+  </div>
+
+  <!-- ===== S2: meet Tide (7.5 – 13.12) ===== -->
+  <div data-hf-id="hf-0obf" id="s2" class="scene clip" data-start="7.5" data-duration="5.7" data-track-index="0">
+    <svg data-hf-id="hf-wz98" id="wave2" viewBox="0 0 1920 200" preserveAspectRatio="none"><path data-hf-id="hf-68wg" id="wave2p" d="M-20 100 C 220 0, 420 200, 660 100 S 1100 0, 1340 100 S 1780 200, 1940 100" /></svg>
+    <div data-hf-id="hf-ossa" id="logo2"><svg data-hf-id="hf-02zn" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1254 1254">
+  <path data-hf-id="hf-pde4" class="lg-tile" fill="#8a2547" d="M315.0,1161.3C240.4,1155.7 169.4,1112.8 125.5,1047.0C105.0,1016.3 91.2,980.0 84.8,940.0L82.5,925.5L82.5,631.0C82.5,351.2 82.6,335.9 84.3,325.5C94.5,263.5 118.8,214.9 159.9,174.0C202.1,132.1 255.7,107.1 316.9,101.0C331.2,99.6 923.8,99.6 938.1,101.0C1000.2,107.2 1055.1,133.5 1098.1,177.6C1136.0,216.6 1160.2,265.7 1169.7,322.5C1171.4,333.0 1171.5,347.7 1171.5,632.0L1171.5,930.5L1169.2,943.0C1160.3,991.2 1144.1,1028.5 1116.6,1064.0C1106.9,1076.5 1085.8,1098.0 1074.1,1107.3C1035.8,1137.5 989.7,1156.4 942.6,1160.9C932.6,1161.9 327.7,1162.3 315.0,1161.3Z"/>
+  <clipPath data-hf-id="hf-8ips" id="wclip2"><rect data-hf-id="hf-6a4m" class="lg-wrect" x="0" y="0" width="0" height="1254"/></clipPath><path data-hf-id="hf-ke9s" class="lg-wave" clip-path="url(#wclip2)" fill="#f8efe3" fill-rule="evenodd" d="M468.5,940.0C394.0,934.6 323.9,910.1 257.5,866.5C220.9,842.4 181.3,808.2 155.6,778.6C146.2,767.7 126.6,742.0 127.7,742.0C128.1,742.0 131.0,742.9 134.0,744.1C170.9,758.2 219.5,749.2 262.8,720.3C286.0,704.8 304.5,687.5 339.3,649.0C395.7,586.7 431.3,555.8 477.0,529.5C484.2,525.4 490.2,522.0 490.5,522.0C490.7,522.0 485.1,527.7 478.1,534.8C452.9,559.9 436.2,584.5 423.7,615.0C401.6,668.7 403.2,734.0 427.6,781.6C464.4,853.0 551.6,886.1 648.8,865.5C683.9,858.1 716.3,843.1 765.5,811.5C808.7,783.8 826.3,774.1 844.8,767.6C878.2,756.0 908.8,759.6 938.2,778.5C947.4,784.5 954.0,790.0 971.4,806.2C993.1,826.4 1002.8,833.0 1018.5,838.0C1035.4,843.4 1058.0,839.6 1078.0,827.9L1083.5,824.7L1081.0,827.6C1061.6,850.4 1035.1,863.6 1012.4,861.6C993.1,860.0 979.3,852.4 948.5,826.5C922.7,804.7 903.7,797.2 876.7,798.2C845.5,799.4 823.9,809.4 764.6,850.4C688.6,902.8 656.3,917.3 582.3,931.9C546.7,939.0 500.0,942.3 468.5,940.0ZM581.0,829.1C527.5,820.6 485.1,791.7 462.0,747.8C444.2,714.0 440.1,669.6 451.0,628.4C467.6,565.6 516.4,512.7 582.8,485.5C623.0,469.1 666.8,465.1 697.8,475.2C706.4,477.9 706.6,476.8 698.4,472.7C637.3,442.0 553.9,447.5 479.0,487.2C422.1,517.3 374.9,559.2 315.5,632.5C272.8,685.3 247.5,709.0 218.5,723.5C188.9,738.4 159.1,740.0 135.7,728.2L128.5,724.5L138.0,723.7C167.6,721.2 193.7,701.5 217.5,663.5C225.2,651.2 237.1,626.5 247.0,602.5C269.0,548.7 283.7,519.4 303.3,490.0C379.3,375.9 494.4,310.0 624.1,306.3C761.0,302.4 866.6,382.1 870.7,492.5C872.2,532.7 861.6,565.6 838.0,594.5C809.5,629.4 766.0,641.8 736.6,623.4L730.8,619.7L738.1,617.9C771.1,609.6 789.3,577.0 778.0,546.7C769.6,524.4 744.8,505.2 715.5,498.4C703.7,495.6 682.7,495.9 670.0,499.0C625.0,509.7 586.8,546.8 573.1,592.9C564.4,622.0 565.2,655.5 575.1,683.7C589.1,723.4 620.7,753.9 657.8,763.7C666.0,765.9 669.8,766.3 682.5,766.3C713.0,766.5 737.1,758.4 791.3,729.8C832.3,708.2 847.1,703.2 872.5,702.3C905.5,701.1 927.0,709.1 972.8,739.6C1014.2,767.2 1030.9,774.0 1057.5,774.0C1078.5,774.0 1102.6,766.3 1121.0,753.7L1125.5,750.6L1122.3,754.7C1120.5,756.9 1114.0,763.6 1107.9,769.4C1073.7,802.2 1040.2,810.9 1005.0,796.1C996.4,792.5 988.0,787.3 964.5,771.2C928.8,746.7 904.1,737.4 875.0,737.7C845.8,737.9 822.0,746.6 769.5,776.2C704.6,812.8 684.5,821.2 645.3,828.1C628.2,831.1 596.8,831.6 581.0,829.1Z"/>
+  <path data-hf-id="hf-r96v" class="lg-accent" fill="#c7605a" d="M664.7,934.5C699.2,922.9 726.2,907.8 776.7,871.7C808.6,849.0 831.8,836.0 849.5,830.8C861.9,827.2 883.3,827.5 894.5,831.4C908.4,836.2 921.7,844.8 938.5,860.1C956.8,876.6 973.4,886.5 988.0,889.6C1001.2,892.4 1019.8,890.0 1031.1,883.9C1033.3,882.8 1033.4,882.8 1032.0,884.4C1029.5,887.5 1019.8,894.5 1012.2,898.8C982.7,915.5 957.1,912.7 926.9,889.4C900.8,869.2 884.2,863.0 864.2,865.9C848.1,868.3 838.4,872.6 799.9,894.6C740.4,928.6 712.4,938.0 670.5,938.0L654.5,938.0L664.7,934.5ZM1061.5,833.2C1071.2,827.9 1079.1,822.8 1089.0,815.1C1093.6,811.5 1097.0,809.2 1096.5,810.0C1094.1,814.1 1084.9,824.7 1083.8,824.7C1083.1,824.7 1079.3,826.6 1075.4,828.9C1068.8,832.7 1058.2,837.0 1055.6,837.0C1055.0,837.0 1057.7,835.3 1061.5,833.2Z"/>
+</svg></div>
+    <div data-hf-id="hf-t8yy" id="meet" class="hl c" style="top:540px"><span data-hf-id="hf-thi2" class="line"><span data-hf-id="hf-iszw">Meet Tide.</span></span></div>
+    <div data-hf-id="hf-bk6d" id="bloat" class="hl" style="top:150px"><span data-hf-id="hf-t371" class="line"><span data-hf-id="hf-nvw2">Music.</span></span><span data-hf-id="hf-vvc8" class="line"><span data-hf-id="hf-55hg">Without the bloat.</span></span></div>
+  </div>
+
+  <!-- ===== S3: lightweight (13.12 – 22.5) ===== -->
+  <div data-hf-id="hf-90eg" id="s3" class="scene clip" data-start="13.12" data-duration="9.38" data-track-index="0" style="background:radial-gradient(90% 80% at 50% 50%, #12151b, #0b0d11)">
+    <div data-hf-id="hf-1cjo" id="s3-cmp">
+      <div data-hf-id="hf-ygil" class="col-lab" style="left:160px;top:200px;color:#9aa0aa">BROWSER PLAYER</div>
+      <div data-hf-id="hf-88m2" class="num" id="n-browser" style="left:160px;top:250px;color:#c8ccd4">0<small data-hf-id="hf-by5o">MiB</small></div>
+      <div data-hf-id="hf-9gj2" class="grid" id="g-browser"></div>
+      <div data-hf-id="hf-ypqh" class="col-lab" style="left:1180px;top:200px;color:var(--terra)">TIDE</div>
+      <div data-hf-id="hf-59bx" class="num" id="n-tide" style="left:1180px;top:250px">0<small data-hf-id="hf-rcqs">MiB</small></div>
+      <div data-hf-id="hf-pq12" class="grid" id="g-tide"></div>
+      <div data-hf-id="hf-y5tu" id="ratio">About <b data-hf-id="hf-lp1l">11× less</b> memory.</div>
+      <div data-hf-id="hf-dskv" id="foot">Memory in use while playing (median over 5 min). Same PC and track, both muted, every helper process counted.<br data-hf-id="hf-x5px">Browser: Edge with YouTube Music web, signed out. Tide 0.1 preview with mpv. 1 block = 16 MiB.</div>
+    </div>
+    <div data-hf-id="hf-gz7w" id="light" class="hl" style="top:250px"><span data-hf-id="hf-vh17" class="line"><span data-hf-id="hf-cvvs">Lighter</span></span><span data-hf-id="hf-v2q6" class="line"><span data-hf-id="hf-ol8o">by design.</span></span></div>
+    <div data-hf-id="hf-qnmj" id="chips3" class="chips" style="left:160px;top:520px;width:640px">
+      <span data-hf-id="hf-d7i1" class="chip">Native app, written in Rust</span><span data-hf-id="hf-kcs0" class="chip">No browser inside</span><span data-hf-id="hf-ki26" class="chip">Lean, simple interface</span><span data-hf-id="hf-2odo" class="chip">Small artwork cache</span>
+    </div>
+  </div>
+
+  <!-- ===== S4: keep the sound (22.5 – 29.95) ===== -->
+  <div data-hf-id="hf-br72" id="s4" class="scene clip" data-start="22.5" data-duration="7.45" data-track-index="0" style="background:radial-gradient(80% 80% at 70% 50%, #1a1218, #0b0d11)">
+    <svg data-hf-id="hf-rwrr" id="wave4" viewBox="0 0 1920 120" preserveAspectRatio="none"><path data-hf-id="hf-btw9" id="wave4p" d="M0 60 C 120 10, 240 110, 360 60 S 600 10, 720 60 S 960 110, 1080 60 S 1320 10, 1440 60 S 1680 110, 1920 60" /></svg>
+    <div data-hf-id="hf-e96m" class="cover" id="cv1" style="left:180px;top:180px;background:radial-gradient(circle at 35% 35%, #f2b089, #c7605a 45%, #5a1e32)"></div>
+    <div data-hf-id="hf-pzw7" class="cover" id="cv2" style="left:1500px;top:110px;width:180px;height:180px;background:linear-gradient(160deg, #2b3c56, #8a2547)"></div>
+    <div data-hf-id="hf-i9gc" class="cover" id="cv3" style="left:1440px;top:650px;width:240px;height:240px;background:repeating-radial-gradient(circle at 50% 120%, #f8efe3 0 10px, #b33d60 10px 30px)"></div>
+    <div data-hf-id="hf-t8f9" class="cover" id="cv4" style="left:360px;top:690px;width:170px;height:170px;background:conic-gradient(from 200deg, #c7605a, #f8efe3, #8a2547, #c7605a)"></div>
+    <div data-hf-id="hf-v2cg" class="cover" id="cv5" style="left:820px;top:90px;width:150px;height:150px;background:linear-gradient(0deg, #0b0d11 0 30%, #c7605a 30% 34%, #f2b089 34%)"></div>
+    <div data-hf-id="hf-kwpw" id="keep" class="hl" style="top:200px"><span data-hf-id="hf-uof5" class="line"><span data-hf-id="hf-ugty">Keep the sound.</span></span></div>
+    <div data-hf-id="hf-yo3i" id="chips4" class="chips" style="left:160px;top:330px;width:620px;flex-direction:column;align-items:flex-start">
+      <span data-hf-id="hf-zn9i" class="chip">Best available stream</span><span data-hf-id="hf-a0p1" class="chip">No re-encoding</span><span data-hf-id="hf-7qqw" class="chip">Played by mpv</span><span data-hf-id="hf-mckn" class="chip">Next song ready early</span>
+    </div>
+  </div>
+
+  <!-- ===== S5: your music (29.95 – 37.45) ===== -->
+  <div data-hf-id="hf-ggl8" id="s5" class="scene clip" data-start="29.95" data-duration="7.5" data-track-index="0" style="background:radial-gradient(80% 80% at 70% 50%, #15121a, #0b0d11)">
+    <div data-hf-id="hf-67ow" id="tiles"></div>
+    <div data-hf-id="hf-ktjl" id="yours" class="hl" style="top:170px"><span data-hf-id="hf-xgkc" class="line"><span data-hf-id="hf-zjod">Your music.</span></span><span data-hf-id="hf-x29b" class="line"><span data-hf-id="hf-8ftf">Already here.</span></span></div>
+    <div data-hf-id="hf-tgg6" id="chips5" class="chips" style="left:160px;top:420px;width:560px;flex-direction:column;align-items:flex-start">
+      <span data-hf-id="hf-sw8q" class="chip">Your playlists and likes</span><span data-hf-id="hf-c6tt" class="chip">Song radio</span><span data-hf-id="hf-5a5j" class="chip">Autoplay keeps it going</span>
+    </div>
+    <div data-hf-id="hf-e64s" style="position:absolute;left:160px;top:720px;width:560px;font-size:22px;color:rgba(248,239,227,.5);line-height:1.45">Connect your YouTube Music account (optional) and stream what's already yours. Nothing to import.</div>
+  </div>
+
+  <!-- ===== S6: made for gaming (37.45 – 44.91) ===== -->
+  <div data-hf-id="hf-hydx" id="s6" class="scene">
+    <video data-hf-id="hf-v5wz" id="v-s6" class="full clip" src="assets/game/s6-day.mp4" data-start="37.45" data-duration="7.46" data-media-start="0" data-track-index="3" muted playsinline></video>
+    <div data-hf-id="hf-vl9z" class="vign" style="opacity:.6"></div><div data-hf-id="hf-e75x" id="s6-shade" style="position:absolute;inset:0;background:linear-gradient(110deg, rgba(5,6,9,.62) 0%, rgba(5,6,9,.25) 34%, transparent 55%)"></div>
+    <div data-hf-id="hf-0glr" id="play" class="hl" style="top:130px;text-shadow:0 6px 40px rgba(0,0,0,.55)"><span data-hf-id="hf-smz9" class="line"><span data-hf-id="hf-1456">Play more.</span></span><span data-hf-id="hf-t1aa" class="line"><span data-hf-id="hf-yz59">Use less.</span></span></div>
+  </div>
+
+  <!-- ===== Tide window (persists across scenes) ===== -->
+  <div data-hf-id="hf-7on1" id="win">
+    <video data-hf-id="hf-gpij" id="w-a" class="clip" src="assets/ui/playlist.mp4" data-start="12.0" data-duration="1.4" data-media-start="2.7" data-track-index="6" muted playsinline></video>
+    <video data-hf-id="hf-11gx" id="w-b" class="clip" src="assets/ui/playlist.mp4" data-start="18.6" data-duration="3.9" data-media-start="2.7" data-track-index="6" muted playsinline></video>
+    <video data-hf-id="hf-kh75" id="w-c" class="clip" src="assets/ui/transport.mp4" data-start="22.5" data-duration="7.45" data-media-start="3.4" data-track-index="6" muted playsinline></video>
+    <video data-hf-id="hf-h8hn" id="w-d" class="clip" src="assets/ui/playlist.mp4" data-start="29.95" data-duration="3.77" data-media-start="4.4" data-track-index="6" muted playsinline></video>
+    <video data-hf-id="hf-m44a" id="w-e" class="clip" src="assets/ui/radio.mp4" data-start="33.72" data-duration="1.85" data-media-start="2.6" data-track-index="6" muted playsinline></video>
+    <video data-hf-id="hf-nwge" id="w-f" class="clip" src="assets/ui/radio.mp4" data-start="35.57" data-duration="1.88" data-media-start="9.4" data-track-index="6" muted playsinline></video>
+    <video data-hf-id="hf-cye3" id="w-g" class="clip" src="assets/ui/queue.mp4" data-start="37.45" data-duration="2.77" data-media-start="3.6" data-track-index="6" muted playsinline></video>
+    <video data-hf-id="hf-cki8" id="w-h" class="clip" src="assets/ui/mini.mp4" data-start="40.22" data-duration="4.69" data-media-start="0.1" data-track-index="6" muted playsinline></video>
+  </div>
+
+  <!-- ===== S7: wipe + end card (44.44 – 48.6) ===== -->
+  <div data-hf-id="hf-b9tb" id="s7" class="scene clip" data-start="44.4" data-duration="4.2" data-track-index="7">
+    <div data-hf-id="hf-gsfr" id="ww">
+      <div data-hf-id="hf-g4wf" id="logo7"><svg data-hf-id="hf-fajn" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1254 1254">
+  <path data-hf-id="hf-jgv8" class="lg-tile" fill="#8a2547" d="M315.0,1161.3C240.4,1155.7 169.4,1112.8 125.5,1047.0C105.0,1016.3 91.2,980.0 84.8,940.0L82.5,925.5L82.5,631.0C82.5,351.2 82.6,335.9 84.3,325.5C94.5,263.5 118.8,214.9 159.9,174.0C202.1,132.1 255.7,107.1 316.9,101.0C331.2,99.6 923.8,99.6 938.1,101.0C1000.2,107.2 1055.1,133.5 1098.1,177.6C1136.0,216.6 1160.2,265.7 1169.7,322.5C1171.4,333.0 1171.5,347.7 1171.5,632.0L1171.5,930.5L1169.2,943.0C1160.3,991.2 1144.1,1028.5 1116.6,1064.0C1106.9,1076.5 1085.8,1098.0 1074.1,1107.3C1035.8,1137.5 989.7,1156.4 942.6,1160.9C932.6,1161.9 327.7,1162.3 315.0,1161.3Z"/>
+  <clipPath data-hf-id="hf-wodp" id="wclip7"><rect data-hf-id="hf-7v0q" class="lg-wrect" x="0" y="0" width="0" height="1254"/></clipPath><path data-hf-id="hf-c0e3" class="lg-wave" clip-path="url(#wclip7)" fill="#f8efe3" fill-rule="evenodd" d="M468.5,940.0C394.0,934.6 323.9,910.1 257.5,866.5C220.9,842.4 181.3,808.2 155.6,778.6C146.2,767.7 126.6,742.0 127.7,742.0C128.1,742.0 131.0,742.9 134.0,744.1C170.9,758.2 219.5,749.2 262.8,720.3C286.0,704.8 304.5,687.5 339.3,649.0C395.7,586.7 431.3,555.8 477.0,529.5C484.2,525.4 490.2,522.0 490.5,522.0C490.7,522.0 485.1,527.7 478.1,534.8C452.9,559.9 436.2,584.5 423.7,615.0C401.6,668.7 403.2,734.0 427.6,781.6C464.4,853.0 551.6,886.1 648.8,865.5C683.9,858.1 716.3,843.1 765.5,811.5C808.7,783.8 826.3,774.1 844.8,767.6C878.2,756.0 908.8,759.6 938.2,778.5C947.4,784.5 954.0,790.0 971.4,806.2C993.1,826.4 1002.8,833.0 1018.5,838.0C1035.4,843.4 1058.0,839.6 1078.0,827.9L1083.5,824.7L1081.0,827.6C1061.6,850.4 1035.1,863.6 1012.4,861.6C993.1,860.0 979.3,852.4 948.5,826.5C922.7,804.7 903.7,797.2 876.7,798.2C845.5,799.4 823.9,809.4 764.6,850.4C688.6,902.8 656.3,917.3 582.3,931.9C546.7,939.0 500.0,942.3 468.5,940.0ZM581.0,829.1C527.5,820.6 485.1,791.7 462.0,747.8C444.2,714.0 440.1,669.6 451.0,628.4C467.6,565.6 516.4,512.7 582.8,485.5C623.0,469.1 666.8,465.1 697.8,475.2C706.4,477.9 706.6,476.8 698.4,472.7C637.3,442.0 553.9,447.5 479.0,487.2C422.1,517.3 374.9,559.2 315.5,632.5C272.8,685.3 247.5,709.0 218.5,723.5C188.9,738.4 159.1,740.0 135.7,728.2L128.5,724.5L138.0,723.7C167.6,721.2 193.7,701.5 217.5,663.5C225.2,651.2 237.1,626.5 247.0,602.5C269.0,548.7 283.7,519.4 303.3,490.0C379.3,375.9 494.4,310.0 624.1,306.3C761.0,302.4 866.6,382.1 870.7,492.5C872.2,532.7 861.6,565.6 838.0,594.5C809.5,629.4 766.0,641.8 736.6,623.4L730.8,619.7L738.1,617.9C771.1,609.6 789.3,577.0 778.0,546.7C769.6,524.4 744.8,505.2 715.5,498.4C703.7,495.6 682.7,495.9 670.0,499.0C625.0,509.7 586.8,546.8 573.1,592.9C564.4,622.0 565.2,655.5 575.1,683.7C589.1,723.4 620.7,753.9 657.8,763.7C666.0,765.9 669.8,766.3 682.5,766.3C713.0,766.5 737.1,758.4 791.3,729.8C832.3,708.2 847.1,703.2 872.5,702.3C905.5,701.1 927.0,709.1 972.8,739.6C1014.2,767.2 1030.9,774.0 1057.5,774.0C1078.5,774.0 1102.6,766.3 1121.0,753.7L1125.5,750.6L1122.3,754.7C1120.5,756.9 1114.0,763.6 1107.9,769.4C1073.7,802.2 1040.2,810.9 1005.0,796.1C996.4,792.5 988.0,787.3 964.5,771.2C928.8,746.7 904.1,737.4 875.0,737.7C845.8,737.9 822.0,746.6 769.5,776.2C704.6,812.8 684.5,821.2 645.3,828.1C628.2,831.1 596.8,831.6 581.0,829.1Z"/>
+  <path data-hf-id="hf-wodj" class="lg-accent" fill="#c7605a" d="M664.7,934.5C699.2,922.9 726.2,907.8 776.7,871.7C808.6,849.0 831.8,836.0 849.5,830.8C861.9,827.2 883.3,827.5 894.5,831.4C908.4,836.2 921.7,844.8 938.5,860.1C956.8,876.6 973.4,886.5 988.0,889.6C1001.2,892.4 1019.8,890.0 1031.1,883.9C1033.3,882.8 1033.4,882.8 1032.0,884.4C1029.5,887.5 1019.8,894.5 1012.2,898.8C982.7,915.5 957.1,912.7 926.9,889.4C900.8,869.2 884.2,863.0 864.2,865.9C848.1,868.3 838.4,872.6 799.9,894.6C740.4,928.6 712.4,938.0 670.5,938.0L654.5,938.0L664.7,934.5ZM1061.5,833.2C1071.2,827.9 1079.1,822.8 1089.0,815.1C1093.6,811.5 1097.0,809.2 1096.5,810.0C1094.1,814.1 1084.9,824.7 1083.8,824.7C1083.1,824.7 1079.3,826.6 1075.4,828.9C1068.8,832.7 1058.2,837.0 1055.6,837.0C1055.0,837.0 1057.7,835.3 1061.5,833.2Z"/>
+</svg></div>
+      <div data-hf-id="hf-3tgc" id="name7">Tide Music</div>
+      <div data-hf-id="hf-2n0n" id="line7">Lightweight music for gaming.</div>
+      <div data-hf-id="hf-eoyv" id="gh7"><svg data-hf-id="hf-5y90" viewBox="0 0 16 16" width="36" height="36" fill="#f8efe3"><path data-hf-id="hf-xuse" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg><span data-hf-id="hf-gact">github.com/yotam1001/tide-music</span></div>
+      <div data-hf-id="hf-5pdl" id="oss7"><span data-hf-id="hf-nymg" class="chip on" style="font-size:26px">Free &amp; open source</span></div>
+    </div>
+    <div data-hf-id="hf-0tvy" id="ww-line"></div>
+  </div>
+
+  <!-- ===== Audio ===== -->
+  <audio data-hf-id="hf-g6p2" id="bed" src="assets/audio/bed.wav" data-start="0" data-duration="48.6" data-track-index="10" data-volume="0.9"></audio>
+  <audio data-hf-id="hf-ngts" id="sx-glitch1" src="assets/audio/sfx/glitch.wav" data-start="1.88" data-duration="0.36" data-track-index="11" data-volume="0.5"></audio>
+  <audio data-hf-id="hf-vj5f" id="sx-glitch2" src="assets/audio/sfx/glitch.wav" data-start="2.35" data-duration="0.36" data-track-index="11" data-volume="0.4"></audio>
+  <audio data-hf-id="hf-ikar" id="sx-crack" src="assets/audio/sfx/crack.wav" data-start="5.16" data-duration="0.9" data-track-index="11" data-volume="0.55"></audio>
+  <audio data-hf-id="hf-aa4h" id="sx-swell" src="assets/audio/sfx/swell.wav" data-start="6.3" data-duration="1.2" data-track-index="12" data-volume="0.4"></audio>
+  <audio data-hf-id="hf-sfzo" id="sx-wh1" src="assets/audio/sfx/whoosh.wav" data-start="8.1" data-duration="0.9" data-track-index="11" data-volume="0.35"></audio>
+  <audio data-hf-id="hf-fjia" id="sx-th1" src="assets/audio/sfx/thump.wav" data-start="13.12" data-duration="0.35" data-track-index="12" data-volume="0.5"></audio>
+  <audio data-hf-id="hf-nbyu" id="sx-th2" src="assets/audio/sfx/thump.wav" data-start="15.0" data-duration="0.35" data-track-index="12" data-volume="0.5"></audio>
+  <audio data-hf-id="hf-ocws" id="sx-wh2" src="assets/audio/sfx/whoosh.wav" data-start="16.7" data-duration="0.9" data-track-index="11" data-volume="0.35"></audio>
+  <audio data-hf-id="hf-gz3t" id="sx-t1" src="assets/audio/sfx/tick.wav" data-start="19.69" data-duration="0.09" data-track-index="13" data-volume="0.3"></audio>
+  <audio data-hf-id="hf-v3x8" id="sx-t2" src="assets/audio/sfx/tick.wav" data-start="20.16" data-duration="0.09" data-track-index="13" data-volume="0.3"></audio>
+  <audio data-hf-id="hf-i8ae" id="sx-t3" src="assets/audio/sfx/tick.wav" data-start="20.62" data-duration="0.09" data-track-index="13" data-volume="0.3"></audio>
+  <audio data-hf-id="hf-yqyy" id="sx-t4" src="assets/audio/sfx/tick.wav" data-start="21.11" data-duration="0.09" data-track-index="13" data-volume="0.3"></audio>
+  <audio data-hf-id="hf-ycbo" id="sx-wh3" src="assets/audio/sfx/whoosh.wav" data-start="22.2" data-duration="0.9" data-track-index="11" data-volume="0.3"></audio>
+  <audio data-hf-id="hf-mkgz" id="sx-t5" src="assets/audio/sfx/tick.wav" data-start="24.38" data-duration="0.09" data-track-index="13" data-volume="0.3"></audio>
+  <audio data-hf-id="hf-54ku" id="sx-t6" src="assets/audio/sfx/tick.wav" data-start="25.31" data-duration="0.09" data-track-index="13" data-volume="0.3"></audio>
+  <audio data-hf-id="hf-2zd8" id="sx-t7" src="assets/audio/sfx/tick.wav" data-start="26.26" data-duration="0.09" data-track-index="13" data-volume="0.3"></audio>
+  <audio data-hf-id="hf-ou7g" id="sx-t8" src="assets/audio/sfx/tick.wav" data-start="27.19" data-duration="0.09" data-track-index="13" data-volume="0.3"></audio>
+  <audio data-hf-id="hf-d7xw" id="sx-swell2" src="assets/audio/sfx/swell.wav" data-start="28.75" data-duration="1.2" data-track-index="12" data-volume="0.35"></audio>
+  <audio data-hf-id="hf-hzay" id="sx-wh4" src="assets/audio/sfx/whoosh.wav" data-start="29.8" data-duration="0.9" data-track-index="11" data-volume="0.3"></audio>
+  <audio data-hf-id="hf-pcgr" id="sx-t9" src="assets/audio/sfx/tick.wav" data-start="30.88" data-duration="0.09" data-track-index="13" data-volume="0.3"></audio>
+  <audio data-hf-id="hf-32il" id="sx-t10" src="assets/audio/sfx/tick.wav" data-start="33.72" data-duration="0.09" data-track-index="13" data-volume="0.3"></audio>
+  <audio data-hf-id="hf-lfrd" id="sx-t11" src="assets/audio/sfx/tick.wav" data-start="35.57" data-duration="0.09" data-track-index="13" data-volume="0.3"></audio>
+  <audio data-hf-id="hf-2z8g" id="sx-wh5" src="assets/audio/sfx/whoosh.wav" data-start="37.2" data-duration="0.9" data-track-index="11" data-volume="0.3"></audio>
+  <audio data-hf-id="hf-lm8g" id="sx-wh6" src="assets/audio/sfx/whoosh.wav" data-start="40.4" data-duration="0.9" data-track-index="12" data-volume="0.25"></audio>
+  <audio data-hf-id="hf-v44m" id="sx-wh7" src="assets/audio/sfx/whoosh.wav" data-start="44.3" data-duration="0.9" data-track-index="11" data-volume="0.35"></audio>
+  <audio data-hf-id="hf-a3ip" id="sx-impact" src="assets/audio/sfx/impact.wav" data-start="46.92" data-duration="1.68" data-track-index="12" data-volume="0.6"></audio>
+</div>
+
+<script>
+// Static generated content (deterministic).
+const gb = document.getElementById("g-browser"), gt = document.getElementById("g-tide"), tiles = document.getElementById("tiles");
+for (let i = 0; i < 55; i++) gb.appendChild(document.createElement("i"));
+for (let i = 0; i < 5; i++) gt.appendChild(document.createElement("i"));
+const tileCols = ["#8a2547","#2b3c56","#c7605a","#3d2a44","#b33d60","#1f4a4a","#5a1e32","#c7905a","#2a2f39","#8a4a6a","#3a5a7a","#f2b089","#4a2a3a","#c7605a","#1f3a4a","#8a2547","#6a3a5a","#2b3c56"];
+tileCols.forEach(c => { const t = document.createElement("i"); t.style.background = `linear-gradient(145deg, ${c}, #0b0d11 140%)`; tiles.appendChild(t); });
+
+const tl = gsap.timeline({ paused: true });
+const E = "power3.out", EI = "power3.inOut";
+function linesIn(sel, at, stag = 0.12) { tl.set(`${sel} .line > span`, { yPercent: 110 }, 0); tl.fromTo(`${sel} .line > span`, { yPercent: 110 }, { yPercent: 0, duration: 0.6, ease: E, stagger: stag, immediateRender: false }, at); tl.set(sel, { opacity: 1 }, at); }
+function linesOut(sel, at) { tl.to(`${sel} .line > span`, { yPercent: -110, duration: 0.45, ease: "power2.in", stagger: 0.06 }, at); }
+["#hook","#meet","#bloat","#light","#keep","#yours","#play"].forEach(s => tl.set(s, { opacity: 0 }, 0));
+// initial states for elements revealed later inside their scenes
+tl.set(["#chips3 .chip", "#chips4 .chip", "#chips5 .chip", "#ratio", "#foot"], { opacity: 0 }, 0);
+tl.set(["#g-browser i", "#g-tide i"], { opacity: 0, scale: 0 }, 0);
+tl.set(["#mon-fill", ".prow .bar i"], { scaleX: 0 }, 0);
+tl.set(".cover", { opacity: 0, scale: 0.6 }, 0);
+tl.set(["#logo2 .lg-tile", "#logo7 .lg-tile"], { scale: 0, transformOrigin: "50% 50%" }, 0);
+tl.set(["#logo2 .lg-wrect", "#logo7 .lg-wrect"], { attr: { width: 0 } }, 0);
+tl.set(["#logo2 .lg-accent", "#logo7 .lg-accent"], { scale: 0, transformOrigin: "60% 75%" }, 0);
+tl.set("#tiles i", { opacity: 0, scale: 0.5, rotationY: -40 }, 0);
+tl.set("#crack path", { strokeDasharray: 1400, strokeDashoffset: 1400 }, 0);
+// untimed containers (they hold timed videos): visibility is driven here
+tl.set("#s1", { autoAlpha: 1 }, 0).set("#s1", { autoAlpha: 0 }, 7.5);
+tl.set("#s6", { autoAlpha: 0 }, 0).set("#s6", { autoAlpha: 1 }, 37.45).set("#s6", { autoAlpha: 0 }, 44.95);
+tl.set("#win", { autoAlpha: 0 }, 0).set("#win", { autoAlpha: 1 }, 12.0).set("#win", { autoAlpha: 0 }, 44.95);
+
+// ---- S1 ----
+tl.fromTo("#s1-game", { scale: 1.12 }, { scale: 1.0, duration: 2.85, ease: "none" }, 0);
+function glitch(at) {
+  tl.to("#s1-game", { x: -26, skewX: 4, filter: "contrast(1.5) saturate(1.8) hue-rotate(40deg)", duration: 0.05, ease: "none" }, at)
+    .to("#s1-game", { x: 18, skewX: -3, filter: "contrast(1.3) saturate(0.4) hue-rotate(-30deg)", duration: 0.05, ease: "none" }, at + 0.05)
+    .to("#s1-game", { x: 0, skewX: 0, filter: "contrast(1) saturate(1) hue-rotate(0deg)", duration: 0.08, ease: "none" }, at + 0.1);
+  tl.fromTo(".scan", { opacity: 0, x: 0 }, { opacity: 1, x: (i) => [60, -90, 40][i], duration: 0.05, ease: "none", immediateRender: false }, at)
+    .to(".scan", { opacity: 0, duration: 0.08, ease: "none" }, at + 0.14);
+}
+glitch(1.88); glitch(2.35);
+tl.fromTo("#mon", { opacity: 0 }, { opacity: 1, duration: 0.12, ease: "none" }, 2.81);
+tl.fromTo("#mon-game", { scale: 1.15, transformOrigin: "0% 0%" }, { scale: 0.62, duration: 2.3, ease: "power2.in" }, 2.81);
+tl.fromTo("#mon-panel", { x: 60, opacity: 0 }, { x: 0, opacity: 1, duration: 0.5, ease: E }, 2.85);
+gsap.utils.toArray(".prow .bar i").forEach((b, i) => tl.to(b, { scaleX: parseFloat(getComputedStyle(b).getPropertyValue("--w")), duration: 1.5, ease: "power2.out" }, 3.1 + i * 0.12));
+tl.to("#mon-fill", { scaleX: 1, duration: 2.0, ease: "power2.out" }, 3.1);
+tl.fromTo("#crack path", { strokeDasharray: 1400, strokeDashoffset: 1400 }, { strokeDashoffset: 0, duration: 0.22, ease: "power4.out", stagger: 0.015, immediateRender: false }, 5.16);
+tl.fromTo("#flash", { opacity: 0 }, { opacity: 0.5, duration: 0.04, ease: "none", immediateRender: false }, 5.16).to("#flash", { opacity: 0, duration: 0.25 }, 5.2);
+tl.to("#mon", { scale: 1.06, y: 260, rotation: 2, opacity: 0, duration: 0.7, ease: "power3.in" }, 5.4);
+linesIn("#hook", 5.64);
+linesOut("#hook", 7.05);
+
+// ---- S2 ----
+tl.fromTo("#wave2p", { strokeDasharray: 2200, strokeDashoffset: 2200 }, { strokeDashoffset: 0, duration: 0.9, ease: "power2.inOut" }, 7.5);
+tl.to("#wave2", { scaleY: 0.25, opacity: 0, duration: 0.5, ease: "power2.in", transformOrigin: "50% 50%" }, 8.45);
+tl.fromTo("#logo2 .lg-tile", { scale: 0, transformOrigin: "50% 50%" }, { scale: 1, duration: 0.6, ease: "back.out(1.6)" }, 8.45);
+tl.fromTo("#logo2 .lg-wrect", { attr: { width: 0 } }, { attr: { width: 1254 }, duration: 0.7, ease: "power2.out", immediateRender: false }, 8.7);
+tl.fromTo("#logo2 .lg-accent", { scale: 0, transformOrigin: "60% 75%" }, { scale: 1, duration: 0.35, ease: "back.out(3)" }, 9.38);
+linesIn("#meet", 9.38);
+tl.to("#logo2", { x: -500, y: -40, scale: 0.55, opacity: 0, duration: 0.6, ease: EI }, 10.9);
+linesOut("#meet", 10.85);
+linesIn("#bloat", 11.26);
+// window enters
+tl.set("#win", { x: 700, y: 1100, scale: 0.86, rotationX: 0 }, 12.0);
+tl.to("#win", { y: 290, duration: 0.7, ease: E }, 12.19);
+linesOut("#bloat", 12.75);
+
+// ---- S3 ---- window collapses into Tide's block stack (match cut)
+tl.to("#win", { x: 1180, y: 430, scale: 0.08, opacity: 0, duration: 0.45, ease: "power3.in" }, 12.9);
+tl.fromTo("#g-browser i", { scale: 0, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.25, ease: "back.out(2)", stagger: 0.028, immediateRender: false }, 13.12);
+const nb = { v: 0 }, nt = { v: 0 };
+tl.to(nb, { v: 886, duration: 1.6, ease: "power2.out", onUpdate: () => { document.getElementById("n-browser").firstChild.textContent = Math.round(nb.v); } }, 13.12);
+tl.fromTo("#g-tide i", { scale: 0, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.3, ease: "back.out(2.5)", stagger: 0.07, immediateRender: false }, 15.0);
+tl.to(nt, { v: 81, duration: 0.8, ease: "power2.out", onUpdate: () => { document.getElementById("n-tide").firstChild.textContent = Math.round(nt.v); } }, 15.0);
+tl.fromTo("#foot", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 15.4);
+// browser collapses toward Tide's footprint
+tl.to("#g-browser i:nth-child(n+6)", { y: 260, opacity: 0, duration: 0.5, ease: "power2.in", stagger: { each: 0.012, from: "end" } }, 16.88);
+tl.to("#g-browser i:nth-child(-n+5)", { background: "#6d7380", duration: 0.4 }, 17.6);
+tl.fromTo("#ratio", { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.5, ease: E }, 17.81);
+tl.to("#s3-cmp", { opacity: 0, x: -80, duration: 0.5, ease: "power2.in" }, 18.45);
+// window returns on the right
+tl.set("#win", { x: 860, y: 170, scale: 0.84, opacity: 0 }, 18.6);
+tl.to("#win", { opacity: 1, duration: 0.5, ease: E }, 18.76);
+tl.fromTo("#win", { y: 230 }, { y: 170, duration: 0.7, ease: E, immediateRender: false }, 18.76);
+linesIn("#light", 18.76);
+tl.fromTo("#chips3 .chip", { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.35, ease: E, stagger: 0.47, immediateRender: false }, 19.69);
+tl.to(["#light", "#chips3"], { opacity: 0, x: -60, duration: 0.4, ease: "power2.in" }, 22.1);
+
+// ---- S4 ----
+tl.fromTo(".cover", { opacity: 0, scale: 0.6 }, { opacity: 1, scale: 1, duration: 0.5, ease: E, stagger: 0.06, immediateRender: false }, 22.5);
+tl.to("#cv1", { x: 900, y: 200, scale: 0.2, opacity: 0, duration: 0.9, ease: EI }, 23.0);
+tl.to("#cv2", { x: -300, y: 300, scale: 0.2, opacity: 0, duration: 0.9, ease: EI }, 23.05);
+tl.to("#cv3", { x: -280, y: -150, scale: 0.2, opacity: 0, duration: 0.9, ease: EI }, 23.1);
+tl.to("#cv4", { x: 800, y: -200, scale: 0.2, opacity: 0, duration: 0.9, ease: EI }, 23.15);
+tl.to("#cv5", { x: 400, y: 300, scale: 0.2, opacity: 0, duration: 0.9, ease: EI }, 23.2);
+linesIn("#keep", 23.45);
+tl.fromTo("#chips4 .chip", { opacity: 0, x: -20 }, { opacity: 1, x: 0, duration: 0.35, ease: E, stagger: 0.94, immediateRender: false }, 24.38);
+gsap.utils.toArray("#chips4 .chip").forEach((c, i) => { tl.to(c, { background: "rgba(179,61,96,.22)", boxShadow: "inset 0 0 0 1.5px rgba(179,61,96,.75)", duration: 0.2 }, 24.38 + i * 0.94); tl.to(c, { background: "rgba(248,239,227,.06)", boxShadow: "inset 0 0 0 1.5px rgba(248,239,227,.16)", duration: 0.4 }, 25.2 + i * 0.94); });
+tl.fromTo("#wave4", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 23.45);
+for (let b = 0; b < 10; b++) tl.fromTo("#wave4", { scaleY: 1.6, transformOrigin: "50% 50%" }, { scaleY: 0.7, duration: 0.42, ease: "power2.out", immediateRender: false }, 23.45 + b * 0.469);
+tl.to("#wave4", { x: -360, duration: 6.5, ease: "none" }, 23.45);
+// one-bar dropout: push in on the player, everything else dims
+tl.to(["#keep", "#chips4", "#wave4"], { opacity: 0, duration: 0.5 }, 28.12);
+tl.to("#win", { x: 390, y: 140, scale: 1.0, duration: 1.8, ease: "power2.inOut" }, 28.12);
+
+// ---- S5 ----
+tl.fromTo("#tiles i", { opacity: 0, scale: 0.5, rotationY: -40 }, { opacity: 1, scale: 1, rotationY: 0, duration: 0.45, ease: E, stagger: 0.025, immediateRender: false }, 29.95);
+tl.to("#tiles i", { x: (i) => 900 - (i % 6) * 168, y: (i) => 60 - Math.floor(i / 6) * 168, scale: 0.15, opacity: 0, duration: 0.6, ease: "power3.in", stagger: 0.015 }, 30.45);
+tl.set("#win", { x: 860, y: 170, scale: 0.84, opacity: 0 }, 29.95);
+tl.fromTo("#win", { opacity: 0, scale: 0.7 }, { opacity: 1, scale: 0.84, duration: 0.55, ease: E, immediateRender: false }, 30.88);
+linesIn("#yours", 30.42);
+gsap.utils.toArray("#chips5 .chip").forEach((c, i) => tl.fromTo(c, { opacity: 0, x: -20 }, { opacity: 1, x: 0, duration: 0.35, ease: E, immediateRender: false }, [30.88, 33.72, 35.57][i]));
+tl.to("#win", { scale: 0.86, duration: 6.5, ease: "none" }, 30.9);
+tl.to("#s5 > *", { opacity: 0, duration: 0.3 }, 37.15);
+
+// ---- S6 ----
+tl.fromTo("#v-s6", { scale: 1.15 }, { scale: 1.0, duration: 7.4, ease: "none" }, 37.45);
+tl.set("#win", { x: 1080, y: 400, scale: 0.68, opacity: 1 }, 37.45);
+tl.fromTo("#win", { y: 1100 }, { y: 400, duration: 0.6, ease: E, immediateRender: false }, 37.45);
+// real full -> mini switch at 40.67: crop to the mini player's client area and drop it into the corner
+tl.fromTo("#win", { clipPath: "inset(0px 0px 0px 0px round 16px)" }, { clipPath: "inset(0px 440px 668px 0px round 16px)", duration: 0.01, ease: "none", immediateRender: false }, 40.67);
+tl.to("#win", { x: 1230, y: 905, scale: 0.88, duration: 0.55, ease: "power3.out" }, 40.68);
+tl.fromTo("#v-s6", { filter: "blur(6px) brightness(.7)" }, { filter: "blur(0px) brightness(1)", duration: 0.6, ease: E, immediateRender: false }, 40.68);
+tl.set("#v-s6", { filter: "blur(6px) brightness(.7)" }, 37.45);
+linesIn("#play", 41.17);
+linesOut("#play", 43.6);
+
+// ---- S7 ---- ivory wipe, end card
+tl.fromTo("#ww", { clipPath: "inset(0 100% 0 0)" }, { clipPath: "inset(0 0% 0 0)", duration: 0.5, ease: "power3.inOut", immediateRender: false }, 44.44);
+tl.fromTo("#ww-line", { x: 0 }, { x: 1930, duration: 0.5, ease: "power3.inOut", immediateRender: false }, 44.44);
+tl.to("#ww-line", { opacity: 0, duration: 0.2 }, 44.94);
+tl.fromTo("#logo7 .lg-tile", { scale: 0, transformOrigin: "50% 50%" }, { scale: 1, duration: 0.6, ease: "back.out(1.6)", immediateRender: false }, 44.91);
+tl.fromTo("#logo7 .lg-wrect", { attr: { width: 0 } }, { attr: { width: 1254 }, duration: 1.2, ease: "power2.out", immediateRender: false }, 45.2);
+tl.fromTo("#logo7 .lg-accent", { scale: 0, transformOrigin: "60% 75%" }, { scale: 1, duration: 0.35, ease: "back.out(3)", immediateRender: false }, 46.92);
+tl.fromTo("#logo7", { scale: 1 }, { scale: 1.08, duration: 0.15, yoyo: true, repeat: 1, ease: "power2.out", immediateRender: false }, 46.92);
+tl.fromTo("#name7", { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: 0.6, ease: E, immediateRender: false }, 45.38);
+tl.fromTo("#line7", { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.6, ease: E, immediateRender: false }, 45.84);
+tl.fromTo("#gh7", { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.6, ease: E, immediateRender: false }, 46.3);
+tl.fromTo("#oss7", { opacity: 0, scale: 0.9 }, { opacity: 1, scale: 1, duration: 0.45, ease: "back.out(2)", immediateRender: false }, 46.92);
+
+window.__timelines = window.__timelines || {};
+window.__timelines["main"] = tl;
+tl.seek(0);
+</script>
+</body>
+</html>

@@ -2,6 +2,14 @@
 
 A Windows-first native Rust music player designed to leave resources available for games.
 
+## Promo video
+
+[![Animated preview of the Tide Music promo video](docs/media/tide-promo-preview.gif)](docs/media/tide-promo.mp4)
+
+[Watch the 48-second video](docs/media/tide-promo.mp4) · [Edit the HyperFrames project](video/README.md)
+
+The video shows the current prototype: real screen recordings of Tide with a connected account. Its memory figure comes from one matched test on one PC; see [how it was measured](docs/media/memory-test.md). Music: Lensko – Let's Go! [NCS Release].
+
 **Working early prototype:** native interface, local/YouTube music playback, search, queue controls and Windows media controls. Optional account integration reads playlists, Liked Songs and recommendations and supplies your signed-in session to playback. Local signed-in library, Premium extraction and muted native playback have been verified; each installation still needs its own session. YouTube features use unofficial tooling and can fail when YouTube changes. This is not an official YouTube product.
 
 ## Design
