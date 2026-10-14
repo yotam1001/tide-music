@@ -12,7 +12,7 @@ Assert-TidePlainPath $taskDownloads
 [IO.Directory]::CreateDirectory($taskDownloads) | Out-Null
 
 function Get-VerifiedAsset($Repo, $Tag, $Name, $Output, $Sha256) {
-    $taskRelease = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/tags/$Tag"
+    $taskRelease = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/tags/$Tag" -TimeoutSec 30
     $taskAsset = $taskRelease.assets | Where-Object name -EQ $Name | Select-Object -First 1
     if (!$taskAsset -or !$taskAsset.PSObject.Properties['digest'] -or $taskAsset.digest -notmatch '^sha256:([a-fA-F0-9]{64})$') {
         throw "Release asset has no SHA-256 digest: $Repo $Tag $Name"

@@ -122,6 +122,8 @@ pub struct Playlist {
 }
 #[derive(Clone, Deserialize, Serialize)]
 pub struct Card {
+    #[serde(default)]
+    pub duration_seconds: Option<u64>,
     pub id: String,
     pub title: String,
     pub subtitle: String,

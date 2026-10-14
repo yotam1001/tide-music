@@ -16,7 +16,9 @@ mod artwork;
 mod artwork_view;
 mod connection;
 mod listening;
+mod metadata;
 mod radio;
+mod settings_location;
 slint::include_modules!();
 
 #[derive(Serialize, Deserialize)]
@@ -791,17 +793,16 @@ fn update_model<T: Clone + PartialEq + 'static>(model: ModelRc<T>, rows: Vec<T>)
     }
     ModelRc::new(VecModel::from(rows))
 }
-fn settings_path() -> PathBuf {
-    std::env::var_os("APPDATA")
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir)
-        .join("TideMusic/settings.json")
+fn settings_path() -> Option<PathBuf> {
+    settings_location::settings_path(|key| std::env::var_os(key).map(PathBuf::from))
 }
 fn save(settings: &Settings) {
     if settings.transient {
         return;
     }
-    let path = settings_path();
+    let Some(path) = settings_path() else {
+        return;
+    };
     if let Some(p) = path.parent() {
         let _ = std::fs::create_dir_all(p);
     }
@@ -812,9 +813,14 @@ fn save(settings: &Settings) {
 fn sanitize_queue(queue: &mut Queue) -> bool {
     let old_current = queue.current;
     let mut changed = false;
+    let mut successor = None;
     queue.current = None;
     for (index, mut track) in std::mem::take(&mut queue.tracks).into_iter().enumerate() {
         let source = track.source.trim();
+        if source.is_empty() || source.chars().any(char::is_control) {
+            changed = true;
+            continue;
+        }
         if source.contains("://") || source.starts_with("http:") || source.starts_with("https:") {
             match tide_playback::validate_playback_source(source) {
                 Ok(validated) => {
@@ -830,7 +836,17 @@ fn sanitize_queue(queue: &mut Queue) -> bool {
         if old_current == Some(index) {
             queue.current = Some(queue.tracks.len());
         }
+        if successor.is_none() && old_current.is_some_and(|current| index >= current) {
+            successor = Some(queue.tracks.len());
+        }
+        if track.source != track.source.trim() {
+            track.source = track.source.trim().to_owned();
+            changed = true;
+        }
         queue.tracks.push(track);
+    }
+    if queue.current.is_none() && old_current.is_some() {
+        queue.current = successor.or_else(|| queue.tracks.len().checked_sub(1));
     }
     changed |= queue.current != old_current;
     changed
@@ -845,7 +861,7 @@ fn content_rows(tracks: &[Track], s: &State, visible: bool, y: f32, height: f32)
             title: t.title.clone().into(),
             artist: t.artist.clone().into(),
             album: t.album.clone().into(),
-            duration: "—".into(),
+            duration: metadata::format_duration(t.duration_seconds).into(),
             recommended: t.recommended,
             artwork: t
                 .artwork_url
@@ -884,6 +900,7 @@ fn recommendation_track(card: &tide_provider::Card) -> Track {
         artist: card.subtitle.clone(),
         album: String::new(),
         source: format!("https://www.youtube.com/watch?v={}", card.id),
+        duration_seconds: card.duration_seconds,
         artwork_url: card.artwork_url.clone(),
         recommended: false,
     }
@@ -983,7 +1000,7 @@ fn refresh(ui: &AppWindow, state: &State) {
             title: t.title.clone().into(),
             artist: t.artist.clone().into(),
             album: t.album.clone().into(),
-            duration: "—".into(),
+            duration: metadata::format_duration(t.duration_seconds).into(),
             recommended: t.recommended,
             artwork: t
                 .artwork_url
@@ -1216,6 +1233,7 @@ fn add(state: &mut State, ui: &AppWindow, source: String) -> bool {
         state,
         ui,
         vec![Track {
+            duration_seconds: None,
             artwork_url: None,
             recommended: false,
             title,
@@ -1345,6 +1363,7 @@ fn search(query: String, cancel: Arc<AtomicBool>) -> Result<Vec<Track>, String> 
                 return None;
             }
             Some(Track {
+                duration_seconds: metadata::seconds(e["duration"].as_f64().unwrap_or(0.0)),
                 artwork_url: None,
                 recommended: false,
                 title: e["title"].as_str().unwrap_or("Untitled").into(),
@@ -1383,8 +1402,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     let ui = AppWindow::new()?;
-    let mut settings: Settings = std::fs::read(settings_path())
-        .ok()
+    let mut settings: Settings = settings_path()
+        .and_then(|path| std::fs::read(path).ok())
         .and_then(|b| serde_json::from_slice(&b).ok())
         .unwrap_or_default();
     let smoke_autoplay_depletion = std::env::args().any(|a| a == "--smoke-autoplay-depletion");
@@ -2422,6 +2441,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         });
     }
+    if std::env::args().any(|argument| argument == "--connect-account") {
+        ui.set_settings_open(true);
+    }
     ui.show()?;
     let media = Rc::new(RefCell::new(None::<tide_windows::MediaSession>));
     let media_enabled =
@@ -2857,6 +2879,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if p.generation != s.generation || !s.active_playback {
                         return;
                     }
+                    let generation = s.generation;
+                    let active = s.active_playback;
+                    if metadata::remember_duration(&mut s.settings.queue, generation, active, &p) {
+                        save(&s.settings);
+                        refresh(&u, &s);
+                    }
                     u.set_position(p.position as f32);
                     u.set_duration(p.duration as f32);
                     u.set_paused(p.paused);
@@ -2949,6 +2977,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         artist: "Fixture artist".into(),
                         album: "Fixture album".into(),
                         source: String::new(),
+                        duration_seconds: None,
                         artwork_url: None,
                         recommended: false,
                     })
@@ -3067,6 +3096,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ];
             s.recommendations = vec![
                 tide_provider::Card {
+                    duration_seconds: None,
                     artwork_url: None,
                     id: "fixture0001".into(),
                     title: "A Quiet Sun".into(),
@@ -3075,6 +3105,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     shelf: "Listen again".into(),
                 },
                 tide_provider::Card {
+                    duration_seconds: None,
                     artwork_url: None,
                     id: "PLfixture".into(),
                     title: "Your evening mix".into(),
@@ -3083,6 +3114,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     shelf: "For you".into(),
                 },
                 tide_provider::Card {
+                    duration_seconds: None,
                     artwork_url: None,
                     id: "MPREfixture".into(),
                     title: "Midnight Geometry".into(),
@@ -3102,6 +3134,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             s.settings.queue = Queue {
                 tracks: vec![
                     Track {
+                        duration_seconds: None,
                         artwork_url: None,
                         recommended: false,
                         title: "Tide Lines".into(),
@@ -3110,6 +3143,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         source: String::new(),
                     },
                     Track {
+                        duration_seconds: None,
                         artwork_url: None,
                         recommended: false,
                         title: "Hollow Coast".into(),
@@ -3118,6 +3152,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         source: String::new(),
                     },
                     Track {
+                        duration_seconds: None,
                         artwork_url: None,
                         recommended: false,
                         title: "A Quiet Sun / An intentionally long title for layout verification"
@@ -3127,6 +3162,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         source: String::new(),
                     },
                     Track {
+                        duration_seconds: None,
                         artwork_url: None,
                         recommended: false,
                         title: "Still Here".into(),
@@ -3135,6 +3171,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         source: String::new(),
                     },
                     Track {
+                        duration_seconds: None,
                         artwork_url: None,
                         recommended: false,
                         title: "Drift".into(),
@@ -3389,7 +3426,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         tracks: (0..100).map(|index| Track {
                                             title: format!("Drag fixture {index}"),
                                             artist: "Fixture artist".into(), album: String::new(),
-                                            source: String::new(), artwork_url: None, recommended: false,
+                                            source: String::new(), duration_seconds: None, artwork_url: None, recommended: false,
                                         }).collect(),
                                         current: Some(0),
                                     };
@@ -3472,6 +3509,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         artist: String::new(),
                         album: String::new(),
                         source: source.clone(),
+                        duration_seconds: None,
                         artwork_url: None,
                         recommended: false,
                     })
@@ -3695,6 +3733,7 @@ mod tests {
 
     fn track(source: &str) -> Track {
         Track {
+            duration_seconds: None,
             artwork_url: None,
             recommended: false,
             title: source.into(),
@@ -3839,6 +3878,47 @@ mod tests {
     }
 
     #[test]
+    fn sanitized_queue_uses_successor_then_predecessor_without_accepting_unsafe_sources() {
+        for (sources, current, expected) in [
+            (
+                vec![
+                    "https://example.com/a",
+                    "ftp://example.com/b",
+                    "https://example.com/c",
+                ],
+                Some(1),
+                Some(1),
+            ),
+            (
+                vec!["https://example.com/a", "ftp://example.com/b"],
+                Some(1),
+                Some(0),
+            ),
+            (vec!["https://example.com/a"], Some(usize::MAX), Some(0)),
+            (
+                vec![
+                    "",
+                    "ftp://example.com/b",
+                    "https://user:secret@example.com/c",
+                ],
+                Some(1),
+                None,
+            ),
+            (vec!["https://example.com/a"], None, None),
+        ] {
+            let mut queue = Queue {
+                tracks: sources.into_iter().map(track).collect(),
+                current,
+            };
+            sanitize_queue(&mut queue);
+            assert_eq!(queue.current, expected);
+            assert!(queue
+                .tracks
+                .iter()
+                .all(|track| tide_playback::validate_playback_source(&track.source).is_ok()));
+        }
+    }
+    #[test]
     fn saved_urls_are_sanitized_and_selection_is_remapped() {
         let mut queue = Queue {
             tracks: vec![
@@ -3856,6 +3936,6 @@ mod tests {
         assert!(!sanitize_queue(&mut queue));
         queue.tracks[1].source = "https://user:secret@example.com/song".into();
         assert!(sanitize_queue(&mut queue));
-        assert_eq!(queue.current, None);
+        assert_eq!(queue.current, Some(0));
     }
 }

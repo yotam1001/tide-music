@@ -40,7 +40,7 @@ $taskWheelHashes = @{
 foreach ($taskRequirement in Get-Content -LiteralPath (Join-Path $taskRoot 'helpers/requirements.txt')) {
     if ($taskRequirement -notmatch '^([a-zA-Z0-9_-]+)==([0-9.]+)$') { throw 'Only exact pinned helper requirements are supported.' }
     $taskName = $Matches[1]; $taskVersion = $Matches[2]
-    $taskMetadata = Invoke-RestMethod -Uri "https://pypi.org/pypi/$taskName/$taskVersion/json"
+    $taskMetadata = Invoke-RestMethod -Uri "https://pypi.org/pypi/$taskName/$taskVersion/json" -TimeoutSec 30
     $taskWheels = @($taskMetadata.urls | Where-Object { $_.packagetype -eq 'bdist_wheel' -and $_.filename -match '-(?:py3|py2\.py3)-none-any\.whl$' -and !$_.yanked })
     if ($taskWheels.Count -ne 1) { throw "Exactly one universal wheel is required for $taskName $taskVersion." }
     $taskWheel = $taskWheels[0]

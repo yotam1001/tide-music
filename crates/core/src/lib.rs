@@ -10,6 +10,8 @@ pub struct Track {
     pub album: String,
     pub source: String,
     #[serde(default)]
+    pub duration_seconds: Option<u64>,
+    #[serde(default)]
     pub artwork_url: Option<String>,
     #[serde(default)]
     pub recommended: bool,
@@ -26,7 +28,7 @@ pub enum PlaybackCommand {
     Shutdown,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct PlaybackSnapshot {
     pub generation: u64,
     pub position: f64,
@@ -37,6 +39,39 @@ pub struct PlaybackSnapshot {
     pub volume: f64,
     pub error: Option<String>,
     pub title: Option<String>,
+}
+
+impl Default for PlaybackSnapshot {
+    fn default() -> Self {
+        Self {
+            generation: 0,
+            position: 0.0,
+            duration: 0.0,
+            paused: true,
+            loading: false,
+            ended: false,
+            volume: 100.0,
+            error: None,
+            title: None,
+        }
+    }
+}
+
+/// SplitMix64 for reproducible, non-cryptographic playlist shuffling.
+fn shuffle_index(seed: &mut u64, bound: usize) -> usize {
+    let bound = bound as u64;
+    let threshold = bound.wrapping_neg() % bound;
+    loop {
+        *seed = seed.wrapping_add(0x9e3779b97f4a7c15);
+        let mut value = *seed;
+        value = (value ^ (value >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
+        value = (value ^ (value >> 27)).wrapping_mul(0x94d049bb133111eb);
+        value ^= value >> 31;
+        // Rejection avoids modulo bias, including for non-power-of-two bounds.
+        if value >= threshold {
+            return (value % bound) as usize;
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -71,7 +106,10 @@ impl Queue {
             return false;
         }
         track.recommended = false;
-        let start = self.current.map_or(0, |i| i + 1).min(self.tracks.len());
+        let start = self
+            .current
+            .map_or(0, |i| i.saturating_add(1))
+            .min(self.tracks.len());
         let index = if play_next {
             start
         } else {
@@ -91,7 +129,7 @@ impl Queue {
 
     /// Move an upcoming row within its manual or autoplay group.
     pub fn move_upcoming(&mut self, index: usize, direction: i32) -> bool {
-        let start = self.current.map_or(0, |i| i + 1);
+        let start = self.current.map_or(0, |i| i.saturating_add(1));
         let target = match direction {
             -1 => index.checked_sub(1),
             1 => index.checked_add(1),
@@ -137,7 +175,10 @@ impl Queue {
         true
     }
     pub fn remove_autoplay_upcoming(&mut self) {
-        let start = self.current.map_or(0, |i| i + 1).min(self.tracks.len());
+        let start = self
+            .current
+            .map_or(0, |i| i.saturating_add(1))
+            .min(self.tracks.len());
         let mut next = self.tracks.split_off(start);
         next.retain(|track| !track.recommended);
         self.tracks.extend(next);
@@ -181,7 +222,7 @@ impl Queue {
 
     /// Randomize upcoming tracks while keeping the current and played prefix.
     pub fn shuffle_upcoming(&mut self, mut seed: u64) {
-        let start = self.current.map_or(0, |i| i + 1);
+        let start = self.current.map_or(0, |i| i.saturating_add(1));
         if start >= self.tracks.len() {
             return;
         }
@@ -195,8 +236,7 @@ impl Queue {
             .map_or(self.tracks.len(), |(i, _)| i);
         for (from, to) in [(start, split), (split, self.tracks.len())] {
             for i in (from + 1..to).rev() {
-                seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
-                let j = from + (seed as usize % (i - from + 1));
+                let j = from + shuffle_index(&mut seed, i - from + 1);
                 self.tracks.swap(i, j);
             }
         }
@@ -210,7 +250,7 @@ impl Queue {
         self.tracks.get(index)
     }
     pub fn next_track(&mut self, repeat: bool) -> Option<&Track> {
-        let index = self.current.map_or(0, |i| i + 1);
+        let index = self.current.map_or(0, |i| i.saturating_add(1));
         if index >= self.tracks.len() && !repeat {
             return None;
         }
@@ -220,19 +260,83 @@ impl Queue {
         self.select(index % self.tracks.len())
     }
     pub fn previous_track(&mut self) -> Option<&Track> {
-        self.select(self.current.unwrap_or(0).saturating_sub(1))
+        if self.tracks.is_empty() {
+            self.current = None;
+            return None;
+        }
+        self.select(
+            self.current
+                .unwrap_or(0)
+                .saturating_sub(1)
+                .min(self.tracks.len() - 1),
+        )
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn shuffle_uses_more_than_seed_parity_and_reaches_every_three_song_order() {
+        let mut orders = HashSet::new();
+        let mut swapped_even = 0;
+        let mut swapped_odd = 0;
+        for seed in 0..1024 {
+            let mut pair = Queue {
+                tracks: vec![track("a"), track("b")],
+                current: None,
+            };
+            pair.shuffle_upcoming(seed);
+            if pair.tracks[0].title == "b" {
+                if seed % 2 == 0 {
+                    swapped_even += 1;
+                } else {
+                    swapped_odd += 1;
+                }
+            }
+            let mut triple = Queue {
+                tracks: vec![track("a"), track("b"), track("c")],
+                current: None,
+            };
+            triple.shuffle_upcoming(seed);
+            orders.insert(
+                triple
+                    .tracks
+                    .iter()
+                    .map(|track| track.title.clone())
+                    .collect::<Vec<_>>(),
+            );
+        }
+        assert!((200..312).contains(&swapped_even));
+        assert!((200..312).contains(&swapped_odd));
+        assert_eq!(orders.len(), 6);
+    }
+    #[test]
+    fn corrupt_selection_does_not_overflow_and_previous_recovers() {
+        let mut q = Queue {
+            tracks: vec![track("a"), track("b")],
+            current: Some(usize::MAX),
+        };
+        q.shuffle_upcoming(1);
+        assert!(q.next_track(false).is_none());
+        assert_eq!(q.previous_track().unwrap().title, "b");
+        q.tracks.clear();
+        assert!(q.previous_track().is_none());
+        assert_eq!(q.current, None);
+    }
+    #[test]
+    fn idle_snapshot_is_paused_at_normal_volume() {
+        let snapshot = PlaybackSnapshot::default();
+        assert!(snapshot.paused);
+        assert_eq!(snapshot.volume, 100.0);
+    }
     fn track(title: &str) -> Track {
         Track {
             title: title.into(),
             artist: String::new(),
             album: String::new(),
             source: title.into(),
+            duration_seconds: None,
             artwork_url: None,
             recommended: false,
         }

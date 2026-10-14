@@ -3,12 +3,15 @@
 This is a preview, not a verified stable release. Current evidence and remaining
 release checks are available in the [source repository](https://github.com/yotam1001/tide-music).
 
-Extract the entire ZIP and double-click **Install Tide.cmd**. Setup installs Tide
+Double-click **TideSetup.exe**, then choose **Install Tide**. The window shows
+setup progress and offers **Open Tide** or **Connect YouTube Music** when finished.
+No ZIP extraction or commands are needed. Setup installs Tide
 for your Windows user, downloads pinned playback tools and a private Python
 runtime, and adds **Tide** and **Uninstall Tide** to the Start menu. Internet access
 and Windows x64 are required; no administrator privileges, system Python or manual
 PowerShell commands are needed. See [the installation guide](docs/INSTALLATION.md)
-for optional browser-helper registration, update behavior and removal.
+for update behavior, Windows Settings removal and the optional advanced browser
+helper setup. The ZIP and command launcher remain an alternative for developers.
 
 Launch Tide from the Start menu. Open a local audio file, paste a music link, or
 search from the header. Home and Library are the main destinations; Queue opens
@@ -36,10 +39,11 @@ chat. Premium playback depends on the supplied account and service compatibility
 
 ## Updates and removal
 
-Close Tide, extract the next ZIP and double-click **Install Tide.cmd** again.
+Close Tide and run the next **TideSetup.exe**.
 Dependencies are prepared before switching the installed app. Saved preferences
-and encrypted sessions are preserved. Choose **Uninstall Tide** in the Start menu
-to remove owned app files, shortcuts and matching native-host registration.
+and encrypted sessions are preserved. Choose **Tide → Uninstall** in **Windows Settings → Apps**, or **Uninstall Tide**
+in the Start menu, to remove owned app files, shortcuts and matching native-host
+registration.
 Use Disconnect inside Account first if you also want to remove the saved session.
 Browser extensions are removed separately in the browser.
 

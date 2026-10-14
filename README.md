@@ -21,6 +21,15 @@ A Windows-first native Rust music player designed to leave resources available f
 
 These are native screenshots with explicitly selected visual-test metadata; playback is inactive in the screenshots. The screenshot fixtures omit artwork URLs; the live app fetches small provider thumbnails when available. Earlier design references are in `docs/concepts/`.
 
+## Install the Windows preview
+
+Run **TideSetup.exe** from the Windows preview build and choose **Install Tide**.
+Setup shows progress, installs private playback tools, and adds Tide to the Start
+menu and Windows Settings. At completion choose **Open Tide** or **Connect YouTube
+Music**. No separate Rust/Python installation or terminal commands are needed.
+See [installation and removal](docs/INSTALLATION.md). Builds are still unsigned
+previews; browser extension distribution and stable-release checks remain open.
+
 ## Build and run
 
 Install stable Rust from [rustup](https://rustup.rs/). On Windows the normal MSVC toolchain requires Visual Studio C++ Build Tools. The repository also supports a development-local GNU setup through `scripts/cargo-local.ps1` when those tools are already present under the ignored `.tools` directory.
