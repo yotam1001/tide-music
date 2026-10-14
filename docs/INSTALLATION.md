@@ -1,11 +1,19 @@
 # Windows preview installation
 
-Extract the complete Windows preview ZIP, then double-click **Install Tide.cmd**.
+Double-click **TideSetup.exe** and choose **Install Tide**. Setup shows progress
+and a retryable error if a step fails. At completion choose **Open Tide**, or
+**Connect YouTube Music** to open Account directly. No commands or ZIP extraction
+are required. The full ZIP with **Install Tide.cmd** remains an advanced alternative.
 Setup needs internet access and Windows x64. It installs for the current user in
 `%LOCALAPPDATA%\Programs\Tide`, without administrator privileges, PATH changes,
 system Python or manual PowerShell commands. Launch **Tide** from the Start menu.
 The installed release contains its own mpv, yt-dlp, Deno and private account-helper
-Python runtime. The extracted download can be removed after setup succeeds.
+Python runtime. The downloaded installer can be removed after setup succeeds.
+
+The single executable embeds the preview ZIP and its SHA-256 digest. It validates
+the embedded digest, exact file allowlist and individual checksums before staging
+any files in a private temporary folder. The temporary payload is removed after
+setup. It does not contain credentials, a browser profile or an embedded browser.
 
 Setup validates the packaged SHA-256 manifest before copying its explicit payload.
 Playback downloads use exact upstream release versions and require upstream
@@ -19,7 +27,12 @@ archives, Python license and wheel license metadata remain in the owned release.
 
 ## Optional browser companion
 
-If the ZIP includes `tide-session-host.exe`, setup can register the native helper
+The graphical installer opens Account for connection guidance and does not ask
+for request headers or extension IDs. It does not install an unsigned extension
+into the browser automatically. Signed companion distribution and Zen lookup
+remain unresolved.
+
+In the advanced ZIP launcher, if the ZIP includes `tide-session-host.exe`, setup can register the native helper
 for one selected browser under the current user's registry. Install the separate
 Tide companion extension in that browser first. Choose Chrome or Edge at the setup
 prompt, then paste the **actual extension ID displayed by that browser**. Setup
@@ -38,8 +51,8 @@ only its Tide native-host registration. Manual import remains available in
 
 ## Update
 
-Close Tide and let any pending companion request finish. Extract the new ZIP and
-run **Install Tide.cmd** again. Setup refuses to stop running processes. It builds
+Close Tide and let any pending companion request finish. Run the new
+**TideSetup.exe** and choose **Install Tide** again. Setup refuses to stop running processes. It builds
 a fresh private release and verifies dependencies before changing Start menu
 shortcuts or native-host registration. A failed preparation leaves the previous
 installation usable. Registration/shortcut failures restore the previous links
@@ -49,8 +62,8 @@ stay in Tide's application-data directory, outside the install directory.
 
 ## Remove
 
-Choose **Uninstall Tide** in the Start menu, or double-click **Uninstall Tide.cmd**
-from a downloaded ZIP. Close Tide first. Removal deletes recorded app/runtime files
+Choose **Tide → Uninstall** in **Windows Settings → Apps**, **Uninstall Tide**
+in the Start menu, or **Uninstall Tide.cmd** from the advanced ZIP. Close Tide first. Removal deletes recorded app/runtime files
 and only shortcuts and native-host keys that still point to that installation.
 Different registrations, modified shortcuts and additional unowned files are
 preserved. Paths containing junctions or symbolic links are rejected. Removal
@@ -58,8 +71,21 @@ does not inspect or delete saved preferences or encrypted sessions. To remove
 a saved session, use **Disconnect** in Tide before uninstalling. Remove the browser
 companion extension through the browser's extension manager separately.
 
-This is an unsigned preview setup launcher, not a signed Windows installer or a
-verified stable release. Windows may display an unsigned-download warning.
+This is a graphical, unsigned preview installer, not a verified stable release. Windows may display an unsigned-download warning.
 Enterprise PowerShell policy may prevent the launcher from running. Fresh
 installation with real downloads, public companion distribution and longer
 playback/session reliability remain release validation requirements.
+
+## Build setup from source
+
+On Windows, build and validate the preview ZIP first, then run:
+
+```powershell
+pwsh -File scripts/build-installer.ps1 -Package dist/tide-windows-preview.zip
+```
+
+The wrapper uses the Windows .NET Framework compiler, WinForms, and the existing
+installer core. No additional installer framework or player runtime is introduced.
+CI builds **TideSetup.exe** alongside the advanced ZIP and verifies its embedded
+payload without installing it. `--preview` exercises only the setup screens;
+`--verify-payload` checks and removes the temporary payload without installing.

@@ -1,11 +1,107 @@
 # Shared installer helpers. Dot sourcing this file has no side effects.
 Set-StrictMode -Version Latest
 
+function Write-TideProgress([int]$Percent, [string]$Message) {
+    if ($Percent -lt 0 -or $Percent -gt 100 -or $Message -match '[|\r\n]') { throw 'Invalid setup progress event.' }
+    Write-Output "TIDE_PROGRESS|$Percent|$Message"
+}
+
+function Get-TideUninstallEntry {
+    $keyPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\TideMusic'
+    if (!(Test-Path -LiteralPath $keyPath)) { return $null }
+    $key = Get-Item -LiteralPath $keyPath
+    $values = @{}
+    foreach ($name in $key.GetValueNames()) { $values[$name] = $key.GetValue($name) }
+    if ($key.SubKeyCount -ne 0) { $values['UnexpectedChildKeys'] = $true }
+    return $values
+}
+function New-TideUninstallEntry {
+    $keyPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\TideMusic'
+    $missingParents = [Collections.Generic.List[string]]::new()
+    $parent = Split-Path -Parent $keyPath
+    while (!(Test-Path -LiteralPath $parent)) {
+        if ($parent -eq 'HKCU:\Software') { throw 'Current-user software registry is unavailable.' }
+        $missingParents.Add($parent); $parent = Split-Path -Parent $parent
+    }
+    for ($index = $missingParents.Count - 1; $index -ge 0; $index--) {
+        if (!(Test-Path -LiteralPath $missingParents[$index])) {
+            try { New-Item -Path $missingParents[$index] | Out-Null }
+            catch { if (!(Test-Path -LiteralPath $missingParents[$index])) { throw } }
+        }
+    }
+    # No -Force: a leaf claimed by another installation is never replaced.
+    New-Item -Path $keyPath | Out-Null
+}
+function Write-TideUninstallValue([string]$Name, $Value) {
+    $kind = if ($Name -in @('NoModify','NoRepair')) { 'DWord' } else { 'String' }
+    New-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\TideMusic' -Name $Name -Value $Value -PropertyType $kind -Force | Out-Null
+}
+function Remove-TideUninstallValue([string]$Name) {
+    Remove-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\TideMusic' -Name $Name
+}
+function Remove-TideUninstallEntryKey {
+    Remove-Item -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\TideMusic' -Force
+}
+function Test-TideUninstallEntryMatch($Actual, $Expected) {
+    if ($null -eq $Expected) { return $null -eq $Actual }
+    if ($null -eq $Actual -or $Actual.Count -ne $Expected.Count) { return $false }
+    foreach ($name in $Expected.Keys) {
+        if (!$Actual.ContainsKey($name) -or $Actual[$name] -ne $Expected[$name]) { return $false }
+    }
+    return $true
+}
+function Get-TideUninstallRegistration([string]$Release, [string]$InstallRoot, [string]$Version) {
+    $links = Get-TideShortcuts $Release $InstallRoot
+    return @{
+        TideProduct='org.tidemusic.windows.preview'
+        DisplayName='Tide'; DisplayVersion=$Version; Publisher='Tide contributors'
+        DisplayIcon=(Join-Path $Release 'tide-music.exe')
+        InstallLocation=$InstallRoot
+        UninstallString=('"{0}" {1}' -f $links['Uninstall Tide.lnk'].Target, $links['Uninstall Tide.lnk'].Arguments)
+        NoModify=1; NoRepair=1
+    }
+}
+function Set-TideUninstallRegistration($Expected, $Value) {
+    if (!(Test-TideUninstallEntryMatch (Get-TideUninstallEntry) $Expected)) { throw 'A different Windows uninstall entry exists; it was left unchanged.' }
+    if ($null -eq $Value) {
+        if ($null -ne $Expected) { Remove-TideUninstallEntryKey }
+        return
+    }
+    $working = @{}; $created = $false
+    if ($null -ne $Expected) { foreach ($name in $Expected.Keys) { $working[$name] = $Expected[$name] } }
+    try {
+        if ($null -eq $Expected) { New-TideUninstallEntry; $created = $true }
+        foreach ($name in @($working.Keys)) {
+            if (!$Value.ContainsKey($name)) {
+                if (!(Test-TideUninstallEntryMatch (Get-TideUninstallEntry) $working)) { throw 'Windows uninstall registration changed during setup.' }
+                Remove-TideUninstallValue $name; $working.Remove($name)
+            }
+        }
+        foreach ($name in $Value.Keys) {
+            if (!(Test-TideUninstallEntryMatch (Get-TideUninstallEntry) $working)) { throw 'Windows uninstall registration changed during setup.' }
+            Write-TideUninstallValue $name $Value[$name]
+            $working[$name] = $Value[$name]
+        }
+    } catch {
+        # Restore only the exact partial snapshot written by this attempt.
+        if (($created -or $null -ne $Expected) -and (Test-TideUninstallEntryMatch (Get-TideUninstallEntry) $working)) {
+            try {
+                if ($created) { Remove-TideUninstallEntryKey }
+                else {
+                    foreach ($name in @($working.Keys)) { if (!$Expected.ContainsKey($name)) { Remove-TideUninstallValue $name } }
+                    foreach ($name in $Expected.Keys) { Write-TideUninstallValue $name $Expected[$name] }
+                }
+            } catch { Write-Warning 'Windows uninstall registration could not be restored; retry setup.' }
+        }
+        throw
+    }
+}
+
 function Get-TideDownload([string]$Uri, [string]$Sha256, [string]$Output) {
     if ($Uri -notmatch '^https://' -or $Sha256 -notmatch '^[a-fA-F0-9]{64}$') { throw 'A download requires HTTPS and a SHA-256 checksum.' }
     Assert-TidePlainPath $Output
     if (Test-Path -LiteralPath $Output) { throw 'Refusing to overwrite an existing download.' }
-    Invoke-WebRequest -UseBasicParsing -Uri $Uri -OutFile $Output
+    Invoke-WebRequest -UseBasicParsing -Uri $Uri -OutFile $Output -TimeoutSec 300
     if ((Get-FileHash -LiteralPath $Output -Algorithm SHA256).Hash -ne $Sha256) { throw 'Dependency download checksum failed.' }
 }
 function Expand-TideArchive([string]$Archive, [string]$Destination) {
@@ -129,7 +225,8 @@ function Get-TideInstallState([string]$InstallRoot) {
     if (!(Test-Path -LiteralPath $record)) { throw 'This directory is not an owned Tide installation; it was left unchanged.' }
     $state = Read-TideJson $record
     if ($state.Product -ne 'org.tidemusic.windows.preview' -or $state.Root -ne $InstallRoot -or $state.Release -notmatch '^[a-f0-9]{32}$' -or
-        $state.Browser -notin @('None','Firefox','Chrome','Edge') -or ($state.ExtensionId -and $state.ExtensionId -notmatch '^[a-p]{32}$')) { throw 'Invalid Tide installation record.' }
+        $state.Browser -notin @('None','Firefox','Chrome','Edge') -or ($state.ExtensionId -and $state.ExtensionId -notmatch '^[a-p]{32}$') -or
+        ($state.PSObject.Properties['AppVersion'] -and $state.AppVersion -notmatch '^[0-9][A-Za-z0-9.+-]{0,63}$')) { throw 'Invalid Tide installation record.' }
     return $state
 }
 function Invoke-TideBrowserSetup([string]$Release, [string]$Mode, [string]$Browser, [string]$ExtensionId) {
@@ -179,10 +276,14 @@ function Remove-TideOwnedRelease([string]$Release) {
     else { Write-Warning 'Additional files in an old release were preserved.' }
 }
 function Invoke-TideDependencies([string]$Release) {
+    Write-TideProgress 20 'Downloading and checking playback tools'
     & (Join-Path $Release 'scripts/setup-runtime.ps1') -Destination (Join-Path $Release 'tools') | Out-Null
+    Write-TideProgress 55 'Installing the private account helper'
     & (Join-Path $Release 'scripts/setup-provider.ps1') -Managed | Out-Null
 }
-function Install-Tide([string]$PackageRoot, [string]$InstallRoot, [string]$ShortcutRoot, [string]$Browser, [string]$ExtensionId) {
+function Install-Tide([string]$PackageRoot, [string]$InstallRoot, [string]$ShortcutRoot, [string]$Browser, [string]$ExtensionId, [string]$AppVersion = '0.1.0-preview') {
+    if ($AppVersion -notmatch '^[0-9][A-Za-z0-9.+-]{0,63}$') { throw 'Invalid application version.' }
+    Write-TideProgress 5 'Checking the setup package'
     $payload = @(Get-TideVerifiedPayload $PackageRoot)
     if ($Browser -notin @('None','Firefox','Chrome','Edge')) { throw 'Select a supported browser.' }
     if ($Browser -ne 'None' -and 'tide-session-host.exe' -notin $payload) { throw 'This package does not contain the browser helper.' }
@@ -196,6 +297,13 @@ function Install-Tide([string]$PackageRoot, [string]$InstallRoot, [string]$Short
         $oldLinks = Get-TideShortcuts $oldRelease $InstallRoot
         if ($Browser -eq 'None') { $Browser = $old.Browser; $ExtensionId = $old.ExtensionId }
     }
+    $oldUninstall = Get-TideUninstallEntry
+    if ($null -ne $oldUninstall) {
+        $oldVersion = if ($old -and $old.PSObject.Properties['AppVersion']) { $old.AppVersion } else { '0.1.0-preview' }
+        if (!$old -or !(Test-TideUninstallEntryMatch $oldUninstall (Get-TideUninstallRegistration $oldRelease $InstallRoot $oldVersion))) {
+            throw 'A different Windows uninstall entry exists; it was left unchanged.'
+        }
+    }
     foreach ($name in @('Tide.lnk','Uninstall Tide.lnk')) {
         $actual = Get-TideShortcut (Join-Path $ShortcutRoot $name)
         if ($actual -and (!$old -or !(Test-TideShortcutMatch $actual $oldLinks[$name]))) { throw 'A different Start menu shortcut exists; it was left unchanged.' }
@@ -205,7 +313,7 @@ function Install-Tide([string]$PackageRoot, [string]$InstallRoot, [string]$Short
     # Serialise install/update/removal. Root creation never replaces existing files.
     [IO.Directory]::CreateDirectory($InstallRoot) | Out-Null
     $lock = [IO.File]::Open((Join-Path $InstallRoot '.tide-install.lock'), 'OpenOrCreate', 'ReadWrite', 'None')
-    $oldUnregistered = $false; $newRegistered = $false; $committed = $false; $touchedLinks = @(); $pendingWritten = $false
+    $oldUnregistered = $false; $newRegistered = $false; $committed = $false; $touchedLinks = @(); $pendingWritten = $false; $uninstallChanged = $false
     try {
         # Recheck after locking, including the active revision.
         if ($old) {
@@ -214,6 +322,7 @@ function Install-Tide([string]$PackageRoot, [string]$InstallRoot, [string]$Short
         } elseif (@(Get-ChildItem -LiteralPath $InstallRoot -Force | Where-Object Name -NE '.tide-install.lock').Count) {
             throw 'Installation changed; retry setup.'
         }
+        Write-TideProgress 15 'Preparing a fresh installation'
         [IO.Directory]::CreateDirectory($release) | Out-Null
         foreach ($name in $payload) {
             $destination = Get-TideChild $release $name
@@ -223,6 +332,7 @@ function Install-Tide([string]$PackageRoot, [string]$InstallRoot, [string]$Short
         [IO.File]::Copy((Join-Path $PackageRoot 'SHA256SUMS.txt'), (Join-Path $release 'SHA256SUMS.txt'), $false)
         Get-TideVerifiedPayload $release | Out-Null
         Invoke-TideDependencies $release
+        Write-TideProgress 75 'Finishing app setup'
         Invoke-TideBrowserSetup $release 'Prepare' $Browser $ExtensionId
         Assert-TideStopped $InstallRoot
         if ($old -and $old.Browser -ne 'None') {
@@ -240,8 +350,12 @@ function Install-Tide([string]$PackageRoot, [string]$InstallRoot, [string]$Short
             $touchedLinks += $name
             Set-TideShortcut $path $links[$name]
         }
+        Write-TideProgress 90 'Adding Start menu and Windows uninstall entries'
+        $newUninstall = Get-TideUninstallRegistration $release $InstallRoot $AppVersion
+        Set-TideUninstallRegistration $oldUninstall $newUninstall
+        $uninstallChanged = $true
         Save-TideReleaseOwnership $release
-        $next = @{Product='org.tidemusic.windows.preview'; Root=$InstallRoot; Release=$id; Browser=$Browser; ExtensionId=$ExtensionId}
+        $next = @{Product='org.tidemusic.windows.preview'; Root=$InstallRoot; Release=$id; Browser=$Browser; ExtensionId=$ExtensionId; AppVersion=$AppVersion}
         $pending = Join-Path $InstallRoot '.tide-install.pending.json'
         $backup = Join-Path $InstallRoot '.tide-install.previous.json'
         if ((Test-Path -LiteralPath $pending) -or (Test-Path -LiteralPath $backup)) { throw 'An interrupted installation record exists; it was preserved for review.' }
@@ -259,9 +373,11 @@ function Install-Tide([string]$PackageRoot, [string]$InstallRoot, [string]$Short
             try { Remove-TideOwnedRelease $oldRelease }
             catch { Write-Warning 'Update succeeded; some previous owned files remain for a later removal.' }
         }
-        Write-Output 'Tide preview installed. Launch Tide from the Start menu. Saved sessions were preserved.'
+        Write-TideProgress 100 'Tide is ready to open'
+        Write-Output ('TIDE_RESULT|' + (Join-Path $release 'tide-music.exe'))
     } catch {
         if (!$committed) {
+            if ($uninstallChanged) { Set-TideUninstallRegistration $newUninstall $oldUninstall }
             if ($pendingWritten -and (Test-Path -LiteralPath $pending)) { Remove-Item -LiteralPath $pending -Force }
             foreach ($name in $touchedLinks) {
                 $path = Join-Path $ShortcutRoot $name
@@ -294,6 +410,11 @@ function Uninstall-Tide([string]$InstallRoot, [string]$ShortcutRoot) {
     Assert-TidePlainPath $ShortcutRoot
     $release = Get-TideChild $InstallRoot ('releases/' + $state.Release)
     $links = Get-TideShortcuts $release $InstallRoot
+    $version = if ($state.PSObject.Properties['AppVersion']) { $state.AppVersion } else { '0.1.0-preview' }
+    $uninstall = Get-TideUninstallEntry
+    if ($null -ne $uninstall -and !(Test-TideUninstallEntryMatch $uninstall (Get-TideUninstallRegistration $release $InstallRoot $version))) {
+        throw 'The Windows uninstall entry changed; it was left unchanged.'
+    }
     $lock = [IO.File]::Open((Join-Path $InstallRoot '.tide-install.lock'), 'OpenOrCreate', 'ReadWrite', 'None')
     try {
         $current = Get-TideInstallState $InstallRoot
@@ -303,7 +424,9 @@ function Uninstall-Tide([string]$InstallRoot, [string]$ShortcutRoot) {
             $_.Name -match '^[a-f0-9]{32}$' -and (Test-Path -LiteralPath (Join-Path $_.FullName '.tide-release.json'))
         })
         foreach ($item in $ownedReleases) { Get-TideOwnedReleasePaths $item.FullName | Out-Null }
+        if (!(Test-TideUninstallEntryMatch (Get-TideUninstallEntry) $uninstall)) { throw 'Windows uninstall registration changed during removal.' }
         Invoke-TideBrowserSetup $release 'Unregister' $state.Browser $state.ExtensionId
+        Set-TideUninstallRegistration $uninstall $null
         foreach ($name in $links.Keys) {
             $path = Join-Path $ShortcutRoot $name
             if (Test-TideShortcutMatch (Get-TideShortcut $path) $links[$name]) { Remove-Item -LiteralPath $path -Force }

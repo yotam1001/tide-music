@@ -33,6 +33,28 @@ $global:FailDependency = $false
 $global:FailShortcut = $false
 $global:FailRegistration = $false
 $global:Registry = @{}
+$global:AppsEntry = $null
+$global:AppWrites = 0
+$global:FailAppWrite = 0
+$global:RaceNewAppEntry = $false
+function Get-TideUninstallEntry {
+    if ($null -eq $global:AppsEntry) { return $null }
+    $copy = @{}; foreach ($name in $global:AppsEntry.Keys) { $copy[$name] = $global:AppsEntry[$name] }
+    return $copy
+}
+function New-TideUninstallEntry {
+    if ($global:RaceNewAppEntry) { $global:AppsEntry = @{Foreign='preserve'}; throw 'Synthetic concurrent entry claim' }
+    if ($null -ne $global:AppsEntry) { throw 'Synthetic entry already exists' }
+    $global:AppsEntry = @{}
+}
+function Write-TideUninstallValue {
+    param($Name, $Value)
+    $global:AppWrites++
+    if ($global:FailAppWrite -eq $global:AppWrites) { $global:FailAppWrite = 0; throw 'Synthetic uninstall registry write failure' }
+    $global:AppsEntry[$Name] = $Value
+}
+function Remove-TideUninstallValue { param($Name) $global:AppsEntry.Remove($Name) }
+function Remove-TideUninstallEntryKey { $global:AppsEntry = $null }
 function Get-TideOwnedProcesses { param($InstallRoot) if ($global:Busy) { return @('synthetic owned process') }; return @() }
 function Get-TideShortcut {
     param($Path)
@@ -86,8 +108,10 @@ switch ($Scenario) {
         New-Install
         $release = Current-Release
         if (!(Test-Path -LiteralPath (Join-Path $links 'Tide.lnk')) -or $global:Registry['Chrome'] -ne $release) { throw 'Missing registration/shortcut' }
+        $expected = Get-TideUninstallRegistration $release $root '0.1.0-preview'
+        if (!(Test-TideUninstallEntryMatch $global:AppsEntry $expected) -or $global:AppsEntry.DisplayName -ne 'Tide' -or $global:AppsEntry.NoModify -ne 1 -or $global:AppsEntry.NoRepair -ne 1) { throw 'Missing Windows Settings uninstall fields' }
         Uninstall-Tide $root $links | Out-Null
-        if ((Test-Path -LiteralPath $root) -or (Test-Path -LiteralPath $links) -or $global:Registry.Count) { throw 'Owned removal incomplete' }
+        if ((Test-Path -LiteralPath $root) -or (Test-Path -LiteralPath $links) -or $global:Registry.Count -or $null -ne $global:AppsEntry) { throw 'Owned removal incomplete' }
         Uninstall-Tide $root $links | Out-Null
     }
     'upgrade' {
@@ -179,7 +203,7 @@ switch ($Scenario) {
     }
     'download' {
         $global:Downloads = 0
-        function Invoke-WebRequest { param([switch]$UseBasicParsing, $Uri, $OutFile) $global:Downloads++; [IO.File]::WriteAllText($OutFile, 'fixture') }
+        function Invoke-WebRequest { param([switch]$UseBasicParsing, $Uri, $OutFile, $TimeoutSec) if ($TimeoutSec -ne 300) { throw 'Missing bounded download timeout' }; $global:Downloads++; [IO.File]::WriteAllText($OutFile, 'fixture') }
         Must-Fail { Get-TideDownload 'https://example.invalid/fixture' '' (Join-Path $Fixture 'missing') }
         if ($global:Downloads) { throw 'Missing digest started download' }
         Must-Fail { Get-TideDownload 'https://example.invalid/fixture' ('0' * 64) (Join-Path $Fixture 'bad') }
@@ -192,16 +216,80 @@ switch ($Scenario) {
         }
     }
     'runtime-missing-digest' {
-        function Invoke-RestMethod { param($Uri) return @{ assets=@(@{name='mpv-v0.41.0-x86_64-pc-windows-msvc.zip'; browser_download_url='https://example.invalid/mpv.zip'}) } }
+        $global:MetadataTimeout = $null
+        function Invoke-RestMethod { param($Uri, $TimeoutSec) $global:MetadataTimeout = $TimeoutSec; return @{ assets=@(@{name='mpv-v0.41.0-x86_64-pc-windows-msvc.zip'; browser_download_url='https://example.invalid/mpv.zip'}) } }
         function Invoke-WebRequest { throw 'Network download must not occur without an upstream digest' }
         Must-Fail { & (Join-Path $Fixture 'source/scripts/setup-runtime.ps1') -Destination (Join-Path $Fixture 'tools') }
+        if ($global:MetadataTimeout -ne 30) { throw 'Missing bounded metadata timeout' }
         if (Test-Path -LiteralPath (Join-Path $Fixture 'tools')) { throw 'Missing digest wrote runtime tools' }
     }
     'runtime-changed-digest' {
-        function Invoke-RestMethod { param($Uri) return @{ assets=@(@{name='mpv-v0.41.0-x86_64-pc-windows-msvc.zip'; digest=('sha256:' + ('0'*64)); browser_download_url='https://example.invalid/mpv.zip'}) } }
+        $global:MetadataTimeout = $null
+        function Invoke-RestMethod { param($Uri, $TimeoutSec) $global:MetadataTimeout = $TimeoutSec; return @{ assets=@(@{name='mpv-v0.41.0-x86_64-pc-windows-msvc.zip'; digest=('sha256:' + ('0'*64)); browser_download_url='https://example.invalid/mpv.zip'}) } }
         function Invoke-WebRequest { throw 'Network download must not occur for a changed upstream digest' }
         Must-Fail { & (Join-Path $Fixture 'source/scripts/setup-runtime.ps1') -Destination (Join-Path $Fixture 'tools') }
+        if ($global:MetadataTimeout -ne 30) { throw 'Missing bounded metadata timeout' }
         if (Test-Path -LiteralPath (Join-Path $Fixture 'tools')) { throw 'Changed digest wrote runtime tools' }
+    }
+    'app-entry-conflict' {
+        $global:AppsEntry = @{DisplayName='unrelated product'; UninstallString='unrelated.exe'}
+        Must-Fail { New-Install }
+        if ((Test-Path -LiteralPath $root) -or $global:AppsEntry.DisplayName -ne 'unrelated product') { throw 'Foreign uninstall entry overwritten' }
+    }
+    'app-entry-update-conflict' {
+        New-Install; $previous = Current-Release
+        $global:AppsEntry.UninstallString = 'different.exe'
+        Must-Fail { New-Install }; Must-Fail { Uninstall-Tide $root $links }
+        if ((Current-Release) -ne $previous -or $global:AppsEntry.UninstallString -ne 'different.exe') { throw 'Changed uninstall entry modified' }
+    }
+    'app-entry-write-failure-first' {
+        $global:FailAppWrite = 3; Must-Fail { New-Install }
+        if ((Test-Path -LiteralPath $root) -or $null -ne $global:AppsEntry -or $global:Registry.Count) { throw 'Partial first uninstall entry not rolled back' }
+    }
+    'app-entry-write-failure-update' {
+        New-Install; $previous = Current-Release; $before = Get-TideUninstallEntry
+        $global:FailAppWrite = $global:AppWrites + 3; Must-Fail { New-Install }
+        if ((Current-Release) -ne $previous -or !(Test-TideUninstallEntryMatch $global:AppsEntry $before) -or $global:Registry['Chrome'] -ne $previous) { throw 'Partial updated uninstall entry not restored' }
+        Uninstall-Tide $root $links | Out-Null
+    }
+    'app-entry-marker-failure' {
+        New-Install; $previous = Current-Release; $before = Get-TideUninstallEntry
+        $pending = Join-Path $root '.tide-install.pending.json'; [IO.File]::WriteAllText($pending, 'preserve interrupted record')
+        Must-Fail { New-Install }
+        if ((Current-Release) -ne $previous -or !(Test-TideUninstallEntryMatch $global:AppsEntry $before)) { throw 'Final marker failure did not restore uninstall entry' }
+        Remove-Item -LiteralPath $pending
+        Uninstall-Tide $root $links | Out-Null
+    }
+    'app-entry-version-update' {
+        New-Install
+        Install-Tide $package $root $links 'None' '' '1.2.3-preview' | Out-Null
+        $expected = Get-TideUninstallRegistration (Current-Release) $root '1.2.3-preview'
+        if (!(Test-TideUninstallEntryMatch $global:AppsEntry $expected)) { throw 'Version/uninstall path did not update' }
+        Uninstall-Tide $root $links | Out-Null
+    }
+    'app-entry-migration' {
+        New-Install; $global:AppsEntry = $null
+        Install-Tide $package $root $links 'None' '' | Out-Null
+        if ($global:AppsEntry.DisplayName -ne 'Tide') { throw 'Previous preview did not gain Windows uninstall entry' }
+        Uninstall-Tide $root $links | Out-Null
+    }
+    'app-entry-new-race' {
+        $global:RaceNewAppEntry = $true; Must-Fail { New-Install }
+        if ((Test-Path -LiteralPath $root) -or $global:AppsEntry.Foreign -ne 'preserve') { throw 'Concurrent foreign entry removed' }
+    }
+    'protocol' {
+        $events = @(Install-Tide $package $root $links 'None' '')
+        $expectedResult = 'TIDE_RESULT|' + (Join-Path (Current-Release) 'tide-music.exe')
+        if ($events[-1] -ne $expectedResult -or @($events | Where-Object { $_ -like 'TIDE_RESULT|*' }).Count -ne 1) { throw 'Missing/duplicate exact installed result' }
+        $previousPercent = -1
+        foreach ($event in $events | Where-Object { $_ -like 'TIDE_PROGRESS|*' }) {
+            if ($event -notmatch '^TIDE_PROGRESS\|([0-9]+)\|[^|\r\n]+$') { throw 'Malformed progress event' }
+            $percent = [int]$Matches[1]
+            if ($percent -lt $previousPercent -or $percent -gt 100) { throw 'Invalid progress ordering' }
+            $previousPercent = $percent
+        }
+        if ($previousPercent -ne 100 -or $global:Registry.Count) { throw 'Default setup required manual browser registration' }
+        Uninstall-Tide $root $links | Out-Null
     }
     default { throw 'Unknown scenario' }
 }
@@ -256,7 +344,9 @@ class WindowsInstallTests(unittest.TestCase):
                          "unknown-root", "shortcut-conflict", "registration-conflict",
                          "changed-shortcut-removal", "changed-registration-removal", "corrupt-package",
                          "traversal-record", "reparse", "lock", "download", "archive-paths",
-                         "runtime-missing-digest", "runtime-changed-digest"):
+                         "runtime-missing-digest", "runtime-changed-digest", "app-entry-conflict",
+                         "app-entry-update-conflict", "app-entry-write-failure-first", "app-entry-write-failure-update",
+                         "app-entry-marker-failure", "app-entry-version-update", "app-entry-migration", "app-entry-new-race", "protocol"):
             with self.subTest(scenario=scenario):
                 self.run_scenario(scenario)
 
@@ -288,7 +378,7 @@ class WindowsInstallTests(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("powershell.exe"), "requires built-in Windows PowerShell 5.1")
     def test_builtin_windows_powershell_lifecycle(self):
-        for scenario in ("fresh-remove", "upgrade", "registration-failure", "runtime-missing-digest"):
+        for scenario in ("fresh-remove", "upgrade", "registration-failure", "runtime-missing-digest", "app-entry-write-failure-update", "protocol"):
             with self.subTest(scenario=scenario):
                 self.run_scenario(scenario, "powershell.exe")
 

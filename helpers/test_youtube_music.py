@@ -38,6 +38,18 @@ class FakeClient:
 
 
 class ProviderTests(unittest.TestCase):
+    def test_track_and_home_duration_metadata_is_optional_and_validated(self):
+        for data, expected in [
+            ({"duration_seconds": 245}, 245), ({"duration": "4:05"}, 245),
+            ({"duration": "1:02:03"}, 3723), ({"duration": "LIVE"}, None),
+            ({"duration": "4:99"}, None), ({"duration_seconds": True}, None),
+            ({"duration_seconds": -1}, None), ({}, None),
+        ]:
+            song = {"videoId": "K4DyBUG242c", "title": "Fixture", **data}
+            self.assertEqual(tracks([song])[0]["duration_seconds"], expected)
+            client = SimpleNamespace(get_home=lambda limit: [{"title": "Fixture", "contents": [song]}])
+            self.assertEqual(run(client, {"action": "home"})["cards"][0]["duration_seconds"], expected)
+
     def test_content_denial_requires_identity_rejection_before_reconnect(self):
         for status in (401, 403):
             failure = RuntimeError("private content must not be returned")

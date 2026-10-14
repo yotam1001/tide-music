@@ -506,6 +506,20 @@ def artist_names(item):
     return clean(", ".join(name for name in names if name))
 
 
+def duration_seconds(item):
+    value = item.get("duration_seconds")
+    if isinstance(value, int) and not isinstance(value, bool) and 0 < value < 2**32:
+        return value
+    text = item.get("duration")
+    if isinstance(text, str) and re.fullmatch(r"[0-9]{1,6}:[0-5][0-9](?::[0-5][0-9])?", text):
+        parts = [int(part) for part in text.split(":")]
+        seconds = 0
+        for part in parts:
+            seconds = seconds * 60 + part
+        return seconds or None
+    return None
+
+
 def tracks(items, limit=MAX_TRACKS, exclude=(), deduplicate=False):
     result = []
     if not isinstance(items, list):
@@ -526,6 +540,7 @@ def tracks(items, limit=MAX_TRACKS, exclude=(), deduplicate=False):
             "album": clean(album.get("name") if isinstance(album, dict) else ""),
             "source": "https://www.youtube.com/watch?v=" + video,
             "artwork_url": artwork_url(item),
+            "duration_seconds": duration_seconds(item),
         })
         if len(result) >= limit:
             break
@@ -598,7 +613,8 @@ def run(client, request):
                 cards.append({"id": item_id, "title": clean(item.get("title")),
                               "subtitle": artist_names(item),
                               "kind": kind, "shelf": clean(shelf.get("title")),
-                              "artwork_url": artwork_url(item)})
+                              "artwork_url": artwork_url(item),
+                              "duration_seconds": duration_seconds(item)})
         return {"type": "home", "cards": cards}
     raise ValueError("unsupported action")
 

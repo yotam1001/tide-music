@@ -49,7 +49,7 @@ pub(super) fn start(
                         s.settings.queue.tracks.push(Track {
                             title: format!("Local verification {}", index + 1),
                             artist: String::new(), album: String::new(), source: source.clone(),
-                            artwork_url: None, recommended: false,
+                            duration_seconds: None, artwork_url: None, recommended: false,
                         });
                     }
                     s.settings.queue.current = Some(0);

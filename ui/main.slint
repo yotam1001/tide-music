@@ -610,7 +610,7 @@ component QueueItem inherits Rectangle {
             draggable: root.index > root.current-index;
             dragging: root.drag-source == root.index;
             drag-in-progress: root.drag-source >= 0;
-            show-duration: false;
+            show-duration: true;
             select => { root.select(); }
             remove => { root.remove(); }
             queue(next) => { root.requeue(next); }

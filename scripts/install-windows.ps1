@@ -5,9 +5,12 @@ param(
     [string]$InstallRoot = (Join-Path $env:LOCALAPPDATA 'Programs/Tide'),
     [ValidateSet('None','Firefox','Chrome','Edge')][string]$Browser = 'None',
     [string]$ChromiumExtensionId,
+    [ValidatePattern('^[0-9][A-Za-z0-9.+-]{0,63}$')][string]$AppVersion = '0.1.0-preview',
     [switch]$Interactive
 )
 $ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+$ProgressPreference = 'SilentlyContinue'
 . (Join-Path $PSScriptRoot 'install-common.ps1')
 $taskInstallRoot = [IO.Path]::GetFullPath($InstallRoot).TrimEnd('\')
 $taskShortcuts = Join-Path ([Environment]::GetFolderPath('Programs')) 'Tide'
@@ -24,4 +27,4 @@ if ($Interactive) {
     }
     if ($Browser -in @('Chrome','Edge')) { $ChromiumExtensionId = Read-Host 'Paste the exact 32-letter ID shown for the installed Tide companion extension' }
 }
-Install-Tide (Split-Path -Parent $PSScriptRoot) $taskInstallRoot $taskShortcuts $Browser $ChromiumExtensionId
+Install-Tide (Split-Path -Parent $PSScriptRoot) $taskInstallRoot $taskShortcuts $Browser $ChromiumExtensionId $AppVersion
