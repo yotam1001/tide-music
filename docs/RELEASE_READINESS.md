@@ -4,6 +4,13 @@ Tide is not yet verified ready for a stable release. These gates retain the full
 playback, account, UI and open-source release requirements. A short passing test
 cannot establish long-term service reliability.
 
+Latest installer evidence (2026-10-15): main `1e403b7` CI and downloaded installer
+payload checks pass. Real-download install/update/remove and installed-app local
+audio/UI probes pass with isolated files/shortcuts and simulated uninstall registry
+I/O. This improves package evidence but does not close fresh-Windows GUI install
+or public account-onboarding gates. See [beta release preparation](BETA_RELEASE.md)
+and [validation details](VALIDATION.md#actual-windows-ci-installer-candidate-2026-10-15).
+
 | Gate | Required evidence | Current evidence |
 | --- | --- | --- |
 | Continuous playback | Sustained live playback with natural transitions and repeated skip/pause/seek, without unexplained stops | The e777f29 one-hour run passed 17 natural transitions, radio refills and pause/resume/skip/seek. App and sampler exited zero; all 156 observed helpers ended, with zero sampling races. Playback source is unchanged through 369f8a1. Historical six-hour app behavior passed, but its enclosing supervisor failed; preserve that failure |

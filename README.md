@@ -29,6 +29,9 @@ menu and Windows Settings. At completion choose **Open Tide** or **Connect YouTu
 Music**. No separate Rust/Python installation or terminal commands are needed.
 See [installation and removal](docs/INSTALLATION.md). Builds are still unsigned
 previews; browser extension distribution and stable-release checks remain open.
+See [beta release preparation](docs/BETA_RELEASE.md) for verified candidate assets
+and the remaining clean-Windows checks, and [Chrome beta setup](docs/BROWSER_COMPANION_BETA.md)
+for the current unpacked extension connection flow.
 
 ## Build and run
 

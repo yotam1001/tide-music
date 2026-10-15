@@ -1,5 +1,27 @@
 # Prototype validation
 
+## Actual Windows CI installer candidate (2026-10-15)
+
+Downloaded the successful main-branch `1e403b7` CI artifacts. The actual
+`TideSetup.exe --verify-payload` passed embedded extraction/checksum checks, and
+the matching preview ZIP passed its payload/checksum/privacy gate.
+
+The opt-in `verify-installed-preview.ps1` probe passed real pinned downloads,
+installation, update to a fresh release, and removal. Both installed revisions
+passed mpv/yt-dlp/Deno version probes, managed Python imports, and native UI
+smoke assertions with silent local audio: browsing preservation, queue actions,
+media Next/Previous routing, pointer drag, and long-drag/autoscroll. Update removed
+the previous owned release; uninstall removed all owned installed files, test
+shortcuts, and the fixture uninstall entry.
+
+Isolation matters: the test used disposable files and actual `.lnk` files outside
+the real Start menu, isolated application-data paths, and in-memory uninstall
+registry I/O. It did not change the current user's installed Tide or account.
+It did not test the setup GUI click path or Windows Settings on clean Windows.
+Windows Sandbox is unavailable on the test machine. Authenticated streaming,
+game-focused physical keys, and days-long session behavior were not retested by
+this local-audio probe. See [beta gates](BETA_RELEASE.md).
+
 ## Restore repaint regression (2026-10-13)
 
 Restoring the native window now invalidates the full scene through an identical
