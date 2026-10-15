@@ -1,0 +1,11 @@
+node_modules/
+renders/
+snaps/
+.hyperframes/
+.thumbnails/
+assets/fonts/
+assets/ui/
+assets/game/
+assets/audio/*.wav
+assets/audio/*.mp3
+assets/audio/sfx/
