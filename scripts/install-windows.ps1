@@ -15,7 +15,14 @@ $ProgressPreference = 'SilentlyContinue'
 $taskInstallRoot = [IO.Path]::GetFullPath($InstallRoot).TrimEnd('\')
 $taskShortcuts = Join-Path ([Environment]::GetFolderPath('Programs')) 'Tide'
 if (!$env:PROCESSOR_ARCHITEW6432 -and $env:PROCESSOR_ARCHITECTURE -ne 'AMD64') { throw 'This preview supports Windows x64.' }
-if ($Mode -eq 'Uninstall') { Uninstall-Tide $taskInstallRoot $taskShortcuts; exit }
+if ($Mode -eq 'Uninstall') {
+    # Windows keeps the process working directory open. Leave the owned install
+    # tree before deleting it, including when invoked by an older shortcut.
+    [Environment]::CurrentDirectory = $env:SystemRoot
+    Set-Location -LiteralPath $env:SystemRoot
+    Uninstall-Tide $taskInstallRoot $taskShortcuts
+    exit
+}
 if ($Interactive) {
     Write-Host 'Tide preview setup (per user; internet required; no administrator access).'
     Write-Host 'Playback tools and a private Python runtime will be downloaded. Saved sessions are preserved.'

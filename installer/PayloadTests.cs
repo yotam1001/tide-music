@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.IO.Compression;
+using System.Diagnostics;
 using System.Text;
 using System.Windows.Forms;
 using TideSetup;
@@ -58,6 +59,24 @@ internal static class PayloadTests {
         foreach (var value in new string[] { null, "", "short", new String('q', 32), new String('a', 31), new String('a', 33), new String('a', 32) + " -Mode Uninstall", "\"; exit" }) {
             try { new InstallOptions(true, value); throw new Exception("Invalid Chrome ID accepted."); }
             catch (ArgumentException) { }
+        }
+        var scratch = Path.Combine(Path.GetTempPath(), "tide setup process " + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(scratch);
+        var previousModules = Environment.GetEnvironmentVariable("PSModulePath");
+        try {
+            var fixtureScript = Path.Combine(scratch, "fixture.ps1");
+            File.WriteAllText(fixtureScript, "param($Mode,$Browser,$ChromiumExtensionId)\n$ErrorActionPreference='Stop'\nGet-FileHash -LiteralPath $PSCommandPath | Out-Null\nif ($Mode -ne 'Install' -or $Browser -ne 'Chrome' -or $ChromiumExtensionId -ne 'abcdefghijklmnopabcdefghijklmnop') { throw 'Argument transfer failed' }\nWrite-Output 'PASS native setup process arguments and system modules'\n");
+            Environment.SetEnvironmentVariable("PSModulePath", Path.Combine(scratch, "nonexistent-pwsh-modules"));
+            using (var process = Process.Start(chrome.StartInfo(fixtureScript))) {
+                var stdout = process.StandardOutput.ReadToEndAsync();
+                var stderr = process.StandardError.ReadToEndAsync();
+                if (!process.WaitForExit(15000)) { process.Kill(); process.WaitForExit(); throw new Exception("Setup process test timed out."); }
+                if (process.ExitCode != 0 || !stdout.Result.Contains("PASS native setup process arguments and system modules"))
+                    throw new Exception("Setup process could not use its system modules or arguments: " + stderr.Result);
+            }
+        } finally {
+            Environment.SetEnvironmentVariable("PSModulePath", previousModules);
+            File.Delete(Path.Combine(scratch, "fixture.ps1")); Directory.Delete(scratch);
         }
         foreach (var mutation in new string[] { "good", "host", "missing", "traversal", "duplicate", "case", "checksum", "partial" }) {
             bool valid = true;

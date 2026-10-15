@@ -83,20 +83,26 @@ $taskExtensionId = 'abcdefghijklmnopabcdefghijklmnop' # Deliberately synthetic: 
 $taskExpectedOrigin = 'chrome-extension://' + $taskExtensionId + '/'
 $taskPowerShell = Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe'
 
-function Invoke-CleanChild([string]$Executable, [string[]]$Arguments, [string]$Label, [int]$TimeoutSeconds = 1800) {
+function Invoke-CleanChild([string]$Executable, [string[]]$Arguments, [string]$Label, [int]$TimeoutSeconds = 1800, [string]$RawArguments = '', [string]$WorkingDirectory = $taskPackage) {
     if ($Label -notmatch '^[a-z0-9-]+$') { throw 'Invalid diagnostic label.' }
     $info = [Diagnostics.ProcessStartInfo]::new()
     $info.FileName = $Executable
-    $info.WorkingDirectory = $taskPackage
+    $info.WorkingDirectory = $WorkingDirectory
     $info.UseShellExecute = $false
     $info.CreateNoWindow = $true
     $info.RedirectStandardOutput = $true
     $info.RedirectStandardError = $true
-    foreach ($argument in $Arguments) { $info.ArgumentList.Add($argument) }
+    if ($RawArguments) {
+        if ($Arguments.Count) { throw 'Choose either structured or registered arguments.' }
+        $info.Arguments = $RawArguments
+    } else { foreach ($argument in $Arguments) { $info.ArgumentList.Add($argument) } }
     foreach ($name in @($info.Environment.Keys)) {
         if ($name -like 'TIDE_*' -or $name -like 'PYTHON*' -or $name -like 'SLINT_*') { $info.Environment.Remove($name) | Out-Null }
     }
     $info.Environment['APPDATA'] = $taskIsolatedProfile
+    if ([IO.Path]::GetFileName($Executable) -ieq 'powershell.exe') {
+        $info.Environment['PSModulePath'] = Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/Modules'
+    }
     $process = [Diagnostics.Process]::new()
     $process.StartInfo = $info
     try {
@@ -216,8 +222,14 @@ try {
     }
     Assert-CleanSentinel
 
-    Invoke-CleanChild $taskPowerShell @('-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
-        '-File', $taskInstaller, '-Mode', 'Uninstall', '-InstallRoot', $taskInstallRoot) 'uninstall' 120 | Out-Null
+    # Exercise the actual registered command, including the harder legacy case
+    # where the invoking process starts inside the installation being removed.
+    $taskUninstallCommand = (Get-TideUninstallEntry).UninstallString
+    if ($taskUninstallCommand -notmatch '^"([^"]+)" (.+)$') { throw 'Registered uninstall command cannot be parsed.' }
+    $taskUninstallExecutable = $Matches[1]; $taskUninstallArguments = $Matches[2]
+    if ($taskUninstallExecutable -ne $taskPowerShell) { throw 'Registered uninstaller is not the expected Windows PowerShell.' }
+    Invoke-CleanChild -Executable $taskUninstallExecutable -Arguments @() -RawArguments $taskUninstallArguments `
+        -WorkingDirectory $taskInstallRoot -Label 'registered-uninstall' -TimeoutSeconds 120 | Out-Null
     foreach ($path in @($taskInstallRoot, $taskShortcutRoot)) {
         if (Test-Path -LiteralPath $path) { throw 'Uninstall left owned installation or Start-menu files.' }
     }

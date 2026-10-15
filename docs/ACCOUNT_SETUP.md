@@ -4,6 +4,11 @@ Tide can read your existing playlists, Liked Songs and Home recommendations and 
 
 ## Chrome companion connection for the Windows beta
 
+In Tide, **Account → Connect with browser** opens this guide. **Reconnect guide**
+serves the same purpose for an existing session; import still requires your
+explicit action in the companion. Advanced keeps the Zen profile and file-import
+fallbacks available.
+
 Start with the [Chrome companion beta guide](BROWSER_COMPANION_BETA.md). Load the
 matching unpacked extension in Chrome, copy its actual extension ID, then select
 **Enable Chrome companion connection (optional)** in **TideSetup.exe** and enter that
@@ -55,7 +60,7 @@ weekly session lifetime is still being verified. It does not require a new accou
 or keeping Zen open.
 
 Alternatively, sign in to YouTube Music in your existing regular Zen browser.
-Open Tide's **Account** menu and choose **Connect account**. The file picker opens
+Open Tide's **Account** menu, expand **Advanced**, and choose **Import Zen profile**. The file picker opens
 the normal Zen Profiles directory. Open your profile folder and select
 **cookies.sqlite**. Tide reads only scoped YouTube cookies from that selected file
 using read-only SQLite, verifies account access and encrypts the session locally.
@@ -63,7 +68,7 @@ Regular-browser import can be rejected when saved cookies differ from an active
 request; use manual import if this happens. Continued browser cookie rotation can
 also invalidate an exported session.
 
-The initial connection defaults to your first signed-in Google account. **Reconnect preserves the account selected in the menu**: Account 2 selects your second signed-in account, and so on. You can also use **Switch** to verify a different selection before saving it; an unavailable account leaves the stored connection unchanged. The heading says **Connected** only after account verification; a saved session alone is not proof of access. Brand channels and custom Zen profile locations can use the manual import below. If you are unsure which profile is active, Zen's `about:support` page shows its Profile Folder. Do not share the cookie database or its contents.
+The initial connection defaults to your first signed-in Google account. **Import Zen profile preserves the account selected in the menu**: Account 2 selects your second signed-in account, and so on. You can also use **Switch** to verify a different selection before saving it; an unavailable account leaves the stored connection unchanged. The heading says **Connected** only after account verification; a saved session alone is not proof of access. Brand channels and custom Zen profile locations can use the manual import below. If you are unsure which profile is active, Zen's `about:support` page shows its Profile Folder. Do not share the cookie database or its contents.
 
 Profile import selects cookies that apply to `music.youtube.com`; cookies limited
 to the root host `youtube.com` are excluded. If matching authentication cookies

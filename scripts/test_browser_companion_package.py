@@ -28,7 +28,11 @@ class PackageTests(unittest.TestCase):
         self.source = self.root / "browser-companion"
         self.csp = "default-src 'self'; script-src 'self'; object-src 'none'; connect-src 'none'"
         for name in (*packager.COMMON_FILES, "background-firefox.js", "background-chromium.js"):
-            (self.source / name).write_bytes(f"synthetic local fixture {name}\n".encode())
+            if name in packager.ICON_FILES.values():
+                data = (Path(__file__).resolve().parents[1] / "browser-companion" / name).read_bytes()
+            else:
+                data = f"synthetic local fixture {name}\n".encode()
+            (self.source / name).write_bytes(data)
         self.manifests = {
             "firefox": {
                 "manifest_version": 2, "name": "Synthetic", "version": "0.1.0",
@@ -48,7 +52,24 @@ class PackageTests(unittest.TestCase):
             },
         }
         for family, manifest in self.manifests.items():
+            manifest["icons"] = packager.ICON_FILES.copy()
+            manifest["action" if family == "chromium" else "browser_action"]["default_icon"] = {size: packager.ICON_FILES[size] for size in ("16", "32")}
             self.write_manifest(family, manifest)
+
+    def test_missing_mismatched_or_external_icons_cannot_be_packaged(self):
+        icon = self.source / "icon16.png"
+        original = icon.read_bytes()
+        icon.write_bytes(b"not a PNG")
+        with self.assertRaises(packager.PackageError):
+            packager.package_companion(self.root, "chromium")
+        icon.write_bytes((self.source / "icon32.png").read_bytes())
+        with self.assertRaises(packager.PackageError):
+            packager.package_companion(self.root, "chromium")
+        icon.write_bytes(original)
+        self.manifests["chromium"]["icons"]["16"] = "https://example.com/icon.png"
+        self.write_manifest("chromium", self.manifests["chromium"])
+        with self.assertRaises(packager.PackageError):
+            packager.package_companion(self.root, "chromium")
 
     def write_manifest(self, family, manifest):
         (self.source / f"manifest.{family}.json").write_text(json.dumps(manifest), encoding="utf-8")

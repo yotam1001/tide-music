@@ -1,5 +1,33 @@
 # Prototype validation
 
+## Fresh-runner failures and onboarding hardening (2026-10-15)
+
+The first clean hosted Windows run for `01406d9` did not pass: its Windows
+PowerShell child inherited the PowerShell 7 module path and failed at
+`Get-FileHash` before installation. The failure artifact was downloaded and
+inspected. The graphical setup child, advanced CMD wrappers and hosted probe
+now select the Windows PowerShell system modules without changing the user's
+persistent environment. The C# regression launches a harmless real script with
+an intentionally incompatible inherited module path and verifies hash commands,
+path quoting and exact Chrome arguments; the CMD regression also verifies
+argument transfer and a nonzero child exit code survives the wrapper.
+
+A separate temporary-directory probe reproduced inability to remove the current
+working directory. The real uninstall entry now leaves both the process and
+PowerShell working directories before removal, and the uninstall shortcut uses
+a stable Windows folder. Entry regressions pass in PowerShell 7 and Windows
+PowerShell 5.1. Hosted validation now invokes the actual registered uninstall
+command from the owned install directory instead of invoking only the package
+script. A new passing hosted result is required; the original failed run remains
+failed evidence, not a release pass.
+
+The primary account action now opens browser connection guidance; the legacy Zen
+picker is under Advanced. Companion packages include the existing Tide PNG icon
+resources at 16/32/48/128 with manifest/dimension validation, a prominent
+session-cookie disclosure and privacy link. Privacy and store-preparation docs
+describe actual processing and human publication steps. These changes do not
+establish Chrome Web Store availability or a fresh authenticated browser import.
+
 ## Graphical Chrome connection setup (2026-10-15)
 
 New setup source offers an unchecked-by-default Chrome companion option and

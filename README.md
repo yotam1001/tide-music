@@ -32,6 +32,7 @@ previews; browser extension distribution and stable-release checks remain open.
 See [beta release preparation](docs/BETA_RELEASE.md) for verified candidate assets
 and the remaining clean-Windows checks, and [Chrome beta setup](docs/BROWSER_COMPANION_BETA.md)
 for the current unpacked extension connection flow.
+Read [privacy and local data handling](PRIVACY.md) before connecting an account.
 
 ## Build and run
 

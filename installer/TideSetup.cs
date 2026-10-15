@@ -120,6 +120,19 @@ namespace TideSetup {
             return "-NoLogo -NoProfile -ExecutionPolicy Bypass -File \"" + script + "\" -Mode Install"
                 + (Chrome ? " -Browser Chrome -ChromiumExtensionId " + ExtensionId : "");
         }
+        internal ProcessStartInfo StartInfo(string script) {
+            var system = Environment.GetFolderPath(Environment.SpecialFolder.System);
+            var start = new ProcessStartInfo {
+                FileName = Path.Combine(system, "WindowsPowerShell", "v1.0", "powershell.exe"),
+                Arguments = Arguments(script), UseShellExecute = false, CreateNoWindow = true,
+                RedirectStandardOutput = true, RedirectStandardError = true,
+                StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8
+            };
+            // A setup launched from pwsh must not load incompatible PowerShell 7
+            // modules in its Windows PowerShell 5.1 child. Do not edit user env.
+            start.EnvironmentVariables["PSModulePath"] = Path.Combine(system, "WindowsPowerShell", "v1.0", "Modules");
+            return start;
+        }
     }
 
     internal sealed class SetupWindow : Form {
@@ -219,12 +232,7 @@ namespace TideSetup {
             string root = null, result = null; var errors = new StringBuilder();
             try {
                 root = Payload.Extract();
-                var start = new ProcessStartInfo {
-                    FileName = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe"),
-                    Arguments = options.Arguments(Path.Combine(root, "scripts", "install-windows.ps1")),
-                    UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true,
-                    StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8
-                };
+                var start = options.StartInfo(Path.Combine(root, "scripts", "install-windows.ps1"));
                 using (var process = new Process { StartInfo = start }) {
                     process.OutputDataReceived += delegate(object source, DataReceivedEventArgs line) {
                         if (line.Data == null) return;
