@@ -6,6 +6,9 @@ and a retryable error if a step fails. At completion choose **Open Tide**, or
 no commands or ZIP extraction. Optional Chrome connection requires loading the
 separate companion extension, as described below. The full ZIP with **Install
 Tide.cmd** remains an advanced alternative.
+Double-click the CMD launchers so each runs in its own console. They close that
+console after showing the result; from an existing CMD session, launch them through
+`cmd /c` to preserve the calling shell.
 Setup needs internet access and Windows x64. It installs for the current user in
 `%LOCALAPPDATA%\Programs\Tide`, without administrator privileges, PATH changes,
 system Python or manual PowerShell commands. Launch **Tide** from the Start menu.
