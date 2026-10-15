@@ -1,11 +1,17 @@
 # Windows beta release preparation
 
-The candidate binaries come from successful Windows CI at `1e403b7`. They are
+The candidate binaries come from successful Windows CI at `f026915`. They are
 unsigned previews, not a stable release. The graphical installer contains the
 player and native session receiver; playback tools and the private Python
 runtime are downloaded and checksum-verified during installation.
 
 ## Candidate downloads
+
+The `v0.1.0-beta.1` candidate is an **unpublished draft**. No public release is
+available yet. Check the [official releases page](https://github.com/yotam1001/tide-music/releases)
+for publication; signed-in maintainers can inspect the draft. The matching
+[successful CI run](https://github.com/yotam1001/tide-music/actions/runs/38751976892)
+also provides artifacts, which may require GitHub sign-in to download.
 
 - `TideSetup.exe`: graphical per-user installation, launch and Windows Settings removal.
 - `tide-windows-preview.zip`: advanced installation, including explicit Chrome native-helper registration.
@@ -13,10 +19,9 @@ runtime are downloaded and checksum-verified during installation.
 - `CHROME_SETUP.md`: complete beta connection instructions.
 - `SHA256SUMS.txt`: download integrity checks; use only assets from this repository.
 
-The Chrome companion is not on the Chrome Web Store. New graphical setup builds
-offer optional native-helper registration after the extension is loaded and its
-exact ID is supplied; the original `1e403b7` candidate needs the advanced launcher
-for that step. Follow [Chrome beta setup](BROWSER_COMPANION_BETA.md) and use matching
+The Chrome companion is not on the Chrome Web Store. The candidate's graphical
+setup offers optional native-helper registration after the extension is loaded
+and its exact ID is supplied. Follow [Chrome beta setup](BROWSER_COMPANION_BETA.md) and use matching
 packages. Loading the unpacked extension and importing a selected session remain
 explicit steps; do not advertise automatic one-click login.
 
@@ -25,6 +30,16 @@ explicit steps; do not advertise automatic one-click login.
 The downloaded CI installer passes its actual embedded-resource extraction and
 checksum verification. Its matching ZIP passes payload allowlist, checksum and
 privacy checks. CI checks and preview packaging both passed.
+
+Both final push and PR CI runs passed the real clean-Windows lifecycle job:
+installation, update, actual Start-menu shortcuts and HKCU uninstall/native-host
+registration, runtime checks, installed native local-audio UI and registered-command
+removal. Downloaded evidence confirms success. The installer embeds the exact
+matching app ZIP; both companion archives match the candidate source (text line
+endings normalized), icon bytes and their checksum manifests. See
+[final candidate validation](VALIDATION.md#final-candidate-and-real-windows-lifecycle-2026-10-15).
+These immutable binaries remain tied to `f026915`; later evidence-only documentation
+changes do not produce a new binary candidate.
 
 `scripts/verify-installed-preview.ps1` is an opt-in network/desktop integration
 probe. It uses the actual packaged installer core with real downloads, private

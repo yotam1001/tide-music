@@ -1,5 +1,45 @@
 # Prototype validation
 
+## Final candidate and real Windows lifecycle (2026-10-15)
+
+Candidate `f02691501a72aed0f07164999b36437ac1c4b567` passed all jobs in
+[push CI](https://github.com/yotam1001/tide-music/actions/runs/38751976892) and
+[PR CI](https://github.com/yotam1001/tide-music/actions/runs/38751986879).
+The real lifecycle job used disposable hosted Windows runners, actual per-user
+HKCU uninstall/native-host keys and Start-menu shortcuts, pinned real runtime
+downloads, installed local-audio UI smoke checks, update and registered-command
+removal. Both downloaded evidence artifacts report success. The PR artifact uses
+GitHub's synthetic merge revision; the draft downloads use the push artifacts
+for the exact candidate commit.
+
+The downloaded setup passed embedded extraction/cleanup and its embedded ZIP
+hash matches the separate candidate ZIP. ZIP payload, source/checksum/privacy
+checks and both companion archives pass. Text source comparison normalizes
+checkout line endings; icons and archive/extracted file bytes match exactly.
+The setup SHA-256 is
+`2896a85043fc5ce19e2a1352ff26344cb94451d4ada7da828e3c639b1ce37a04`;
+the preview ZIP SHA-256 is
+`29a293eadde97ffb62f41cfa3c5c34eaf4776a3d5b63241c61ab1c446100220a`.
+Local script validation passed 43 tests with three capability skips. Index and
+fresh-public-clone privacy audits passed without findings.
+
+Real CMD regressions first reproduced a waiting launcher's directory lock and
+failure after its child deleted the executing batch file. Both launchers now
+leave the owned working directory and parse their complete result-handling tail
+before setup/removal can delete them. Disposable self-deleting fixtures verify
+success, exact failure exit codes and paths containing spaces and `!`. Launchers
+close their own consoles; callers in an existing CMD shell use `cmd /c`.
+
+An intermediate `a941445` PR check failed when its harmless PowerShell setup
+fixture exceeded the test's 15-second startup deadline. That failure remains
+recorded; both final runs passed without rerunning or relabeling the failed job.
+
+This evidence does not establish interactive installer clicks, high-DPI setup,
+fresh authenticated browser import through the graphical route, physical Fn keys
+with game focus, or weekly session longevity. Chrome used a synthetic extension
+ID; no account credentials were used by CI. The beta remains an unpublished draft
+until the remaining checks and publication review.
+
 ## Fresh-runner failures and onboarding hardening (2026-10-15)
 
 The first clean hosted Windows run for `01406d9` did not pass: its Windows
