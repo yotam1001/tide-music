@@ -4,8 +4,12 @@ This is an optional **source prototype**, not a signed or store-published login 
 
 For Windows beta installation, connection, troubleshooting and removal, follow
 the [Chrome companion beta guide](https://github.com/yotam1001/tide-music/blob/main/docs/BROWSER_COMPANION_BETA.md). Loading the
-extension and registering the local helper are separate steps. **TideSetup.exe
-alone does not register the Chrome helper.**
+extension and registering the local helper are separate steps. **TideSetup.exe**
+can register the Chrome helper when you explicitly enable its optional Chrome
+setup checkbox and enter the exact installed extension ID. It does not load the
+extension or transfer a session automatically. The new graphical registration
+path still needs live Chrome validation; the earlier recorded Chrome success
+used a separately prepared registration.
 
 ## Contents and local tests
 

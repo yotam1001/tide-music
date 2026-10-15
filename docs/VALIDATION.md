@@ -1,5 +1,26 @@
 # Prototype validation
 
+## Graphical Chrome connection setup (2026-10-15)
+
+New setup source offers an unchecked-by-default Chrome companion option and
+exact extension-ID field. C# tests cover opt-in control behavior, invalid IDs,
+argument/path quoting, passing the normalized ID into the existing owned setup
+core, and control bounds. A setup containing the previously validated matching
+preview ZIP compiled and passed its actual embedded-payload verification. That
+local bridge build is not a new player build or a distributable release asset.
+
+The application Help URL now points to maintained main-branch account guidance.
+Docs lead with companion connection instead of manual headers. Actual browser
+handshake/import through the new graphical route and rendered high-DPI screens
+remain unverified; do not infer them from argument/control tests. Preview capture
+was obscured by another full-screen app; no user game/browser inputs were sent.
+
+A separate clean hosted-Windows CI job is being added for real per-user registry,
+shortcuts, private runtimes, native app, update and removal. Its guard refuses to
+run on this development machine. Passing that job will be fresh Windows system
+integration evidence, not evidence of GUI clicks, authentication or game-focused
+physical keys.
+
 ## Actual Windows CI installer candidate (2026-10-15)
 
 Downloaded the successful main-branch `1e403b7` CI artifacts. The actual

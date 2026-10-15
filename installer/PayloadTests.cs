@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.IO.Compression;
 using System.Text;
+using System.Windows.Forms;
 using TideSetup;
 
 internal static class PayloadTests {
@@ -32,7 +33,32 @@ internal static class PayloadTests {
         }
         bytes.Position = 0; return bytes;
     }
-    public static int Main() {
+    [STAThread] public static int Main() {
+        using (var form = new SetupWindow(true)) {
+            var chromeControl = (CheckBox)form.Controls["chromeConnection"];
+            var idControl = (TextBox)form.Controls["chromeExtensionId"];
+            if (chromeControl.Checked || idControl.Enabled) throw new Exception("Chrome registration must require explicit opt-in.");
+            chromeControl.Checked = true;
+            if (!idControl.Enabled) throw new Exception("Extension ID entry did not enable after opt-in.");
+            chromeControl.Checked = false;
+            if (idControl.Enabled) throw new Exception("Extension ID entry remained active without opt-in.");
+            foreach (Control control in form.Controls) {
+                if (control.Left < 0 || control.Top < 0 || control.Right > form.ClientSize.Width || control.Bottom > form.ClientSize.Height)
+                    throw new Exception("Installer control is outside its client area: " + control.GetType().Name);
+            }
+        }
+        var script = Path.Combine(Path.GetTempPath(), "fixture folder", "install-windows.ps1");
+        var plain = new InstallOptions(false, "ignored untrusted input");
+        if (plain.Chrome || plain.Arguments(script).Contains("-Browser") || !plain.Arguments(script).Contains("-File \"" + script + "\""))
+            throw new Exception("Default installer arguments changed browser consent or path quoting.");
+        var chrome = new InstallOptions(true, "  ABCDEFGHIJKLMNOPABCDEFGHIJKLMNOP  ");
+        if (!chrome.Chrome || chrome.ExtensionId != "abcdefghijklmnopabcdefghijklmnop"
+            || !chrome.Arguments(script).EndsWith(" -Browser Chrome -ChromiumExtensionId abcdefghijklmnopabcdefghijklmnop", StringComparison.Ordinal))
+            throw new Exception("Exact Chrome extension ID was not propagated.");
+        foreach (var value in new string[] { null, "", "short", new String('q', 32), new String('a', 31), new String('a', 33), new String('a', 32) + " -Mode Uninstall", "\"; exit" }) {
+            try { new InstallOptions(true, value); throw new Exception("Invalid Chrome ID accepted."); }
+            catch (ArgumentException) { }
+        }
         foreach (var mutation in new string[] { "good", "host", "missing", "traversal", "duplicate", "case", "checksum", "partial" }) {
             bool valid = true;
             using (var stream = Fixture(mutation)) using (var zip = new ZipArchive(stream, ZipArchiveMode.Read)) {

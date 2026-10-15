@@ -13,15 +13,16 @@ this flow for them. Manual import remains available in [account setup](ACCOUNT_S
 
 ## Get the matching packages
 
-Use the Windows x64 preview ZIP and Chromium companion from the **same release
+Use **TideSetup.exe** and the Chromium companion from the **same release
 or successful build** in the [official repository](https://github.com/yotam1001/tide-music).
 If there is no published release yet, a successful GitHub Actions build supplies
 `tide-windows-preview-<commit>` and
 `tide-browser-companion-prototypes-<commit>` artifacts. GitHub may require sign-in
 to download Actions artifacts. Do not use packages posted in comments or messages.
 
-Extract both downloads to folders you control. The Windows payload must contain
-`Install Tide.cmd` and `tide-session-host.exe`. In the companion artifact, use
+Extract the companion download to a folder you control. The Windows artifact
+contains **TideSetup.exe**; the full preview ZIP is an advanced alternative. In
+the companion artifact, use
 `tide-browser-chromium/extension/`: **the selected folder must contain
 `manifest.json` directly**. Alternatively, extract the inner
 `tide-browser-chromium.zip` to a dedicated folder and use that folder.
@@ -46,18 +47,31 @@ install or register Tide's local helper, and the popup cannot do that for you.
 
 ## Register Tide's local helper
 
-Close Tide and finish or cancel any companion transfer first. In the extracted
-Windows preview folder, run **Install Tide.cmd**. At its browser-helper prompt,
-choose **Chrome**, then paste the exact extension ID from Chrome. This installs
-or updates Tide for your Windows user and registers the helper for that ID.
-Internet access is needed for runtime downloads; administrator access is not.
+Close Tide and finish or cancel any companion transfer first. Run
+**TideSetup.exe**, select **Enable Chrome companion connection (optional)**, and paste
+the exact extension ID from Chrome into its ID field. The option starts
+unchecked. Setup accepts only a complete 32-character ID made of lowercase
+letters `a` through `p`; it does not guess an ID or allow wildcard origins.
+Choose **Install Tide**. This installs or updates Tide for your Windows user and
+registers the local helper for that extension ID. Internet access is needed for
+runtime downloads; administrator access is not.
 
-If you already installed using **TideSetup.exe**, this advanced launcher is still
-needed to enable the Chrome helper. The graphical installer's **Connect YouTube
-Music** button opens Tide's Account panel; it does not register a browser helper
-or install an extension. Do not guess an ID or use another person's ID. Setup
+If Tide is already installed, rerun the matching setup with the Chrome option
+enabled. Leaving it unchecked skips registration on a first install; an update
+preserves the previously recorded browser choice. The installer's guide link
+explains loading the extension; setup does not load it into Chrome. The
+completion screen reports registration when this option succeeds, but that is
+not yet proof of a working browser connection or an imported account.
+
+The advanced alternative is to extract the full Windows preview ZIP, confirm it
+contains `Install Tide.cmd` and `tide-session-host.exe`, and run **Install
+Tide.cmd**. Choose **Chrome** at its browser-helper prompt and paste the same
+actual extension ID. Do not guess an ID or use another person's ID. Setup
 refuses to replace a conflicting Tide registration: report that conflict rather
 than editing the registry or deleting it by hand.
+
+**Connect YouTube Music** on setup's completion screen opens Tide's Account
+panel; session transfer still requires the separate explicit import below.
 
 Open the companion popup and choose **Check local connection**. Continue only
 when it says **The browser can reach Tide's local host**. This check transfers no
@@ -88,7 +102,7 @@ require reconnecting; a weekly minimum lifetime is not guaranteed.
 
 | Popup result | Next step |
 | --- | --- |
-| Browser cannot find or accept the local host | Confirm the advanced setup completed for **Chrome**, under the same Windows user, using the ID currently displayed in `chrome://extensions`. |
+| Browser cannot find or accept the local host | Confirm setup completed with its Chrome option enabled, under the same Windows user, using the ID currently displayed in `chrome://extensions`. The advanced launcher's Chrome choice is equivalent. |
 | Host does not allow this extension ID | Check for an ID change after moving or reloading the unpacked folder. Use the matching setup; do not weaken its allowed-origin policy. |
 | Host cannot start, is outdated, or gives an invalid reply | Update from matching official app/companion packages and retry **Check local connection**. Preserve existing accounts; report persistent failures. |
 | Capture expired or background stopped | Select the Music tab, retry import, close the popup and click Library promptly. Chrome may suspend the service worker. |

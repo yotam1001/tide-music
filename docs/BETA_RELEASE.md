@@ -13,10 +13,12 @@ runtime are downloaded and checksum-verified during installation.
 - `CHROME_SETUP.md`: complete beta connection instructions.
 - `SHA256SUMS.txt`: download integrity checks; use only assets from this repository.
 
-The Chrome companion is not on the Chrome Web Store. The graphical setup alone
-does not register its native helper. Follow [Chrome beta setup](BROWSER_COMPANION_BETA.md)
-for the advanced launcher and exact extension-ID step. This extra step remains
-a public-onboarding limitation; do not advertise automatic one-click login.
+The Chrome companion is not on the Chrome Web Store. New graphical setup builds
+offer optional native-helper registration after the extension is loaded and its
+exact ID is supplied; the original `1e403b7` candidate needs the advanced launcher
+for that step. Follow [Chrome beta setup](BROWSER_COMPANION_BETA.md) and use matching
+packages. Loading the unpacked extension and importing a selected session remain
+explicit steps; do not advertise automatic one-click login.
 
 ## Verification performed
 
@@ -43,6 +45,13 @@ setup GUI. It also does not establish authenticated streaming/session longevity,
 physical media keys in games, or Chrome Web Store availability.
 
 ## Checks required before publishing the beta
+
+The `installed-preview` CI job adds a separate check on a disposable hosted
+Windows runner using actual HKCU registrations, Start-menu shortcuts, private
+runtimes, a synthetic Chrome origin, update and removal. Its guarded script
+refuses this development machine and preserves diagnostic artifacts in CI.
+This closes only the system-integration checks it actually passes; it does not
+replace clicking through setup or connecting a real Google account.
 
 On a disposable Windows x64 VM or another test user/machine:
 

@@ -2,6 +2,24 @@
 
 Tide can read your existing playlists, Liked Songs and Home recommendations and pass your signed-in YouTube session to native playback. This is an unofficial integration. Premium benefits depend on a valid Premium account and compatible YouTube extraction; Tide does not independently verify a subscription or guarantee that every track is available.
 
+## Chrome companion connection for the Windows beta
+
+Start with the [Chrome companion beta guide](BROWSER_COMPANION_BETA.md). Load the
+matching unpacked extension in Chrome, copy its actual extension ID, then select
+**Enable Chrome companion connection (optional)** in **TideSetup.exe** and enter that
+ID. After setup, check the local connection and explicitly import the selected
+YouTube Music tab. This avoids manually copying session headers. The option is
+unchecked by default and does not install the extension or sign into Google for
+you. **Connect YouTube Music** on setup's completion screen opens Account in Tide;
+it does not itself transfer a session.
+
+The Chrome transfer passed an earlier local comparison test, but the new
+graphical helper-registration path still needs live validation. This is not a
+Chrome Web Store release. Zen's native-host lookup remains unresolved; other
+browser families are not established by the Chrome result. The fallback import
+methods below remain available. Confirm the intended account and library after
+every explicit import; a successful import replaces Tide's stored session.
+
 ## Install the optional library helper
 
 For the Windows preview, run **TideSetup.exe** and choose **Install Tide**.
@@ -23,8 +41,9 @@ Python runs only while a library request is active and exits afterward. The nati
 ## Import a session locally
 
 Manual request-header import can use your preferred browser; Zen is not required
-for that path. Account help opens in the Windows default browser. Automatic
-session transfer across browser families is still pending the work described in
+for that path. Account help opens in the Windows default browser. The optional
+Chrome companion provides explicit transfer as described above; support across
+browser families is still pending the work described in
 [browser connection requirements](BROWSER_CONNECTION.md); opening a browser alone
 does not connect its account to Tide.
 
