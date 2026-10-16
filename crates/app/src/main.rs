@@ -2093,7 +2093,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let weak = ui.as_weak();
         ui.on_open_account_help(move || {
             if let Err(error) = tide_windows::open_web_page(
-                "https://github.com/yotam1001/tide-music/blob/codex/account-library-sync/docs/ACCOUNT_SETUP.md",
+                "https://github.com/yotam1001/tide-music/blob/main/docs/ACCOUNT_SETUP.md",
             ) {
                 if let Some(u) = weak.upgrade() {
                     u.set_account_status(error.into());

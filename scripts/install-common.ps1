@@ -212,7 +212,7 @@ function Get-TideShortcuts([string]$Release, [string]$InstallRoot) {
     $powershell = Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe'
     return @{
         'Tide.lnk' = @{Target=(Join-Path $Release 'tide-music.exe'); Arguments=''; WorkingDirectory=$Release; Icon=(Join-Path $Release 'tide-music.exe')}
-        'Uninstall Tide.lnk' = @{Target=$powershell; Arguments=('-NoProfile -ExecutionPolicy Bypass -File "{0}" -Mode Uninstall -InstallRoot "{1}"' -f (Join-Path $Release 'scripts/install-windows.ps1'), $InstallRoot); WorkingDirectory=$InstallRoot; Icon=(Join-Path $Release 'tide-music.exe')}
+        'Uninstall Tide.lnk' = @{Target=$powershell; Arguments=('-NoProfile -ExecutionPolicy Bypass -File "{0}" -Mode Uninstall -InstallRoot "{1}"' -f (Join-Path $Release 'scripts/install-windows.ps1'), $InstallRoot); WorkingDirectory=$env:SystemRoot; Icon=(Join-Path $Release 'tide-music.exe')}
     }
 }
 function Test-TideShortcutMatch($Actual, $Expected) {
