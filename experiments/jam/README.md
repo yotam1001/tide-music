@@ -67,7 +67,11 @@ and remaining invite-admission, filesystem-cancellation and deployment risks.
 Invite files give access to room state and guest membership. Keep them private,
 share only with intended participants, and never paste them in issues/chat logs.
 The required `*.jam-invite.json` suffix is ignored by Git. Use a private user
-folder, never a shared or repository folder. Windows files inherit that folder's
+folder on a local disk, never a shared or repository folder. Native and CLI input
+checks reject non-regular files and oversized inputs. Windows also rejects direct
+network-share/device paths, reserved device filenames and alternate data streams.
+This does not impose a deadline on arbitrary filesystem stalls; see the security
+review's remaining limits. Windows files inherit that folder's
 permissions; Unix creation requests mode 0600. Files are not automatically erased;
 their capabilities expire when the room closes or expires.
 Operator keys use a separately ignored `*.jam-operator-key` file and must never
@@ -162,6 +166,19 @@ commands directly, including disabled-control bypasses, local volume and queue
 restoration. Other tests render/input-test full, compact, minimum and mini layouts
 entirely in software, with no desktop window. These checks do not establish two-PC
 or live authenticated YouTube behavior.
+
+The separate Windows file-input probe uses an isolated named pipe rather than a
+real invite or key. It must reject the pipe before opening it and cancel without
+blocking. Build the explicit ignored test, then run its supervised gate:
+
+```powershell
+New-Item -ItemType Directory -Force .local | Out-Null
+cargo test -p tide-music --locked --features experimental-jams --bin tide-music --no-run --message-format=json | Set-Content .local/jam-pipe-build.jsonl -Encoding utf8
+if ($LASTEXITCODE -ne 0) { throw 'Probe build failed' }
+python experiments/jam/check-private-pipe.py --cargo-artifacts .local/jam-pipe-build.jsonl
+```
+
+This does not read a session, create a listener on the network or load audio.
 
 ## Validation
 

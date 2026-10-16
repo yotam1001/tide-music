@@ -994,3 +994,27 @@ See the [Jam lab](../experiments/jam/README.md) for scope and the
 [security review](../experiments/jam/SECURITY_REVIEW.md) for remaining risks.
 No real account or browser session was used; no relay was deployed. The normal
 installer still excludes Jams, and the draft remains unmerged for user review.
+
+### Experimental Jam private-file inputs (2026-10-16)
+
+A controlled Windows named pipe reproduced the production guest file reader
+connecting and remaining blocked after cancellation. A supervisor stopped only
+that isolated test after its deadline. After applying a shared native/CLI private
+file guard, the probe exits zero and the pipe is never connected. Inputs must be
+ordinary, size-bounded files; Windows rejects direct device/UNC namespaces,
+reserved device names and alternate data streams before filesystem access, and
+checks the opened handle without following a final reparse point. Exclusive
+private-file creation remains intact.
+
+The supervised CI gate requires exactly one named ignored test to exist. A fixture
+pointing at a real unrelated Rust test binary reproduced a zero-test false pass;
+the corrected gate rejects that fixture before creating the pipe. A separate
+review agent checked the changed native/CLI guards and identified that gate issue;
+it did not access private data. General filesystem stalls, mapped drives, parent
+reparse traversal and Unix precheck/open races remain outside this narrow fix.
+The lab's 29 HTTP/TLS/protocol/CLI/file tests pass. A parallel local workspace
+build hit Windows' paging-file limit before tests ran; that failure is retained
+and a single-job retry passes all 123 workspace tests with five explicit probes
+ignored, followed by strict workspace Clippy. Strict lab Clippy also passes.
+The named-pipe gate runs its ignored probe separately and passes. The missing-test
+negative fixture fails as required. None of these checks read real private files.

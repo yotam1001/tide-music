@@ -41,6 +41,14 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Experimental native app tests failed' }
           cargo clippy -p tide-music --all-targets --locked --features experimental-jams -- -D warnings
           if ($LASTEXITCODE -ne 0) { throw 'Experimental native app Clippy failed' }
+      - name: Reject private pipe input without blocking guest cancellation
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force .local | Out-Null
+          cargo test -p tide-music --locked --features experimental-jams --bin tide-music --no-run --message-format=json | Set-Content .local/jam-pipe-build.jsonl -Encoding utf8
+          if ($LASTEXITCODE -ne 0) { throw 'Private file probe build failed' }
+          python experiments/jam/check-private-pipe.py --cargo-artifacts .local/jam-pipe-build.jsonl
+          if ($LASTEXITCODE -ne 0) { throw 'Private file cancellation probe failed' }
       - name: Verify default isolation and callback ownership without a desktop window
         shell: pwsh
         run: |

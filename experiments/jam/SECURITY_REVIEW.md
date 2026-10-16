@@ -2,6 +2,8 @@
 
 Reviewed on 2026-10-16. This is a bounded source review and synthetic test record,
 not a guarantee that Jams or a future deployment are free of security issues.
+An independent review agent inspected the source; this is not a professional
+deployment audit or certification.
 No real session, browser profile, clipboard, private invite or operator key was
 read for the independent review. No relay was deployed.
 
@@ -34,12 +36,12 @@ credentials and audio are not part of that coordination protocol.
   availability abuse, rather than host control or account disclosure. The current
   prototype is for trusted friends; per-recipient invites or host removal would
   be needed for stronger admission control. Ending the room revokes its tokens.
-- **File-input cancellation is incomplete.** Native private-file reads are
-  synchronous and bounded by size, but lack a regular-file check or read deadline.
-  A blocked share/device input could strand the worker and its joining destructor.
-  This was a source-level hardening observation, not a reproduced Windows-picker
-  exploit. Use ordinary files in a private local folder; the documented bounded
-  HTTP cleanup time does not bound such filesystem operations.
+- **General filesystem deadlines remain incomplete.** The direct Windows
+  pipe/device/share case is hardened as described below. Mapped network drives,
+  parent reparse traversal, Unix precheck/open races and a stalled filesystem are
+  not covered by that narrowly demonstrated fix. Use ordinary files in a private
+  local folder. The documented bounded HTTP cleanup time is not a universal
+  filesystem deadline.
 - **Deployment has not been validated.** The nginx template disables logging and
   buffering, but an actual proxy/host may introduce logs, temporary request files,
   different routing or network exposure. Follow the real-host checklist in
@@ -48,3 +50,27 @@ credentials and audio are not part of that coordination protocol.
 
 Jams remain opt-in and unmerged for the user's trial. These review results do not
 close two-PC authenticated playback, long-session or deployed-relay release gates.
+
+## File-input follow-up
+
+A synthetic Windows named-pipe server reproduced the production guest worker
+blocking after cancellation: its file reader connected to the pipe and waited
+for data indefinitely. Only the isolated test process was stopped. This verifies
+the reader behavior, not a remote exploit or normal Windows-picker attack.
+
+Native and CLI reads now share a size-bounded, zeroizing file reader. On Windows,
+it rejects direct UNC/device namespaces, reserved device names and alternate data
+streams before filesystem access. Both platforms check that the selected input
+is an ordinary file before opening and recheck the opened handle and size.
+Windows additionally opens the selected final reparse point without following it,
+rejects its reparse attributes, and permits only read sharing while reading.
+Native invite and CLI private-file creation use the same lexical path guard and
+retain exclusive creation. This adds no account access or relay protocol fields.
+
+After hardening, the same named-pipe probe exits successfully without connecting
+to the pipe. CI runs this isolated native probe with a five-second supervisor
+deadline, and requires the exact test to exist so a zero-test run cannot pass.
+The independent follow-up identified that missing-test weakness; a real unrelated
+Rust test binary reproduced the old false pass and is rejected by the corrected
+gate. The remaining filesystem limitations above are deliberately not represented
+as fixed.

@@ -65,6 +65,7 @@ fn operator_path(path: &str) -> Result<&Path, String> {
     Ok(Path::new(path))
 }
 fn private_file(path: &Path) -> Result<fs::File, String> {
+    tide_jam_lab::files::check_private_path(path)?;
     let mut options = fs::OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
@@ -78,15 +79,7 @@ fn private_file(path: &Path) -> Result<fs::File, String> {
 }
 fn read_operator(path: &str) -> Result<Secret, String> {
     let path = operator_path(path)?;
-    let mut bytes = zeroize::Zeroizing::new(Vec::new());
-    fs::File::open(path)
-        .map_err(|_| "Cannot open operator key file")?
-        .take(67)
-        .read_to_end(&mut bytes)
-        .map_err(|_| "Cannot read operator key file")?;
-    if bytes.len() > 66 {
-        return Err("Invalid operator key file".into());
-    }
+    let bytes = tide_jam_lab::files::read_private(path, 66)?;
     let text = std::str::from_utf8(&bytes).map_err(|_| "Invalid operator key file")?;
     Secret::parse(text.trim_end_matches(['\r', '\n']))
         .map_err(|_| "Invalid operator key file".into())
@@ -111,16 +104,9 @@ fn keygen(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 fn bounded_file(path: &str) -> Result<Vec<u8>, String> {
-    let mut bytes = Vec::new();
-    fs::File::open(path)
-        .map_err(|_| "Cannot open lab input file")?
-        .take(MAX_BODY as u64 + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|_| "Cannot read lab input")?;
-    if bytes.len() > MAX_BODY {
-        return Err("Lab input is too large".into());
-    }
-    Ok(bytes)
+    tide_jam_lab::files::read_private(Path::new(path), MAX_BODY)
+        .map(|bytes| bytes.to_vec())
+        .map_err(String::from)
 }
 fn millis(value: f64) -> u64 {
     if value.is_finite() && value > 0.0 {

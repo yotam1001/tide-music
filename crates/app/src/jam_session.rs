@@ -2,7 +2,7 @@
 //! or player. One latest snapshot/event each bounds memory and avoids blocking UI.
 use std::{
     fs,
-    io::{Read, Write},
+    io::Write,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -144,16 +144,7 @@ impl Drop for Session {
     }
 }
 fn read_private(path: &Path, limit: usize) -> Result<Zeroizing<Vec<u8>>, &'static str> {
-    let mut bytes = Zeroizing::new(Vec::new());
-    fs::File::open(path)
-        .map_err(|_| "Cannot open private Jam file")?
-        .take(limit as u64 + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|_| "Cannot read private Jam file")?;
-    if bytes.len() > limit {
-        return Err("Private Jam file is too large");
-    }
-    Ok(bytes)
+    tide_jam_lab::files::read_private(path, limit)
 }
 fn operator(path: &Path) -> Result<Secret, &'static str> {
     if !path.to_string_lossy().ends_with(".jam-operator-key") {
@@ -167,6 +158,7 @@ fn operator(path: &Path) -> Result<Secret, &'static str> {
     )
 }
 fn write_invite(path: &Path, invite: &Invite) -> Result<(), &'static str> {
+    tide_jam_lab::files::check_private_path(path)?;
     if !path.to_string_lossy().ends_with(".jam-invite.json") {
         return Err("Save the invite as .jam-invite.json");
     }
@@ -364,6 +356,7 @@ fn guest(shared: &Shared, path: &Path) -> Result<(), &'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Read;
     use std::net::{TcpListener, TcpStream};
 
     struct Fixture {
@@ -571,5 +564,24 @@ mod tests {
         });
         end(&session);
         assert!(fixture.removed.load(Ordering::Acquire));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "Isolated named-pipe file-input probe; never use a real private file"]
+    fn private_pipe_input_does_not_block_cancellation() {
+        let path = PathBuf::from(std::env::var_os("JAM_PRIVATE_PIPE_PROBE").unwrap());
+        assert!(path
+            .to_string_lossy()
+            .starts_with(r"\\.\pipe\tide-jam-input-probe-"));
+        let session = Session::start(Start::Guest { invite: path }).unwrap();
+        assert!(matches!(
+            wait(|| session.take_event()),
+            Event::Problem { terminal: true, .. }
+        ));
+        session.cancel();
+        let began = Instant::now();
+        drop(session);
+        assert!(began.elapsed() < Duration::from_secs(1));
     }
 }
