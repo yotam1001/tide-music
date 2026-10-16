@@ -51,3 +51,20 @@ jobs:
           $env:JAM_NATIVE_FIXTURE = (Join-Path $PWD '.local/jam-silence.wav')
           cargo test --manifest-path experiments/jam/Cargo.toml --locked --test native -- --ignored --nocapture
           if ($LASTEXITCODE -ne 0) { throw 'Native Jam validation failed' }
+      - name: Diagnose fixture output on failed native runner
+        if: failure()
+        shell: pwsh
+        run: |
+          $taskMpv = Join-Path $PWD '.local/jam-native-runtime/mpv.exe'
+          $taskWave = Join-Path $PWD '.local/jam-silence.wav'
+          if ((Test-Path -LiteralPath $taskMpv) -and (Test-Path -LiteralPath $taskWave)) {
+            foreach ($taskSink in @('wasapi', 'null')) {
+              $taskOut = Join-Path $PWD ('.local/mpv-' + $taskSink + '.stdout.log')
+              $taskErr = Join-Path $PWD ('.local/mpv-' + $taskSink + '.stderr.log')
+              $taskArgs = @('--no-config', '--no-video', ('--ao=' + $taskSink), '--length=0.25', '--volume=0', '--', ('"' + $taskWave + '"'))
+              $taskProbe = Start-Process -FilePath $taskMpv -ArgumentList $taskArgs -WindowStyle Hidden -PassThru -RedirectStandardOutput $taskOut -RedirectStandardError $taskErr
+              if (!$taskProbe.WaitForExit(10000)) { $taskProbe.Kill(); $taskProbe.WaitForExit() }
+              Write-Output ('Synthetic fixture sink ' + $taskSink + ' exit ' + $taskProbe.ExitCode)
+              Get-Content -LiteralPath $taskOut,$taskErr -TotalCount 20
+            }
+          }

@@ -136,10 +136,14 @@ impl Harness {
             }
         }
         panic!(
-            "Native Jam phase failed: {label}; drift {} ms, host ready={}, guest ready={}",
+            "Native Jam phase failed: {label}; drift {} ms, host ready={}, guest ready={}, host error={:?}, guest error={:?}, host duration={}, guest duration={}",
             self.drift(),
             local(&self.host).ready,
-            local(&self.follower).ready
+            local(&self.follower).ready,
+            self.host.snapshot().error,
+            self.follower.snapshot().error,
+            self.host.snapshot().duration,
+            self.follower.snapshot().duration
         );
     }
     fn drift(&self) -> u64 {
