@@ -2,6 +2,14 @@
 
 A Windows-first native Rust music player designed to leave resources available for games.
 
+## Promo video
+
+[![Animated preview of the Tide Music promo video](docs/media/tide-promo-preview.gif)](docs/media/tide-promo.mp4)
+
+[Watch the 48-second video](docs/media/tide-promo.mp4) · [Edit the HyperFrames project](video/README.md)
+
+The video shows the current prototype: real screen recordings of Tide with a connected account. Its memory figure comes from one matched test on one PC; see [how it was measured](docs/media/memory-test.md). Music: Lensko – Let's Go! [NCS Release].
+
 **Working early prototype:** native interface, local/YouTube music playback, search, queue controls and Windows media controls. Optional account integration reads playlists, Liked Songs and recommendations and supplies your signed-in session to playback. Local signed-in library, Premium extraction and muted native playback have been verified; each installation still needs its own session. YouTube features use unofficial tooling and can fail when YouTube changes. This is not an official YouTube product.
 
 ## Design
@@ -10,6 +18,7 @@ A Windows-first native Rust music player designed to leave resources available f
 - Independent dark/light themes and full/compact sizing; the light palette uses warm grey, terracotta and muted purple.
 - A mini player with an expand icon using the same queue and playback engine.
 - Playlist previews with Play/Shuffle, song menus, upcoming-track reordering/removal, song radio and recommendation autoplay.
+- Home Refresh rotates a 24-card selection from up to 240 personalized candidates. Recent IDs are kept only in memory; small upstream pools can still repeat.
 - Small real thumbnails with a bounded memory cache and no generic artwork banner.
 - Refresh on Home selects a varied batch of 24 playable recommendations from a
   wider personalized pool, favouring suggestions not recently shown. A bounded

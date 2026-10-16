@@ -898,38 +898,71 @@ account, native-host registration or installed application was changed by this
 check. Full fresh-machine installation/upgrade/removal and signed distribution
 remain open; the launcher is a preview, not evidence of stable-release readiness.
 
-### Recommendation variety and player indicators (2026-10-16)
+### Player indicators, recommendation variety and queue text (2026-10-16)
 
-Home now requests up to eight personalized shelves, bounds candidates to 240,
-then displays 24 playable song/playlist cards. A bounded, session-only identity
-history prioritizes unseen cards before repeats and avoids the previous selection
-when the upstream pool permits it. Seven native selection tests and 49 Python
-helper tests pass, including small pools, unsupported entries, deduplication,
-shelf balance and fixed bounds. This changes selection from actual recommendations;
-it does not guarantee YouTube generates new recommendations on each request.
+Home Refresh selects 24 playable cards from up to 240 personalized candidates,
+prioritizing unseen/recently unshown IDs with bounded memory-only history.
+Small upstream pools can repeat; no listening history is written to create variety.
 
-A native software-renderer regression reproduced the progress thumb remaining at
-maximum after real pointer/keyboard input, even while the external clock changed
-and the window was fully repainted. Native Slider assignments severed the parent
-property binding. TideSlider now retains the external binding and keeps a local
-input preview, resetting it on release, track/duration changes, focus loss and
-window-mode changes. The regression passes 30 simulated handoffs and subsequent
-clock updates in the same fixed-size reused buffer. This is a state/render test,
-not 30 naturally completed songs or a long-duration live playback measurement.
+Real native pointer/keyboard input reproduced the progress thumb losing its clock
+binding after seeking to maximum. Keeping externally owned values separate from
+local input previews fixes the regression across 30 simulated track handoffs in
+one fixed-size reused software buffer. This is not 30 naturally completed songs.
+Volume text matches a full-render reference without resizing in that test. The
+reported physical Windows volume-label freeze was not reproduced offscreen;
+a repaint limited to the player bar is a mitigation pending actual-session review.
 
-The volume callback, model and text passed the same offscreen fixed-size check;
-the reported physical Windows resize-only freeze was not reproduced there.
-A player-bar-only repaint on live position/volume changes is included as a
-mitigation, with confirmation in the user's Windows session still required.
-The default workspace passes 118 tests with four explicitly opt-in probes ignored.
-The experimental app passes 41 unit tests and four rendered integration tests;
-strict workspace Clippy with experimental controls and formatting pass. The Jam
-protocol/HTTP/TLS/CLI suite passes 27 tests, with its native probe explicitly opt-in.
+Rendered queue tests reproduced mixed-direction Hebrew/Japanese/emoji metadata
+painting left across artwork and drag handles despite Text elision. Metadata now
+has a bounded clipped column and queue delegates use the visible list width.
+Long spaced names, 600-character unbroken names and mixed-direction strings keep
+time/actions and artwork/handles unchanged at widths 650, 780 and 1140 in both
+themes. Native remove controls remain reachable. Full names remain in accessibility
+labels. Software images use synthetic metadata only; no user account or playback
+is opened. These ordinary player fixes contain no experimental Jam code.
 
-Optional native Jams now provide host/join/leave controls, private invite-file
-handoff, bounded background networking and guest control ownership. Network-worker
-lifecycle tests use synthetic local HTTP fixtures. Rendered input tests cover
-minimum/full/compact/mini, disabled guest transport, reachable local volume/Leave
-and Escape. These do not establish real two-computer authenticated YouTube playback,
-Internet synchronization, long-session behavior or deployed proxy safety.
-The immutable f026915 beta assets do not contain these source changes.
+### Playback runtime downloads without a release API lookup (2026-10-16)
+
+Hosted clean-install checks repeatedly encountered GitHub's unauthenticated API
+rate limit while looking up release metadata. The failed evidence was retained;
+retrying those jobs passed, but the API remained an avoidable setup dependency.
+Setup now downloads the same exact mpv/yt-dlp/Deno release URLs and verifies the
+same reviewed SHA-256 pins against the actual files before extraction. Versions,
+checksums, overwrite refusal, path checks and bounded download timeout are unchanged.
+No GitHub account/token or insecure fallback is added.
+
+Isolated installer lifecycle/package tests pass. New regressions exercise the
+production asset function with the metadata API unavailable, reject missing pins
+and existing output before downloading, and reject a corrupted runtime by the
+actual checksum check before tools are extracted. These cases cover PowerShell 7
+and built-in Windows PowerShell 5.1. The real-download verifier also passes pinned
+CPython/helper imports and all three playback-tool checksums and executable
+versions in a disposable temporary fixture, which is removed afterward. It does
+not install Tide, register a browser host, access an account or show an app window.
+GitHub's download hosting and other upstream services still need to be reachable.
+
+### Experimental native Jams (2026-10-16)
+
+At `cb36f50`, the opt-in experimental app passed 41 unit tests and four
+rendered integration tests, strict workspace Clippy with experimental
+controls, and the offline native ownership probe. The Jam protocol/HTTP/
+TLS/CLI suite passed 27 tests; its native probe is explicitly opt-in.
+These results precede integration of the subsequent main-branch queue
+and installer fixes and do not verify that integration.
+
+Native Jams provide host/join/leave controls, private invite-file handoff,
+bounded background networking and guest control ownership. Worker lifecycle
+tests use synthetic local HTTP fixtures. Rendered input tests cover minimum,
+full, compact and mini layouts, disabled guest transport, reachable local
+volume/Leave and Escape. These do not establish real two-computer
+authenticated YouTube playback, Internet synchronization, long-session
+behavior or deployed proxy safety. The immutable f026915 beta assets do
+not contain Jams, and this branch remains separate for user review.
+
+After integrating main at `d0ed644`, the experimental workspace passes 121 tests
+with four explicitly opt-in probes ignored. Strict workspace Clippy and formatting
+pass. The 27-test Jam suite also passes, with its native probe still opt-in.
+The offline native ownership probe passes without showing a window or loading
+audio. Synthetic host/guest/minimum/mini renders were regenerated; the compact
+light guest view was inspected. This integration retains the current queue-text,
+indicator and setup fixes; it does not close the real-network validation gates.

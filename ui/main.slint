@@ -505,12 +505,20 @@ component SongRow inherits Rectangle {
                 }
             }
             Cover { width: 42px; height: 42px; artwork: root.track.artwork; light-mode: root.light-mode; }
-            VerticalLayout {
+            Rectangle {
                 horizontal-stretch: 1;
-                min-width: 60px;
-                spacing: 4px;
-                Text { text: root.track.title; color: root.light-mode ? #392e33 : #f0eeef; font-size: 14px; font-weight: root.current ? 600 : 500; overflow: elide; }
-                Text { text: (root.current ? "Now playing · " : "") + root.track.artist; color: root.light-mode ? #716773 : #a1a5ae; font-size: 11px; overflow: elide; }
+                min-width: 0px;
+                height: 36px;
+                // Mixed-direction glyphs can paint outside an elided Text's
+                // bounds. Clip metadata only, keeping row focus/actions intact.
+                clip: true;
+                VerticalLayout {
+                    width: parent.width;
+                    height: parent.height;
+                    spacing: 4px;
+                    Text { min-width: 0px; text: root.track.title; color: root.light-mode ? #392e33 : #f0eeef; font-size: 14px; font-weight: root.current ? 600 : 500; overflow: elide; }
+                    Text { min-width: 0px; text: (root.current ? "Now playing · " : "") + root.track.artist; color: root.light-mode ? #716773 : #a1a5ae; font-size: 11px; overflow: elide; }
+                }
             }
             if root.show-duration && root.track.duration != "" && root.track.duration != "—" : Text { width: 42px; text: root.track.duration; color: root.light-mode ? #716773 : #a1a5ae; font-size: 11px; horizontal-alignment: right; }
             if root.show-menu : LibraryButton { width: 30px; height: 30px; caption: "..."; label: "Actions for " + root.track.title; light-mode: root.light-mode; enabled: root.enabled && !root.drag-in-progress; active: root.menu-open; clicked => { root.menu-open = !root.menu-open; } }
@@ -757,6 +765,7 @@ component QueueDrawer inherits Rectangle {
                 mouse-drag-pan-enabled: false;
                 horizontal-scrollbar-policy: always-off;
                 for visible-index in max(0, root.rows.length - max(0, root.current-index)) : QueueItem {
+                    width: queue-list.visible-width;
                     enabled: root.enabled;
                     index: visible-index + max(0, root.current-index);
                     track: root.rows[self.index];

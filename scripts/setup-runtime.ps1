@@ -12,15 +12,10 @@ Assert-TidePlainPath $taskDownloads
 [IO.Directory]::CreateDirectory($taskDownloads) | Out-Null
 
 function Get-VerifiedAsset($Repo, $Tag, $Name, $Output, $Sha256) {
-    $taskRelease = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/tags/$Tag" -TimeoutSec 30
-    $taskAsset = $taskRelease.assets | Where-Object name -EQ $Name | Select-Object -First 1
-    if (!$taskAsset -or !$taskAsset.PSObject.Properties['digest'] -or $taskAsset.digest -notmatch '^sha256:([a-fA-F0-9]{64})$') {
-        throw "Release asset has no SHA-256 digest: $Repo $Tag $Name"
-    }
-    $taskExpected = $Matches[1]
-    if ($taskExpected -ne $Sha256) { throw "Upstream asset digest changed for $Name; review the release before updating its pinned checksum." }
-    if ($taskAsset.browser_download_url -cne "https://github.com/$Repo/releases/download/$Tag/$Name") { throw 'Unexpected release download source.' }
-    Get-TideDownload $taskAsset.browser_download_url $Sha256 $Output
+    # The reviewed URL and local SHA-256 pin are authoritative. Looking up the
+    # same digest through GitHub's rate-limited API adds no integrity check to
+    # hashing the actual download, and can prevent otherwise valid installs.
+    Get-TideDownload "https://github.com/$Repo/releases/download/$Tag/$Name" $Sha256 $Output
 }
 
 Get-VerifiedAsset 'mpv-player/mpv' 'v0.41.0' 'mpv-v0.41.0-x86_64-pc-windows-msvc.zip' (Join-Path $taskDownloads 'mpv.zip') '4e197f729f5071c6772f35fffd96e0f36e3e8a044bd9479b136bb09b7c6a80ff'

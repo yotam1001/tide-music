@@ -1947,6 +1947,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         configure_account_playback(&mut s, &u);
                         s.library_playlists.clear();
                         s.recommendations.clear();
+                        s.discovery.clear();
                         refresh_library_models(&s, &u);
                         u.set_account_connected(false);
                         u.set_account_name("".into());
