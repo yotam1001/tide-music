@@ -9,7 +9,8 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import MagicMock, patch
-from youtube_music import (LOGIN_SECONDS, MAX_RADIO_TRACKS, MUSIC_URL, artwork_url, connect, connect_existing, create_client, main,
+from youtube_music import (LOGIN_SECONDS, MAX_RADIO_TRACKS, MAX_HOME_CARDS, MAX_HOME_ITEMS_PER_SHELF,
+                          MAX_HOME_SHELVES, MUSIC_URL, artwork_url, connect, connect_existing, create_client, main,
                           music_cookies, cookie_matches_music, read_cookie_database, CookieReadError, CookieSelectionError,
                           read_music_cookies, remove_login_profile, run,
                           selected_zen_database, session_headers, switch_account, tracks,
@@ -188,10 +189,67 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(result["tracks"][0]["source"], "https://www.youtube.com/watch?v=K4DyBUG242c")
         self.assertEqual(tracks([{"videoId": "https://other.example"}]), [])
 
-    def test_home_types_and_limit(self):
+    def test_home_types_and_deduplication_across_shelves(self):
         result = run(FakeClient(), {"action": "home"})
-        self.assertEqual(len(result["cards"]), 120)
+        self.assertEqual(len(result["cards"]), 3)
         self.assertEqual([c["kind"] for c in result["cards"][:3]], ["song", "album", "playlist"])
+
+    def test_home_requests_more_shelves_and_keeps_later_personalized_candidates(self):
+        shelves = [None, {"contents": "Description"}, {"contents": None}]
+        shelves += [{"title": "Personal shelf " + str(index), "contents": [
+            {"videoId": f"{index:011d}", "title": "Personal song " + str(index)}
+        ]} for index in range(MAX_HOME_SHELVES + 1)]
+        client = SimpleNamespace(get_home=MagicMock(return_value=shelves))
+        cards = run(client, {"action": "home"})["cards"]
+        client.get_home.assert_called_once_with(limit=8)
+        self.assertEqual(len(cards), MAX_HOME_SHELVES)
+        self.assertEqual(cards[-1]["id"], "00000000007")
+        self.assertEqual(cards[-1]["title"], "Personal song 7")
+        self.assertEqual(cards[-1]["shelf"], "Personal shelf 7")
+        self.assertNotIn("00000000008", [card["id"] for card in cards])
+
+    def test_home_caps_distinct_cards_and_items_per_shelf_even_if_api_overshoots(self):
+        shelves = [{"title": str(shelf), "contents": [
+            {"videoId": f"{shelf * 100 + item:011d}", "title": str(item)}
+            for item in range(MAX_HOME_ITEMS_PER_SHELF + 5)
+        ]} for shelf in range(MAX_HOME_SHELVES + 1)]
+        client = SimpleNamespace(get_home=lambda limit: shelves)
+        cards = run(client, {"action": "home"})["cards"]
+        self.assertEqual(len(cards), MAX_HOME_CARDS)
+        self.assertEqual(len({(card["kind"], card["id"]) for card in cards}), MAX_HOME_CARDS)
+        self.assertTrue(all(int(card["title"]) < MAX_HOME_ITEMS_PER_SHELF for card in cards))
+
+    def test_home_deduplicates_by_kind_and_id_preserving_first_metadata(self):
+        client = SimpleNamespace(get_home=lambda limit: [
+            {"title": "First", "contents": [
+                {"videoId": "K4DyBUG242c", "title": "Original"},
+                {"videoId": "K4DyBUG242c", "title": "Duplicate"},
+                {"playlistId": "K4DyBUG242c", "title": "Distinct playlist"},
+            ]},
+            {"title": "Later", "contents": [
+                {"videoId": "K4DyBUG242c", "title": "Another duplicate"},
+                {"playlistId": "K4DyBUG242c", "title": "Repeated playlist"},
+            ]},
+        ])
+        cards = run(client, {"action": "home"})["cards"]
+        self.assertEqual([(card["kind"], card["title"]) for card in cards],
+                         [("song", "Original"), ("playlist", "Distinct playlist")])
+        self.assertEqual([card["shelf"] for card in cards], ["First", "First"])
+
+    def test_home_skips_malformed_and_unavailable_candidates(self):
+        for payload in (None, {}, "invalid", 42):
+            client = SimpleNamespace(get_home=lambda limit: payload)
+            self.assertEqual(run(client, {"action": "home"}), {"type": "home", "cards": []})
+        client = SimpleNamespace(get_home=lambda limit: [{"contents": [
+            None, [], "invalid", {}, {"videoId": ["K4DyBUG242c"]},
+            {"playlistId": "bad/id"}, {"browseId": {"id": "MPREfixture"}},
+            {"videoId": "K4DyBUG242c", "isAvailable": False},
+            {"videoId": "K4DyBUG242c", "title": "Available", "artists": "invalid"},
+        ]}])
+        cards = run(client, {"action": "home"})["cards"]
+        self.assertEqual(len(cards), 1)
+        self.assertEqual(cards[0]["title"], "Available")
+        self.assertEqual(cards[0]["subtitle"], "")
 
     def test_rejects_invalid_playlist_and_writes(self):
         for request in [{"action": "playlist", "id": "bad/id"}, {"action": "rate"}]:

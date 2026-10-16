@@ -10,6 +10,7 @@ A Windows-first native Rust music player designed to leave resources available f
 - Independent dark/light themes and full/compact sizing; the light palette uses warm grey, terracotta and muted purple.
 - A mini player with an expand icon using the same queue and playback engine.
 - Playlist previews with Play/Shuffle, song menus, upcoming-track reordering/removal, song radio and recommendation autoplay.
+- Home Refresh rotates a 24-card selection from up to 240 personalized candidates. Recent IDs are kept only in memory; small upstream pools can still repeat.
 - Small real thumbnails with a bounded memory cache and no generic artwork banner.
 - Native Slint interface; no embedded browser or Electron runtime.
 

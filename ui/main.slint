@@ -54,7 +54,18 @@ component VolumeMark inherits Path {
 component TideSlider inherits Rectangle {
     in property <float> minimum: 0;
     in property <float> maximum: 100;
-    in-out property <float> value: 0;
+    in property <float> value: 0;
+    in property <int> reset-revision: 0;
+    // Native input must never assign the externally owned value: doing so
+    // breaks its binding to the live clock/volume. Keep a local drag preview.
+    private property <float> input-value: root.value;
+    private property <bool> interacting: false;
+    private property <bool> input-focused: native.has-focus;
+    changed value => { if !root.interacting { root.input-value = root.value; } }
+    changed maximum => { root.interacting = false; root.input-value = root.value; }
+    changed reset-revision => { root.interacting = false; root.input-value = root.value; }
+    changed enabled => { if !root.enabled { root.interacting = false; root.input-value = root.value; } }
+    changed input-focused => { if !root.input-focused { root.interacting = false; root.input-value = root.value; } }
     in property <bool> enabled: true;
     in property <bool> light-mode: false;
     in property <string> label;
@@ -62,7 +73,7 @@ component TideSlider inherits Rectangle {
     callback changed(float);
     callback released(float);
     private property <float> fraction: root.maximum > root.minimum
-        ? min(1, max(0, (root.value - root.minimum) / (root.maximum - root.minimum))) : 0;
+        ? min(1, max(0, (root.input-value - root.minimum) / (root.maximum - root.minimum))) : 0;
     private property <color> accent: root.light-mode ? #b45448 : #b33d60;
 
     min-width: 40px;
@@ -72,9 +83,11 @@ component TideSlider inherits Rectangle {
     // Accessibility adjustments are complete actions and have no pointer/key release.
     function commit-accessible(value: float) {
         if root.enabled {
-            root.value = min(root.maximum, max(root.minimum, value));
-            root.changed(root.value);
-            root.released(root.value);
+            root.interacting = false;
+            root.input-value = min(root.maximum, max(root.minimum, value));
+            root.changed(root.input-value);
+            root.released(root.input-value);
+            root.input-value = root.value;
         }
     }
 
@@ -110,7 +123,7 @@ component TideSlider inherits Rectangle {
         opacity: 0;
         minimum: root.minimum;
         maximum: root.maximum;
-        value <=> root.value;
+        value <=> root.input-value;
         enabled: root.enabled;
         accessible-label: root.label;
         accessible-value: root.value-text;
@@ -119,8 +132,14 @@ component TideSlider inherits Rectangle {
         }
         accessible-action-increment => { root.commit-accessible(root.value + 1); }
         accessible-action-decrement => { root.commit-accessible(root.value - 1); }
-        changed(value) => { root.changed(value); }
-        released(value) => { root.released(value); }
+        changed(value) => { root.interacting = true; root.changed(value); }
+        released(value) => {
+            root.interacting = false;
+            root.released(value);
+            // A rejected/no-op seek need not change the owner's value, so a
+            // changed-value callback alone cannot end the local preview.
+            root.input-value = root.value;
+        }
     }
 }
 
@@ -481,12 +500,20 @@ component SongRow inherits Rectangle {
                 }
             }
             Cover { width: 42px; height: 42px; artwork: root.track.artwork; light-mode: root.light-mode; }
-            VerticalLayout {
+            Rectangle {
                 horizontal-stretch: 1;
-                min-width: 60px;
-                spacing: 4px;
-                Text { text: root.track.title; color: root.light-mode ? #392e33 : #f0eeef; font-size: 14px; font-weight: root.current ? 600 : 500; overflow: elide; }
-                Text { text: (root.current ? "Now playing · " : "") + root.track.artist; color: root.light-mode ? #716773 : #a1a5ae; font-size: 11px; overflow: elide; }
+                min-width: 0px;
+                height: 36px;
+                // Mixed-direction glyphs can paint outside an elided Text's
+                // bounds. Clip metadata only, keeping row focus/actions intact.
+                clip: true;
+                VerticalLayout {
+                    width: parent.width;
+                    height: parent.height;
+                    spacing: 4px;
+                    Text { min-width: 0px; text: root.track.title; color: root.light-mode ? #392e33 : #f0eeef; font-size: 14px; font-weight: root.current ? 600 : 500; overflow: elide; }
+                    Text { min-width: 0px; text: (root.current ? "Now playing · " : "") + root.track.artist; color: root.light-mode ? #716773 : #a1a5ae; font-size: 11px; overflow: elide; }
+                }
             }
             if root.show-duration && root.track.duration != "" && root.track.duration != "—" : Text { width: 42px; text: root.track.duration; color: root.light-mode ? #716773 : #a1a5ae; font-size: 11px; horizontal-alignment: right; }
             if root.show-menu : LibraryButton { width: 30px; height: 30px; caption: "..."; label: "Actions for " + root.track.title; light-mode: root.light-mode; enabled: root.enabled && !root.drag-in-progress; active: root.menu-open; clicked => { root.menu-open = !root.menu-open; } }
@@ -732,6 +759,7 @@ component QueueDrawer inherits Rectangle {
                 mouse-drag-pan-enabled: false;
                 horizontal-scrollbar-policy: always-off;
                 for visible-index in max(0, root.rows.length - max(0, root.current-index)) : QueueItem {
+                    width: queue-list.visible-width;
                     enabled: root.enabled;
                     index: visible-index + max(0, root.current-index);
                     track: root.rows[self.index];
@@ -811,6 +839,16 @@ component QueueDrawer inherits Rectangle {
 }
 
 component PlayerBar inherits Rectangle {
+    in property <bool> window-minimized: false;
+    private property <int> input-revision: 0;
+    private property <bool> repaint-phase: false;
+    changed window-minimized => { root.input-revision += 1; }
+    changed track-title => { root.input-revision += 1; }
+    changed collapsed => { root.input-revision += 1; }
+    // A changed label can otherwise survive in a reused Windows software
+    // surface until resize. Invalidate only this small bar on live updates.
+    changed volume => { root.repaint-phase = !root.repaint-phase; }
+    changed position => { root.repaint-phase = !root.repaint-phase; }
     in property <bool> light-mode;
     in property <bool> compact;
     in property <bool> collapsed;
@@ -835,6 +873,7 @@ component PlayerBar inherits Rectangle {
     background: root.light-mode ? #eee5db : #15181d;
     border-width: 1px;
     border-color: root.light-mode ? #ded0c4 : #292e37;
+    Rectangle { x: 1px; y: 1px; width: max(0px, parent.width - 2px); height: max(0px, parent.height - 2px); background: root.light-mode ? #eee5db : #15181d; visible: root.repaint-phase; }
     pure function format-time(seconds: float) -> string {
         let total: int = max(0, seconds);
         let minutes: int = total / 60;
@@ -880,10 +919,10 @@ component PlayerBar inherits Rectangle {
             spacing: 9px;
             cross-axis-alignment: center;
             Text { width: 38px; text: root.format-time(root.position); color: root.secondary; font-size: 11px; horizontal-alignment: right; }
-            TideSlider { light-mode: root.light-mode; horizontal-stretch: 1; minimum: 0; maximum: max(1, root.duration); value: root.position; enabled: root.duration > 0; label: "Playback position"; value-text: root.format-time(root.position); released(value) => { root.seek(value); } }
+            TideSlider { reset-revision: root.input-revision; light-mode: root.light-mode; horizontal-stretch: 1; minimum: 0; maximum: max(1, root.duration); value: root.position; enabled: root.duration > 0; label: "Playback position"; value-text: root.format-time(root.position); released(value) => { root.seek(value); } }
             Text { width: 38px; text: root.format-time(root.duration); color: root.secondary; font-size: 11px; }
             VolumeMark { ink: root.secondary; }
-            TideSlider { light-mode: root.light-mode; width: root.compact || root.collapsed ? 105px : 150px; minimum: 0; maximum: 100; value: root.volume; label: "Volume"; value-text: root.volume.to-fixed(0) + "%"; changed(value) => { root.change-volume(value); } }
+            TideSlider { reset-revision: root.input-revision; light-mode: root.light-mode; width: root.compact || root.collapsed ? 105px : 150px; minimum: 0; maximum: 100; value: root.volume; label: "Volume"; value-text: root.volume.to-fixed(0) + "%"; changed(value) => { root.change-volume(value); } }
             Text { width: 38px; text: root.volume.to-fixed(0) + "%"; color: root.secondary; font-size: 11px; horizontal-alignment: right; }
         }
     }
@@ -1279,6 +1318,7 @@ export component AppWindow inherits Window {
                 Text { x: 130px; width: max(0px, parent.width - 150px); height: parent.height; text: root.status-text; color: root.secondary; font-size: 11px; overflow: elide; vertical-alignment: center; accessible-live-region: polite; }
             }
             PlayerBar {
+                window-minimized: root.minimized;
                 preferred-height: 110px;
                 min-height: 110px;
                 max-height: root.collapsed ? 1000px : 110px;
