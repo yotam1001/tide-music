@@ -14,6 +14,17 @@ use tide_jam_lab::{
 };
 use tide_playback::PlaybackHandle;
 
+fn start_player() -> PlaybackHandle {
+    #[cfg(feature = "headless-native")]
+    {
+        tide_playback::start_null_audio_for_lab().unwrap()
+    }
+    #[cfg(not(feature = "headless-native"))]
+    {
+        tide_playback::start().unwrap()
+    }
+}
+
 fn milliseconds(value: f64) -> u64 {
     if value.is_finite() && value > 0.0 {
         (value * 1000.0) as u64
@@ -160,6 +171,14 @@ impl Drop for Harness {
 #[test]
 #[ignore = "Requires explicit JAM_NATIVE_FIXTURE and mpv; runs two muted native players"]
 fn two_native_players_follow_pause_seek_repeat_skip_stale_host_and_close() {
+    println!(
+        "Native Jam fixture output: {}",
+        if cfg!(feature = "headless-native") {
+            "explicit null-audio test sink"
+        } else {
+            "normal system audio, muted"
+        }
+    );
     let fixture = PathBuf::from(
         std::env::var_os("JAM_NATIVE_FIXTURE").expect("Set a silent local WAV fixture"),
     );
@@ -175,8 +194,8 @@ fn two_native_players_follow_pause_seek_repeat_skip_stale_host_and_close() {
         })
         .unwrap()
         .member;
-    let host = tide_playback::start().unwrap();
-    let follower = tide_playback::start().unwrap();
+    let host = start_player();
+    let follower = start_player();
     host.send(PlaybackCommand::SetVolume(0.0)).unwrap();
     follower.send(PlaybackCommand::SetVolume(0.0)).unwrap();
     host.send(PlaybackCommand::Load {

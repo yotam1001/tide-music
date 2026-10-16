@@ -44,12 +44,12 @@ jobs:
                   output.writeframes(b'\0' * 96000)
           '@ | python -
           if ($LASTEXITCODE -ne 0) { throw 'Silent fixture preparation failed' }
-      - name: Two muted native players and real loopback relay
+      - name: Two native clocks with explicit headless audio sink
         shell: pwsh
         run: |
           $env:TIDE_RUNTIME_DIR = (Join-Path $PWD '.local/jam-native-runtime')
           $env:JAM_NATIVE_FIXTURE = (Join-Path $PWD '.local/jam-silence.wav')
-          cargo test --manifest-path experiments/jam/Cargo.toml --locked --test native -- --ignored --nocapture
+          cargo test --manifest-path experiments/jam/Cargo.toml --locked --features headless-native --test native -- --ignored --nocapture
           if ($LASTEXITCODE -ne 0) { throw 'Native Jam validation failed' }
       - name: Diagnose fixture output on failed native runner
         if: failure()

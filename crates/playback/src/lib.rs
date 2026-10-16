@@ -87,6 +87,20 @@ pub fn start_with_account(
     let mut runtimes = RuntimePaths::discover()?;
     runtimes.cookies = cookies;
     runtimes.account_index = account_index;
+    start_runtime(runtimes)
+}
+
+/// Run the real mpv clock/IPC against a null audio sink on headless test hosts.
+/// No account input, runtime environment switch or network option can enable it.
+#[cfg(all(windows, feature = "jam-lab-null-audio"))]
+pub fn start_null_audio_for_lab() -> Result<PlaybackHandle, String> {
+    let mut runtimes = RuntimePaths::discover()?;
+    runtimes.null_audio_for_lab = true;
+    start_runtime(runtimes)
+}
+
+#[cfg(windows)]
+fn start_runtime(runtimes: RuntimePaths) -> Result<PlaybackHandle, String> {
     let yt_dlp_available = runtimes.yt_dlp.is_some();
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_io()
@@ -451,6 +465,8 @@ struct RuntimePaths {
     account_index: u32,
     mpv: PathBuf,
     yt_dlp: Option<PathBuf>,
+    #[cfg(feature = "jam-lab-null-audio")]
+    null_audio_for_lab: bool,
 }
 
 impl RuntimePaths {
@@ -464,6 +480,8 @@ impl RuntimePaths {
             account_index: 0,
             mpv,
             yt_dlp: Self::discover_yt_dlp(),
+            #[cfg(feature = "jam-lab-null-audio")]
+            null_audio_for_lab: false,
         })
     }
 
@@ -1080,6 +1098,10 @@ async fn launch_player(
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .creation_flags(0x08000000);
+    #[cfg(feature = "jam-lab-null-audio")]
+    if runtimes.null_audio_for_lab {
+        command.arg("--ao=null");
+    }
     if let Some(cookies) = &cookie_copy {
         let path = cookies.path().to_string_lossy();
         command.arg(format!(

@@ -130,6 +130,14 @@ unauthenticated API rate limits. It does not change production runtime setup.
 The initial CI attempts stopped before native playback: one hit that API rate
 limit, and one had an invalid `$LASTEXITCODE` check after a successful PowerShell
 script. The lab setup no longer uses that API/check; failed jobs remain recorded.
+Subsequent runner diagnostics established that hosted Windows has no playback
+device (WASAPI failed; a direct null-sink fixture succeeded). CI therefore uses
+`--features headless-native` to opt into the playback crate's compile-time-only
+`jam-lab-null-audio` seam. That test constructor accepts no account parameters;
+normal constructors still use the system output. Nothing in a room, invite,
+environment setting or ordinary Tide UI can select the null sink. This exercises
+real mpv decoding, IPC and timing without claiming physical audio-device coverage.
+The normal-device tests above remain separate evidence, not replaced by CI.
 
 ## Before enabling Jams in Tide
 

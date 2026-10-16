@@ -8,6 +8,9 @@ publish = false
 # Deliberately isolated: normal Tide builds do not compile or run the lab.
 [workspace]
 
+[features]
+headless-native = ["tide-playback/jam-lab-null-audio"]
+
 [dependencies]
 axum = { version = "=0.8.9", default-features = false, features = ["json", "http1", "tokio"] }
 getrandom = "=0.3.4"
