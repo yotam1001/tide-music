@@ -16,6 +16,9 @@ from urllib.parse import urlsplit
 MAX_INPUT = 65536
 MAX_TRACKS = 2000
 MAX_RADIO_TRACKS = 25
+MAX_HOME_SHELVES = 8
+MAX_HOME_ITEMS_PER_SHELF = 40
+MAX_HOME_CARDS = 240
 ARTWORK_HOSTS = ("ytimg.com", "ggpht.com", "googleusercontent.com")
 LOGIN_SECONDS = 8 * 60
 LOGIN_RETRY_SECONDS = 15
@@ -585,15 +588,20 @@ def run(client, request):
         items = data.get("tracks", [])
         return {"type": "tracks", "tracks": tracks(items), "truncated": len(items) > MAX_TRACKS}
     if action == "home":
-        shelves = client.get_home(limit=3)
+        # Fetch a wider personalized candidate pool for the app's refresh
+        # selection. The API may overshoot its row limit; cap our output too.
+        shelves = client.get_home(limit=MAX_HOME_SHELVES)
         cards = []
+        seen = set()
         # ytmusicapi includes description shelves with string contents and None
         # entries for unsupported mixed content. Keep the playable shelf rows.
+        if not isinstance(shelves, list):
+            return {"type": "home", "cards": cards}
         shelves = [shelf for shelf in shelves if isinstance(shelf, dict)
                    and isinstance(shelf.get("contents"), list)]
-        for shelf in shelves[:3]:
-            for item in shelf.get("contents", [])[:40]:
-                if not isinstance(item, dict):
+        for shelf in shelves[:MAX_HOME_SHELVES]:
+            for item in shelf["contents"][:MAX_HOME_ITEMS_PER_SHELF]:
+                if not isinstance(item, dict) or item.get("isAvailable") is False:
                     continue
                 kind = clean(item.get("type") or "unknown", 30).lower()
                 video = identifier(item.get("videoId"), True)
@@ -608,13 +616,17 @@ def run(client, request):
                         kind = "album"
                     elif item_id.startswith("UC"):
                         kind = "artist"
-                if not item_id:
+                key = (kind, item_id)
+                if not item_id or key in seen:
                     continue
+                seen.add(key)
                 cards.append({"id": item_id, "title": clean(item.get("title")),
                               "subtitle": artist_names(item),
                               "kind": kind, "shelf": clean(shelf.get("title")),
                               "artwork_url": artwork_url(item),
                               "duration_seconds": duration_seconds(item)})
+                if len(cards) >= MAX_HOME_CARDS:
+                    return {"type": "home", "cards": cards}
         return {"type": "home", "cards": cards}
     raise ValueError("unsupported action")
 

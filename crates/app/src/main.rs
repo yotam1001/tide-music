@@ -15,6 +15,7 @@ use tide_core::{PlaybackCommand, Queue, Track};
 mod artwork;
 mod artwork_view;
 mod connection;
+mod discovery;
 mod listening;
 mod metadata;
 mod radio;
@@ -105,6 +106,7 @@ struct State {
     library_cancel: Arc<AtomicBool>,
     library_playlists: Vec<tide_provider::Playlist>,
     recommendations: Vec<tide_provider::Card>,
+    discovery: discovery::Discovery,
     detail_tracks: Vec<Track>,
     search_tracks: Vec<Track>,
     account_error: bool,
@@ -494,6 +496,7 @@ fn stage_saved_connection(
     s.radio_requests.reset();
     s.library_playlists.clear();
     s.recommendations.clear();
+    s.discovery.clear();
     s.detail_tracks.clear();
     s.artwork.borrow_mut().clear();
     u.set_detail_open(false);
@@ -657,6 +660,7 @@ fn adopt_saved_connection(s: &mut State, u: &AppWindow, tx: &mpsc::SyncSender<Li
 }
 
 fn configure_account_playback(s: &mut State, u: &AppWindow) -> bool {
+    s.discovery.clear();
     let connection = s
         .provider
         .as_ref()
@@ -1508,6 +1512,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         library_cancel: Arc::new(AtomicBool::new(false)),
         library_playlists: Vec::new(),
         recommendations: Vec::new(),
+        discovery: discovery::Discovery::default(),
         detail_tracks: Vec::new(),
         search_tracks: Vec::new(),
         account_error: false,
@@ -1845,6 +1850,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         configure_account_playback(&mut s, &u);
                         s.library_playlists.clear();
                         s.recommendations.clear();
+                        s.discovery.clear();
                         refresh_library_models(&s, &u);
                         u.set_account_connected(false);
                         u.set_account_name("".into());
@@ -2698,12 +2704,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             request_library(&mut s, &u, &library_tx, tide_provider::Request::Home);
                         }
                         Ok(tide_provider::Response::Home { cards }) => {
-                            s.recommendations = cards.into_iter().take(120).collect();
-                            u.set_home_artwork_y(0.0);
+                            let seed = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map_or(0, |time| time.as_nanos() as u64);
+                            let selected = s.discovery.select(cards, seed);
+                            if selected.is_empty() {
+                                u.set_account_status("No playable recommendations returned. Your current selection is kept; try Refresh again later.".into());
+                                continue;
+                            }
+                            s.recommendations = selected;
                             u.set_home_artwork_y(0.0);
                             refresh_library_models(&s, &u);
                             u.set_account_status(
-                                "Your YouTube Music recommendations are refreshed".into(),
+                                "A different selection from your YouTube Music recommendations is ready".into(),
                             );
                         }
                         Ok(tide_provider::Response::Tracks { tracks, truncated }) => {

@@ -897,3 +897,26 @@ pinned checksums and executable version checks. The fixture was removed. No
 account, native-host registration or installed application was changed by this
 check. Full fresh-machine installation/upgrade/removal and signed distribution
 remain open; the launcher is a preview, not evidence of stable-release readiness.
+
+### Player indicators, recommendation variety and queue text (2026-10-16)
+
+Home Refresh selects 24 playable cards from up to 240 personalized candidates,
+prioritizing unseen/recently unshown IDs with bounded memory-only history.
+Small upstream pools can repeat; no listening history is written to create variety.
+
+Real native pointer/keyboard input reproduced the progress thumb losing its clock
+binding after seeking to maximum. Keeping externally owned values separate from
+local input previews fixes the regression across 30 simulated track handoffs in
+one fixed-size reused software buffer. This is not 30 naturally completed songs.
+Volume text matches a full-render reference without resizing in that test. The
+reported physical Windows volume-label freeze was not reproduced offscreen;
+a repaint limited to the player bar is a mitigation pending actual-session review.
+
+Rendered queue tests reproduced mixed-direction Hebrew/Japanese/emoji metadata
+painting left across artwork and drag handles despite Text elision. Metadata now
+has a bounded clipped column and queue delegates use the visible list width.
+Long spaced names, 600-character unbroken names and mixed-direction strings keep
+time/actions and artwork/handles unchanged at widths 650, 780 and 1140 in both
+themes. Native remove controls remain reachable. Full names remain in accessibility
+labels. Software images use synthetic metadata only; no user account or playback
+is opened. These ordinary player fixes contain no experimental Jam code.
