@@ -3,12 +3,14 @@
 **Experimental. Not included in Tide or its beta installer.**
 This tests whether Tide's native playback engine can follow a host's queue and
 playback clock without sharing accounts or audio. It is not a finished Jam feature;
-the CLI now supports an explicitly configured private HTTPS relay, but native
-Tide controls and validation on two physical computers are still outstanding.
+the CLI supports an explicitly configured private HTTPS relay, and a separate
+opt-in Tide developer build has native host/join/leave controls. Validation on two
+physical computers with authenticated streams is still outstanding.
 
 The lab is a separate Cargo workspace with its own lockfile. Normal Tide builds
-do not compile it, start a listener, add its dependencies or run background Jam
-threads. Existing beta assets and account files are unaffected.
+do not link its transport or run background Jam threads. The optional native
+client links protocol/client/controller code only, without the relay server.
+Existing beta assets are unchanged.
 
 ## Implemented
 
@@ -96,7 +98,8 @@ experiments/jam/target/debug/tide-jam-lab.exe join --invite-file <private-folder
 Replace the placeholder paths. The host refuses to overwrite an existing invite.
 Runs are bounded to 5–1800 seconds. Host commands: `pause`, `resume`, `next`,
 `previous`, `seek 30`, `quit`. Queue order comes from the file at startup; interactive
-queue editing and a native Jam UI are not implemented. Removing `--mute` enables
+queue editing is not implemented in the CLI. See the optional native controls below.
+Removing `--mute` enables
 audio only in that lab instance. Ordinary YouTube availability limits still apply;
 the lab does not promise Premium access or reconnect an account.
 
@@ -106,6 +109,53 @@ backslashes, credentials (including empty userinfo), dot paths, alternative IPv4
 notation, uppercase hostnames and an explicitly written default `:443`. A final
 root slash is optional. Invites select a server to contact: accept them only from
 someone you trust. Joining never reads or sends an operator key.
+
+## Optional native Tide controls
+
+```powershell
+cargo run -p tide-music --locked --features experimental-jams
+```
+
+This is a developer build, not the normal installer. Open **Jam** in the header.
+Hosting shares the playing YouTube song and up to 99 upcoming tracks. Enter the
+trusted relay endpoint; for HTTPS choose its operator key, then save a **new**
+private guest invite. Send only that invite to intended guests. Joining opens a
+trusted invite file, without reading the operator key. Setup of the private relay
+and its TLS proxy remains a separate operator task.
+
+Guests use their existing **local** playback runtime/account. No account data or
+audio enters the coordination worker. Local transport, queue edits, autoplay,
+media keys and account controls are guarded while following; volume stays local.
+Leave remains available in mini mode. The original queue is kept in memory and
+restored paused on Leave; the guest queue is never saved to settings. Changing
+the saved local account ends the Jam before applying the account change. A failed
+initial connection restores the local queue paused. Track failures, stale hosts
+and terminal network errors do not silently switch to local autoplay.
+
+Networking runs in one on-demand worker with bounded latest-state mailboxes.
+Leaving cancels delivery immediately; a retiring worker finishes bounded HTTP
+cleanup before another session can start. App shutdown joins it; in-flight HTTP
+plus cleanup can take up to about six seconds. If a safety pause/stop cannot enter
+the playback command queue, the engine is shut down through its separate shutdown
+channel before restoring the local player. A local source or invalid host queue
+ends hosting rather than sharing arbitrary paths or streams.
+
+Upcoming songs unknown to the guest may initially display their YouTube IDs;
+native metadata replaces the current title when available. This is an experimental
+limitation, not the final shared-library UX. Synchronization remains approximate.
+
+```powershell
+cargo test -p tide-music --locked --features experimental-jams
+cargo clippy -p tide-music --all-targets --locked --features experimental-jams -- -D warnings
+cargo run -p tide-music --locked --features experimental-jams -- --smoke-jam-ownership
+```
+
+The explicit ownership probe uses transient synthetic state, no provider/account,
+and never shows its window or loads audio. It exercises native callbacks and media
+commands directly, including disabled-control bypasses, local volume and queue
+restoration. Other tests render/input-test full, compact, minimum and mini layouts
+entirely in software, with no desktop window. These checks do not establish two-PC
+or live authenticated YouTube behavior.
 
 ## Validation
 
@@ -177,9 +227,10 @@ The normal-device tests above remain separate evidence, not replaced by CI.
 2. Test two physical computers with real independently authenticated streams,
    extraction delays, regional/unavailable tracks, asymmetric latency, outages
    and repeated host/guest reconnects. Define acceptable measured drift.
-3. Integrate host/join/leave, queue ownership and buffering status into the native
-   UI; restore the guest's original local queue on leave; gate local media keys
-   while following the host. Do not treat this CLI as finished app UX.
+3. Validate native host/join/leave, queue ownership, buffering, safety shutdown and
+   account changes against real participants. Controls and offline ownership/
+   rendering tests are implemented, but physical/native/service behavior still
+   needs end-to-end validation before enabling the feature by default.
 4. Measure complete process-tree resource use and obtain a separate security
    review of the public transport before advertising Internet rooms.
 

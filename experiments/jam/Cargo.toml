@@ -9,19 +9,40 @@ publish = false
 [workspace]
 
 [features]
-headless-native = ["tide-playback/jam-lab-null-audio"]
+default = ["relay", "cli"]
+relay = ["dep:axum", "dep:hyper", "dep:hyper-util", "dep:tokio"]
+cli = ["relay", "dep:tide-core", "dep:tide-playback"]
+headless-native = ["cli", "tide-playback/jam-lab-null-audio"]
+
+[[bin]]
+name = "tide-jam-lab"
+path = "src/main.rs"
+required-features = ["cli"]
+
+[[test]]
+name = "protocol_sync"
+required-features = ["relay"]
+[[test]]
+name = "network"
+required-features = ["relay"]
+[[test]]
+name = "native"
+required-features = ["cli"]
+[[test]]
+name = "cli"
+required-features = ["cli"]
 
 [dependencies]
-axum = { version = "=0.8.9", default-features = false, features = ["json", "http1", "tokio"] }
+axum = { version = "=0.8.9", optional = true, default-features = false, features = ["json", "http1", "tokio"] }
 getrandom = "=0.3.4"
-hyper = { version = "1", features = ["http1", "server"] }
-hyper-util = { version = "0.1", features = ["tokio", "service"] }
+hyper = { version = "1", optional = true, features = ["http1", "server"] }
+hyper-util = { version = "0.1", optional = true, features = ["tokio", "service"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 subtle = "2"
-tide-core = { path = "../../crates/core" }
-tide-playback = { path = "../../crates/playback" }
-tokio = { version = "1", features = ["io-util", "macros", "net", "rt", "sync", "time"] }
+tide-core = { path = "../../crates/core", optional = true }
+tide-playback = { path = "../../crates/playback", optional = true }
+tokio = { version = "1", optional = true, features = ["io-util", "macros", "net", "rt", "sync", "time"] }
 ureq = { version = "=3.4.2", default-features = false, features = ["rustls"] }
 url = "2"
 zeroize = "1"

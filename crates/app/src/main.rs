@@ -15,6 +15,11 @@ use tide_core::{PlaybackCommand, Queue, Track};
 mod artwork;
 mod artwork_view;
 mod connection;
+mod discovery;
+#[cfg(feature = "experimental-jams")]
+mod jam;
+#[cfg(feature = "experimental-jams")]
+mod jam_session;
 mod listening;
 mod metadata;
 mod radio;
@@ -82,6 +87,8 @@ impl LibraryAction {
     }
 }
 struct State {
+    #[cfg(feature = "experimental-jams")]
+    jam: jam::Jam,
     settings: Settings,
     engine: Option<tide_playback::PlaybackHandle>,
     generation: u64,
@@ -105,6 +112,7 @@ struct State {
     library_cancel: Arc<AtomicBool>,
     library_playlists: Vec<tide_provider::Playlist>,
     recommendations: Vec<tide_provider::Card>,
+    discovery: discovery::Discovery,
     detail_tracks: Vec<Track>,
     search_tracks: Vec<Track>,
     account_error: bool,
@@ -120,6 +128,17 @@ struct State {
 }
 
 type LibraryResult = Result<tide_provider::Response, String>;
+fn local_controls_allowed(state: &State) -> bool {
+    #[cfg(feature = "experimental-jams")]
+    {
+        !jam::following(state)
+    }
+    #[cfg(not(feature = "experimental-jams"))]
+    {
+        let _ = state;
+        true
+    }
+}
 async fn select_zen_session(index: i32) -> Option<tide_provider::Request> {
     let mut dialog = rfd::AsyncFileDialog::new()
         .set_title("Connect your Zen session: select cookies.sqlite in your profile")
@@ -205,6 +224,9 @@ fn request_library(
     tx: &mpsc::SyncSender<LibraryResult>,
     request: tide_provider::Request,
 ) {
+    if !local_controls_allowed(s) {
+        return;
+    }
     if s.library_worker.is_some() || s.pending_saved_connection.is_some() {
         return;
     }
@@ -304,6 +326,9 @@ fn current_video_id(s: &State) -> Option<String> {
     .then_some(id)
 }
 fn request_radio(s: &mut State, u: &AppWindow, tx: &mpsc::SyncSender<LibraryResult>, force: bool) {
+    if !local_controls_allowed(s) {
+        return;
+    }
     if s.library_worker.is_some()
         || s.pending_saved_connection.is_some()
         || !s.account_verified
@@ -484,6 +509,8 @@ fn stage_saved_connection(
     u: &AppWindow,
     saved: Option<tide_provider::SavedConnection>,
 ) {
+    #[cfg(feature = "experimental-jams")]
+    jam::account_changing(s, u);
     s.rejected_saved_connection = None;
     s.connection_retry = connection::AdoptionRetry::new();
     s.library_cancel.store(true, Ordering::Release);
@@ -494,6 +521,7 @@ fn stage_saved_connection(
     s.radio_requests.reset();
     s.library_playlists.clear();
     s.recommendations.clear();
+    s.discovery.clear();
     s.detail_tracks.clear();
     s.artwork.borrow_mut().clear();
     u.set_detail_open(false);
@@ -657,6 +685,9 @@ fn adopt_saved_connection(s: &mut State, u: &AppWindow, tx: &mpsc::SyncSender<Li
 }
 
 fn configure_account_playback(s: &mut State, u: &AppWindow) -> bool {
+    #[cfg(feature = "experimental-jams")]
+    jam::account_changing(s, u);
+    s.discovery.clear();
     let connection = s
         .provider
         .as_ref()
@@ -912,6 +943,9 @@ fn start_tracks(
     index: usize,
     shuffle: bool,
 ) -> bool {
+    if !local_controls_allowed(s) {
+        return false;
+    }
     tracks.truncate(tide_core::MAX_QUEUE_TRACKS);
     if index >= tracks.len() {
         return false;
@@ -941,6 +975,9 @@ fn start_tracks(
     }
 }
 fn queue_choice(s: &mut State, u: &AppWindow, track: Track, play_next: bool) {
+    if !local_controls_allowed(s) {
+        return;
+    }
     if s.settings.queue.insert_manual(track, play_next) {
         refresh(u, s);
         save(&s.settings);
@@ -1094,6 +1131,9 @@ fn upcoming_source(queue: &Queue, repeat: bool) -> Option<&str> {
 }
 
 fn send(state: &mut State, ui: &AppWindow, cmd: PlaybackCommand) -> bool {
+    if !local_controls_allowed(state) && !matches!(cmd, PlaybackCommand::SetVolume(_)) {
+        return false;
+    }
     if let Some((_, _, position, paused)) = &mut state.connection_resume {
         match &cmd {
             PlaybackCommand::TogglePause => *paused = !*paused,
@@ -1137,6 +1177,9 @@ fn submit_load(
 }
 
 fn play(state: &mut State, ui: &AppWindow) -> bool {
+    if !local_controls_allowed(state) {
+        return false;
+    }
     let Some(source) = state
         .settings
         .queue
@@ -1205,6 +1248,9 @@ fn is_youtube_source(source: &str) -> bool {
 }
 
 fn select_and_play(state: &mut State, ui: &AppWindow, index: usize) {
+    if !local_controls_allowed(state) {
+        return;
+    }
     let previous = state.settings.queue.current;
     if state.settings.queue.select(index).is_some() && !play(state, ui) {
         state.settings.queue.current = previous;
@@ -1213,6 +1259,9 @@ fn select_and_play(state: &mut State, ui: &AppWindow, index: usize) {
 }
 
 fn add(state: &mut State, ui: &AppWindow, source: String) -> bool {
+    if !local_controls_allowed(state) {
+        return false;
+    }
     let source = match tide_playback::validate_playback_source(&source) {
         Ok(source) => source,
         Err(error) => {
@@ -1376,6 +1425,10 @@ fn search(query: String, cancel: Arc<AtomicBool>) -> Result<Vec<Track>, String> 
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let jam_ownership_smoke = std::env::args().any(|arg| arg == "--smoke-jam-ownership");
+    if jam_ownership_smoke && !cfg!(feature = "experimental-jams") {
+        return Err("Jam ownership verification requires an experimental-jams build".into());
+    }
     if std::env::args().any(|arg| arg == "--smoke-ui" || arg.starts_with("--smoke-early-skip")) {
         let panic_hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
@@ -1402,10 +1455,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     let ui = AppWindow::new()?;
-    let mut settings: Settings = settings_path()
-        .and_then(|path| std::fs::read(path).ok())
-        .and_then(|b| serde_json::from_slice(&b).ok())
-        .unwrap_or_default();
+    let mut settings: Settings = if jam_ownership_smoke {
+        Settings {
+            transient: true,
+            ..Settings::default()
+        }
+    } else {
+        settings_path()
+            .and_then(|path| std::fs::read(path).ok())
+            .and_then(|b| serde_json::from_slice(&b).ok())
+            .unwrap_or_default()
+    };
     let smoke_autoplay_depletion = std::env::args().any(|a| a == "--smoke-autoplay-depletion");
     let smoke_autoplay =
         smoke_autoplay_depletion || std::env::args().any(|a| a == "--smoke-autoplay");
@@ -1453,7 +1513,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if sanitize_queue(&mut settings.queue) {
         save(&settings);
     }
-    let test_mode = (smoke_early_skip && !smoke_skip_session)
+    let test_mode = jam_ownership_smoke
+        || (smoke_early_skip && !smoke_skip_session)
         || local_listening_source.is_some()
         || std::env::args().any(|a| a == "--smoke-ui" || a == "--benchmark-mode");
     let provider = if test_mode {
@@ -1485,6 +1546,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(e) => (None, Some(e)),
     };
     let state = Rc::new(RefCell::new(State {
+        #[cfg(feature = "experimental-jams")]
+        jam: jam::Jam::default(),
         settings,
         engine,
         generation: 0,
@@ -1508,6 +1571,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         library_cancel: Arc::new(AtomicBool::new(false)),
         library_playlists: Vec::new(),
         recommendations: Vec::new(),
+        discovery: discovery::Discovery::default(),
         detail_tracks: Vec::new(),
         search_tracks: Vec::new(),
         account_error: false,
@@ -1558,6 +1622,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         PlaybackCommand::SetVolume(ui.get_volume() as f64),
     );
     let picker_busy = Rc::new(PickerState::default());
+    #[cfg(feature = "experimental-jams")]
+    jam::install(&state, &ui, &picker_busy);
     let (tx, rx) = mpsc::sync_channel(2);
     let (library_tx, library_rx) = mpsc::sync_channel::<LibraryResult>(2);
     {
@@ -1565,6 +1631,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let weak = ui.as_weak();
         let tx = library_tx.clone();
         ui.on_play_radio(move || {
+            if !local_controls_allowed(&state.borrow()) {
+                return;
+            }
             if let Some(u) = weak.upgrade() {
                 let mut s = state.borrow_mut();
                 s.settings.autoplay = true;
@@ -1579,6 +1648,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let weak = ui.as_weak();
         let tx = library_tx.clone();
         ui.on_shuffle_playlist(move |index| {
+            if !local_controls_allowed(&state.borrow()) {
+                return;
+            }
             if let Some(u) = weak.upgrade() {
                 let mut s = state.borrow_mut();
                 if s.library_worker.is_some() {
@@ -1640,6 +1712,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let tx = library_tx.clone();
         let picker_busy = picker_busy.clone();
         ui.on_switch_account(move |index| {
+            if !local_controls_allowed(&state.borrow()) {
+                return;
+            }
             if let Some(u) = weak.upgrade() {
                 if (0..10).contains(&index) {
                     picker_busy.cancel_account();
@@ -1665,6 +1740,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let tx = library_tx.clone();
         let picker_busy = picker_busy.clone();
         ui.on_connect_account(move || {
+            if !local_controls_allowed(&state.borrow()) {
+                return;
+            }
             if let Some(u) = weak.upgrade() {
                 connect_picker(&picker_busy, state.clone(), &u, tx.clone());
             }
@@ -1674,6 +1752,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let state = state.clone();
         let picker_busy = picker_busy.clone();
         ui.on_cancel_account(move || {
+            if !local_controls_allowed(&state.borrow()) {
+                return;
+            }
             picker_busy.cancel_account();
             state.borrow().library_cancel.store(true, Ordering::Release);
         });
@@ -1683,6 +1764,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let weak = ui.as_weak();
         let picker_busy = picker_busy.clone();
         ui.on_import_account(move || {
+            if !local_controls_allowed(&state.borrow()) {
+                return;
+            }
             let state = Rc::downgrade(&state);
             let revision = picker_busy.account_revision.get();
             let selection = picker_busy.clone();
@@ -1730,6 +1814,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let weak = ui.as_weak();
         let tx = library_tx.clone();
         ui.on_refresh_library(move || {
+            if !local_controls_allowed(&state.borrow()) {
+                return;
+            }
             if let Some(u) = weak.upgrade() {
                 let mut s = state.borrow_mut();
                 if let Some(saved) = s.rejected_saved_connection.take() {
@@ -1745,6 +1832,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let weak = ui.as_weak();
         let tx = library_tx.clone();
         ui.on_refresh_recommendations(move || {
+            if !local_controls_allowed(&state.borrow()) {
+                return;
+            }
             if let Some(u) = weak.upgrade() {
                 request_library(
                     &mut state.borrow_mut(),
@@ -1760,6 +1850,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let weak = ui.as_weak();
         let tx = library_tx.clone();
         ui.on_play_liked(move || {
+            if !local_controls_allowed(&state.borrow()) {
+                return;
+            }
             if let Some(u) = weak.upgrade() {
                 request_library(
                     &mut state.borrow_mut(),
@@ -1775,6 +1868,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let weak = ui.as_weak();
         let tx = library_tx.clone();
         ui.on_select_library_playlist(move |index| {
+            if !local_controls_allowed(&state.borrow()) {
+                return;
+            }
             if let Some(u) = weak.upgrade() {
                 let mut s = state.borrow_mut();
                 if let Some(p) = usize::try_from(index)
@@ -1797,6 +1893,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let weak = ui.as_weak();
         let tx = library_tx.clone();
         ui.on_select_recommendation(move |index| {
+            if !local_controls_allowed(&state.borrow()) {
+                return;
+            }
             if let Some(u) = weak.upgrade() {
                 let mut s = state.borrow_mut();
                 if let Some(card) = usize::try_from(index)
@@ -1829,6 +1928,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let weak = ui.as_weak();
         let picker_busy = picker_busy.clone();
         ui.on_disconnect_account(move || {
+            if !local_controls_allowed(&state.borrow()) {
+                return;
+            }
             picker_busy.cancel_account();
             if let Some(u) = weak.upgrade() {
                 let mut s = state.borrow_mut();
@@ -1859,6 +1961,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let state = state.clone();
         let weak = ui.as_weak();
         ui.on_play_detail(move || {
+            if !local_controls_allowed(&state.borrow()) {
+                return;
+            }
             if let Some(u) = weak.upgrade() {
                 let mut s = state.borrow_mut();
                 let tracks = s.detail_tracks.clone();
@@ -1870,6 +1975,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let state = state.clone();
         let weak = ui.as_weak();
         ui.on_shuffle_detail(move || {
+            if !local_controls_allowed(&state.borrow()) {
+                return;
+            }
             if let Some(u) = weak.upgrade() {
                 let mut s = state.borrow_mut();
                 let tracks = s.detail_tracks.clone();
@@ -1881,6 +1989,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let state = state.clone();
         let weak = ui.as_weak();
         ui.on_select_detail_track(move |index| {
+            if !local_controls_allowed(&state.borrow()) {
+                return;
+            }
             if let Some(u) = weak.upgrade() {
                 let mut s = state.borrow_mut();
                 let tracks = s.detail_tracks.clone();
@@ -1894,6 +2005,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let state = state.clone();
         let weak = ui.as_weak();
         ui.on_select_search_track(move |index| {
+            if !local_controls_allowed(&state.borrow()) {
+                return;
+            }
             if let Some(u) = weak.upgrade() {
                 let mut s = state.borrow_mut();
                 if let Some(track) = usize::try_from(index)
@@ -1910,6 +2024,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let state = state.clone();
         let weak = ui.as_weak();
         ui.on_queue_search_track(move |index, next| {
+            if !local_controls_allowed(&state.borrow()) {
+                return;
+            }
             if let Some(u) = weak.upgrade() {
                 let mut s = state.borrow_mut();
                 if let Some(t) = usize::try_from(index)
@@ -1926,6 +2043,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let state = state.clone();
         let weak = ui.as_weak();
         ui.on_queue_detail_track(move |index, next| {
+            if !local_controls_allowed(&state.borrow()) {
+                return;
+            }
             if let Some(u) = weak.upgrade() {
                 let mut s = state.borrow_mut();
                 if let Some(t) = usize::try_from(index)
@@ -1942,6 +2062,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let state = state.clone();
         let weak = ui.as_weak();
         ui.on_requeue_track(move |index, next| {
+            if !local_controls_allowed(&state.borrow()) {
+                return;
+            }
             if let Some(u) = weak.upgrade() {
                 let mut s = state.borrow_mut();
                 if let Some(t) = usize::try_from(index)
@@ -1964,6 +2087,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let state = state.clone();
         let weak = ui.as_weak();
         ui.on_queue_recommendation(move |index, next| {
+            if !local_controls_allowed(&state.borrow()) {
+                return;
+            }
             if let Some(u) = weak.upgrade() {
                 let mut s = state.borrow_mut();
                 if let Some(c) = usize::try_from(index)
@@ -1998,6 +2124,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let weak = ui.as_weak();
         let tx = library_tx.clone();
         ui.on_retry_error(move || {
+            if !local_controls_allowed(&state.borrow()) {
+                return;
+            }
             if let Some(u) = weak.upgrade() {
                 let mut s = state.borrow_mut();
                 if s.account_error {
@@ -2037,6 +2166,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let weak = ui.as_weak();
         let tx = library_tx.clone();
         ui.on_start_track_radio(move |context, index| {
+            if !local_controls_allowed(&state.borrow()) {
+                return;
+            }
             if let Some(u) = weak.upgrade() {
                 let mut s = state.borrow_mut();
                 let index = usize::try_from(index).ok();
@@ -2072,6 +2204,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let state = state.clone();
         let weak = ui.as_weak();
         ui.on_reorder_queue_track(move |index, target| {
+            if !local_controls_allowed(&state.borrow()) {
+                return;
+            }
             if let Some(u) = weak.upgrade() {
                 let mut s = state.borrow_mut();
                 if let (Ok(index), Ok(target)) = (usize::try_from(index), usize::try_from(target)) {
@@ -2099,6 +2234,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let state = state.clone();
         let weak = ui.as_weak();
         ui.on_add_source(move |input| {
+            if !local_controls_allowed(&state.borrow()) {
+                return;
+            }
             let Some(ui) = weak.upgrade() else {
                 return;
             };
@@ -2154,6 +2292,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ui.$method(move || {
                 if let Some($u) = weak.upgrade() {
                     let mut $s = state.borrow_mut();
+                    if !local_controls_allowed(&$s) {
+                        return;
+                    }
                     $body
                 }
             });
@@ -2164,6 +2305,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let weak = ui.as_weak();
         let picker_busy = picker_busy.clone();
         ui.on_open_file(move || {
+            if !local_controls_allowed(&state.borrow()) {
+                return;
+            }
             let state = Rc::downgrade(&state);
             let weak = weak.clone();
             let error_ui = weak.upgrade();
@@ -2204,6 +2348,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let weak = ui.as_weak();
         let tx = library_tx.clone();
         ui.on_next_track(move || {
+            if !local_controls_allowed(&state.borrow()) {
+                return;
+            }
             if let Some(u) = weak.upgrade() {
                 let mut s = state.borrow_mut();
                 let repeat = s.settings.repeat;
@@ -2279,6 +2426,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let state = state.clone();
         let weak = ui.as_weak();
         ui.on_remove_queue_track(move |index| {
+            if !local_controls_allowed(&state.borrow()) {
+                return;
+            }
             if let Some(u) = weak.upgrade() {
                 let mut s = state.borrow_mut();
                 let Ok(index) = usize::try_from(index) else {
@@ -2337,7 +2487,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 u.set_collapsed(c);
                 u.window().set_size(if c {
-                    slint::LogicalSize::new(700.0, 132.0)
+                    slint::LogicalSize::new(700.0, if u.get_jam_active() { 166.0 } else { 132.0 })
                 } else {
                     let size = *restored_size.borrow();
                     slint::LogicalSize::new(size.width.max(650.0), size.height.max(420.0))
@@ -2350,6 +2500,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let state = state.clone();
         let weak = ui.as_weak();
         ui.on_select_track(move |i| {
+            if !local_controls_allowed(&state.borrow()) {
+                return;
+            }
             if let Some(u) = weak.upgrade() {
                 let mut s = state.borrow_mut();
                 if i >= 0 {
@@ -2362,6 +2515,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let state = state.clone();
         let weak = ui.as_weak();
         ui.on_seek(move |p| {
+            if !local_controls_allowed(&state.borrow()) {
+                return;
+            }
             if let Some(u) = weak.upgrade() {
                 send(&mut state.borrow_mut(), &u, PlaybackCommand::Seek(p as f64));
             }
@@ -2371,6 +2527,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let state = state.clone();
         let weak = ui.as_weak();
         ui.on_media_command(move |action, value| {
+            if !local_controls_allowed(&state.borrow()) {
+                return;
+            }
             let Some(u) = weak.upgrade() else {
                 return;
             };
@@ -2444,6 +2603,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if std::env::args().any(|argument| argument == "--connect-account") {
         ui.set_settings_open(true);
     }
+    #[cfg(feature = "experimental-jams")]
+    if jam_ownership_smoke {
+        jam::ownership_smoke(&state, &ui, &picker_busy);
+        drop(state.borrow_mut().engine.take());
+        return Ok(());
+    }
     ui.show()?;
     let media = Rc::new(RefCell::new(None::<tide_windows::MediaSession>));
     let media_enabled =
@@ -2465,7 +2630,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 };
                 let p = engine.snapshot();
                 let eligible = preparation_eligible(s.active_playback, s.generation, &p);
-                let _ = engine.prepare_next(if eligible {
+                let _ = engine.prepare_next(if eligible && local_controls_allowed(&s) {
                     upcoming_source(&s.settings.queue, s.settings.repeat)
                 } else {
                     None
@@ -2619,6 +2784,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if let Some(worker) = s.library_worker.take() {
                         let _ = worker.join();
                     }
+                    if !local_controls_allowed(&s) { continue; }
                     if s.pending_saved_connection.is_some() { continue; }
                     if !matches!(&result, Ok(tide_provider::Response::Connected)) {
                         match s.provider.as_ref().map(|p| p.saved_connection()).transpose() {
@@ -2698,12 +2864,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             request_library(&mut s, &u, &library_tx, tide_provider::Request::Home);
                         }
                         Ok(tide_provider::Response::Home { cards }) => {
-                            s.recommendations = cards.into_iter().take(120).collect();
-                            u.set_home_artwork_y(0.0);
+                            let seed = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map_or(0, |time| time.as_nanos() as u64);
+                            let selected = s.discovery.select(cards, seed);
+                            if selected.is_empty() {
+                                u.set_account_status("No playable recommendations returned. Your current selection is kept; try Refresh again later.".into());
+                                continue;
+                            }
+                            s.recommendations = selected;
                             u.set_home_artwork_y(0.0);
                             refresh_library_models(&s, &u);
                             u.set_account_status(
-                                "Your YouTube Music recommendations are refreshed".into(),
+                                "A different selection from your YouTube Music recommendations is ready".into(),
                             );
                         }
                         Ok(tide_provider::Response::Tracks { tracks, truncated }) => {
@@ -2842,6 +3015,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if s.library_worker.is_none() && s.pending_saved_connection.is_some() {
                     adopt_saved_connection(&mut s, &u, &library_tx);
                 }
+                #[cfg(feature = "experimental-jams")]
+                jam::tick(&mut s, &u);
                 let artwork_changed = s.artwork.borrow_mut().poll();
                 if artwork_changed {
                     refresh(&u, &s);
@@ -2906,6 +3081,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                         }
                     }
+                    if !local_controls_allowed(&s) { return; }
                     if p.ended {
                         let repeat = s.settings.repeat;
                         let previous = s.settings.queue.current;
@@ -3641,6 +3817,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         timer.stop();
     }
     let mut s = state.borrow_mut();
+    #[cfg(feature = "experimental-jams")]
+    jam::leave(&mut s, &ui, "Jam closed");
     if s.volume_save_pending {
         save(&s.settings);
     }

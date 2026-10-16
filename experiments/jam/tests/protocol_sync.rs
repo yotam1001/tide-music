@@ -29,6 +29,42 @@ fn ready() -> Local {
 }
 
 #[test]
+fn joining_an_existing_player_never_reuses_its_load_generation() {
+    let mut follower = Follower::starting_after(41);
+    let actions = follower.decide(&view(), 0, &ready(), 0).unwrap();
+    assert!(matches!(
+        actions.first(),
+        Some(Action::Load { generation: 42, .. })
+    ));
+    let mut exhausted = Follower::starting_after(u64::MAX);
+    assert!(exhausted.decide(&view(), 0, &ready(), 0).is_err());
+}
+
+#[test]
+fn rejected_views_cannot_replace_the_displayed_queue_or_track_metadata() {
+    let mut follower = Follower::default();
+    let mut current = view();
+    assert!(follower.accepts_timeline(&current, 0));
+    follower.decide(&current, 0, &ready(), 0).unwrap();
+    current.timeline.as_mut().unwrap().revision = 2;
+    current.timeline.as_mut().unwrap().queue = vec![VideoId::parse("second00001").unwrap()];
+    assert!(!follower.accepts_timeline(&current, 2500));
+    assert!(!follower
+        .decide(&current, 2500, &ready(), 100)
+        .unwrap()
+        .iter()
+        .any(|action| matches!(action, Action::Load { .. })));
+    current.age_ms = STALE_MS;
+    assert!(!follower.accepts_timeline(&current, 0));
+    current.age_ms = 0;
+    assert!(follower.accepts_timeline(&current, 0));
+    follower.decide(&current, 0, &ready(), 200).unwrap();
+    assert!(!follower.accepts_timeline(&view(), 0));
+    follower.disconnect();
+    assert!(!follower.accepts_timeline(&current, 0));
+}
+
+#[test]
 fn wire_cannot_supply_urls_paths_cookie_fields_or_non_ascii_ids() {
     for value in [
         "file:///abc",

@@ -27,8 +27,9 @@ playback reliability and convenient browser login are established. An isolated
 playback, bounded room capabilities and an opt-in private HTTPS relay transport.
 It is not included in Tide or its installer. Remote use requires an operator's
 own configured TLS proxy and creation key; no hosted Tide service is provided.
-Multi-device validation and native UI integration remain outstanding; no
-production release date is committed.
+The opt-in native developer build now includes host/join/leave and guest control
+ownership; normal builds do not link its transport. Multi-device/live-service and
+resource validation remain outstanding; no production release date is committed.
 
 Synchronized playback on each participant's device is a required part of the
 feature. A shared queue with audio playing only on the host does not meet its

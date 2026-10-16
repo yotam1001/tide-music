@@ -2,5 +2,6 @@
 pub mod client;
 pub mod endpoint;
 pub mod protocol;
+#[cfg(feature = "relay")]
 pub mod relay;
 pub mod sync;

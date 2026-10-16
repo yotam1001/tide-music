@@ -39,6 +39,26 @@ impl Default for Follower {
     }
 }
 impl Follower {
+    /// Whether this timeline may describe the local queue/track. Callers must
+    /// not attach metadata from a rejected response to the currently loaded song.
+    pub fn accepts_timeline(&self, view: &View, rtt_ms: u64) -> bool {
+        self.active
+            && view.validate().is_ok()
+            && rtt_ms <= 2_000
+            && view.age_ms.saturating_add(rtt_ms / 2) < STALE_MS
+            && view
+                .timeline
+                .as_ref()
+                .is_some_and(|timeline| timeline.revision >= self.revision)
+    }
+    /// Continue an existing native engine's monotonic load generation. A Jam
+    /// must never reuse generations already consumed by local playback.
+    pub fn starting_after(generation: u64) -> Self {
+        Self {
+            generation,
+            ..Self::default()
+        }
+    }
     pub fn disconnect(&mut self) -> Vec<Action> {
         self.active = false;
         self.current = None;

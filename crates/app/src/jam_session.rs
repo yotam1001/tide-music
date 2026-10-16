@@ -1,0 +1,575 @@
+//! Optional Jam networking worker. It owns capabilities, never the local account
+//! or player. One latest snapshot/event each bounds memory and avoids blocking UI.
+use std::{
+    fs,
+    io::{Read, Write},
+    path::{Path, PathBuf},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Condvar, Mutex,
+    },
+    thread::{self, JoinHandle},
+    time::{Duration, Instant},
+};
+use tide_jam_lab::{
+    client::{Client, Error},
+    endpoint::Endpoint,
+    protocol::*,
+};
+use zeroize::Zeroizing;
+
+pub enum Start {
+    Host {
+        endpoint: String,
+        operator: Option<PathBuf>,
+        invite: PathBuf,
+        timeline: Timeline,
+    },
+    Guest {
+        invite: PathBuf,
+    },
+}
+pub enum Event {
+    Hosting {
+        guests: usize,
+    },
+    View {
+        view: View,
+        rtt_ms: u64,
+        received: Instant,
+    },
+    Problem {
+        message: &'static str,
+        terminal: bool,
+    },
+}
+struct Frame {
+    timeline: Timeline,
+    sampled: Instant,
+}
+struct Shared {
+    stop: AtomicBool,
+    frame: Mutex<Option<Frame>>,
+    event: Mutex<Option<Event>>,
+    wake: Condvar,
+}
+impl Shared {
+    fn stopped(&self) -> bool {
+        self.stop.load(Ordering::Acquire)
+    }
+    fn event(&self, event: Event) {
+        if let Ok(mut slot) = self.event.lock() {
+            *slot = Some(event);
+        }
+    }
+    fn wait(&self) {
+        if let Ok(frame) = self.frame.lock() {
+            let _ = self
+                .wake
+                .wait_timeout_while(frame, Duration::from_secs(1), |_| !self.stopped());
+        }
+    }
+}
+pub struct Session {
+    shared: Arc<Shared>,
+    worker: Option<JoinHandle<()>>,
+}
+impl Session {
+    pub fn start(start: Start) -> Result<Self, &'static str> {
+        let shared = Arc::new(Shared {
+            stop: AtomicBool::new(false),
+            frame: Mutex::new(None),
+            event: Mutex::new(None),
+            wake: Condvar::new(),
+        });
+        let worker_state = shared.clone();
+        let worker = thread::Builder::new()
+            .name("tide-jam".into())
+            .spawn(move || {
+                let result = match start {
+                    Start::Host {
+                        endpoint,
+                        operator,
+                        invite,
+                        timeline,
+                    } => host(
+                        &worker_state,
+                        &endpoint,
+                        operator.as_deref(),
+                        &invite,
+                        timeline,
+                    ),
+                    Start::Guest { invite } => guest(&worker_state, &invite),
+                };
+                if let Err(message) = result {
+                    worker_state.event(Event::Problem {
+                        message,
+                        terminal: true,
+                    });
+                }
+            })
+            .map_err(|_| "Could not start Jam networking")?;
+        Ok(Self {
+            shared,
+            worker: Some(worker),
+        })
+    }
+    pub fn publish(&self, timeline: Timeline) {
+        if let Ok(mut frame) = self.shared.frame.lock() {
+            *frame = Some(Frame {
+                timeline,
+                sampled: Instant::now(),
+            });
+        }
+    }
+    pub fn take_event(&self) -> Option<Event> {
+        self.shared.event.lock().ok()?.take()
+    }
+    pub fn cancel(&self) {
+        self.shared.stop.store(true, Ordering::Release);
+        self.shared.wake.notify_all();
+    }
+    pub fn finished(&self) -> bool {
+        self.worker
+            .as_ref()
+            .is_none_or(|worker| worker.is_finished())
+    }
+}
+impl Drop for Session {
+    fn drop(&mut self) {
+        self.cancel();
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
+fn read_private(path: &Path, limit: usize) -> Result<Zeroizing<Vec<u8>>, &'static str> {
+    let mut bytes = Zeroizing::new(Vec::new());
+    fs::File::open(path)
+        .map_err(|_| "Cannot open private Jam file")?
+        .take(limit as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "Cannot read private Jam file")?;
+    if bytes.len() > limit {
+        return Err("Private Jam file is too large");
+    }
+    Ok(bytes)
+}
+fn operator(path: &Path) -> Result<Secret, &'static str> {
+    if !path.to_string_lossy().ends_with(".jam-operator-key") {
+        return Err("Select a .jam-operator-key file");
+    }
+    let bytes = read_private(path, 66)?;
+    Secret::parse(
+        std::str::from_utf8(&bytes)
+            .map_err(|_| "Invalid operator key file")?
+            .trim_end_matches(['\r', '\n']),
+    )
+}
+fn write_invite(path: &Path, invite: &Invite) -> Result<(), &'static str> {
+    if !path.to_string_lossy().ends_with(".jam-invite.json") {
+        return Err("Save the invite as .jam-invite.json");
+    }
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options
+        .open(path)
+        .map_err(|_| "Cannot save invite; choose a new private filename")?;
+    let bytes = tide_jam_lab::client::encode(invite).map_err(|_| "Cannot encode Jam invite")?;
+    if file
+        .write_all(&bytes)
+        .and_then(|_| file.sync_all())
+        .is_err()
+    {
+        drop(file);
+        let _ = fs::remove_file(path);
+        return Err("Cannot write Jam invite");
+    }
+    Ok(())
+}
+struct Hosted<'a> {
+    client: &'a Client,
+    room: Created,
+}
+impl Drop for Hosted<'_> {
+    fn drop(&mut self) {
+        let _ = self.client.close(&self.room.room, &self.room.host);
+    }
+}
+struct Membership<'a> {
+    client: &'a Client,
+    room: String,
+    token: Secret,
+}
+impl Drop for Membership<'_> {
+    fn drop(&mut self) {
+        let _ = self.client.leave(&self.room, &self.token);
+    }
+}
+fn host(
+    shared: &Shared,
+    endpoint: &str,
+    key: Option<&Path>,
+    path: &Path,
+    mut timeline: Timeline,
+) -> Result<(), &'static str> {
+    timeline.validate()?;
+    let endpoint = Endpoint::parse(endpoint)
+        .map_err(|_| "Enter a canonical HTTPS relay or literal loopback address")?;
+    let client = Client::new(endpoint.as_str()).map_err(|_| "Invalid Jam relay")?;
+    let key = key.map(operator).transpose()?;
+    if endpoint.is_remote() && key.is_none() {
+        return Err("HTTPS hosting requires the relay operator's key file");
+    }
+    if shared.stopped() {
+        return Ok(());
+    }
+    let created = match &key {
+        Some(key) => client.create_with_key(key),
+        None => client.create(),
+    }
+    .map_err(|_| "Cannot create Jam; check the relay and operator key")?;
+    drop(key);
+    let room = Hosted {
+        client: &client,
+        room: created,
+    };
+    if shared.stopped() {
+        return Ok(());
+    }
+    write_invite(
+        path,
+        &Invite {
+            endpoint: endpoint.as_str().into(),
+            room: room.room.room.clone(),
+            invite: room.room.invite.clone(),
+        },
+    )?;
+    let mut sampled = Instant::now();
+    let mut revision = 0u64;
+    let mut failures = 0;
+    while !shared.stopped() {
+        if let Some(frame) = shared
+            .frame
+            .lock()
+            .map_err(|_| "Jam snapshot unavailable")?
+            .take()
+        {
+            timeline = frame.timeline;
+            sampled = frame.sampled;
+        }
+        let mut outgoing = timeline.clone();
+        revision = revision
+            .checked_add(1)
+            .ok_or("Jam revision limit reached")?;
+        outgoing.revision = revision;
+        let age = sampled.elapsed().as_millis() as u64;
+        if age >= 2000 {
+            outgoing.loading = true;
+            outgoing.paused = true;
+        } else if !outgoing.paused && !outgoing.loading {
+            outgoing.position_ms = outgoing
+                .position_ms
+                .saturating_add(age)
+                .min(MAX_POSITION_MS);
+        }
+        match client.publish(&room.room.room, &room.room.host, &outgoing) {
+            Ok(()) => {
+                failures = 0;
+                // The host poll updates guest count only; no authority comes from it.
+                if !shared.stopped() {
+                    match client.poll(&room.room.room, &room.room.host) {
+                        Ok(view) => shared.event(Event::Hosting {
+                            guests: view.members,
+                        }),
+                        Err(_) => shared.event(Event::Problem {
+                            message: "Jam hosted; guest count temporarily unavailable",
+                            terminal: false,
+                        }),
+                    }
+                }
+            }
+            Err(Error::Unavailable | Error::Invalid) => return Err("Jam room closed or expired"),
+            Err(_) => {
+                failures += 1;
+                if failures >= 5 {
+                    return Err("Jam relay unavailable after bounded retries");
+                }
+                shared.event(Event::Problem {
+                    message: "Jam connection interrupted; retrying",
+                    terminal: false,
+                });
+            }
+        }
+        shared.wait();
+    }
+    Ok(())
+}
+fn guest(shared: &Shared, path: &Path) -> Result<(), &'static str> {
+    if !path.to_string_lossy().ends_with(".jam-invite.json") {
+        return Err("Select a .jam-invite.json file");
+    }
+    let bytes = read_private(path, MAX_BODY)?;
+    let invite: Invite = serde_json::from_slice(&bytes).map_err(|_| "Invalid Jam invite file")?;
+    drop(bytes);
+    let client = Client::new(&invite.endpoint)
+        .map_err(|_| "Invite requires a canonical HTTPS relay or literal loopback address")?;
+    if shared.stopped() {
+        return Ok(());
+    }
+    let joined = client
+        .join(&invite)
+        .map_err(|_| "Cannot join Jam; the invite may be expired or the room full")?;
+    let membership = Membership {
+        client: &client,
+        room: invite.room,
+        token: joined.member,
+    };
+    let mut failures = 0;
+    while !shared.stopped() {
+        let began = Instant::now();
+        match client.poll(&membership.room, &membership.token) {
+            Ok(view) => {
+                failures = 0;
+                shared.event(Event::View {
+                    view,
+                    rtt_ms: began.elapsed().as_millis() as u64,
+                    received: Instant::now(),
+                });
+            }
+            Err(Error::Unavailable | Error::Invalid) => {
+                return Err("Jam closed, expired or returned invalid state")
+            }
+            Err(_) => {
+                failures += 1;
+                if failures >= 5 {
+                    return Err("Jam disconnected after bounded retries");
+                }
+                shared.event(Event::Problem {
+                    message: "Jam connection interrupted; playback will pause",
+                    terminal: false,
+                });
+            }
+        }
+        shared.wait();
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::{TcpListener, TcpStream};
+
+    struct Fixture {
+        endpoint: String,
+        invite: PathBuf,
+        stop: Arc<AtomicBool>,
+        removed: Arc<AtomicBool>,
+        worker: Option<JoinHandle<()>>,
+    }
+    impl Fixture {
+        fn start() -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.set_nonblocking(true).unwrap();
+            let endpoint = format!("http://{}", listener.local_addr().unwrap());
+            let stop = Arc::new(AtomicBool::new(false));
+            let removed = Arc::new(AtomicBool::new(false));
+            let cancel = stop.clone();
+            let observed_remove = removed.clone();
+            let invite =
+                std::env::temp_dir().join(format!("{}.jam-invite.json", room_id().unwrap()));
+            let worker = thread::spawn(move || {
+                let created = Created {
+                    room: room_id().unwrap(),
+                    host: Secret::random().unwrap(),
+                    invite: Secret::random().unwrap(),
+                };
+                let member = Secret::random().unwrap();
+                let mut state = None;
+                let deadline = Instant::now() + Duration::from_secs(8);
+                while !cancel.load(Ordering::Acquire) && Instant::now() < deadline {
+                    let mut socket = match listener.accept() {
+                        Ok((socket, _)) => socket,
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            thread::sleep(Duration::from_millis(2));
+                            continue;
+                        }
+                        Err(error) => panic!("synthetic listener failed: {error}"),
+                    };
+                    socket.set_nonblocking(false).unwrap();
+                    socket
+                        .set_read_timeout(Some(Duration::from_secs(2)))
+                        .unwrap();
+                    socket
+                        .set_write_timeout(Some(Duration::from_secs(2)))
+                        .unwrap();
+                    let (head, body) = request(&mut socket);
+                    assert!(head.contains("x-tide-jam-protocol: 1"));
+                    let (status, body) = if head.starts_with("POST /v1/rooms HTTP") {
+                        assert!(!head.to_lowercase().contains("authorization:"));
+                        ("200 OK", serde_json::to_vec(&created).unwrap())
+                    } else if head.starts_with("POST ") && head.contains("/join HTTP") {
+                        (
+                            "200 OK",
+                            serde_json::to_vec(&Joined {
+                                member: member.clone(),
+                            })
+                            .unwrap(),
+                        )
+                    } else if head.starts_with("PUT ") {
+                        let timeline: Timeline = serde_json::from_slice(&body).unwrap();
+                        timeline.validate().unwrap();
+                        state = Some(timeline);
+                        ("204 No Content", vec![])
+                    } else if head.starts_with("GET ") {
+                        (
+                            "200 OK",
+                            serde_json::to_vec(&View {
+                                timeline: state.clone(),
+                                age_ms: 0,
+                                members: 1,
+                            })
+                            .unwrap(),
+                        )
+                    } else if head.starts_with("DELETE ") {
+                        observed_remove.store(true, Ordering::Release);
+                        ("204 No Content", vec![])
+                    } else {
+                        panic!("unexpected synthetic request method");
+                    };
+                    write!(
+                        socket,
+                        "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    )
+                    .unwrap();
+                    socket.write_all(&body).unwrap();
+                }
+            });
+            Self {
+                endpoint,
+                invite,
+                stop,
+                removed,
+                worker: Some(worker),
+            }
+        }
+    }
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            self.stop.store(true, Ordering::Release);
+            self.worker.take().unwrap().join().unwrap();
+            let _ = fs::remove_file(&self.invite);
+        }
+    }
+    fn request(socket: &mut TcpStream) -> (String, Zeroizing<Vec<u8>>) {
+        let mut head = Zeroizing::new(Vec::new());
+        let mut byte = [0];
+        while !head.ends_with(b"\r\n\r\n") {
+            assert!(head.len() < 8192);
+            socket.read_exact(&mut byte).unwrap();
+            head.push(byte[0]);
+        }
+        let head = String::from_utf8(head.to_vec()).unwrap();
+        let size = head
+            .lines()
+            .find_map(|line| {
+                line.to_ascii_lowercase()
+                    .strip_prefix("content-length: ")
+                    .map(str::to_owned)
+            })
+            .map_or(0, |size| size.parse::<usize>().unwrap());
+        assert!(size <= MAX_BODY);
+        let mut body = Zeroizing::new(vec![0; size]);
+        socket.read_exact(&mut body).unwrap();
+        (head, body)
+    }
+    fn wait<T>(mut predicate: impl FnMut() -> Option<T>) -> T {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some(value) = predicate() {
+                return value;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "synthetic Jam worker deadline exceeded"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+    fn end(session: &Session) {
+        let began = Instant::now();
+        session.cancel();
+        assert!(
+            began.elapsed() < Duration::from_millis(100),
+            "cancellation blocked the UI caller"
+        );
+        wait(|| session.finished().then_some(()));
+    }
+    #[test]
+    fn hosted_worker_saves_only_guest_invite_and_closes_without_blocking_cancellation() {
+        let fixture = Fixture::start();
+        let timeline = Timeline {
+            revision: 1,
+            play_id: 42,
+            queue: vec![VideoId::parse("fixture0001").unwrap()],
+            index: 0,
+            position_ms: 0,
+            paused: true,
+            loading: false,
+        };
+        let session = Session::start(Start::Host {
+            endpoint: fixture.endpoint.clone(),
+            operator: None,
+            invite: fixture.invite.clone(),
+            timeline,
+        })
+        .unwrap();
+        wait(|| match session.take_event() {
+            Some(Event::Hosting { guests: 1 }) => Some(()),
+            Some(Event::Problem { message, .. }) => panic!("{message}"),
+            _ => None,
+        });
+        let bytes = read_private(&fixture.invite, MAX_BODY).unwrap();
+        let invite: Invite = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(invite.endpoint, fixture.endpoint);
+        let keys = serde_json::from_slice::<serde_json::Value>(&bytes).unwrap();
+        assert_eq!(keys.as_object().unwrap().len(), 3);
+        assert!(keys.get("host").is_none() && keys.get("operator").is_none());
+        end(&session);
+        assert!(fixture.removed.load(Ordering::Acquire));
+    }
+    #[test]
+    fn guest_worker_delivers_only_validated_views_and_leaves_its_membership() {
+        let fixture = Fixture::start();
+        write_invite(
+            &fixture.invite,
+            &Invite {
+                endpoint: fixture.endpoint.clone(),
+                room: room_id().unwrap(),
+                invite: Secret::random().unwrap(),
+            },
+        )
+        .unwrap();
+        let session = Session::start(Start::Guest {
+            invite: fixture.invite.clone(),
+        })
+        .unwrap();
+        wait(|| match session.take_event() {
+            Some(Event::View { view, .. }) => {
+                view.validate().unwrap();
+                Some(())
+            }
+            Some(Event::Problem { message, .. }) => panic!("{message}"),
+            _ => None,
+        });
+        end(&session);
+        assert!(fixture.removed.load(Ordering::Acquire));
+    }
+}

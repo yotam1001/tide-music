@@ -5,16 +5,64 @@ on:
       - 'experiments/jam/**'
       - 'crates/core/**'
       - 'crates/playback/**'
+      - 'crates/app/**'
+      - 'ui/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
       - '.github/workflows/jam-lab.yml'
   pull_request:
     paths:
       - 'experiments/jam/**'
       - 'crates/core/**'
       - 'crates/playback/**'
+      - 'crates/app/**'
+      - 'ui/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
       - '.github/workflows/jam-lab.yml'
 permissions:
   contents: read
 jobs:
+  jam-native-controls:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Check opt-in native controls and in-memory rendering
+        shell: pwsh
+        run: |
+          $env:TIDE_JAM_LAYOUT_DIR = (Join-Path $PWD '.local/jam-ui-layouts')
+          $env:TIDE_PLAYER_INDICATORS_DIR = (Join-Path $PWD '.local/player-indicators')
+          cargo test -p tide-music --locked --features experimental-jams
+          if ($LASTEXITCODE -ne 0) { throw 'Experimental native app tests failed' }
+          cargo clippy -p tide-music --all-targets --locked --features experimental-jams -- -D warnings
+          if ($LASTEXITCODE -ne 0) { throw 'Experimental native app Clippy failed' }
+      - name: Verify default isolation and callback ownership without a desktop window
+        shell: pwsh
+        run: |
+          $taskDefaultTree = cargo tree -p tide-music --locked --edges normal --prefix none
+          if ($LASTEXITCODE -ne 0) { throw 'Default dependency tree failed' }
+          if ($taskDefaultTree | Select-String '^tide-jam-lab v') { throw 'Default build links the Jam transport' }
+          $taskJamTree = cargo tree -p tide-music --locked --features experimental-jams --edges normal --prefix none
+          if ($LASTEXITCODE -ne 0) { throw 'Experimental dependency tree failed' }
+          if ($taskJamTree | Select-String '^axum v') { throw 'Experimental player links the relay server' }
+          ./experiments/jam/prepare-native.ps1
+          $env:TIDE_RUNTIME_DIR = (Join-Path $PWD '.local/jam-native-runtime')
+          cargo run -p tide-music --locked --features experimental-jams -- --smoke-jam-ownership
+          if ($LASTEXITCODE -ne 0) { throw 'Guest ownership verification failed' }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: synthetic-native-ui-${{ github.run_id }}
+          path: |
+            .local/jam-ui-layouts/*.png
+            .local/player-indicators/*.png
+          if-no-files-found: ignore
+          retention-days: 7
   private-proxy-config:
     runs-on: ubuntu-latest
     timeout-minutes: 5

@@ -11,7 +11,16 @@ A Windows-first native Rust music player designed to leave resources available f
 - A mini player with an expand icon using the same queue and playback engine.
 - Playlist previews with Play/Shuffle, song menus, upcoming-track reordering/removal, song radio and recommendation autoplay.
 - Small real thumbnails with a bounded memory cache and no generic artwork banner.
+- Refresh on Home selects a varied batch of 24 playable recommendations from a
+  wider personalized pool, favouring suggestions not recently shown. A bounded
+  in-memory history avoids repeating the same screen; small upstream pools must
+  eventually repeat. No listening history is fabricated or written to YouTube.
 - Native Slint interface; no embedded browser or Electron runtime.
+
+Home Refresh varies the displayed selection from your real YouTube recommendations;
+it cannot force YouTube to generate an entirely new pool. Recent display history is
+memory-only, clears on account changes, and never causes artwork to be preloaded
+for the whole candidate pool.
 
 ![Full native interface](docs/screenshots/full.png)
 ![Light native interface](docs/screenshots/light.png)

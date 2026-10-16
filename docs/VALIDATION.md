@@ -897,3 +897,39 @@ pinned checksums and executable version checks. The fixture was removed. No
 account, native-host registration or installed application was changed by this
 check. Full fresh-machine installation/upgrade/removal and signed distribution
 remain open; the launcher is a preview, not evidence of stable-release readiness.
+
+### Recommendation variety and player indicators (2026-10-16)
+
+Home now requests up to eight personalized shelves, bounds candidates to 240,
+then displays 24 playable song/playlist cards. A bounded, session-only identity
+history prioritizes unseen cards before repeats and avoids the previous selection
+when the upstream pool permits it. Seven native selection tests and 49 Python
+helper tests pass, including small pools, unsupported entries, deduplication,
+shelf balance and fixed bounds. This changes selection from actual recommendations;
+it does not guarantee YouTube generates new recommendations on each request.
+
+A native software-renderer regression reproduced the progress thumb remaining at
+maximum after real pointer/keyboard input, even while the external clock changed
+and the window was fully repainted. Native Slider assignments severed the parent
+property binding. TideSlider now retains the external binding and keeps a local
+input preview, resetting it on release, track/duration changes, focus loss and
+window-mode changes. The regression passes 30 simulated handoffs and subsequent
+clock updates in the same fixed-size reused buffer. This is a state/render test,
+not 30 naturally completed songs or a long-duration live playback measurement.
+
+The volume callback, model and text passed the same offscreen fixed-size check;
+the reported physical Windows resize-only freeze was not reproduced there.
+A player-bar-only repaint on live position/volume changes is included as a
+mitigation, with confirmation in the user's Windows session still required.
+The default workspace passes 118 tests with four explicitly opt-in probes ignored.
+The experimental app passes 41 unit tests and four rendered integration tests;
+strict workspace Clippy with experimental controls and formatting pass. The Jam
+protocol/HTTP/TLS/CLI suite passes 27 tests, with its native probe explicitly opt-in.
+
+Optional native Jams now provide host/join/leave controls, private invite-file
+handoff, bounded background networking and guest control ownership. Network-worker
+lifecycle tests use synthetic local HTTP fixtures. Rendered input tests cover
+minimum/full/compact/mini, disabled guest transport, reachable local volume/Leave
+and Escape. These do not establish real two-computer authenticated YouTube playback,
+Internet synchronization, long-session behavior or deployed proxy safety.
+The immutable f026915 beta assets do not contain these source changes.

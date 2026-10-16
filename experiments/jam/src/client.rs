@@ -171,6 +171,6 @@ pub fn encode<T: Serialize>(value: &T) -> Result<Zeroizing<Vec<u8>>, Error> {
         .map_err(|_| Error::Invalid)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "relay"))]
 #[path = "transport_tests.rs"]
 mod transport_tests;

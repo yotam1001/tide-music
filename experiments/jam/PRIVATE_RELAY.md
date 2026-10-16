@@ -1,9 +1,10 @@
 # Private HTTPS relay experiment
 
-This is an operator/developer path for the isolated Jam CLI, not a one-click Tide
-feature. No service is deployed or paid for by building it. Keep the ordinary
-beta installer separate. A real two-computer listening trial and native host/join
-controls are still required before advertising Jams.
+This is an operator/developer path for the isolated Jam CLI and Tide's optional
+`experimental-jams` build. No service is deployed or paid for by building it.
+Keep the ordinary beta installer separate. Native host/join/leave controls have
+isolated checks; real two-computer listening and deployment validation are still
+required before advertising Jams.
 
 ## Trust and data
 

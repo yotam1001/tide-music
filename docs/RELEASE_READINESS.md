@@ -19,6 +19,22 @@ This does not close GUI installation or public account-onboarding gates.
 See [beta release preparation](BETA_RELEASE.md)
 and [validation details](VALIDATION.md#final-candidate-and-real-windows-lifecycle-2026-10-15).
 
+Development work after that immutable candidate includes a varied Home selection
+(24 playable cards, bounded recent-history IDs, up to 240 upstream candidates),
+and native slider ownership/repaint fixes. The progress regression was reproduced
+with real pointer/keyboard input: seeking to maximum severed subsequent clock
+updates, even with a full redraw. The corrected slider keeps input preview separate
+from the external clock. Tests cover repeated handoffs and volume text in a reused
+software buffer without resizing. The reported resize-only volume freeze was not
+reproduced in that offscreen sequence; the player-bar-only repaint mitigation
+still needs confirmation in the real Windows session. These source changes are
+not present in the existing `f026915` draft binaries.
+
+Native Jams are an optional `experimental-jams` developer build, excluded from the
+normal package. Host/join/leave, callback ownership, local-volume and paused-queue
+restoration have isolated tests; real two-computer authenticated playback and
+long-session/resource validation remain open. See the [Jam lab](../experiments/jam/README.md).
+
 | Gate | Required evidence | Current evidence |
 | --- | --- | --- |
 | Continuous playback | Sustained live playback with natural transitions and repeated skip/pause/seek, without unexplained stops | The e777f29 one-hour run passed 17 natural transitions, radio refills and pause/resume/skip/seek. App and sampler exited zero; all 156 observed helpers ended, with zero sampling races. Playback source is unchanged through 369f8a1. Historical six-hour app behavior passed, but its enclosing supervisor failed; preserve that failure |
