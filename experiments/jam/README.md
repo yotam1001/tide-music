@@ -1,9 +1,10 @@
 # Synchronized listening feasibility lab
 
-**Experimental, loopback only. Not included in Tide or its beta installer.**
+**Experimental. Not included in Tide or its beta installer.**
 This tests whether Tide's native playback engine can follow a host's queue and
 playback clock without sharing accounts or audio. It is not a finished Jam feature;
-friends on different computers cannot use this implementation yet.
+the CLI now supports an explicitly configured private HTTPS relay, but native
+Tide controls and validation on two physical computers are still outstanding.
 
 The lab is a separate Cargo workspace with its own lockfile. Normal Tide builds
 do not compile it, start a listener, add its dependencies or run background Jam
@@ -23,24 +24,32 @@ threads. Existing beta assets and account files are unaffected.
 
 ## Security boundary
 
-The relay and client **only accept literal IPv4 loopback**. There is no public
-bind switch or remote-client option. Do not expose this through port forwarding,
-a tunnel or a reverse proxy. Public deployment has not been reviewed or tested.
-Internet support needs a separate authenticated TLS transport/deployment design;
-removing the loopback checks is not an implementation of that design.
+The relay **always binds literal IPv4 loopback**. Ordinary local mode accepts
+only its listener's exact Host. Private remote mode requires both an explicit
+canonical HTTPS endpoint and a private operator key, behind a trusted TLS proxy
+on the same machine. The client verifies certificates using rustls and Mozilla's
+roots. There is no certificate bypass, arbitrary plaintext remote endpoint, public
+bind switch, redirect following or environment proxy support. See the separate
+[private relay guide](PRIVATE_RELAY.md); do not expose ordinary local mode.
 
 Room and member capabilities use OS-backed randomness. Host control is never
 included in an invite or poll response. Capabilities are passed in sensitive
 authorization headers, not query strings or command-line arguments; Debug/errors
 redact them. Tokens in owned Rust wrappers are zeroized on drop, but this is not
-a claim that every HTTP/JSON allocation is erased. The transport is plaintext
-loopback; it is not end-to-end encryption and does not defend against local malware.
+a claim that every HTTP/JSON allocation is erased. The backend hop is plaintext
+loopback; HTTPS terminates at the proxy. This is not end-to-end encryption and
+does not defend against local malware or a malicious relay operator. That operator
+can see listening metadata and room credentials, but receives no Google credentials.
 
-Requests require an exact Host, no Origin, the protocol header and JSON for
-POST/PUT. No CORS is enabled. The server limits rooms to 32, guests to eight per
+Requests require an exact Host, no Origin, a single protocol/authentication header
+and JSON for POST/PUT. Forwarded authority headers, absolute request targets,
+queries and encoded/ambiguous paths are rejected. No CORS is enabled. The server
+admits at most 512 requests/second globally and limits rooms to 32, guests to eight per
 room, bodies to 32 KiB, active connections to 16 and retained connection tasks to
 32. Header/body/connection deadlines are 2/2/4 seconds. Create/publish rates are
-bounded. Rooms expire after two hours; idle memberships after 30 seconds. Ten-second
+bounded. Private mode authenticates creation before allocating room state; the
+operator key is never placed in a guest invite or retained as a client-wide header.
+Rooms expire after two hours; idle memberships after 30 seconds. Ten-second
 maintenance removes expired state. Restarting the relay forgets every room.
 
 Clients reject redirects, proxies, oversized responses and invalid incoming
@@ -56,6 +65,9 @@ The required `*.jam-invite.json` suffix is ignored by Git. Use a private user
 folder, never a shared or repository folder. Windows files inherit that folder's
 permissions; Unix creation requests mode 0600. Files are not automatically erased;
 their capabilities expire when the room closes or expires.
+Operator keys use a separately ignored `*.jam-operator-key` file and must never
+be shared with guests. Generated Unix files request mode 0600; on Windows use a
+private user folder with restrictive inherited permissions.
 
 ## Run locally
 
@@ -88,6 +100,13 @@ queue editing and a native Jam UI are not implemented. Removing `--mute` enables
 audio only in that lab instance. Ordinary YouTube availability limits still apply;
 the lab does not promise Premium access or reconnect an account.
 
+The client accepts canonical `https://jam.example.test` or nondefault HTTPS ports
+for the private relay mode. It rejects URL repairs/normalization such as whitespace,
+backslashes, credentials (including empty userinfo), dot paths, alternative IPv4
+notation, uppercase hostnames and an explicitly written default `:443`. A final
+root slash is optional. Invites select a server to contact: accept them only from
+someone you trust. Joining never reads or sends an operator key.
+
 ## Validation
 
 ```powershell
@@ -95,6 +114,16 @@ cargo fmt --manifest-path experiments/jam/Cargo.toml --all -- --check
 cargo test --manifest-path experiments/jam/Cargo.toml --locked
 cargo clippy --manifest-path experiments/jam/Cargo.toml --all-targets --locked -- -D warnings
 ```
+
+The transport suite exercises the real backend through a generated-certificate
+TLS proxy fixture: room creation, separate guest join, shared queue, role isolation,
+leave/close, untrusted/expired/wrong-name certificates, plaintext impostors and
+redirects that must not contact a second server. Certificate roots are injected
+only in the private unit-test module; production exposes no custom-root option.
+Other checks cover canonical endpoints, duplicate security headers, forwarded
+authority spoofing, unauthenticated allocation attempts, invalid/missing operator
+files, safe key generation and strict CLI option parsing. This fixture does not
+validate an actual nginx installation, Internet reachability or physical devices.
 
 The explicit Windows native test requires a **silent local WAV at least 60 seconds
 long** and trusted mpv in `TIDE_RUNTIME_DIR`. It runs two muted native players and a
@@ -141,9 +170,10 @@ The normal-device tests above remain separate evidence, not replaced by CI.
 
 ## Before enabling Jams in Tide
 
-1. Design and review trusted TLS coordination, deployment abuse controls and costs;
-   decide whether to self-host or operate a service. Share no Google credentials
-   or audio with that service. Disclose its visibility of room/listening metadata.
+1. Validate the private HTTPS deployment on a real host, including its TLS proxy,
+   resource/abuse controls, certificate lifecycle and costs. No Tide-operated public
+   service is provided. The private transport has a code review and automated TLS
+   tests; those do not constitute an audit of any deployed service.
 2. Test two physical computers with real independently authenticated streams,
    extraction delays, regional/unavailable tracks, asymmetric latency, outages
    and repeated host/guest reconnects. Define acceptable measured drift.

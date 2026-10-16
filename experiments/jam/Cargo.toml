@@ -22,6 +22,10 @@ subtle = "2"
 tide-core = { path = "../../crates/core" }
 tide-playback = { path = "../../crates/playback" }
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt", "sync", "time"] }
-ureq = { version = "=3.4.2", default-features = false }
+ureq = { version = "=3.4.2", default-features = false, features = ["rustls"] }
 url = "2"
 zeroize = "1"
+
+[dev-dependencies]
+rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }

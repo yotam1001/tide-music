@@ -23,11 +23,12 @@ investigation below is not a claim that every proposed feature is complete.
 
 Plan a Jam-style feature for friends listening together while gaming, after
 playback reliability and convenient browser login are established. An isolated
-[loopback feasibility lab](../experiments/jam/README.md) now exercises synchronized
-native playback and bounded room capabilities. It is not included in Tide or its
-installer and cannot connect friends on different computers. Public transport,
-multi-device validation and native UI integration remain deferred; no production
-release date is committed.
+[feasibility lab](../experiments/jam/README.md) now exercises synchronized native
+playback, bounded room capabilities and an opt-in private HTTPS relay transport.
+It is not included in Tide or its installer. Remote use requires an operator's
+own configured TLS proxy and creation key; no hosted Tide service is provided.
+Multi-device validation and native UI integration remain outstanding; no
+production release date is committed.
 
 Synchronized playback on each participant's device is a required part of the
 feature. A shared queue with audio playing only on the host does not meet its

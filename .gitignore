@@ -4,6 +4,7 @@
 /dist/
 /experiments/jam/target/
 *.jam-invite.json
+*.jam-operator-key
 .env
 .env.*
 !.env.example

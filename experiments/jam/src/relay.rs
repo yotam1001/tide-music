@@ -1,3 +1,4 @@
+use crate::endpoint::Endpoint;
 use crate::protocol::*;
 use axum::{
     extract::{DefaultBodyLimit, Path, Request, State},
@@ -185,6 +186,8 @@ struct Shared {
     store: Arc<Mutex<Store>>,
     epoch: Instant,
     host: String,
+    operator: Option<Secret>,
+    requests: Arc<Mutex<VecDeque<u64>>>,
 }
 impl Shared {
     fn now(&self) -> u64 {
@@ -202,6 +205,17 @@ impl Shared {
 async fn guard(State(shared): State<Shared>, request: Request, next: Next) -> Response {
     let headers = request.headers();
     if headers.contains_key(header::ORIGIN)
+        || headers.contains_key("forwarded")
+        || headers.contains_key("x-forwarded-host")
+        || headers.contains_key("x-forwarded-proto")
+        || headers.get_all(header::HOST).iter().count() != 1
+        || headers.get_all("x-tide-jam-protocol").iter().count() != 1
+        || headers.get_all(header::AUTHORIZATION).iter().count() > 1
+        || headers.get_all(header::CONTENT_TYPE).iter().count() > 1
+        || request.uri().scheme().is_some()
+        || request.uri().authority().is_some()
+        || request.uri().path().contains(['%', '\\'])
+        || request.uri().path().contains("//")
         || headers.get(header::HOST).and_then(|h| h.to_str().ok()) != Some(shared.host.as_str())
         || headers
             .get("x-tide-jam-protocol")
@@ -210,6 +224,32 @@ async fn guard(State(shared): State<Shared>, request: Request, next: Next) -> Re
         || request.uri().query().is_some()
     {
         return StatusCode::FORBIDDEN.into_response();
+    }
+    // Bounded global admission, independent of untrusted forwarded IP headers.
+    // This is a private relay, not a claim to resist Internet denial of service.
+    {
+        let Ok(mut requests) = shared.requests.lock() else {
+            return StatusCode::SERVICE_UNAVAILABLE.into_response();
+        };
+        let now = shared.now();
+        while requests
+            .front()
+            .is_some_and(|time| now.saturating_sub(*time) >= 1000)
+        {
+            requests.pop_front();
+        }
+        if requests.len() >= 512 {
+            return StatusCode::TOO_MANY_REQUESTS.into_response();
+        }
+        requests.push_back(now);
+    }
+    if request.method() == axum::http::Method::POST && request.uri().path() == "/v1/rooms" {
+        if let Some(operator) = &shared.operator {
+            if !token(headers).is_ok_and(|supplied| operator.matches(&supplied)) {
+                // Authenticate before reading JSON or consuming room capacity.
+                return StatusCode::NOT_FOUND.into_response();
+            }
+        }
     }
     if (request.method() == axum::http::Method::POST || request.method() == axum::http::Method::PUT)
         && headers
@@ -288,10 +328,45 @@ async fn leave(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Loopback only. No public bind override, TLS bypass, CORS or request logging.
+/// Explicit, inseparable configuration for a private TLS reverse proxy on the
+/// same machine. No forwarded header can select this authority or supply a key.
+#[derive(Debug)]
+pub struct PrivateRelay {
+    endpoint: Endpoint,
+    operator: Secret,
+}
+impl PrivateRelay {
+    pub fn new(endpoint: &str, operator: Secret) -> Result<Self, &'static str> {
+        let endpoint = Endpoint::parse(endpoint).map_err(|_| "Invalid private relay endpoint")?;
+        if !endpoint.is_remote() {
+            return Err("Private relays require an HTTPS endpoint");
+        }
+        Ok(Self { endpoint, operator })
+    }
+}
+
+/// Ordinary lab mode. Literal loopback only, without proxy support.
 pub async fn serve(
     listener: TcpListener,
+    stop: tokio::sync::watch::Receiver<bool>,
+) -> std::io::Result<()> {
+    serve_inner(listener, stop, None).await
+}
+
+/// Backend remains loopback-only. The operator must provide a trusted, correctly
+/// configured TLS proxy; this function never opens a public plaintext listener.
+pub async fn serve_private(
+    listener: TcpListener,
+    stop: tokio::sync::watch::Receiver<bool>,
+    config: PrivateRelay,
+) -> std::io::Result<()> {
+    serve_inner(listener, stop, Some(config)).await
+}
+
+async fn serve_inner(
+    listener: TcpListener,
     mut stop: tokio::sync::watch::Receiver<bool>,
+    config: Option<PrivateRelay>,
 ) -> std::io::Result<()> {
     let address = listener.local_addr()?;
     if address.ip() != std::net::Ipv4Addr::LOCALHOST {
@@ -299,10 +374,19 @@ pub async fn serve(
             "The Jam lab can only listen on 127.0.0.1",
         ));
     }
+    let (host, operator) = match config {
+        Some(config) => (
+            config.endpoint.authority().to_owned(),
+            Some(config.operator),
+        ),
+        None => (address.to_string(), None),
+    };
     let shared = Shared {
         store: Arc::new(Mutex::new(Store::default())),
         epoch: Instant::now(),
-        host: address.to_string(),
+        host,
+        operator,
+        requests: Arc::new(Mutex::new(VecDeque::new())),
     };
     let router = Router::new()
         .route("/v1/rooms", post(create))

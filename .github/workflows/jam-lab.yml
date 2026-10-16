@@ -15,6 +15,27 @@ on:
 permissions:
   contents: read
 jobs:
+  private-proxy-config:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate standalone nginx template with disposable certificates
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install --no-install-recommends -y nginx
+          mkdir -p "$RUNNER_TEMP/jam-nginx"
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj '/CN=jam.example.test' -keyout "$RUNNER_TEMP/jam-nginx/server.key" -out "$RUNNER_TEMP/jam-nginx/fullchain.pem" 2>/dev/null
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          fixture = Path(os.environ['RUNNER_TEMP']) / 'jam-nginx'
+          source = Path('experiments/jam/nginx-private.example.conf').read_text()
+          source = source.replace('/etc/tide-jam/', str(fixture) + '/')
+          (fixture / 'nginx.conf').write_text(source)
+          PY
+          sudo nginx -t -c "$RUNNER_TEMP/jam-nginx/nginx.conf"
   jam-lab:
     runs-on: windows-latest
     timeout-minutes: 15

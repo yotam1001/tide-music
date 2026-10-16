@@ -52,9 +52,26 @@ fn wire_cannot_supply_urls_paths_cookie_fields_or_non_ascii_ids() {
     assert!(serde_json::from_value::<Timeline>(value).is_err());
 }
 #[test]
-fn client_refuses_every_non_loopback_or_ambiguous_endpoint() {
+fn client_requires_canonical_https_or_literal_loopback_http_endpoints() {
     for address in [
         "https://example.com:443",
+        "https://EXAMPLE.com",
+        "https://@example.com",
+        "https://example.com:0",
+        "https://example.com/./",
+        "https://example.com/a/../",
+        " https://example.com",
+        "https://example.com\n",
+        "https://example.com\\",
+        "https://example.com/%2f",
+        "https://example.com?",
+        "https://example.com/#",
+        "http://2130706433:8000",
+        "http://127.1:8000",
+        "http://0x7f000001:8000",
+        "http://127.0.0.1:08000",
+        "http://127.0.0.1:0",
+        "http://@127.0.0.1:8000",
         "http://192.168.1.5:8000",
         "http://localhost:8000",
         "http://127.0.0.1:8000/path",
@@ -66,6 +83,14 @@ fn client_refuses_every_non_loopback_or_ambiguous_endpoint() {
         assert!(Client::new(address).is_err());
     }
     assert!(Client::new("http://127.0.0.1:8012").is_ok());
+    assert!(Client::new("https://jam.example.test").is_ok());
+    assert!(Client::new("https://jam.example.test/").is_ok());
+    assert!(Client::new("https://jam.example.test:8443").is_ok());
+    assert!(Client::new("https://127.0.0.1:8443").is_ok());
+    assert!(Client::new("https://jam.example.test")
+        .unwrap()
+        .create()
+        .is_err());
 }
 #[test]
 fn both_sender_and_receiver_validate_bounded_timelines() {

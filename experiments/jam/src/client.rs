@@ -1,3 +1,4 @@
+use crate::endpoint::Endpoint;
 use crate::protocol::*;
 use serde::{de::DeserializeOwned, Serialize};
 use std::time::Duration;
@@ -21,25 +22,23 @@ impl std::fmt::Display for Error {
 impl std::error::Error for Error {}
 
 pub struct Client {
-    endpoint: String,
+    endpoint: Endpoint,
     agent: ureq::Agent,
 }
 impl Client {
     pub fn new(endpoint: &str) -> Result<Self, Error> {
-        let url = url::Url::parse(endpoint).map_err(|_| Error::Invalid)?;
-        // Not a public-network client: no hostnames, LAN addresses, proxies or TLS bypass.
-        if url.scheme() != "http"
-            || url.host_str() != Some("127.0.0.1")
-            || !url.username().is_empty()
-            || url.password().is_some()
-            || url.port().is_none()
-            || url.path() != "/"
-            || url.query().is_some()
-            || url.fragment().is_some()
-        {
-            return Err(Error::Invalid);
-        }
+        Self::build(
+            endpoint,
+            ureq::tls::TlsConfig::builder()
+                .provider(ureq::tls::TlsProvider::Rustls)
+                .root_certs(ureq::tls::RootCerts::WebPki)
+                .build(),
+        )
+    }
+    fn build(endpoint: &str, tls: ureq::tls::TlsConfig) -> Result<Self, Error> {
+        let endpoint = Endpoint::parse(endpoint)?;
         let agent = ureq::Agent::config_builder()
+            .tls_config(tls)
             .proxy(None)
             .max_redirects(0)
             .timeout_global(Some(Duration::from_secs(3)))
@@ -49,13 +48,10 @@ impl Client {
             .output_buffer_size(4096)
             .build()
             .into();
-        Ok(Self {
-            endpoint: url.as_str().trim_end_matches('/').into(),
-            agent,
-        })
+        Ok(Self { endpoint, agent })
     }
     pub fn endpoint(&self) -> &str {
-        &self.endpoint
+        self.endpoint.as_str()
     }
     fn request(
         &self,
@@ -69,7 +65,7 @@ impl Client {
         }
         let mut request = ureq::http::Request::builder()
             .method(method)
-            .uri(format!("{}{path}", self.endpoint))
+            .uri(format!("{}{path}", self.endpoint.as_str()))
             .header("x-tide-jam-protocol", "1")
             .header("content-type", "application/json")
             .body(body)
@@ -114,7 +110,18 @@ impl Client {
         Ok(format!("/v1/rooms/{room}{suffix}"))
     }
     pub fn create(&self) -> Result<Created, Error> {
-        let result: Created = self.json("POST", "/v1/rooms", None, b"{}")?;
+        if self.endpoint.is_remote() {
+            return Err(Error::Invalid);
+        }
+        self.create_inner(None)
+    }
+    /// The operator key is scoped to this explicitly selected relay and this
+    /// single operation. It is never retained in the agent or sent by join/poll.
+    pub fn create_with_key(&self, operator: &Secret) -> Result<Created, Error> {
+        self.create_inner(Some(operator))
+    }
+    fn create_inner(&self, operator: Option<&Secret>) -> Result<Created, Error> {
+        let result: Created = self.json("POST", "/v1/rooms", operator, b"{}")?;
         if !valid_hex(&result.room, 32) || result.host.matches(&result.invite) {
             return Err(Error::Invalid);
         }
@@ -163,3 +170,7 @@ pub fn encode<T: Serialize>(value: &T) -> Result<Zeroizing<Vec<u8>>, Error> {
         .map(Zeroizing::new)
         .map_err(|_| Error::Invalid)
 }
+
+#[cfg(test)]
+#[path = "transport_tests.rs"]
+mod transport_tests;
