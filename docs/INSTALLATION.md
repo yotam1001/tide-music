@@ -21,9 +21,12 @@ any files in a private temporary folder. The temporary payload is removed after
 setup. It does not contain credentials, a browser profile or an embedded browser.
 
 Setup validates the packaged SHA-256 manifest before copying its explicit payload.
-Playback downloads use exact upstream release versions and require upstream
-SHA-256 digests matching the checksums pinned in the setup script; a missing digest
-or mismatch stops setup. Embedded CPython 3.14.0
+Playback downloads use exact upstream release URLs and must match the SHA-256
+checksums pinned in the setup script before extraction or execution. A missing
+pin or mismatching download stops setup. This does not require a GitHub account,
+API token or release-metadata API request; an API rate limit cannot block these
+playback downloads. GitHub's file hosting and your connection must still work.
+Embedded CPython 3.14.0
 uses the checksum from the [official Windows release index](https://www.python.org/ftp/python/3.14.0/windows-3.14.0.json).
 The exactly pinned helper dependencies are universal wheels fetched from PyPI;
 each wheel must match both its published and script-pinned SHA-256 digest. No existing Python environment,

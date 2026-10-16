@@ -19,6 +19,13 @@ This does not close GUI installation or public account-onboarding gates.
 See [beta release preparation](BETA_RELEASE.md)
 and [validation details](VALIDATION.md#final-candidate-and-real-windows-lifecycle-2026-10-15).
 
+Newer development source includes player-indicator and queue-text fixes, varied
+Home selections, and setup hardening that downloads pinned playback releases
+without a GitHub release-metadata API lookup. Actual downloaded files must still
+match their pinned checksums. These changes are not in the existing `f026915`
+draft assets. The volume repaint mitigation and a new installer candidate still
+need the user's manual checks; experimental Jams remain unmerged for user review.
+
 | Gate | Required evidence | Current evidence |
 | --- | --- | --- |
 | Continuous playback | Sustained live playback with natural transitions and repeated skip/pause/seek, without unexplained stops | The e777f29 one-hour run passed 17 natural transitions, radio refills and pause/resume/skip/seek. App and sampler exited zero; all 156 observed helpers ended, with zero sampling races. Playback source is unchanged through 369f8a1. Historical six-hour app behavior passed, but its enclosing supervisor failed; preserve that failure |

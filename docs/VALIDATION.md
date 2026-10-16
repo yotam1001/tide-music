@@ -920,3 +920,23 @@ time/actions and artwork/handles unchanged at widths 650, 780 and 1140 in both
 themes. Native remove controls remain reachable. Full names remain in accessibility
 labels. Software images use synthetic metadata only; no user account or playback
 is opened. These ordinary player fixes contain no experimental Jam code.
+
+### Playback runtime downloads without a release API lookup (2026-10-16)
+
+Hosted clean-install checks repeatedly encountered GitHub's unauthenticated API
+rate limit while looking up release metadata. The failed evidence was retained;
+retrying those jobs passed, but the API remained an avoidable setup dependency.
+Setup now downloads the same exact mpv/yt-dlp/Deno release URLs and verifies the
+same reviewed SHA-256 pins against the actual files before extraction. Versions,
+checksums, overwrite refusal, path checks and bounded download timeout are unchanged.
+No GitHub account/token or insecure fallback is added.
+
+Isolated installer lifecycle/package tests pass. New regressions exercise the
+production asset function with the metadata API unavailable, reject missing pins
+and existing output before downloading, and reject a corrupted runtime by the
+actual checksum check before tools are extracted. These cases cover PowerShell 7
+and built-in Windows PowerShell 5.1. The real-download verifier also passes pinned
+CPython/helper imports and all three playback-tool checksums and executable
+versions in a disposable temporary fixture, which is removed afterward. It does
+not install Tide, register a browser host, access an account or show an app window.
+GitHub's download hosting and other upstream services still need to be reachable.
