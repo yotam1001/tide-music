@@ -113,11 +113,23 @@ checkpoints sampled 0–207 ms drift. These are sparse samples on one computer, 
 a maximum-drift guarantee. The stale-host checkpoint intentionally has a paused
 guest and advancing host and is not a synchronization measurement.
 
+A second run using the lab-only pinned mpv fixture also passed in 16.22 seconds,
+with six corrections and synchronized checkpoint samples of 0–212 ms. Neither
+run supplies evidence about a remote network or real YouTube extraction.
+
 The native test maps its two fixed IDs to the silent fixture **inside test code
 only**. The runnable lab always constructs fixed-domain YouTube URLs from strict
 IDs. Tests prove the transport/controller/native-clock paths; they do not prove
 multi-computer Internet synchronization, simultaneous YouTube extraction,
 buffering under real networks, Premium playback or long sessions.
+
+The dedicated CI job downloads only the existing checksum-pinned mpv asset via
+`prepare-native.ps1`, preserving companion DLLs/licenses. It verifies the exact
+reviewed SHA-256 rather than querying release metadata, avoiding shared-runner
+unauthenticated API rate limits. It does not change production runtime setup.
+The initial CI attempts stopped before native playback: one hit that API rate
+limit, and one had an invalid `$LASTEXITCODE` check after a successful PowerShell
+script. The lab setup no longer uses that API/check; failed jobs remain recorded.
 
 ## Before enabling Jams in Tide
 
