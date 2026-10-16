@@ -4,12 +4,13 @@
 <body>
   <main>
     <span class="eyebrow">TIDE · SOURCE PROTOTYPE</span>
-    <h1>Bring your Music session to Tide</h1>
-    <p>Select a signed-in YouTube Music tab, then import its session into the local Tide app.</p>
+    <h1>Connect YouTube Music</h1>
+    <p>Import reads the selected Music tab's session cookies so Tide can use that account's playlists and playback. Credentials go to Tide on this computer, not a Tide server.</p>
     <p id="status" role="status" aria-live="polite">Checking companion status…</p>
     <div class="buttons"><button id="import" type="button">Import selected tab</button><button id="cancel" type="button" class="secondary" disabled>Cancel</button></div>
     <p><button id="check-host" type="button" class="secondary">Check local connection</button></p>
-    <p class="note">Capture lasts up to two minutes. Session credentials go only to the local Tide native host. No automatic refresh. The host must be registered separately.</p>
+    <p class="note">Import is opt-in and expires after two minutes. No background refresh. Install and register the local Tide helper first.</p>
+    <p class="note"><a href="https://github.com/yotam1001/tide-music/blob/main/PRIVACY.md" target="_blank" rel="noopener noreferrer">Privacy and local storage</a></p>
   </main>
   <script src="popup.js"></script>
 </body>

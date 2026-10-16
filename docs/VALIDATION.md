@@ -1,5 +1,116 @@
 # Prototype validation
 
+## Final candidate and real Windows lifecycle (2026-10-15)
+
+Candidate `f02691501a72aed0f07164999b36437ac1c4b567` passed all jobs in
+[push CI](https://github.com/yotam1001/tide-music/actions/runs/38751976892) and
+[PR CI](https://github.com/yotam1001/tide-music/actions/runs/38751986879).
+The real lifecycle job used disposable hosted Windows runners, actual per-user
+HKCU uninstall/native-host keys and Start-menu shortcuts, pinned real runtime
+downloads, installed local-audio UI smoke checks, update and registered-command
+removal. Both downloaded evidence artifacts report success. The PR artifact uses
+GitHub's synthetic merge revision; the draft downloads use the push artifacts
+for the exact candidate commit.
+
+The downloaded setup passed embedded extraction/cleanup and its embedded ZIP
+hash matches the separate candidate ZIP. ZIP payload, source/checksum/privacy
+checks and both companion archives pass. Text source comparison normalizes
+checkout line endings; icons and archive/extracted file bytes match exactly.
+The setup SHA-256 is
+`2896a85043fc5ce19e2a1352ff26344cb94451d4ada7da828e3c639b1ce37a04`;
+the preview ZIP SHA-256 is
+`29a293eadde97ffb62f41cfa3c5c34eaf4776a3d5b63241c61ab1c446100220a`.
+Local script validation passed 43 tests with three capability skips. Index and
+fresh-public-clone privacy audits passed without findings.
+
+Real CMD regressions first reproduced a waiting launcher's directory lock and
+failure after its child deleted the executing batch file. Both launchers now
+leave the owned working directory and parse their complete result-handling tail
+before setup/removal can delete them. Disposable self-deleting fixtures verify
+success, exact failure exit codes and paths containing spaces and `!`. Launchers
+close their own consoles; callers in an existing CMD shell use `cmd /c`.
+
+An intermediate `a941445` PR check failed when its harmless PowerShell setup
+fixture exceeded the test's 15-second startup deadline. That failure remains
+recorded; both final runs passed without rerunning or relabeling the failed job.
+
+This evidence does not establish interactive installer clicks, high-DPI setup,
+fresh authenticated browser import through the graphical route, physical Fn keys
+with game focus, or weekly session longevity. Chrome used a synthetic extension
+ID; no account credentials were used by CI. The beta remains an unpublished draft
+until the remaining checks and publication review.
+
+## Fresh-runner failures and onboarding hardening (2026-10-15)
+
+The first clean hosted Windows run for `01406d9` did not pass: its Windows
+PowerShell child inherited the PowerShell 7 module path and failed at
+`Get-FileHash` before installation. The failure artifact was downloaded and
+inspected. The graphical setup child, advanced CMD wrappers and hosted probe
+now select the Windows PowerShell system modules without changing the user's
+persistent environment. The C# regression launches a harmless real script with
+an intentionally incompatible inherited module path and verifies hash commands,
+path quoting and exact Chrome arguments; the CMD regression also verifies
+argument transfer and a nonzero child exit code survives the wrapper.
+
+A separate temporary-directory probe reproduced inability to remove the current
+working directory. The real uninstall entry now leaves both the process and
+PowerShell working directories before removal, and the uninstall shortcut uses
+a stable Windows folder. Entry regressions pass in PowerShell 7 and Windows
+PowerShell 5.1. Hosted validation now invokes the actual registered uninstall
+command from the owned install directory instead of invoking only the package
+script. A new passing hosted result is required; the original failed run remains
+failed evidence, not a release pass.
+
+The primary account action now opens browser connection guidance; the legacy Zen
+picker is under Advanced. Companion packages include the existing Tide PNG icon
+resources at 16/32/48/128 with manifest/dimension validation, a prominent
+session-cookie disclosure and privacy link. Privacy and store-preparation docs
+describe actual processing and human publication steps. These changes do not
+establish Chrome Web Store availability or a fresh authenticated browser import.
+
+## Graphical Chrome connection setup (2026-10-15)
+
+New setup source offers an unchecked-by-default Chrome companion option and
+exact extension-ID field. C# tests cover opt-in control behavior, invalid IDs,
+argument/path quoting, passing the normalized ID into the existing owned setup
+core, and control bounds. A setup containing the previously validated matching
+preview ZIP compiled and passed its actual embedded-payload verification. That
+local bridge build is not a new player build or a distributable release asset.
+
+The application Help URL now points to maintained main-branch account guidance.
+Docs lead with companion connection instead of manual headers. Actual browser
+handshake/import through the new graphical route and rendered high-DPI screens
+remain unverified; do not infer them from argument/control tests. Preview capture
+was obscured by another full-screen app; no user game/browser inputs were sent.
+
+A separate clean hosted-Windows CI job is being added for real per-user registry,
+shortcuts, private runtimes, native app, update and removal. Its guard refuses to
+run on this development machine. Passing that job will be fresh Windows system
+integration evidence, not evidence of GUI clicks, authentication or game-focused
+physical keys.
+
+## Actual Windows CI installer candidate (2026-10-15)
+
+Downloaded the successful main-branch `1e403b7` CI artifacts. The actual
+`TideSetup.exe --verify-payload` passed embedded extraction/checksum checks, and
+the matching preview ZIP passed its payload/checksum/privacy gate.
+
+The opt-in `verify-installed-preview.ps1` probe passed real pinned downloads,
+installation, update to a fresh release, and removal. Both installed revisions
+passed mpv/yt-dlp/Deno version probes, managed Python imports, and native UI
+smoke assertions with silent local audio: browsing preservation, queue actions,
+media Next/Previous routing, pointer drag, and long-drag/autoscroll. Update removed
+the previous owned release; uninstall removed all owned installed files, test
+shortcuts, and the fixture uninstall entry.
+
+Isolation matters: the test used disposable files and actual `.lnk` files outside
+the real Start menu, isolated application-data paths, and in-memory uninstall
+registry I/O. It did not change the current user's installed Tide or account.
+It did not test the setup GUI click path or Windows Settings on clean Windows.
+Windows Sandbox is unavailable on the test machine. Authenticated streaming,
+game-focused physical keys, and days-long session behavior were not retested by
+this local-audio probe. See [beta gates](BETA_RELEASE.md).
+
 ## Restore repaint regression (2026-10-13)
 
 Restoring the native window now invalidates the full scene through an identical

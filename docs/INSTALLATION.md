@@ -2,8 +2,13 @@
 
 Double-click **TideSetup.exe** and choose **Install Tide**. Setup shows progress
 and a retryable error if a step fails. At completion choose **Open Tide**, or
-**Connect YouTube Music** to open Account directly. No commands or ZIP extraction
-are required. The full ZIP with **Install Tide.cmd** remains an advanced alternative.
+**Connect YouTube Music** to open Account directly. Installing the player requires
+no commands or ZIP extraction. Optional Chrome connection requires loading the
+separate companion extension, as described below. The full ZIP with **Install
+Tide.cmd** remains an advanced alternative.
+Double-click the CMD launchers so each runs in its own console. They close that
+console after showing the result; from an existing CMD session, launch them through
+`cmd /c` to preserve the calling shell.
 Setup needs internet access and Windows x64. It installs for the current user in
 `%LOCALAPPDATA%\Programs\Tide`, without administrator privileges, PATH changes,
 system Python or manual PowerShell commands. Launch **Tide** from the Start menu.
@@ -27,10 +32,22 @@ archives, Python license and wheel license metadata remain in the owned release.
 
 ## Optional browser companion
 
-The graphical installer opens Account for connection guidance and does not ask
-for request headers or extension IDs. It does not install an unsigned extension
-into the browser automatically. Signed companion distribution and Zen lookup
-remain unresolved.
+For Chrome, follow the [companion beta guide](BROWSER_COMPANION_BETA.md): load the
+matching Chromium extension in Chrome first, then run **TideSetup.exe** and select
+**Enable Chrome companion connection (optional)**. Paste the **actual extension ID
+displayed by Chrome** into the ID field before choosing **Install Tide**. This
+option starts unchecked and registers the local helper only when explicitly
+selected. It accepts exactly 32 lowercase letters `a` through `p`; it never
+guesses an ID or grants wildcard origins. An existing different Tide native-host
+registration is preserved and causes setup to stop.
+
+Setup does not ask for request headers or install an unsigned extension into the
+browser automatically. **Connect YouTube Music** opens Account; it does not
+import a session. After setup, use the companion's **Check local connection**,
+then explicitly **Import selected tab** as the guide describes. Successful
+registration alone does not prove account access. The new graphical registration
+path still needs a live Chrome setup/import check. Signed companion distribution
+and Zen lookup remain unresolved.
 
 In the advanced ZIP launcher, if the ZIP includes `tide-session-host.exe`, setup can register the native helper
 for one selected browser under the current user's registry. Install the separate
@@ -43,7 +60,8 @@ and causes setup to stop.
 Firefox registration uses the companion's fixed add-on ID. Zen's real native-host
 lookup is still unresolved, and signed public companion distribution remains an
 open release gate. A prepared registration does not prove that a browser can use
-the helper. Choosing None skips first-install registration. On update, the existing
+the helper. Leaving the graphical Chrome option unchecked (or choosing None in
+the advanced launcher) skips first-install registration. On update, the existing
 browser choice is retained unless another browser is explicitly selected.
 The browser extension itself is installed and removed in the browser; setup owns
 only its Tide native-host registration. Manual import remains available in

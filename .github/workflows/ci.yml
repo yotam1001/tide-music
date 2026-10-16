@@ -66,3 +66,33 @@ jobs:
             dist/tide-browser-chromium/
           if-no-files-found: error
           retention-days: 14
+  installed-preview:
+    name: Real Windows install/update/remove
+    needs: preview
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: tide-windows-preview-${{ github.sha }}
+          path: .local/clean-installer-artifact
+      - name: Verify actual setup and unpack matching preview
+        shell: pwsh
+        run: |
+          python scripts/check-preview-package.py .local/clean-installer-artifact/tide-windows-preview.zip --with-browser-host
+          if ($LASTEXITCODE -ne 0) { throw 'Preview verification failed' }
+          $setup = Start-Process -FilePath (Join-Path $PWD '.local/clean-installer-artifact/TideSetup.exe') -ArgumentList '--verify-payload' -WindowStyle Hidden -Wait -PassThru
+          if ($setup.ExitCode -ne 0) { throw 'Actual setup embedded-payload verification failed' }
+          Expand-Archive -LiteralPath .local/clean-installer-artifact/tide-windows-preview.zip -DestinationPath .local/clean-payload
+      - name: Exercise real per-user install, Chrome host, update and removal
+        id: clean-install
+        shell: pwsh
+        run: ./scripts/verify-clean-windows.ps1 -PackageRoot .local/clean-payload
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() && steps.clean-install.outputs.evidence-directory != '' }}
+        with:
+          name: tide-clean-windows-evidence-${{ github.sha }}
+          path: ${{ steps.clean-install.outputs.evidence-directory }}
+          if-no-files-found: error
+          retention-days: 7
