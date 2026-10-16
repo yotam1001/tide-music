@@ -1,6 +1,6 @@
 # Tide privacy notice
 
-Last updated: 2026-10-15
+Last updated: 2026-10-16
 
 This notice covers the Tide Windows player, its optional session companion
 extension, and its local native helper in this repository. Tide is an unofficial
@@ -14,6 +14,22 @@ advertising SDK, analytics service or automatic crash-report uploader in this
 version. Tide does not send your session to the project maintainers or a Tide
 server, sell it, or use it for advertisements, profiling or unrelated purposes.
 Google/YouTube and download providers have their own data practices.
+
+## Optional experimental listening rooms
+
+Jams are disabled in normal builds and the beta installer. A developer who
+explicitly enables `experimental-jams` can choose a private relay and host/join
+a room. The relay and its TLS proxy can see video IDs, queue order, position,
+pause/loading state and room capabilities. They receive no Google cookies,
+account headers or audio from Tide. HTTPS protects transport to that operator;
+room metadata is not end-to-end encrypted against the operator.
+
+Invites contact their specified server, so use only trusted invites/operators.
+Operator keys allow room creation and must not be sent to guests. Invite/key files
+remain in the private folders chosen by the user; Tide does not automatically
+erase them. Capabilities remain in memory during a session. The original guest
+queue is restored paused on leave, and the temporary Jam queue is not saved to
+preferences. See the [experimental Jam guide](experiments/jam/README.md).
 
 ## What the browser companion processes
 

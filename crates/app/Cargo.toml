@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 build = "build.rs"
 
+[features]
+experimental-jams = ["dep:tide-jam-lab", "dep:zeroize"]
+
 [dependencies]
 tide-core = { path = "../core" }
 tide-playback = { path = "../playback" }
@@ -18,6 +21,8 @@ rfd = "0.17.2"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 ureq = { version = "3", default-features = false, features = ["rustls"] }
 url = "2"
+tide-jam-lab = { path = "../../experiments/jam", default-features = false, optional = true }
+zeroize = { version = "1", optional = true }
 
 [build-dependencies]
 slint-build = "=1.18.1"

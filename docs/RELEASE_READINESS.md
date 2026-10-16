@@ -26,6 +26,13 @@ match their pinned checksums. These changes are not in the existing `f026915`
 draft assets. The volume repaint mitigation and a new installer candidate still
 need the user's manual checks; experimental Jams remain unmerged for user review.
 
+On this experimental branch, native Jams are available only in an optional
+`experimental-jams` developer build, excluded from the normal package.
+Host/join/leave, callback ownership, local volume and paused-queue restoration
+have isolated tests. Real two-computer authenticated playback, deployed-relay
+and long-session/resource validation remain open. See the
+[Jam lab](../experiments/jam/README.md).
+
 | Gate | Required evidence | Current evidence |
 | --- | --- | --- |
 | Continuous playback | Sustained live playback with natural transitions and repeated skip/pause/seek, without unexplained stops | The e777f29 one-hour run passed 17 natural transitions, radio refills and pause/resume/skip/seek. App and sampler exited zero; all 156 observed helpers ended, with zero sampling races. Playback source is unchanged through 369f8a1. Historical six-hour app behavior passed, but its enclosing supervisor failed; preserve that failure |

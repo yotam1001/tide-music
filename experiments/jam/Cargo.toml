@@ -1,0 +1,52 @@
+[package]
+name = "tide-jam-lab"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+# Deliberately isolated: normal Tide builds do not compile or run the lab.
+[workspace]
+
+[features]
+default = ["relay", "cli"]
+relay = ["dep:axum", "dep:hyper", "dep:hyper-util", "dep:tokio"]
+cli = ["relay", "dep:tide-core", "dep:tide-playback"]
+headless-native = ["cli", "tide-playback/jam-lab-null-audio"]
+
+[[bin]]
+name = "tide-jam-lab"
+path = "src/main.rs"
+required-features = ["cli"]
+
+[[test]]
+name = "protocol_sync"
+required-features = ["relay"]
+[[test]]
+name = "network"
+required-features = ["relay"]
+[[test]]
+name = "native"
+required-features = ["cli"]
+[[test]]
+name = "cli"
+required-features = ["cli"]
+
+[dependencies]
+axum = { version = "=0.8.9", optional = true, default-features = false, features = ["json", "http1", "tokio"] }
+getrandom = "=0.3.4"
+hyper = { version = "1", optional = true, features = ["http1", "server"] }
+hyper-util = { version = "0.1", optional = true, features = ["tokio", "service"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+subtle = "2"
+tide-core = { path = "../../crates/core", optional = true }
+tide-playback = { path = "../../crates/playback", optional = true }
+tokio = { version = "1", optional = true, features = ["io-util", "macros", "net", "rt", "sync", "time"] }
+ureq = { version = "=3.4.2", default-features = false, features = ["rustls"] }
+url = "2"
+zeroize = "1"
+
+[dev-dependencies]
+rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }

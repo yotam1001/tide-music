@@ -1,0 +1,157 @@
+use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
+use std::fmt;
+use subtle::ConstantTimeEq;
+use zeroize::Zeroizing;
+
+pub const MAX_QUEUE: usize = 100;
+pub const MAX_BODY: usize = 32 * 1024;
+pub const MAX_POSITION_MS: u64 = 24 * 60 * 60 * 1000;
+pub const STALE_MS: u64 = 6_000;
+
+#[derive(Clone, PartialEq, Eq, Debug, Serialize)]
+#[serde(transparent)]
+pub struct VideoId(String);
+
+impl VideoId {
+    pub fn parse(value: &str) -> Result<Self, &'static str> {
+        if value.len() != 11
+            || !value
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-')
+        {
+            return Err("Jam accepts only YouTube video IDs, never URLs or files");
+        }
+        Ok(Self(value.into()))
+    }
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+    pub fn playback_url(&self) -> String {
+        format!("https://www.youtube.com/watch?v={}", self.0)
+    }
+}
+impl<'de> Deserialize<'de> for VideoId {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = String::deserialize(deserializer)?;
+        Self::parse(&value).map_err(de::Error::custom)
+    }
+}
+
+/// Capability strings are never included in Debug/error output or CLI arguments.
+#[derive(Clone)]
+pub struct Secret(Zeroizing<String>);
+impl Secret {
+    pub fn random() -> Result<Self, &'static str> {
+        let mut bytes = Zeroizing::new([0u8; 32]);
+        getrandom::fill(bytes.as_mut()).map_err(|_| "Secure randomness unavailable")?;
+        Self::parse(&hex(bytes.as_ref()))
+    }
+    pub fn parse(value: &str) -> Result<Self, &'static str> {
+        if !valid_hex(value, 64) {
+            return Err("Invalid room capability");
+        }
+        Ok(Self(Zeroizing::new(value.into())))
+    }
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+    pub fn matches(&self, other: &Self) -> bool {
+        self.0.as_bytes().ct_eq(other.0.as_bytes()).into()
+    }
+}
+impl fmt::Debug for Secret {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("[room capability redacted]")
+    }
+}
+impl Serialize for Secret {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.expose())
+    }
+}
+impl<'de> Deserialize<'de> for Secret {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = Zeroizing::new(String::deserialize(deserializer)?);
+        Self::parse(&value).map_err(de::Error::custom)
+    }
+}
+
+pub fn valid_hex(value: &str, length: usize) -> bool {
+    value.len() == length
+        && value
+            .bytes()
+            .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+}
+pub fn room_id() -> Result<String, &'static str> {
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes).map_err(|_| "Secure randomness unavailable")?;
+    Ok(hex(&bytes))
+}
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Timeline {
+    pub revision: u64,
+    pub play_id: u64,
+    pub queue: Vec<VideoId>,
+    pub index: usize,
+    pub position_ms: u64,
+    pub paused: bool,
+    pub loading: bool,
+}
+impl Timeline {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if self.queue.is_empty()
+            || self.queue.len() > MAX_QUEUE
+            || self.index >= self.queue.len()
+            || self.position_ms > MAX_POSITION_MS
+            || self.revision == 0
+            || self.play_id == 0
+        {
+            return Err("Invalid Jam timeline");
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct View {
+    pub timeline: Option<Timeline>,
+    pub age_ms: u64,
+    pub members: usize,
+}
+impl View {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if self.members > 8 || self.age_ms > 2 * 60 * 60 * 1000 {
+            return Err("Invalid Jam room state");
+        }
+        if let Some(timeline) = &self.timeline {
+            timeline.validate()?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Created {
+    pub room: String,
+    pub host: Secret,
+    pub invite: Secret,
+}
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Joined {
+    pub member: Secret,
+}
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Invite {
+    pub endpoint: String,
+    pub room: String,
+    pub invite: Secret,
+}

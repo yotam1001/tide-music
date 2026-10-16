@@ -20,7 +20,16 @@ The video shows the current prototype: real screen recordings of Tide with a con
 - Playlist previews with Play/Shuffle, song menus, upcoming-track reordering/removal, song radio and recommendation autoplay.
 - Home Refresh rotates a 24-card selection from up to 240 personalized candidates. Recent IDs are kept only in memory; small upstream pools can still repeat.
 - Small real thumbnails with a bounded memory cache and no generic artwork banner.
+- Refresh on Home selects a varied batch of 24 playable recommendations from a
+  wider personalized pool, favouring suggestions not recently shown. A bounded
+  in-memory history avoids repeating the same screen; small upstream pools must
+  eventually repeat. No listening history is fabricated or written to YouTube.
 - Native Slint interface; no embedded browser or Electron runtime.
+
+Home Refresh varies the displayed selection from your real YouTube recommendations;
+it cannot force YouTube to generate an entirely new pool. Recent display history is
+memory-only, clears on account changes, and never causes artwork to be preloaded
+for the whole candidate pool.
 
 ![Full native interface](docs/screenshots/full.png)
 ![Light native interface](docs/screenshots/light.png)

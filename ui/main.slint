@@ -231,6 +231,7 @@ component TideButton inherits Rectangle {
 // the lightweight layouts. The parent can replace this component once artwork
 // becomes part of the shared track model.
 component TransportButtons inherits Rectangle {
+    in property <bool> enabled: true;
     in property <bool> paused;
     in property <bool> repeat-enabled;
     in property <bool> light-mode: false;
@@ -255,6 +256,7 @@ component TransportButtons inherits Rectangle {
         alignment: center;
 
         if root.show-shuffle : TideButton {
+            enabled: root.enabled;
             width: 36px;
             height: 36px;
             label: "Shuffle upcoming tracks";
@@ -270,6 +272,7 @@ component TransportButtons inherits Rectangle {
         }
 
         TideButton {
+            enabled: root.enabled;
             width: 42px;
             height: 40px;
             label: "Previous track";
@@ -285,6 +288,7 @@ component TransportButtons inherits Rectangle {
         }
 
         TideButton {
+            enabled: root.enabled;
             width: 48px;
             height: 44px;
             label: root.paused ? "Play" : "Pause";
@@ -303,6 +307,7 @@ component TransportButtons inherits Rectangle {
         }
 
         TideButton {
+            enabled: root.enabled;
             width: 42px;
             height: 40px;
             label: "Next track";
@@ -700,6 +705,7 @@ component QueueDrawer inherits Rectangle {
     changed rows => { root.cancel-drag(); }
     changed current-index => { root.cancel-drag(); root.artwork-scroll-y = 0px; }
     changed visible => { if !root.visible { root.cancel-drag(); } }
+    changed enabled => { if !root.enabled { root.cancel-drag(); root.overflow-open = false; } }
     background: root.light-mode ? #eee5db : #15181d;
     border-width: 1px;
     border-color: root.light-mode ? #ded0c4 : #292e37;
@@ -839,6 +845,7 @@ component QueueDrawer inherits Rectangle {
 }
 
 component PlayerBar inherits Rectangle {
+    in property <bool> transport-enabled: true;
     in property <bool> window-minimized: false;
     private property <int> input-revision: 0;
     private property <bool> repaint-phase: false;
@@ -902,7 +909,7 @@ component PlayerBar inherits Rectangle {
                     Text { text: root.track-artist; color: root.secondary; font-size: 12px; overflow: elide; }
                 }
             }
-            TransportButtons { x: (parent.width - self.width) / 2; y: 2px; width: 150px; height: 48px; paused: root.paused; light-mode: root.light-mode; show-repeat: false; show-shuffle: false; toggle-pause => { root.toggle-pause(); } previous-track => { root.previous-track(); } next-track => { root.next-track(); } }
+            TransportButtons { enabled: root.transport-enabled; x: (parent.width - self.width) / 2; y: 2px; width: 150px; height: 48px; paused: root.paused; light-mode: root.light-mode; show-repeat: false; show-shuffle: false; toggle-pause => { root.toggle-pause(); } previous-track => { root.previous-track(); } next-track => { root.next-track(); } }
             HorizontalLayout {
                 x: parent.width - self.width;
                 y: 8px;
@@ -919,7 +926,7 @@ component PlayerBar inherits Rectangle {
             spacing: 9px;
             cross-axis-alignment: center;
             Text { width: 38px; text: root.format-time(root.position); color: root.secondary; font-size: 11px; horizontal-alignment: right; }
-            TideSlider { reset-revision: root.input-revision; light-mode: root.light-mode; horizontal-stretch: 1; minimum: 0; maximum: max(1, root.duration); value: root.position; enabled: root.duration > 0; label: "Playback position"; value-text: root.format-time(root.position); released(value) => { root.seek(value); } }
+            TideSlider { reset-revision: root.input-revision; light-mode: root.light-mode; horizontal-stretch: 1; minimum: 0; maximum: max(1, root.duration); value: root.position; enabled: root.transport-enabled && root.duration > 0; label: "Playback position"; value-text: root.format-time(root.position); released(value) => { root.seek(value); } }
             Text { width: 38px; text: root.format-time(root.duration); color: root.secondary; font-size: 11px; }
             VolumeMark { ink: root.secondary; }
             TideSlider { reset-revision: root.input-revision; light-mode: root.light-mode; width: root.compact || root.collapsed ? 105px : 150px; minimum: 0; maximum: 100; value: root.volume; label: "Volume"; value-text: root.volume.to-fixed(0) + "%"; changed(value) => { root.change-volume(value); } }
@@ -928,6 +935,15 @@ component PlayerBar inherits Rectangle {
     }
 }
 export component AppWindow inherits Window {
+    in property <bool> jam-available: false;
+    in property <bool> jam-active: false;
+    in property <bool> jam-guest: false;
+    in property <string> jam-status;
+    in-out property <bool> jam-open: false;
+    in-out property <string> jam-endpoint;
+    callback jam-host();
+    callback jam-join();
+    callback jam-leave();
     in-out property <length> library-artwork-y;
     in-out property <length> library-artwork-height;
     in-out property <length> home-artwork-y;
@@ -1029,7 +1045,7 @@ export component AppWindow inherits Window {
     private property <image> current-artwork: root.track-artwork;
     private property <bool> wide: true;
     private property <bool> advanced-open: false;
-    private property <bool> browsing-enabled: !root.settings-open && !(root.queue-open && !root.wide);
+    private property <bool> browsing-enabled: !root.settings-open && !root.jam-open && !root.jam-guest && !(root.queue-open && !root.wide);
     title: "Tide";
     icon: @image-url("assets/tide-icon.png");
     default-font-family: "Segoe UI";
@@ -1037,14 +1053,15 @@ export component AppWindow inherits Window {
     preferred-width: root.collapsed ? 700px : root.compact-mode ? 780px : 1140px;
     preferred-height: root.collapsed ? 132px : root.compact-mode ? 720px : 800px;
     min-width: 650px;
-    min-height: root.collapsed ? 112px : 420px;
+    min-height: root.collapsed ? (root.jam-active ? 146px : 112px) : 420px;
     background: root.light-mode ? #f4eee6 : #111318;
     init => { Palette.color-scheme = root.light-mode ? light : dark; root.wide = root.width >= 1050px; }
     changed width => { root.wide = root.width >= 1050px; }
     changed settings-open => {
-        if root.settings-open { app-focus.focus(); }
+        if root.settings-open { root.jam-open = false; app-focus.focus(); }
         else { root.advanced-open = false; }
     }
+    changed jam-open => { if root.jam-open { root.settings-open = false; app-focus.focus(); } }
     changed queue-open => { if root.queue-open && !root.wide { app-focus.focus(); } }
     changed wide => { if !root.wide && root.queue-open { app-focus.focus(); } }
     changed light-mode => { Palette.color-scheme = root.light-mode ? light : dark; }
@@ -1066,6 +1083,7 @@ export component AppWindow inherits Window {
     app-focus := FocusScope {
         key-pressed(event) => {
             if event.text == Key.Escape {
+                if root.jam-open { root.jam-open = false; return accept; }
                 if root.settings-open { root.settings-open = false; return accept; }
                 if root.queue-open { root.queue-open = false; return accept; }
             }
@@ -1086,7 +1104,8 @@ export component AppWindow inherits Window {
                     SearchMark { ink: root.secondary; }
                     LineEdit { horizontal-stretch: 1; enabled: root.browsing-enabled; text <=> root.source-input; placeholder-text: "Search music or paste a link"; accessible-label: "Search music or paste a YouTube link"; accepted(value) => { if value != "" { root.add-source(value); } } }
                     LibraryButton { width: 74px; light-mode: root.light-mode; enabled: root.browsing-enabled; caption: "Search"; label: "Search for music or open the pasted link"; clicked => { if root.source-input != "" { root.add-source(root.source-input); } } }
-                    LibraryButton { width: 92px; light-mode: root.light-mode; caption: "Account"; label: "Open account and settings"; active: root.settings-open; clicked => { root.settings-open = !root.settings-open; } }
+                    if root.jam-available : LibraryButton { width: 70px; light-mode: root.light-mode; caption: "Jam"; label: "Open experimental private Jam controls"; active: root.jam-active || root.jam-open; clicked => { root.jam-open = !root.jam-open; } }
+                    LibraryButton { width: 92px; enabled: !root.jam-guest; light-mode: root.light-mode; caption: "Account"; label: "Open account and settings"; active: root.settings-open; clicked => { root.settings-open = !root.settings-open; } }
                 }
             }
             if !root.collapsed : content-area := Rectangle {
@@ -1196,7 +1215,7 @@ export component AppWindow inherits Window {
                                     cross-axis-alignment: center;
                                     VerticalLayout { horizontal-stretch: 1; spacing: 4px; Text { text: "For you"; color: root.foreground; font-size: 28px; font-weight: 600; } Text { text: "Music from your YouTube Music Home"; color: root.secondary; font-size: 12px; overflow: elide; } }
                                     if root.current-index >= 0 && root.paused : LibraryButton { width: 78px; light-mode: root.light-mode; enabled: root.browsing-enabled; caption: "Resume"; label: "Resume your current queue"; clicked => { root.toggle-pause(); } }
-                                    LibraryButton { width: 78px; light-mode: root.light-mode; caption: "Refresh"; label: "Refresh your recommendations"; enabled: root.browsing-enabled && root.account-connected && !root.account-busy; clicked => { root.refresh-recommendations(); } }
+                                    LibraryButton { width: 78px; light-mode: root.light-mode; caption: "Refresh"; label: "Get a different selection of your recommendations"; enabled: root.browsing-enabled && root.account-connected && !root.account-busy; clicked => { root.refresh-recommendations(); } }
                                 }
                                 if root.recommendations.length > 0 : ListView {
                                     content-y <=> root.home-artwork-y;
@@ -1216,7 +1235,7 @@ export component AppWindow inherits Window {
                     if root.queue-open && root.wide : QueueDrawer {
                         artwork-scroll-y <=> root.queue-artwork-y;
                         artwork-view-height <=> root.queue-artwork-height;
-                        enabled: !root.settings-open;
+                        enabled: !root.settings-open && !root.jam-open && !root.jam-guest;
                         width: 340px;
                         rows: root.rows;
                         current-index: root.current-index;
@@ -1242,7 +1261,7 @@ export component AppWindow inherits Window {
                     QueueDrawer {
                         artwork-scroll-y <=> root.queue-artwork-y;
                         artwork-view-height <=> root.queue-artwork-height;
-                        enabled: !root.settings-open;
+                        enabled: !root.settings-open && !root.jam-open && !root.jam-guest;
                         x: max(0px, parent.width - 340px);
                         width: 340px;
                         height: parent.height;
@@ -1314,6 +1333,45 @@ export component AppWindow inherits Window {
                         }
                     }
                 }
+                if root.jam-available && root.jam-open : Rectangle {
+                    width: parent.width;
+                    height: parent.height;
+                    Rectangle { width: max(0px, parent.width - 420px); height: parent.height; background: #00000060; TouchArea { clicked => { root.jam-open = false; } } }
+                    Rectangle {
+                        x: max(0px, parent.width - 420px); width: 420px; height: parent.height;
+                        background: root.surface; border-width: 1px; border-color: root.outline;
+                        TouchArea { }
+                        ScrollView {
+                            width: parent.width; height: parent.height; horizontal-scrollbar-policy: always-off;
+                            VerticalLayout {
+                                padding: 20px; spacing: 12px; alignment: start;
+                                HorizontalLayout { height: 34px; Text { horizontal-stretch: 1; text: "Listen together"; color: root.foreground; font-size: 20px; font-weight: 650; vertical-alignment: center; } LibraryButton { width: 30px; height: 30px; light-mode: root.light-mode; caption: "×"; label: "Close Jam controls"; clicked => { root.jam-open = false; } } }
+                                Text { text: "EXPERIMENTAL · PRIVATE RELAY"; color: root.secondary; font-size: 10px; font-weight: 650; }
+                                Text { height: 54px; text: root.jam-status; color: root.foreground; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
+                                if root.jam-active : Text { height: 78px; text: root.jam-guest ? "The host controls songs, pause and position. Your volume stays local. Leave to restore your original queue, paused." : "Share only the saved guest invite with friends. The current song and up to 99 upcoming tracks follow your queue. Only YouTube songs can be shared."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
+                                if root.jam-active : LibraryButton { height: 36px; light-mode: root.light-mode; caption: root.jam-guest ? "Leave Jam" : "End Jam"; label: root.jam-guest ? "Leave Jam and restore your paused local queue" : "Close the hosted room for all guests"; active: true; clicked => { root.jam-leave(); } }
+                                if !root.jam-active : Text { height: 54px; text: "Each person plays independently using their own local session. A trusted relay exchanges song IDs and timing, never Google credentials or audio."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
+                                if !root.jam-active : Text { text: "Host a Jam"; color: root.foreground; font-weight: 600; }
+                                if !root.jam-active : LineEdit { text <=> root.jam-endpoint; placeholder-text: "https://your-relay.example"; accessible-label: "Trusted Jam relay endpoint"; }
+                                if !root.jam-active : Text { height: 48px; text: "Play a YouTube song first. HTTPS hosting asks for your relay operator's key, then a new private invite filename. A relay must already be configured."; color: root.secondary; font-size: 11px; wrap: word-wrap; }
+                                if !root.jam-active : LibraryButton { height: 36px; light-mode: root.light-mode; caption: "Host and save invite…"; label: "Host the current YouTube queue and save a new private guest invite"; clicked => { root.jam-host(); } }
+                                if !root.jam-active : Rectangle { height: 1px; background: root.outline; }
+                                if !root.jam-active : Text { text: "Join a friend"; color: root.foreground; font-weight: 600; }
+                                if !root.jam-active : Text { height: 42px; text: "Open an invite from someone you trust. It contacts their relay. Your queue is preserved while you follow the host."; color: root.secondary; font-size: 11px; wrap: word-wrap; }
+                                if !root.jam-active : LibraryButton { height: 36px; light-mode: root.light-mode; caption: "Open guest invite…"; label: "Select a private Jam invite and follow its host"; clicked => { root.jam-join(); } }
+                                Rectangle { height: 12px; }
+                                Text { height: 70px; text: "No public Tide relay is provided. Synchronization is approximate; unavailable tracks or a lost connection pause guests. Real cross-computer and long-session testing is still pending."; color: root.secondary; font-size: 11px; wrap: word-wrap; }
+                            }
+                        }
+                    }
+                }
+            }
+            if root.jam-active : Rectangle {
+                height: 34px; background: root.surface;
+                HorizontalLayout { padding-left: 18px; padding-right: 18px; spacing: 10px; cross-axis-alignment: center;
+                    Text { horizontal-stretch: 1; text: root.jam-status; color: root.foreground; font-size: 11px; overflow: elide; }
+                    LibraryButton { width: 90px; height: 28px; light-mode: root.light-mode; caption: root.jam-guest ? "Leave Jam" : "End Jam"; label: "Stop participating in this Jam"; clicked => { root.jam-leave(); } }
+                }
             }
             if !root.collapsed && root.error-message == "" && root.status-text != "" : Rectangle {
                 height: 24px;
@@ -1321,6 +1379,7 @@ export component AppWindow inherits Window {
             }
             PlayerBar {
                 window-minimized: root.minimized;
+                transport-enabled: !root.jam-guest;
                 preferred-height: 110px;
                 min-height: 110px;
                 max-height: root.collapsed ? 1000px : 110px;

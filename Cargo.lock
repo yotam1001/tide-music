@@ -4182,6 +4182,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "tide-jam-lab"
+version = "0.1.0"
+dependencies = [
+ "getrandom 0.3.4",
+ "serde",
+ "serde_json",
+ "subtle",
+ "ureq",
+ "url",
+ "zeroize",
+]
+
+[[package]]
 name = "tide-music"
 version = "0.1.0"
 dependencies = [
@@ -4193,12 +4206,14 @@ dependencies = [
  "slint",
  "slint-build",
  "tide-core",
+ "tide-jam-lab",
  "tide-playback",
  "tide-provider",
  "tide-windows",
  "ureq",
  "url",
  "winresource",
+ "zeroize",
 ]
 
 [[package]]
