@@ -1,6 +1,8 @@
 //! Explicit opt-in, two real muted mpv workers; no account/session/SMTC access.
 #![cfg(windows)]
 mod common;
+#[path = "common/link.rs"]
+mod link;
 use common::Relay;
 use std::{
     path::PathBuf,
@@ -44,7 +46,9 @@ fn local(engine: &PlaybackHandle) -> Local {
 }
 struct Harness {
     _relay: Relay,
+    link: Option<link::Link>,
     client: Client,
+    guest_client: Client,
     room: Created,
     guest: Secret,
     host: PlaybackHandle,
@@ -92,16 +96,22 @@ impl Harness {
             self.published = Some(now);
         }
         let request = Instant::now();
-        let view = self.client.poll(&self.room.room, &self.guest).unwrap();
-        let actions = self
-            .controller
-            .decide(
-                &view,
-                request.elapsed().as_millis() as u64,
+        let actions = match self.guest_client.poll(&self.room.room, &self.guest) {
+            Ok(view) => self
+                .controller
+                .decide(
+                    &view,
+                    request.elapsed().as_millis() as u64,
+                    &local(&self.follower),
+                    self.started.elapsed().as_millis() as u64,
+                )
+                .unwrap(),
+            Err(tide_jam_lab::client::Error::Transport) => self.controller.network_failure(
                 &local(&self.follower),
                 self.started.elapsed().as_millis() as u64,
-            )
-            .unwrap();
+            ),
+            Err(error) => panic!("Unexpected native fixture transport failure: {error}"),
+        };
         self.apply(actions);
         std::thread::sleep(Duration::from_millis(100));
     }
@@ -168,22 +178,13 @@ impl Drop for Harness {
         let _ = self.client.close(&self.room.room, &self.room.host);
     }
 }
-#[test]
-#[ignore = "Requires explicit JAM_NATIVE_FIXTURE and mpv; runs two muted native players"]
-fn two_native_players_follow_pause_seek_repeat_skip_stale_host_and_close() {
-    println!(
-        "Native Jam fixture output: {}",
-        if cfg!(feature = "headless-native") {
-            "explicit null-audio test sink"
-        } else {
-            "normal system audio, muted"
-        }
-    );
+fn harness(delayed: bool) -> Harness {
     let fixture = PathBuf::from(
         std::env::var_os("JAM_NATIVE_FIXTURE").expect("Set a silent local WAV fixture"),
     );
     assert!(fixture.is_file());
     let relay = Relay::start();
+    let link = delayed.then(|| link::Link::start(&relay.endpoint));
     let client = Client::new(&relay.endpoint).unwrap();
     let room = client.create().unwrap();
     let guest = client
@@ -203,7 +204,10 @@ fn two_native_players_follow_pause_seek_repeat_skip_stale_host_and_close() {
         generation: 1,
     })
     .unwrap();
-    let mut h = Harness {
+    Harness {
+        guest_client: Client::new(link.as_ref().map_or(&relay.endpoint, |link| &link.endpoint))
+            .unwrap(),
+        link,
         _relay: relay,
         client,
         room,
@@ -217,7 +221,20 @@ fn two_native_players_follow_pause_seek_repeat_skip_stale_host_and_close() {
         revision: 0,
         play_id: 1,
         seeks: 0,
-    };
+    }
+}
+#[test]
+#[ignore = "Requires explicit JAM_NATIVE_FIXTURE and mpv; runs two muted native players"]
+fn two_native_players_follow_pause_seek_repeat_skip_stale_host_and_close() {
+    println!(
+        "Native Jam fixture output: {}",
+        if cfg!(feature = "headless-native") {
+            "explicit null-audio test sink"
+        } else {
+            "normal system audio, muted"
+        }
+    );
+    let mut h = harness(false);
     h.phase("late join", true, |h| {
         local(&h.host).ready
             && local(&h.follower).ready
@@ -298,4 +315,70 @@ fn two_native_players_follow_pause_seek_repeat_skip_stale_host_and_close() {
         "PASS native Jam room close; {} total bounded seeks; both players muted",
         h.seeks
     );
+}
+
+#[test]
+#[ignore = "Requires explicit JAM_NATIVE_FIXTURE and mpv; runs two muted native players"]
+fn two_native_players_recover_from_real_dropped_requests_and_delayed_polling() {
+    use std::sync::atomic::Ordering;
+    let mut h = harness(true);
+    h.link
+        .as_ref()
+        .unwrap()
+        .delay_ms
+        .store(250, Ordering::Release);
+    h.phase("delayed guest late join", true, |h| {
+        local(&h.host).ready
+            && local(&h.follower).ready
+            && !local(&h.follower).paused
+            && h.drift() < 600
+    });
+    h.link
+        .as_ref()
+        .unwrap()
+        .outage
+        .store(true, Ordering::Release);
+    h.phase("real dropped poll requests pause guest", true, |h| {
+        local(&h.follower).paused && !local(&h.host).paused
+    });
+    assert!(h.link.as_ref().unwrap().dropped.load(Ordering::Relaxed) > 0);
+    h.link
+        .as_ref()
+        .unwrap()
+        .outage
+        .store(false, Ordering::Release);
+    h.phase("same membership recovers after outage", true, |h| {
+        !local(&h.follower).paused && h.drift() < 600
+    });
+    for play_id in 2..=7 {
+        // Same video again, alternating the link delay each time. No account,
+        // browser session or remote audio is used in this fixture.
+        h.link
+            .as_ref()
+            .unwrap()
+            .delay_ms
+            .store(if play_id % 2 == 0 { 75 } else { 250 }, Ordering::Release);
+        h.play_id = play_id;
+        h.host
+            .send(PlaybackCommand::Load {
+                source: h.fixture.to_string_lossy().into_owned(),
+                generation: play_id,
+            })
+            .unwrap();
+        h.phase("repeated native handoff over delayed link", true, |h| {
+            local(&h.host).generation == play_id
+                && local(&h.follower).generation == play_id
+                && local(&h.host).ready
+                && local(&h.follower).ready
+                && !local(&h.follower).paused
+                && h.drift() < 600
+        });
+    }
+    assert!(
+        h.seeks <= 20,
+        "The delayed link must not cause a continuous seek loop"
+    );
+    assert_eq!(h.host.snapshot().volume, 0.0);
+    assert_eq!(h.follower.snapshot().volume, 0.0);
+    println!("PASS native delayed-link recovery; seven plays, {} dropped requests, {} seeks; both players muted", h.link.as_ref().unwrap().dropped.load(Ordering::Relaxed), h.seeks);
 }

@@ -61,6 +61,9 @@ five failed poll attempts. Explicit leave permanently disables that follower.
 Seeking is limited to ready matching generations and a three-second correction
 cooldown. It is approximate synchronization, not sample-accurate audio.
 
+See the [bounded security review](SECURITY_REVIEW.md) for the credential boundary
+and remaining invite-admission, filesystem-cancellation and deployment risks.
+
 Invite files give access to room state and guest membership. Keep them private,
 share only with intended participants, and never paste them in issues/chat logs.
 The required `*.jam-invite.json` suffix is ignored by Git. Use a private user
@@ -126,7 +129,10 @@ and its TLS proxy remains a separate operator task.
 Guests use their existing **local** playback runtime/account. No account data or
 audio enters the coordination worker. Local transport, queue edits, autoplay,
 media keys and account controls are guarded while following; volume stays local.
-Leave remains available in mini mode. The original queue is kept in memory and
+Leave remains available in mini mode. If one song is unavailable locally, the
+guest pauses and waits without repeatedly retrying it; the host's next play can
+load normally without rejoining. Relay/protocol failures still use their bounded
+failure handling. The original queue is kept in memory and
 restored paused on Leave; the guest queue is never saved to settings. Changing
 the saved local account ends the Jam before applying the account change. A failed
 initial connection restores the local queue paused. Track failures, stale hosts
@@ -217,6 +223,17 @@ normal constructors still use the system output. Nothing in a room, invite,
 environment setting or ordinary Tide UI can select the null sink. This exercises
 real mpv decoding, IPC and timing without claiming physical audio-device coverage.
 The normal-device tests above remain separate evidence, not replaced by CI.
+
+On 2026-10-16 an additional native test passed with a test-only loopback fault
+proxy, two muted system-audio mpv players and a silent local WAV. It injects
+75/250 ms delay in each direction, drops actual guest HTTP requests during an
+outage, verifies pause/recovery with the same membership, and exercises seven
+plays. Both native tests passed together in 38.59 seconds. A separately sampled
+22.45-second run passed with 32 dropped requests and eight correction seeks;
+synchronized checkpoints sampled 10–126 ms drift. These samples are not a
+maximum drift guarantee. The sampler confirmed successful exit and all observed
+helpers ended. This uses local decoding and simulated network faults, not live
+YouTube, two physical computers or a long-duration listening session.
 
 ## Before enabling Jams in Tide
 

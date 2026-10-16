@@ -966,3 +966,31 @@ The offline native ownership probe passes without showing a window or loading
 audio. Synthetic host/guest/minimum/mini renders were regenerated; the compact
 light guest view was inspected. This integration retains the current queue-text,
 indicator and setup fixes; it does not close the real-network validation gates.
+
+### Experimental Jam recovery and network faults (2026-10-16)
+
+A native guest's per-track playback error previously marked the entire Jam
+terminal, preventing the host's next song from recovering. A production guest
+update reducer now pauses and waits on that song without repeated loads, while a
+new host play can load and synchronize normally. Its regression failed under the
+previous terminal-error behavior and passes after the change. Stale, slow,
+invalid and explicitly disconnected state cannot revive playback. The updated
+experimental workspace passes 123 tests with four opt-in probes ignored; strict
+workspace and lab Clippy pass.
+
+Two real muted native players passed the original synchronization probe and a
+new delayed/dropped-HTTP probe together in 38.59 seconds. A separate sampled run
+of the new probe passed seven plays, 32 dropped guest requests, outage pause,
+same-membership recovery and eight bounded correction seeks in 22.45 seconds.
+Its debug fixture process tree (two players plus local relay/proxy, without the
+Tide UI or extraction) had 15 samples after discarding five startup samples:
+working-set median/p95 128.01/129.59 MiB, private-bytes median/p95 96.43/97.92 MiB.
+The process exited zero, all observed helpers ended and sampling races were zero.
+These are short synthetic-lab measurements, not release-app overhead or gaming
+performance evidence.
+Both native probes also pass serially with the explicit null-audio CI feature
+in 38.56 seconds; this is separate from the normal muted system-audio evidence.
+See the [Jam lab](../experiments/jam/README.md) for scope and the
+[security review](../experiments/jam/SECURITY_REVIEW.md) for remaining risks.
+No real account or browser session was used; no relay was deployed. The normal
+installer still excludes Jams, and the draft remains unmerged for user review.

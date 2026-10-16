@@ -146,7 +146,7 @@ fn pause_guest(s: &mut State, u: &AppWindow) {
     {
         stop_confirmed(s);
         s.jam.terminal = true;
-        u.set_jam_status("Playback stopped safely · leave Jam to restore the local player".into());
+        u.set_jam_status("Playback stopped safely Â· leave Jam to restore the local player".into());
     }
 }
 fn begin_guest(s: &mut State, u: &AppWindow) -> Result<(), &'static str> {
@@ -219,7 +219,7 @@ pub fn account_changing(s: &mut State, u: &AppWindow) {
 }
 pub fn install(state: &Rc<RefCell<State>>, ui: &AppWindow, picker: &Rc<PickerState>) {
     ui.set_jam_available(true);
-    ui.set_jam_status("Private relay experiment · not a public Tide service".into());
+    ui.set_jam_status("Private relay experiment Â· not a public Tide service".into());
     {
         let state = state.clone();
         let weak = ui.as_weak();
@@ -228,7 +228,7 @@ pub fn install(state: &Rc<RefCell<State>>, ui: &AppWindow, picker: &Rc<PickerSta
                 leave(
                     &mut state.borrow_mut(),
                     &u,
-                    "Left Jam · your queue is restored and paused",
+                    "Left Jam Â· your queue is restored and paused",
                 );
             }
         });
@@ -348,9 +348,9 @@ pub fn install(state: &Rc<RefCell<State>>, ui: &AppWindow, picker: &Rc<PickerSta
                         u.set_jam_active(true);
                         u.set_jam_status(
                             if host {
-                                "Creating room and saving private invite…"
+                                "Creating room and saving private inviteâ€¦"
                             } else {
-                                "Joining · original queue preserved"
+                                "Joining Â· original queue preserved"
                             }
                             .into(),
                         );
@@ -369,6 +369,46 @@ pub fn install(state: &Rc<RefCell<State>>, ui: &AppWindow, picker: &Rc<PickerSta
         }
     }
 }
+struct GuestUpdate {
+    actions: Vec<Action>,
+    adopt_queue: bool,
+    status: &'static str,
+}
+fn guest_update(
+    follower: &mut Follower,
+    view: &View,
+    rtt_ms: u64,
+    local: &Local,
+    now: u64,
+    failed: bool,
+) -> Result<GuestUpdate, &'static str> {
+    let adopt_queue = follower.accepts_timeline(view, rtt_ms);
+    let mut actions = follower.decide(view, rtt_ms, local, now)?;
+    let loading_new_track = actions
+        .iter()
+        .any(|action| matches!(action, Action::Load { .. }));
+    // A regional/unavailable song is a per-track failure. Keep the membership
+    // and host's authority, without repeatedly extracting the failed song.
+    // A newer host play may Load even while the old engine error is visible.
+    let waiting_for_track = failed && !loading_new_track;
+    if waiting_for_track && !local.paused && !actions.contains(&Action::Pause(true)) {
+        actions.push(Action::Pause(true));
+    }
+    let status = match view.timeline.as_ref().filter(|_| adopt_queue) {
+        Some(_) if waiting_for_track => {
+            "This song is unavailable locally. Waiting for the host's next songâ€¦"
+        }
+        Some(timeline) if timeline.loading => "Host is buffering Â· waiting together",
+        Some(_) if !local.ready || loading_new_track => "Loading host's song locallyâ€¦",
+        Some(_) => "Following host Â· volume stays local",
+        None => "Waiting for a fresh host state Â· playback stays paused if unavailable",
+    };
+    Ok(GuestUpdate {
+        actions,
+        adopt_queue,
+        status,
+    })
+}
 pub fn tick(s: &mut State, u: &AppWindow) {
     if s.jam.retiring.as_ref().is_some_and(Session::finished) {
         s.jam.retiring.take();
@@ -377,7 +417,7 @@ pub fn tick(s: &mut State, u: &AppWindow) {
     match event {
         Some(Event::Hosting { guests }) => {
             s.jam.connected = true;
-            u.set_jam_status(format!("Hosting · {guests} guest(s) · private invite saved").into())
+            u.set_jam_status(format!("Hosting Â· {guests} guest(s) Â· private invite saved").into())
         }
         Some(Event::View {
             view,
@@ -409,7 +449,7 @@ pub fn tick(s: &mut State, u: &AppWindow) {
             Err(_) => leave(
                 s,
                 u,
-                "Jam ended · the host queue must contain YouTube tracks",
+                "Jam ended Â· the host queue must contain YouTube tracks",
             ),
         }
         return;
@@ -428,14 +468,6 @@ pub fn tick(s: &mut State, u: &AppWindow) {
             && p.duration.is_finite()
             && p.duration > 0.0,
     };
-    if p.error.is_some() && s.settings.queue.current.is_some() && p.generation == s.generation {
-        pause_guest(s, u);
-        s.jam.terminal = true;
-        u.set_jam_status(
-            "This track could not play locally. Leave Jam to retry or reconnect.".into(),
-        );
-        return;
-    }
     let Some((mut view, rtt, received)) = s.jam.view.clone() else {
         return;
     };
@@ -443,7 +475,7 @@ pub fn tick(s: &mut State, u: &AppWindow) {
         if !p.paused {
             pause_guest(s, u);
         }
-        u.set_jam_status("Jam connection interrupted · paused while reconnecting".into());
+        u.set_jam_status("Jam connection interrupted Â· paused while reconnecting".into());
         return;
     }
     view.age_ms = view
@@ -453,28 +485,23 @@ pub fn tick(s: &mut State, u: &AppWindow) {
         .jam
         .began
         .map_or(0, |began| began.elapsed().as_millis() as u64);
-    let adopt_queue = s
-        .jam
-        .follower
-        .as_ref()
-        .unwrap()
-        .accepts_timeline(&view, rtt);
-    let actions = match s
-        .jam
-        .follower
-        .as_mut()
-        .unwrap()
-        .decide(&view, rtt, &local, now)
-    {
-        Ok(actions) => actions,
+    let update = match guest_update(
+        s.jam.follower.as_mut().unwrap(),
+        &view,
+        rtt,
+        &local,
+        now,
+        p.error.is_some() && p.generation == s.generation,
+    ) {
+        Ok(update) => update,
         Err(_) => {
             s.jam.terminal = true;
             pause_guest(s, u);
-            u.set_jam_status("Invalid Jam state · playback paused".into());
+            u.set_jam_status("Invalid Jam state Â· playback paused".into());
             return;
         }
     };
-    if let Some(timeline) = view.timeline.as_ref().filter(|_| adopt_queue) {
+    if let Some(timeline) = view.timeline.as_ref().filter(|_| update.adopt_queue) {
         let changed = timeline.queue.len() != s.settings.queue.tracks.len()
             || s.settings.queue.current != Some(timeline.index)
             || timeline
@@ -502,7 +529,7 @@ pub fn tick(s: &mut State, u: &AppWindow) {
                         .find(|track| track.source == source)
                         .cloned()
                         .unwrap_or(Track {
-                            title: format!("YouTube track · {}", id.as_str()),
+                            title: format!("YouTube track Â· {}", id.as_str()),
                             artist: "Jam".into(),
                             album: String::new(),
                             source,
@@ -518,24 +545,9 @@ pub fn tick(s: &mut State, u: &AppWindow) {
             };
             refresh(u, s);
         }
-        u.set_jam_status(
-            if view.age_ms >= STALE_MS {
-                "Host is unavailable · playback paused"
-            } else if timeline.loading {
-                "Host is buffering · waiting together"
-            } else if !local.ready {
-                "Loading host's song locally…"
-            } else {
-                "Following host · volume stays local"
-            }
-            .into(),
-        );
-    } else {
-        u.set_jam_status(
-            "Waiting for a fresh host state · playback stays paused if unavailable".into(),
-        );
     }
-    for action in actions {
+    u.set_jam_status(update.status.into());
+    for action in update.actions {
         let command = match action {
             Action::Load { video, generation } => {
                 s.generation = generation;
@@ -551,7 +563,7 @@ pub fn tick(s: &mut State, u: &AppWindow) {
         if s.engine.as_ref().unwrap().send(command).is_err() {
             s.jam.terminal = true;
             pause_guest(s, u);
-            u.set_jam_status("Jam playback command failed · leave to retry".into());
+            u.set_jam_status("Jam playback command failed Â· leave to retry".into());
             break;
         }
     }
@@ -565,7 +577,7 @@ pub fn tick(s: &mut State, u: &AppWindow) {
             .current
             .and_then(|index| s.settings.queue.tracks.get_mut(index))
         {
-            if track.title.starts_with("YouTube track · ") {
+            if track.title.starts_with("YouTube track Â· ") {
                 track.title = title;
                 refresh(u, s);
             }
@@ -663,4 +675,99 @@ pub fn ownership_smoke(state: &Rc<RefCell<State>>, u: &AppWindow, pickers: &Rc<P
         assert!(u.get_paused() && u.get_position() == 0.0 && !u.get_jam_guest());
     }
     println!("PASS offline Jam ownership: native callbacks/media keys blocked, volume local, original queue restored paused; window never shown");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn view(play_id: u64) -> View {
+        View {
+            timeline: Some(Timeline {
+                revision: play_id,
+                play_id,
+                queue: vec![VideoId::parse("fixture0001").unwrap()],
+                index: 0,
+                position_ms: 10_000,
+                paused: false,
+                loading: false,
+            }),
+            age_ms: 0,
+            members: 1,
+        }
+    }
+
+    #[test]
+    fn unavailable_song_waits_without_retrying_and_next_host_play_recovers() {
+        let mut follower = Follower::default();
+        let first =
+            guest_update(&mut follower, &view(1), 100, &Local::default(), 0, false).unwrap();
+        assert!(matches!(
+            first.actions[0],
+            Action::Load { generation: 1, .. }
+        ));
+        let failed = Local {
+            generation: 1,
+            paused: false,
+            ..Local::default()
+        };
+        let waiting = guest_update(&mut follower, &view(1), 100, &failed, 1000, true)
+            .expect("an unavailable song must not end the Jam");
+        assert_eq!(waiting.actions, vec![Action::Pause(true)]);
+        assert!(waiting.status.contains("Waiting for the host"));
+        let paused = Local {
+            paused: true,
+            ..failed
+        };
+        for now in [1100, 2000, 4000] {
+            let waiting = guest_update(&mut follower, &view(1), 100, &paused, now, true).unwrap();
+            assert!(
+                waiting.actions.is_empty(),
+                "failed songs must not reload in a loop"
+            );
+        }
+        let next = guest_update(&mut follower, &view(2), 100, &paused, 5000, true).unwrap();
+        assert!(matches!(
+            next.actions[0],
+            Action::Load { generation: 2, .. }
+        ));
+        assert_eq!(next.status, "Loading host's song locallyâ€¦");
+        let ready = Local {
+            generation: 2,
+            duration_ms: 60_000,
+            ready: true,
+            paused: true,
+            ..Local::default()
+        };
+        let resumed = guest_update(&mut follower, &view(2), 100, &ready, 6000, false).unwrap();
+        assert_eq!(
+            resumed.actions,
+            vec![Action::Seek(10_050), Action::Pause(false)]
+        );
+    }
+
+    #[test]
+    fn failed_song_cannot_recover_from_stale_invalid_or_disconnected_state() {
+        let mut follower = Follower::default();
+        guest_update(&mut follower, &view(1), 0, &Local::default(), 0, false).unwrap();
+        let failed = Local {
+            generation: 1,
+            paused: true,
+            ..Local::default()
+        };
+        let mut stale = view(2);
+        stale.age_ms = STALE_MS;
+        for (view, rtt) in [(stale, 0), (view(2), 2001)] {
+            let update = guest_update(&mut follower, &view, rtt, &failed, 4000, true).unwrap();
+            assert!(!update.adopt_queue);
+            assert!(update.actions.is_empty());
+        }
+        let mut invalid = view(2);
+        invalid.timeline.as_mut().unwrap().queue.clear();
+        assert!(guest_update(&mut follower, &invalid, 0, &failed, 4000, true).is_err());
+        follower.disconnect();
+        let update = guest_update(&mut follower, &view(2), 0, &failed, 5000, true).unwrap();
+        assert!(!update.adopt_queue);
+        assert!(update.actions.is_empty());
+    }
 }

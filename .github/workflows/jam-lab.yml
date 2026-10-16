@@ -118,7 +118,7 @@ jobs:
         run: |
           $env:TIDE_RUNTIME_DIR = (Join-Path $PWD '.local/jam-native-runtime')
           $env:JAM_NATIVE_FIXTURE = (Join-Path $PWD '.local/jam-silence.wav')
-          cargo test --manifest-path experiments/jam/Cargo.toml --locked --features headless-native --test native -- --ignored --nocapture
+          cargo test --manifest-path experiments/jam/Cargo.toml --locked --features headless-native --test native -- --ignored --nocapture --test-threads=1
           if ($LASTEXITCODE -ne 0) { throw 'Native Jam validation failed' }
       - name: Diagnose fixture output on failed native runner
         if: failure()
