@@ -2,6 +2,8 @@
 /.tools/
 /.local/
 /dist/
+/experiments/jam/target/
+*.jam-invite.json
 .env
 .env.*
 !.env.example
