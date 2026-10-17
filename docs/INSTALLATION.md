@@ -15,6 +15,11 @@ system Python or manual PowerShell commands. Launch **Tide** from the Start menu
 The installed release contains its own mpv, yt-dlp, Deno and private account-helper
 Python runtime. The downloaded installer can be removed after setup succeeds.
 
+Installer packages contain only the explicit application payload. Rust compilers,
+`target/` build outputs and local development/test caches are excluded; package
+validation rejects them. Installed Tide does not compile Rust or create a Cargo
+build cache while listening.
+
 The single executable embeds the preview ZIP and its SHA-256 digest. It validates
 the embedded digest, exact file allowlist and individual checksums before staging
 any files in a private temporary folder. The temporary payload is removed after
