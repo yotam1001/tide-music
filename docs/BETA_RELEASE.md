@@ -1,9 +1,13 @@
-# Publish Windows previews
+# Publish Windows releases
 
 This is the maintainer checklist. For normal use, start with [Install Tide](INSTALLATION.md).
 
 ## What is available now?
 
+- [v0.1.0](https://github.com/yotam1001/tide-music/releases/tag/v0.1.0) is the
+  stable-channel package requested by the maintainer to test public in-app
+  updating from previews. Publish only its matching checked build as Latest.
+  This decision does not mark the outstanding human checks below as passed.
 - [v0.1.0-preview.2](https://github.com/yotam1001/tide-music/releases/tag/v0.1.0-preview.2)
   is the Windows preview for the Home recommendation fix. Publication requires
   its matching automated checks and package verification to pass.
@@ -15,8 +19,8 @@ This is the maintainer checklist. For normal use, start with [Install Tide](INST
 - `v0.1.0-beta.1` is an unpublished, older draft with binaries from `f026915`.
   It does not contain the latest UI or in-app updater. Do not publish it as the
   current build or silently replace its reviewed assets.
-- Current source identifies itself as `0.1.0-preview.2`. Never replace the
-  published preview 1 assets in place. The verified updater
+- Current source identifies itself as `0.1.0`. Never replace the
+  published preview assets in place. The verified updater
   implementation is in merged PR #13 (`ce0d142`). Its source `e02e99e` passed
   [push CI](https://github.com/yotam1001/tide-music/actions/runs/39041897082) and
   [PR CI](https://github.com/yotam1001/tide-music/actions/runs/39041899612), including
@@ -31,8 +35,8 @@ procedure, not a claim that every manual test has already passed.
 - [ ] Choose the reviewed `main` commit and record it. Keep experimental Jams
   unmerged until the user has tested it.
 - [ ] Make the release tag match `v` plus the Cargo workspace version. For the
-  current candidate, use a new `v0.1.0-preview.2` prerelease rather than modifying
-  preview 1 or the old beta.
+  current candidate, use a new stable `v0.1.0` release rather than modifying
+  either published preview or the old beta.
 - [ ] Require the Windows source checks, preview package and real install/update/
   removal jobs to pass for the candidate. Do not build large Rust caches locally.
 - [ ] Get the installer and companion from that same successful run. Verify the
@@ -80,7 +84,8 @@ checks as passed. Stable release needs the broader reliability evidence there.
   connection and Troubleshooting. Make sure packaged copies match. If runtime/
   installer code changes, repeat the relevant acceptance checks.
 - [ ] Validate the final docs, privacy scan and matching packages. Publish as a
-  **prerelease**, not stable. Do not modify historical assets in place.
+  stable **0.1.0** as Latest for the authorized updater test. Future preview
+  candidates should be prereleases. Do not modify historical assets in place.
 - [ ] Check the release and download links without maintainer access. Confirm the
   EXE and companion filenames, checksums and Chrome guide are clear.
 - [ ] Review [launch copy and channel notes](LAUNCH_PLAN.md). Approve each external

@@ -1,8 +1,7 @@
 # Start using Tide
 
-Tide is a native Windows music player for listening while gaming. This is an
-unsigned preview, not a verified stable release. You need Windows x64 and internet
-access. No Rust, Python installation or API key is needed with the installer.
+Tide is a native Windows music player for listening while gaming. The installer
+is unsigned. You need Windows x64 and internet access. No Rust, Python installation or API key is needed with the installer.
 
 ## 1. Install and open
 
@@ -15,7 +14,7 @@ Open **TideSetup.exe**, choose **Install Tide**, and wait for setup to finish.
 Choose **Open Tide**, or find **Tide** in the Windows Start menu.
 
 Reading this inside the advanced ZIP and cannot find the EXE? Get the installer
-from the [Windows preview release](https://github.com/yotam1001/tide-music/releases/tag/v0.1.0-preview.2).
+from the [Windows release](https://github.com/yotam1001/tide-music/releases/tag/v0.1.0).
 Advanced users can instead run the ZIP's **Install Tide.cmd**.
 
 ## 2. Connect YouTube Music
@@ -43,7 +42,8 @@ To try Tide without an account, skip this step and play a local audio file.
 
 **Settings → Check for updates** finds published stable releases. **Install and
 restart** verifies the download and keeps your account and preferences. Preview
-releases need a manual installer update.
+releases can update to stable 0.1.0 here too. Future preview-only updates need
+their installer.
 
 [Installation and removal](https://github.com/yotam1001/tide-music/blob/main/docs/INSTALLATION.md) ·
 [Troubleshooting](https://github.com/yotam1001/tide-music/blob/main/docs/TROUBLESHOOTING.md) ·

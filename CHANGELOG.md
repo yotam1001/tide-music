@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.1.0 — 2026-10-17
+
+- Publish the preview 2 feature set on the stable update channel at the
+  maintainer's request, allowing installed previews to test Install and restart.
+- Match the Cargo, app, installer and GitHub release version as 0.1.0.
+- Keep the existing updater validation, audio engine and account handling.
+  Outstanding device and long-term checks remain in the release-readiness notes.
+
 ## 0.1.0-preview.2 — 2026-10-17
 
 - Pin My Supermix beside Liked Songs in Library, resolving the connected

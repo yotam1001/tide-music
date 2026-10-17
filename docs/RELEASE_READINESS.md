@@ -1,8 +1,10 @@
 # Release readiness
 
-Tide is not yet verified ready for a stable release. These gates retain the full
-playback, account, UI and open-source release requirements. A short passing test
-cannot establish long-term service reliability.
+The maintainer requested stable-channel **0.1.0** on 2026-10-17 so installed
+previews can test the public Install and restart flow. It contains the preview 2
+feature set with matching stable app/installer metadata. The channel decision
+does not mark the outstanding playback, account, device or onboarding checks
+below as passed. A short test cannot establish long-term service reliability.
 
 ## Latest verified runtime (2026-10-17)
 
@@ -19,8 +21,8 @@ Exact-head menu, Account, Settings and updater renders were reviewed in both
 themes. The downloaded installer/ZIP passed checksum, allowlist and privacy
 validation, and its embedded ZIP matched the separately validated package.
 No personal browser, saved account or user installation was used by these tests.
-Live updating between published releases remains untested because no stable
-release has been published.
+Live updating through the public stable release is the next maintainer test;
+the automated graphical update/restart evidence above uses controlled fixtures.
 
 ## Public preview decision (2026-10-17)
 

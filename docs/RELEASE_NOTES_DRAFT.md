@@ -1,4 +1,4 @@
-# Tide Music — Windows preview 2
+# Tide Music 0.1.0
 
 Maintainer draft: publish only with a reviewed matching candidate and completed
 [preview checks](BETA_RELEASE.md). Remove this paragraph from the published notes.
@@ -20,24 +20,20 @@ mini player when you want it out of the way.
 You need Windows x64 and internet access. No Rust, system Python or API key is
 required. GitHub's Source code archives are for contributors, not normal setup.
 
-## Changed since preview 1
+## Update from an installed preview
 
-- My Supermix is always pinned at the top of Library beside Liked Songs. It
-  fetches your connected account's current mix when opened, even if it is not
-  among Home's visible cards. Temporary mix unavailability does not sign you out.
-- Home uses the leading three YouTube Music rows again. First load preserves
-  their original order, without forced shelf or song/playlist balancing.
-- Refresh varies a limited selection near the leading recommendations,
-  rather than promoting every unseen item ahead of familiar suggestions.
-- Songs, titles, artwork and shelf context still come from YouTube Music.
-  Small recommendation pools can repeat. No new account connection is needed
-  solely for this update. The audio engine, login and companion protocol are unchanged.
+In preview 1 or preview 2, open **Settings → Check for updates**, then choose
+**Install and restart**. Tide verifies the installer download, stops playback,
+updates the installed app and reopens it. Your account and preferences are kept.
+Portable/development copies should use **TideSetup.exe** manually instead.
 
-Close Tide and run this installer to update preview 1; your saved account and
-preferences are retained. The existing preview 1 Chrome extension remains
-compatible; a new connection or extension reload is not required for this fix.
+This is the preview 2 feature set with matching stable app, installer and release
+versions, published at the maintainer's request to test public in-app updating.
+It includes the Home relevance fix and the pinned My Supermix Library shortcut.
+No updater policy, audio engine or account behavior changes in this promotion.
+The existing Chrome companion remains compatible and does not need replacing.
 
-## In this preview
+## Included
 
 - Native audio playback, search, playlists, Liked Songs and recommendations.
 - Queue dragging, playlist shuffle, song radio and recommendation Autoplay.
@@ -47,7 +43,7 @@ compatible; a new connection or extension reload is not required for this fix.
 
 ## Known limits
 
-- This is an unsigned preview with unofficial YouTube integration.
+- This is an unsigned release with unofficial YouTube integration.
 - Chrome connection uses a manually loaded companion. There is no Chrome Web
   Store installation or official Google OAuth login flow.
 - Other browser connection paths are not recommended yet. YouTube can expire a
@@ -55,8 +51,11 @@ compatible; a new connection or extension reload is not required for this fix.
 - Audio quality and memory use vary. There is no universal RAM cap, gapless
   playback promise or guarantee of every Premium format.
 - The updater skips prereleases. Install newer previews with their installer;
-  update unpacked extension files separately.
+  update unpacked extension files separately when they change.
 - Experimental Jams are not part of this release.
+- Physical media keys in focused games, fresh-user browser onboarding and
+  long-term session continuity remain separate checks. The stable channel
+  label does not claim that these outstanding checks have passed.
 
 [Troubleshooting](https://github.com/yotam1001/tide-music/blob/main/docs/TROUBLESHOOTING.md) ·
 [Privacy](https://github.com/yotam1001/tide-music/blob/main/PRIVACY.md) ·

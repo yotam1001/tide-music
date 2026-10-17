@@ -11,10 +11,10 @@ and Edge and Firefox are not recommended paths yet.
 
 ## 1. Get the two matching downloads
 
-From [v0.1.0-preview.2](https://github.com/yotam1001/tide-music/releases/tag/v0.1.0-preview.2), get:
+From [v0.1.0](https://github.com/yotam1001/tide-music/releases/tag/v0.1.0), get:
 
-- [**TideSetup.exe**](https://github.com/yotam1001/tide-music/releases/download/v0.1.0-preview.2/TideSetup.exe) — installs the Windows player and its local connection helper.
-- [**tide-browser-chromium.zip**](https://github.com/yotam1001/tide-music/releases/download/v0.1.0-preview.2/tide-browser-chromium.zip) — the Chrome companion.
+- [**TideSetup.exe**](https://github.com/yotam1001/tide-music/releases/download/v0.1.0/TideSetup.exe) — installs the Windows player and its local connection helper.
+- [**tide-browser-chromium.zip**](https://github.com/yotam1001/tide-music/releases/download/v0.1.0/tide-browser-chromium.zip) — the Chrome companion.
 
 Contributors testing later source changes can use matching successful
 [Windows build artifacts](https://github.com/yotam1001/tide-music/actions/workflows/ci.yml).
