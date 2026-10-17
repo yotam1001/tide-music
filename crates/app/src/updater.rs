@@ -653,13 +653,17 @@ mod tests {
         let source = root.path().join("fixture.cs");
         let exe = root.path().join("TideSetup.exe");
         let receipt = root.path().join("TideSetup.exe.receipt");
-        // Publish only a complete receipt so the existence check cannot observe
+        // Publish only a complete receipt so the reader cannot observe
         // File.WriteAllText's newly created, but still empty, output file.
-        fs::write(&source, r#"class Fixture { static void Main(string[] args) {
+        fs::write(
+            &source,
+            r#"class Fixture { static void Main(string[] args) {
             var receipt = System.Reflection.Assembly.GetExecutingAssembly().Location + ".receipt";
             System.IO.File.WriteAllText(receipt + ".tmp", System.String.Join("|", args));
             System.IO.File.Move(receipt + ".tmp", receipt);
-        } }"#).unwrap();
+        } }"#,
+        )
+        .unwrap();
         let compiler = PathBuf::from(std::env::var_os("SystemRoot").unwrap())
             .join("Microsoft.NET/Framework64/v4.0.30319/csc.exe");
         let result = std::process::Command::new(compiler)
