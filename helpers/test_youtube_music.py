@@ -194,19 +194,19 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(len(result["cards"]), 3)
         self.assertEqual([c["kind"] for c in result["cards"][:3]], ["song", "album", "playlist"])
 
-    def test_home_requests_more_shelves_and_keeps_later_personalized_candidates(self):
+    def test_home_preserves_the_leading_rows_and_does_not_fetch_distant_shelves(self):
         shelves = [None, {"contents": "Description"}, {"contents": None}]
         shelves += [{"title": "Personal shelf " + str(index), "contents": [
             {"videoId": f"{index:011d}", "title": "Personal song " + str(index)}
         ]} for index in range(MAX_HOME_SHELVES + 1)]
         client = SimpleNamespace(get_home=MagicMock(return_value=shelves))
         cards = run(client, {"action": "home"})["cards"]
-        client.get_home.assert_called_once_with(limit=8)
+        client.get_home.assert_called_once_with(limit=3)
         self.assertEqual(len(cards), MAX_HOME_SHELVES)
-        self.assertEqual(cards[-1]["id"], "00000000007")
-        self.assertEqual(cards[-1]["title"], "Personal song 7")
-        self.assertEqual(cards[-1]["shelf"], "Personal shelf 7")
-        self.assertNotIn("00000000008", [card["id"] for card in cards])
+        self.assertEqual(cards[-1]["id"], "00000000002")
+        self.assertEqual(cards[-1]["title"], "Personal song 2")
+        self.assertEqual(cards[-1]["shelf"], "Personal shelf 2")
+        self.assertNotIn("00000000003", [card["id"] for card in cards])
 
     def test_home_caps_distinct_cards_and_items_per_shelf_even_if_api_overshoots(self):
         shelves = [{"title": str(shelf), "contents": [

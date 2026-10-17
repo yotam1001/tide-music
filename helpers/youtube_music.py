@@ -16,9 +16,9 @@ from urllib.parse import urlsplit
 MAX_INPUT = 65536
 MAX_TRACKS = 2000
 MAX_RADIO_TRACKS = 25
-MAX_HOME_SHELVES = 8
+MAX_HOME_SHELVES = 3
 MAX_HOME_ITEMS_PER_SHELF = 40
-MAX_HOME_CARDS = 240
+MAX_HOME_CARDS = MAX_HOME_SHELVES * MAX_HOME_ITEMS_PER_SHELF
 ARTWORK_HOSTS = ("ytimg.com", "ggpht.com", "googleusercontent.com")
 LOGIN_SECONDS = 8 * 60
 LOGIN_RETRY_SECONDS = 15
@@ -588,8 +588,9 @@ def run(client, request):
         items = data.get("tracks", [])
         return {"type": "tracks", "tracks": tracks(items), "truncated": len(items) > MAX_TRACKS}
     if action == "home":
-        # Fetch a wider personalized candidate pool for the app's refresh
-        # selection. The API may overshoot its row limit; cap our output too.
+        # Keep the leading Home rows in provider order. Fetching distant shelves
+        # for novelty diluted the earlier, more relevant selection.
+        # The API may overshoot its row limit; cap our output too.
         shelves = client.get_home(limit=MAX_HOME_SHELVES)
         cards = []
         seen = set()

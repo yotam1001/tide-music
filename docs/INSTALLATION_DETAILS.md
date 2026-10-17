@@ -86,7 +86,7 @@ once after startup. Turn this off with **Settings → Startup checks**; **Check 
 updates** remains available. Drafts, prereleases and CI artifacts are excluded.
 The current app version comes from Cargo; maintainers must increase it for each
 new published release and make the release tag match `v<version>`.
-This development build identifies itself as `0.1.0-preview.1`, so it can also
+This development build identifies itself as `0.1.0-preview.2`, so it can also
 recognize a future stable `0.1.0` as newer than the preview.
 
 When an update is available, Settings gains an indicator. Choose **Install and

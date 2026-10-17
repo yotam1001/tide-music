@@ -16,8 +16,10 @@ physical keyboard/Fn behavior while a game has focus still needs user validation
 
 ## Home and Library
 
-- **Home:** recommendations from your YouTube Music account. Refresh rotates the
-  selection, though a small upstream recommendation pool can still repeat.
+- **Home:** recommendations from your YouTube Music account. Preview 2
+  restores the leading rows and their original order, with limited refresh
+  variety near those recommendations. Preview 1 rotates more aggressively;
+  small upstream pools can repeat in either version.
 - **Library:** your playlists and Liked Songs. Selecting a playlist opens its
   tracks; **Play** or **Shuffle** starts it.
 - **Search:** stays separate from the queue until you select or queue a song.

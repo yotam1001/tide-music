@@ -73,7 +73,11 @@ Playback requires a temporary Netscape cookie file restricted to `.youtube.com` 
 ## What sync does
 
 - Reads up to 200 playlists and 2,000 tracks per playlist/Liked Songs, reporting truncation.
-- Reads up to eight Home shelves, with up to 40 items per shelf and 240 candidates overall; Home shows a rotating selection of 24 cards. Song and playlist recommendations are playable. Album/artist cards are displayed but do not yet open.
+- Preview 2 restores the first three Home shelves, with up to 40 items
+  per shelf and 120 candidates overall. Home shows up to 24 playable song/playlist
+  cards, preserving provider order with limited variation within the leading 48.
+  Unsupported album/artist cards are filtered. Preview 1 used eight shelves and
+  aggressive novelty/shelf balancing, which could promote less relevant items.
 - Fetches fresh account data on refresh; selecting a playlist replaces Tide's queue. This does not copy audio files, change your YouTube library, or migrate data to another service.
 - Sends no likes, playlist edits or playback-history updates. Listening in Tide therefore does not currently train YouTube recommendations.
 

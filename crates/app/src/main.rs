@@ -2721,10 +2721,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             request_library(&mut s, &u, &library_tx, tide_provider::Request::Home);
                         }
                         Ok(tide_provider::Response::Home { cards }) => {
-                            let seed = std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .map_or(0, |time| time.as_nanos() as u64);
-                            let selected = s.discovery.select(cards, seed);
+                            let selected = s.discovery.select(cards);
                             if selected.is_empty() {
                                 u.set_account_status("No playable recommendations returned. Your current selection is kept; try Refresh again later.".into());
                                 continue;
@@ -2733,7 +2730,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             u.set_home_artwork_y(0.0);
                             refresh_library_models(&s, &u);
                             u.set_account_status(
-                                "A different selection from your YouTube Music recommendations is ready".into(),
+                                "Your YouTube Music recommendations are refreshed".into(),
                             );
                         }
                         Ok(tide_provider::Response::Tracks { tracks, truncated }) => {

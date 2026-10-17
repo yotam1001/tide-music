@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.1.0-preview.2 — 2026-10-17
+
+- Restore the leading YouTube Music Home rows and their original order, instead
+  of balancing unrelated shelves and forcing equal song/playlist exposure.
+- Keep refresh variety close to the leading recommendations, with a bounded
+  repeat penalty rather than exhausting every unseen suggestion first.
+
 ## 0.1.0-preview.1 — 2026-10-17
 
 Tide is a Windows preview. A stable release is pending the checks in
