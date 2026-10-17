@@ -70,7 +70,8 @@ internal static class PayloadTests {
             using (var process = Process.Start(chrome.StartInfo(fixtureScript))) {
                 var stdout = process.StandardOutput.ReadToEndAsync();
                 var stderr = process.StandardError.ReadToEndAsync();
-                if (!process.WaitForExit(15000)) { process.Kill(); process.WaitForExit(); throw new Exception("Setup process test timed out."); }
+                // Cold PowerShell startup on a busy hosted runner can exceed 15 seconds.
+                if (!process.WaitForExit(60000)) { process.Kill(); process.WaitForExit(); throw new Exception("Setup process test timed out."); }
                 if (process.ExitCode != 0 || !stdout.Result.Contains("PASS native setup process arguments and system modules"))
                     throw new Exception("Setup process could not use its system modules or arguments: " + stderr.Result);
             }

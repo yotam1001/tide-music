@@ -3456,7 +3456,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 u.window().dispatch_event(WindowEvent::PointerMoved { position: start });
                                 u.window().dispatch_event(WindowEvent::PointerPressed { position: start, button: PointerEventButton::Left });
                                 let _ = u.window().take_snapshot();
-                                let edge = slint::LogicalPosition::new(start.x, 590.0);
+                                // Keep the gesture near the queue bottom after removing the
+                                // old status strip, including different client heights/DPI.
+                                let client_height = u.window().size().height as f32 / u.window().scale_factor();
+                                let edge = slint::LogicalPosition::new(start.x, client_height - 182.0);
                                 u.window().dispatch_event(WindowEvent::PointerMoved { position: edge });
                                 let weak = u.as_weak();
                                 slint::Timer::single_shot(Duration::from_millis(1000), move || {

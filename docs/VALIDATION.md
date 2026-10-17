@@ -3,15 +3,19 @@
 ## Native UI refinement (2026-10-17)
 
 The shell separates Settings from Account and exposes theme switching directly
-in the header. Song and queue actions use anchored native menus rather than
-row-expanding action bars. Removing a queue track is now a menu action;
-reordering still uses the existing drag handles. Brand assets and existing color
+in the header. Account is a labeled header button next to Settings; numbered
+account slots and manual import live under Advanced. Settings has no duplicate
+theme controls. Song and queue actions use explicitly styled Slint popups rather
+than OS context menus or row-expanding action bars. Removing a queue track is
+now a menu action; reordering still uses the existing drag handles. Brand assets and existing color
 literals are retained. See [the UI review](UI_REVIEW.md).
 
 `cargo test -p tide-music --test ui_chrome` exercises real Slint pointer and
 keyboard input with the software renderer: theme without an account, hover
 feedback, settings/account isolation, Escape and outside-click dismissal,
-keyboard song actions, fixed list geometry, and full/compact/minimum layouts.
+keyboard song actions, fixed list geometry, popup surface colors in both themes,
+full/compact/minimum layouts, and the absence of a separate Playing status strip.
+Windows CI uploads the synthetic software-renderer gallery for visual review.
 Optional render exports use `TIDE_UI_REVIEW_DIR`. Fixtures are synthetic and do
 not open a desktop window, load saved accounts or start playback. The queue-text
 regression dispatches Remove through the real menu and compares time/action and

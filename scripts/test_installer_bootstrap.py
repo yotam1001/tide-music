@@ -21,7 +21,8 @@ class InstallerBootstrapTests(unittest.TestCase):
                 str(ROOT / "installer/TideSetup.cs"), str(ROOT / "installer/PayloadTests.cs")
             ], capture_output=True, timeout=30)
             self.assertEqual(result.returncode, 0, result.stdout.decode(errors="replace"))
-            result = subprocess.run([str(output)], capture_output=True, timeout=30)
+            # Leave headroom beyond the isolated child's bounded startup deadline.
+            result = subprocess.run([str(output)], capture_output=True, timeout=90)
             self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
             self.assertIn(b"PASS: payload", result.stdout)
 

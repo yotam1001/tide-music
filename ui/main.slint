@@ -457,6 +457,74 @@ component EmptyState inherits Rectangle {
     }
 }
 
+export struct MenuAction {
+    title: string,
+    code: int,
+    enabled: bool,
+}
+
+// Draw inside Slint rather than delegating to the OS context-menu renderer,
+// whose theme and font can differ from the player's current appearance.
+component ActionMenu inherits PopupWindow {
+    in property <[MenuAction]> items;
+    in property <bool> light-mode;
+    in property <int> separator-after: -1;
+    private property <int> selected: -1;
+    callback chosen(int);
+    width: 252px;
+    height: root.items.length * 42px + 12px + (root.separator-after >= 0 ? 9px : 0px);
+    close-policy: close-on-click-outside;
+    forward-focus: menu-focus;
+    function activate(index: int) {
+        if index >= 0 && index < root.items.length && root.items[index].enabled {
+            let code = root.items[index].code;
+            root.close();
+            root.chosen(code);
+        }
+    }
+    menu-focus := FocusScope {
+        width: parent.width; height: parent.height;
+        key-pressed(event) => {
+            if event.text == Key.Escape || event.text == Key.Tab { root.close(); return accept; }
+            if event.text == Key.DownArrow { root.selected = root.selected < root.items.length - 1 ? root.selected + 1 : 0; return accept; }
+            if event.text == Key.UpArrow { root.selected = root.selected > 0 ? root.selected - 1 : root.items.length - 1; return accept; }
+            if event.text == Key.Return || event.text == " " { root.activate(root.selected); return accept; }
+            return reject;
+        }
+        Rectangle {
+            width: parent.width; height: parent.height;
+            background: root.light-mode ? #f9f4ee : #191c22;
+            border-width: 1px; border-color: root.light-mode ? #ded0c4 : #292e37;
+            border-radius: 10px;
+            if root.separator-after >= 0 : Rectangle {
+                x: 12px; y: 9px + (root.separator-after + 1) * 42px;
+                width: parent.width - 24px; height: 1px;
+                background: root.light-mode ? #ded0c4 : #292e37;
+            }
+            for item[index] in root.items : Rectangle {
+                x: 6px; y: 6px + index * 42px + (index > root.separator-after && root.separator-after >= 0 ? 9px : 0px);
+                width: parent.width - 12px; height: 40px; border-radius: 6px;
+                opacity: item.enabled ? 1 : 0.45;
+                background: item.enabled && (hit.has-hover || root.selected == index) ? (root.light-mode ? #e9e0d6 : #30232e) : Colors.transparent;
+                hit := TouchArea {
+                    enabled: item.enabled; mouse-cursor: pointer;
+                    Button { width: parent.width; height: parent.height; text: ""; opacity: 0; enabled: item.enabled; accessible-label: item.title; clicked => { root.activate(index); } }
+                }
+                Path {
+                    x: 12px; y: 11px; width: 18px; height: 18px; viewbox-width: 24; viewbox-height: 24;
+                    stroke: root.light-mode ? #956a61 : #bd8496; stroke-width: 1.5px; fill: Colors.transparent;
+                    commands: item.code == 0 ? "M 5 5 L 14 12 L 5 19 Z M 19 5 L 19 19"
+                        : item.code == 1 ? "M 3 6 L 17 6 M 3 11 L 17 11 M 3 16 L 10 16 M 18 14 L 18 22 M 14 18 L 22 18"
+                        : item.code == 2 ? "M 12 10 A 2 2 0 1 0 12 14 A 2 2 0 1 0 12 10 Z M 8 7 C 5 10 5 14 8 17 M 16 7 C 19 10 19 14 16 17 M 5 4 C 1 8 1 16 5 20 M 19 4 C 23 8 23 16 19 20"
+                        : item.code == 4 ? "M 3 6 L 7 6 C 11 6 13 18 17 18 L 21 18 M 17 14 L 21 18 L 17 22 M 3 18 L 7 18 C 11 18 13 6 17 6 L 21 6 M 17 2 L 21 6 L 17 10"
+                        : "M 6 7 L 18 7 L 17 21 L 7 21 Z M 4 7 L 20 7 M 9 7 L 9 3 L 15 3 L 15 7 M 10 10 L 10 18 M 14 10 L 14 18";
+                }
+                Text { x: 42px; width: parent.width - 50px; height: parent.height; text: item.title; color: root.light-mode ? #392e33 : #f0eeef; font-size: 13px; font-weight: 500; vertical-alignment: center; overflow: elide; }
+            }
+        }
+    }
+}
+
 component SongRow inherits Rectangle {
     in property <TrackRow> track;
     in property <int> index;
@@ -539,28 +607,32 @@ component SongRow inherits Rectangle {
                 }
             }
             if root.show-duration && root.track.duration != "" && root.track.duration != "—" : Text { width: 42px; text: root.track.duration; color: root.light-mode ? #716773 : #a1a5ae; font-size: 11px; horizontal-alignment: right; }
-            if root.show-menu : LibraryButton { width: 30px; height: 30px; caption: "..."; label: "Actions for " + root.track.title; light-mode: root.light-mode; enabled: root.enabled && !root.drag-in-progress; clicked => { song-menu.show({ x: max(0px, root.width - 290px), y: 52px }); } }
+            if root.show-menu : LibraryButton { width: 30px; height: 30px; caption: "..."; label: "Actions for " + root.track.title; light-mode: root.light-mode; enabled: root.enabled && !root.drag-in-progress; clicked => { song-menu.show(); } }
         }
     }
-    song-menu := ContextMenuArea {
-        enabled: root.enabled && root.show-menu && !root.drag-in-progress;
-        Menu {
-            if !root.removable || root.current : MenuItem {
-                title: root.removable ? "Repeat next" : "Play next";
-                activated => { if root.enabled { root.queue(true); } }
-            }
-            if !root.removable || root.current : MenuItem {
-                title: root.removable ? "Repeat later" : "Add to queue";
-                activated => { if root.enabled { root.queue(false); } }
-            }
-            if !root.removable || root.current : MenuSeparator { }
-            MenuItem {
-                title: "Start song radio";
-                activated => { if root.enabled { root.radio(); } }
-            }
-            if root.removable : MenuItem {
-                title: "Remove from queue";
-                activated => { if root.enabled { root.remove(); } }
+    song-menu := ActionMenu {
+        x: max(0px, root.width - self.width - 10px); y: 52px;
+        light-mode: root.light-mode;
+        separator-after: root.removable && !root.current ? 0 : 1;
+        items: root.removable && !root.current ? [
+            { title: "Start song radio", code: 2, enabled: root.enabled },
+            { title: "Remove from queue", code: 3, enabled: root.enabled },
+        ] : root.removable ? [
+            { title: "Repeat next", code: 0, enabled: root.enabled },
+            { title: "Repeat later", code: 1, enabled: root.enabled },
+            { title: "Start song radio", code: 2, enabled: root.enabled },
+            { title: "Remove from queue", code: 3, enabled: root.enabled },
+        ] : [
+            { title: "Play next", code: 0, enabled: root.enabled },
+            { title: "Add to queue", code: 1, enabled: root.enabled },
+            { title: "Start song radio", code: 2, enabled: root.enabled },
+        ];
+        chosen(code) => {
+            if root.enabled && !root.drag-in-progress {
+                if code == 0 { root.queue(true); }
+                if code == 1 { root.queue(false); }
+                if code == 2 { root.radio(); }
+                if code == 3 && root.removable { root.remove(); }
             }
         }
     }
@@ -739,12 +811,15 @@ component QueueDrawer inherits Rectangle {
     border-width: 1px;
     border-color: root.light-mode ? #ded0c4 : #292e37;
     TouchArea { }
-    queue-menu := ContextMenuArea {
-        enabled: root.enabled;
-        Menu {
-            MenuItem { title: "Shuffle upcoming"; enabled: root.enabled && root.rows.length > 1; activated => { if root.enabled { root.shuffle(); } } }
-            MenuItem { title: "Clear queue"; enabled: root.enabled && root.rows.length > 0; activated => { if root.enabled { root.clear(); } } }
-        }
+    changed enabled => { if !root.enabled { queue-menu.close(); } }
+    queue-menu := ActionMenu {
+        x: max(0px, root.width - self.width - 14px); y: 48px;
+        light-mode: root.light-mode; separator-after: 0;
+        items: [
+            { title: "Shuffle upcoming", code: 4, enabled: root.enabled && root.rows.length > 1 },
+            { title: "Clear queue", code: 3, enabled: root.enabled && root.rows.length > 0 },
+        ];
+        chosen(code) => { if root.enabled { if code == 4 { root.shuffle(); } if code == 3 { root.clear(); } } }
     }
 
     VerticalLayout {
@@ -755,7 +830,7 @@ component QueueDrawer inherits Rectangle {
             spacing: 7px;
             cross-axis-alignment: center;
             Text { horizontal-stretch: 1; text: "Queue"; color: root.light-mode ? #392e33 : #f0eeef; font-size: 20px; font-weight: 600; }
-            LibraryButton { width: 30px; height: 30px; enabled: root.enabled; caption: "..."; label: "More queue actions"; light-mode: root.light-mode; clicked => { queue-menu.show({ x: max(0px, root.width - 294px), y: 48px }); } }
+            LibraryButton { width: 30px; height: 30px; enabled: root.enabled; caption: "..."; label: "More queue actions"; light-mode: root.light-mode; clicked => { queue-menu.show(); } }
             LibraryButton { width: 30px; height: 30px; enabled: root.enabled; caption: "×"; label: "Close queue drawer"; light-mode: root.light-mode; clicked => { root.cancel-drag(); root.close(); } }
         }
         // The fixed rail owns pointer capture while ListView recycles song rows.
@@ -1131,6 +1206,7 @@ export component AppWindow inherits Window {
                     LibraryButton { width: 74px; light-mode: root.light-mode; enabled: root.browsing-enabled; caption: "Search"; label: "Search for music or open the pasted link"; clicked => { if root.source-input != "" { root.add-source(root.source-input); } } }
                     LibraryButton { width: 36px; height: 36px; light-mode: root.light-mode; caption: root.light-mode ? "☾" : "☼"; label: root.light-mode ? "Switch to dark theme" : "Switch to light theme"; clicked => { root.switch-mode(); } }
                     LibraryButton { width: 84px; quiet: false; light-mode: root.light-mode; caption: "Settings"; label: "Open settings"; active: root.settings-open; clicked => { root.settings-open = !root.settings-open; } }
+                    LibraryButton { width: 78px; quiet: false; light-mode: root.light-mode; caption: "Account"; label: "Open YouTube Music account"; active: root.account-open; clicked => { root.account-open = !root.account-open; } }
                 }
             }
             if !root.collapsed : content-area := Rectangle {
@@ -1152,20 +1228,7 @@ export component AppWindow inherits Window {
                             NavigationButton { light-mode: root.light-mode; enabled: root.browsing-enabled; active: !root.library-open; library: false; clicked => { root.library-open = false; root.home-open = true; root.close-detail(); root.close-search(); } }
                             NavigationButton { light-mode: root.light-mode; enabled: root.browsing-enabled; active: root.library-open; library: true; clicked => { root.library-open = true; root.home-open = false; root.close-detail(); root.close-search(); } }
                             Rectangle { vertical-stretch: 1; }
-                            Rectangle { height: 1px; background: root.outline; }
-                            Rectangle {
-                                height: 70px;
-                                border-radius: 9px;
-                                border-width: account-control.has-focus ? 2px : 0px;
-                                border-color: root.outline;
-                                background: account-control.pressed || root.account-open ? root.surface : Colors.transparent;
-                                account-control := Button { width: parent.width; height: parent.height; opacity: 0; accessible-label: "Open YouTube Music account"; clicked => { root.account-open = !root.account-open; } }
-                                VerticalLayout {
-                                    padding-left: 10px; padding-right: 6px; spacing: 5px; alignment: center;
-                                    Text { text: "Account"; color: root.foreground; font-size: 12px; font-weight: 600; overflow: elide; }
-                                    Text { text: root.account-busy ? "Connecting…" : root.account-verified ? "Connected" : "Connect account"; color: root.secondary; font-size: 11px; overflow: elide; }
-                                }
-                            }
+
 
                         }
                     }
@@ -1331,30 +1394,21 @@ export component AppWindow inherits Window {
                         ScrollView {
                             width: parent.width; height: parent.height; horizontal-scrollbar-policy: always-off;
                             VerticalLayout {
-                                padding: 24px; spacing: 14px;
+                                padding: 24px; spacing: 14px; alignment: start;
                                 HorizontalLayout { height: 42px; cross-axis-alignment: center; Text { horizontal-stretch: 1; text: "Settings"; color: root.foreground; font-size: 25px; font-weight: 650; } LibraryButton { width: 32px; height: 32px; caption: "×"; label: "Close settings"; light-mode: root.light-mode; clicked => { root.settings-open = false; } } }
-                                Text { text: "Appearance"; color: root.foreground; font-size: 15px; font-weight: 600; }
-                                HorizontalLayout {
-                                    height: 40px; spacing: 8px;
-                                    LibraryButton { horizontal-stretch: 1; height: 40px; quiet: false; caption: "Light"; label: "Use light theme"; light-mode: root.light-mode; active: root.light-mode; clicked => { if !root.light-mode { root.switch-mode(); } } }
-                                    LibraryButton { horizontal-stretch: 1; height: 40px; quiet: false; caption: "Dark"; label: "Use dark theme"; light-mode: root.light-mode; active: !root.light-mode; clicked => { if root.light-mode { root.switch-mode(); } } }
-                                }
-                                Rectangle { height: 10px; }
-                                Rectangle { height: 1px; background: root.outline; }
-                                Text { text: "Layout"; color: root.foreground; font-size: 15px; font-weight: 600; }
+                                Text { height: 20px; text: "Layout"; color: root.foreground; font-size: 15px; font-weight: 600; }
                                 HorizontalLayout {
                                     height: 40px; spacing: 8px;
                                     LibraryButton { horizontal-stretch: 1; height: 40px; quiet: false; caption: "Normal"; label: "Use normal window size"; light-mode: root.light-mode; active: !root.compact-mode; clicked => { if root.compact-mode { root.toggle-compact(); } } }
                                     LibraryButton { horizontal-stretch: 1; height: 40px; quiet: false; caption: "Compact"; label: "Use compact window size"; light-mode: root.light-mode; active: root.compact-mode; clicked => { if !root.compact-mode { root.toggle-compact(); } } }
                                 }
-                                Text { text: "Theme and window size are independent."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
                                 Rectangle { height: 10px; }
                                 Rectangle { height: 1px; background: root.outline; }
-                                Text { text: "Playback"; color: root.foreground; font-size: 15px; font-weight: 600; }
+                                Text { height: 20px; text: "Playback"; color: root.foreground; font-size: 15px; font-weight: 600; }
                                 LibraryButton { height: 40px; quiet: false; caption: "Open audio file"; label: "Open a local audio file"; light-mode: root.light-mode; clicked => { root.open-file(); root.settings-open = false; } }
                                 Rectangle { height: 10px; }
                                 Rectangle { height: 1px; background: root.outline; }
-                                Text { text: "About Tide · 0.1.0 preview"; color: root.secondary; font-size: 12px; }
+                                Text { height: 18px; text: "About Tide · 0.1.0 preview"; color: root.secondary; font-size: 12px; }
                                 AboutSlint { height: 112px; horizontal-stretch: 0; }
                             }
                         }
@@ -1377,39 +1431,43 @@ export component AppWindow inherits Window {
                             height: parent.height;
                             horizontal-scrollbar-policy: always-off;
                             VerticalLayout {
-                            padding: 20px;
-                            spacing: 10px;
-                            HorizontalLayout { height: 34px; cross-axis-alignment: center; Text { horizontal-stretch: 1; text: "Your account"; color: root.foreground; font-size: 20px; font-weight: 650; } LibraryButton { width: 30px; height: 30px; light-mode: root.light-mode; caption: "×"; label: "Close account"; clicked => { root.account-open = false; } } }
-                            Text { height: 25px; text: root.account-busy ? "Connecting…" : root.account-verified ? "Connected" + (root.account-name == "" ? "" : " · " + root.account-name) : root.account-connected ? "Saved session · not verified" : "Connect YouTube Music"; color: root.foreground; font-size: 14px; font-weight: 600; overflow: elide; }
-                            if root.account-status != "" : Text { height: 42px; text: root.account-status; color: root.secondary; font-size: 11px; wrap: word-wrap; overflow: elide; accessible-live-region: polite; }
-                            if root.account-connected || root.advanced-open : HorizontalLayout { height: 34px; spacing: 8px; ComboBox { horizontal-stretch: 1; model: ["Account 1", "Account 2", "Account 3", "Account 4", "Account 5", "Account 6", "Account 7", "Account 8", "Account 9", "Account 10"]; current-index <=> root.account-index; enabled: root.account-connected && !root.account-busy; } LibraryButton { width: 76px; light-mode: root.light-mode; caption: "Switch"; label: "Connect selected Google account"; enabled: root.account-connected && !root.account-busy; clicked => { root.switch-account(root.account-index); } } }
-                            if !root.account-verified : Text { height: 54px; text: "Use Tide's Chrome companion to import your selected YouTube Music tab. Tide detects the imported session automatically. Manual methods are under Advanced."; color: root.secondary; font-size: 11px; wrap: word-wrap; }
+                            padding: 24px;
+                            spacing: 16px;
+                            alignment: start;
+                            HorizontalLayout { height: 42px; cross-axis-alignment: center; Text { horizontal-stretch: 1; text: "Account"; color: root.foreground; font-size: 25px; font-weight: 650; } LibraryButton { width: 32px; height: 32px; light-mode: root.light-mode; caption: "×"; label: "Close account"; clicked => { root.account-open = false; } } }
                             HorizontalLayout {
-                                height: 36px;
-                                spacing: 8px;
-                                LibraryButton { horizontal-stretch: 1; light-mode: root.light-mode; caption: root.account-connected ? "Reconnect guide" : "Connect with browser"; label: "Open browser companion connection guide"; enabled: !root.account-busy; active: !root.account-connected; clicked => { root.open-account-help(); } }
-                                if root.account-busy : LibraryButton { width: 76px; light-mode: root.light-mode; caption: "Cancel"; label: "Cancel account request"; clicked => { root.cancel-account(); } }
+                                height: 64px; spacing: 14px; cross-axis-alignment: center;
+                                Rectangle {
+                                    width: 48px; height: 48px; border-radius: 24px;
+                                    background: root.light-mode ? #e8d5cb : #30232e;
+                                    Path { x: 12px; y: 10px; width: 24px; height: 28px; viewbox-width: 24; viewbox-height: 28; fill: Colors.transparent; stroke: root.light-mode ? #956a61 : #bd8496; stroke-width: 1.6px; commands: "M 17 7 A 5 5 0 1 0 7 7 A 5 5 0 1 0 17 7 Z M 3 25 L 3 22 C 3 12 21 12 21 22 L 21 25"; }
+                                }
+                                VerticalLayout {
+                                    min-width: 0px; horizontal-stretch: 1; spacing: 5px; alignment: center;
+                                    Text { text: root.account-name != "" ? root.account-name : "YouTube Music"; color: root.foreground; font-size: 18px; font-weight: 600; overflow: elide; }
+                                    Text { text: root.account-busy ? "Connecting…" : root.account-verified ? "Connected to YouTube Music" : root.account-connected ? "Saved session · verification needed" : "Not connected"; color: root.secondary; font-size: 12px; overflow: elide; }
+                                }
                             }
+                            if root.account-status != "" : Text { max-height: 72px; overflow: elide; text: root.account-status; color: root.secondary; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
+                            if !root.account-verified : Text { text: "Import your signed-in YouTube Music tab with Tide’s browser companion to use your playlists and recommendations."; color: root.secondary; font-size: 13px; wrap: word-wrap; }
+                            LibraryButton { height: 42px; quiet: false; light-mode: root.light-mode; caption: root.account-connected ? "Connection help" : "Connect YouTube Music"; label: "Open browser companion connection guide"; enabled: !root.account-busy; active: !root.account-verified; clicked => { root.open-account-help(); } }
+                            if root.account-busy : LibraryButton { height: 36px; light-mode: root.light-mode; caption: "Cancel connection"; label: "Cancel account request"; clicked => { root.cancel-account(); } }
                             Rectangle { height: 1px; background: root.outline; }
-                            LibraryButton { height: 34px; light-mode: root.light-mode; caption: root.advanced-open ? "Hide advanced" : "Advanced"; label: root.advanced-open ? "Hide advanced account options" : "Show advanced account options"; clicked => { root.advanced-open = !root.advanced-open; } }
-                            if root.advanced-open : LibraryButton { height: 34px; light-mode: root.light-mode; caption: "Import Zen profile"; label: "Select an existing Zen cookie database for advanced import"; enabled: !root.account-busy; clicked => { root.connect-account(); } }
-                            if root.advanced-open : HorizontalLayout {
-                                height: 34px;
-                                spacing: 8px;
-                                LibraryButton { width: 124px; light-mode: root.light-mode; caption: "Import session"; label: "Import session from a local file"; enabled: !root.account-busy; clicked => { root.import-account(); } }
-                                LibraryButton { horizontal-stretch: 1; light-mode: root.light-mode; caption: "Disconnect"; label: "Disconnect YouTube Music account"; enabled: root.account-connected && !root.account-busy; clicked => { root.disconnect-account(); } }
-                                LibraryButton { width: 70px; light-mode: root.light-mode; caption: "Help"; label: "Help connecting your account"; clicked => { root.open-account-help(); } }
+                            LibraryButton { height: 36px; light-mode: root.light-mode; caption: root.advanced-open ? "Advanced connection options  ⌃" : "Advanced connection options  ⌄"; label: root.advanced-open ? "Hide advanced account options" : "Show advanced account options"; clicked => { root.advanced-open = !root.advanced-open; } }
+                            if root.advanced-open : VerticalLayout {
+                                spacing: 12px;
+                                Text { text: "Google account slot"; color: root.foreground; font-size: 13px; font-weight: 600; }
+                                Text { text: "Use this only if the imported session opened the wrong Google account. Select your YouTube profile in the browser before importing."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
+                                HorizontalLayout { height: 36px; spacing: 8px; ComboBox { horizontal-stretch: 1; model: ["Account 1", "Account 2", "Account 3", "Account 4", "Account 5", "Account 6", "Account 7", "Account 8", "Account 9", "Account 10"]; current-index <=> root.account-index; enabled: root.account-connected && !root.account-busy; } LibraryButton { width: 76px; quiet: false; light-mode: root.light-mode; caption: "Switch"; label: "Connect selected Google account"; enabled: root.account-connected && !root.account-busy; clicked => { root.switch-account(root.account-index); } } }
+                                LibraryButton { height: 36px; quiet: false; light-mode: root.light-mode; caption: "Import Zen profile"; label: "Select an existing Zen cookie database for advanced import"; enabled: !root.account-busy; clicked => { root.connect-account(); } }
+                                LibraryButton { height: 36px; quiet: false; light-mode: root.light-mode; caption: "Import session file"; label: "Import session from a local file"; enabled: !root.account-busy; clicked => { root.import-account(); } }
                             }
-                            Rectangle { height: 12px; }
-                            Rectangle { height: 1px; background: root.outline; }
+                            if root.account-connected : LibraryButton { height: 36px; quiet: false; light-mode: root.light-mode; caption: "Disconnect account"; label: "Disconnect YouTube Music account"; enabled: !root.account-busy; clicked => { root.disconnect-account(); } }
+
                             }
                         }
                     }
                 }
-            }
-            if !root.collapsed && root.error-message == "" && root.status-text != "" : Rectangle {
-                height: 24px;
-                Text { x: 130px; width: max(0px, parent.width - 150px); height: parent.height; text: root.status-text; color: root.secondary; font-size: 11px; overflow: elide; vertical-alignment: center; accessible-live-region: polite; }
             }
             PlayerBar {
                 window-minimized: root.minimized;

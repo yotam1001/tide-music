@@ -50,7 +50,7 @@ fn key(ui: &AppWindow, value: Key) {
 fn remove_via_menu(ui: &AppWindow, window: &MinimalSoftwareWindow, width: u32, x: f32, y: f32) {
     click(ui, x, y);
     draw(window, width);
-    // Up from an unselected native menu selects its last item: Remove.
+    // Up from an unselected popup selects its last item: Remove.
     key(ui, Key::UpArrow);
     key(ui, Key::Return);
     draw(window, width);
