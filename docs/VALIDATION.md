@@ -1,5 +1,27 @@
 # Prototype validation
 
+## Native UI refinement (2026-10-17)
+
+The shell separates Settings from Account and exposes theme switching directly
+in the header. Song and queue actions use anchored native menus rather than
+row-expanding action bars. Removing a queue track is now a menu action;
+reordering still uses the existing drag handles. Brand assets and existing color
+literals are retained. See [the UI review](UI_REVIEW.md).
+
+`cargo test -p tide-music --test ui_chrome` exercises real Slint pointer and
+keyboard input with the software renderer: theme without an account, hover
+feedback, settings/account isolation, Escape and outside-click dismissal,
+keyboard song actions, fixed list geometry, and full/compact/minimum layouts.
+Optional render exports use `TIDE_UI_REVIEW_DIR`. Fixtures are synthetic and do
+not open a desktop window, load saved accounts or start playback. The queue-text
+regression dispatches Remove through the real menu and compares time/action and
+artwork/handle pixels across long, unbroken and mixed-direction metadata.
+
+These checks supplement the existing slider, artwork and restored-surface
+regressions; they do not replace actual Windows focus, physical media keys,
+account onboarding or long-session listening checks. Existing draft beta assets
+are not updated merely by changing the UI source.
+
 ## Final candidate and real Windows lifecycle (2026-10-15)
 
 Candidate `f02691501a72aed0f07164999b36437ac1c4b567` passed all jobs in

@@ -15,8 +15,11 @@ helper setup. The ZIP and command launcher remain an alternative for developers.
 
 Launch Tide from the Start menu. Open a local audio file, paste a music link, or
 search from the header. Home and Library are the main destinations; Queue opens
-the upcoming tracks. Account contains theme and window-size controls. Mini has
-an expand icon to return to the full window.
+the upcoming tracks. The sun/moon button switches theme directly. Settings holds
+appearance, window size and local-file playback; Account is a separate entry at
+the bottom of the left navigation. Mini has an expand icon to return to the full
+window. Song actions open a floating menu without expanding the row. Use an
+upcoming song's drag handle to reorder it, or its menu to remove it.
 
 ## Connect YouTube Music
 

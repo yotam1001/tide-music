@@ -1,5 +1,41 @@
 # UI and UX review
 
+## Settings, menus and visual hierarchy (2026-10-17)
+
+The current review keeps Home, Library, the optional Queue drawer and the centered
+playback bar. The existing Tide mark, icon files, burgundy dark accent and warm
+light palette are retained at the user's request.
+
+| Finding | Change |
+| --- | --- |
+| Appearance and window sizing were hidden behind Account | A direct sun/moon control and separate Settings entry stay in the header. Settings groups Appearance, Layout, local playback and About; account connection has its own navigation entry and panel |
+| Song actions expanded a row into horizontal button bars | Song and queue actions use anchored native menus with keyboard selection, Escape and outside-click dismissal, keeping list geometry fixed |
+| Queue duration, title, menu and a separate remove button competed for width | Remove moves into the song menu. Drag handles stay visible; the playing row shows its artist without duplicating the Now playing heading |
+| Most secondary actions looked like primary boxed controls | Secondary controls have a quieter treatment with hover/focus feedback; the main play button remains dominant |
+| Navigation and mixed playlist/song rows lacked consistent spacing | A wider normal navigation rail, consistent list-row height and content gutters clarify the hierarchy; narrow windows keep a smaller rail |
+| Home repeated Resume above the existing transport | The redundant action is removed; playback stays in the centered transport |
+| Empty screens framed a large blank rectangle | Empty-state copy remains, with open space instead of an unnecessary card outline |
+
+Theme and size continue to use independent existing callbacks. Connection errors
+and connection CLI entry points now open Account rather than Settings. Panels
+are mutually exclusive, close with Escape, scroll at short heights and leave
+playback available. Browsing uses 72px rows, 48px covers and 16/13px song/artist
+text; the queue retains its denser 66px rows. Artwork viewport selection reads
+the same Slint layout dimensions rather than duplicating heights in Rust.
+Existing metadata clipping, artwork scheduling/cache bounds, slider binding
+fixes and restore invalidation remain in place.
+
+Verification uses the real Slint components and software renderer, plus native
+pointer/keyboard input, without browser rendering. The tests use synthetic
+metadata and never load an account or start audio. These isolated checks do not
+establish physical media-key routing, real-session reliability or user acceptance
+of the redesign. See VALIDATION.md for completed results and remaining gates.
+
+## Earlier review notes
+
+The sections below record previous iterations; the settings/menu behavior above
+supersedes their earlier control placement descriptions.
+
 The earlier screen mixed account setup, library browsing and playback, showed oversized invented artwork above the queue, and coupled light theme to a smaller window. The new shell uses Home, Library and Queue as stable destinations. Search and transport controls remain available on every full/compact screen.
 
 - Home shows provider recommendations and shortcuts to Liked Songs and playlists. Unsupported album cards cannot start playback and show a disabled action.
