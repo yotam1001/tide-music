@@ -1,6 +1,6 @@
 # Tide Music
 
-A native Windows music player built for listening while gaming.
+A native Windows music player built to keep RAM use low while gaming.
 
 [![Watch the Tide Music demo](docs/media/tide-promo-preview.gif)](docs/media/tide-promo.mp4)
 
@@ -13,10 +13,11 @@ Play YouTube Music, bring in your playlists and recommendations, and keep the
 player out of the way with a mini mode. Tide uses native audio playback rather
 than keeping an embedded browser running.
 
-**Preview status:** no public installer has been released yet. The beta is an
-unpublished draft. This page describes the current source. Downloads will appear
-on the [official Releases page](https://github.com/yotam1001/tide-music/releases)
-after the remaining setup checks.
+**Windows preview:** [Download TideSetup.exe](https://github.com/yotam1001/tide-music/releases/download/v0.1.0-preview.1/TideSetup.exe)
+from [v0.1.0-preview.1](https://github.com/yotam1001/tide-music/releases/tag/v0.1.0-preview.1).
+For YouTube Music, also download the matching
+[Chrome companion](https://github.com/yotam1001/tide-music/releases/download/v0.1.0-preview.1/tide-browser-chromium.zip)
+and follow the connection guide below. This is an unsigned prerelease.
 
 ![Tide's dark interface](docs/screenshots/full.png)
 

@@ -1,10 +1,15 @@
-# Prepare the first public Windows preview
+# Publish Windows previews
 
 This is the maintainer checklist. For normal use, start with [Install Tide](INSTALLATION.md).
 
 ## What is available now?
 
-- The source is public; no installer release has been published.
+- [v0.1.0-preview.1](https://github.com/yotam1001/tide-music/releases/tag/v0.1.0-preview.1)
+  is the public Windows prerelease, with the installer, matching Chrome companion,
+  setup guide and download checksums.
+- On 2026-10-17 the maintainer confirmed that the installer worked in their test
+  and authorized publication. That report is scoped to the installer; the broader
+  manual checks below remain useful for subsequent previews and stable readiness.
 - `v0.1.0-beta.1` is an unpublished, older draft with binaries from `f026915`.
   It does not contain the latest UI or in-app updater. Do not publish it as the
   current build or silently replace its reviewed assets.
@@ -12,8 +17,11 @@ This is the maintainer checklist. For normal use, start with [Install Tide](INST
   implementation is in merged PR #13 (`ce0d142`). Its source `e02e99e` passed
   [push CI](https://github.com/yotam1001/tide-music/actions/runs/39041897082) and
   [PR CI](https://github.com/yotam1001/tide-music/actions/runs/39041899612), including
-  the real graphical update/restart lifecycle. Documentation changes need their
-  own matching package validation before becoming release assets.
+  the real graphical update/restart lifecycle. Release packages must also pass
+  the checks below with their matching documentation.
+
+Use the following checklist for future preview candidates. It is a release
+procedure, not a claim that every manual test has already passed.
 
 ## 1. Prepare a matching candidate
 
@@ -62,13 +70,11 @@ checks as passed. Stable release needs the broader reliability evidence there.
 
 ## 3. Publish, then announce
 
-- [ ] Have the user review the concrete candidate, manual results and release text
-  and authorize publication. The existing hold on the unpublished beta remains
-  until then.
-- [ ] Replace the no-public-download notices in README, START_HERE, Installation,
-  Chrome connection and Troubleshooting with the actual release link. Make sure
-  the packaged copies also reflect the published state. If runtime/installer code
-  changes, repeat the relevant acceptance checks.
+- [ ] Record the concrete candidate, manual results and publication authorization.
+  Never infer that a passing installer test completes unrelated manual checks.
+- [ ] Update the download links in README, START_HERE, Installation, Chrome
+  connection and Troubleshooting. Make sure packaged copies match. If runtime/
+  installer code changes, repeat the relevant acceptance checks.
 - [ ] Validate the final docs, privacy scan and matching packages. Publish as a
   **prerelease**, not stable. Do not modify historical assets in place.
 - [ ] Check the release and download links without maintainer access. Confirm the

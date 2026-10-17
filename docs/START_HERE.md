@@ -15,9 +15,8 @@ Open **TideSetup.exe**, choose **Install Tide**, and wait for setup to finish.
 Choose **Open Tide**, or find **Tide** in the Windows Start menu.
 
 Reading this inside the advanced ZIP and cannot find the EXE? Get the installer
-from the [official Releases page](https://github.com/yotam1001/tide-music/releases).
-Advanced users can instead run the ZIP's **Install Tide.cmd**. No public installer
-has been released yet; maintainer draft downloads are not public downloads.
+from the [Windows preview release](https://github.com/yotam1001/tide-music/releases/tag/v0.1.0-preview.1).
+Advanced users can instead run the ZIP's **Install Tide.cmd**.
 
 ## 2. Connect YouTube Music
 

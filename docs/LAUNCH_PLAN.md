@@ -1,7 +1,9 @@
 # First preview launch
 
-Preparation only: no announcement has been posted and no public installer release
-has been published. Finish the [launch checklist](BETA_RELEASE.md) first.
+Early source-preview introductions have been shared. The Windows installer is
+available in [v0.1.0-preview.1](https://github.com/yotam1001/tide-music/releases/tag/v0.1.0-preview.1).
+Keep future posts consistent with the [release checklist](BETA_RELEASE.md) and
+the preview's known limitations.
 
 ## Start small
 
@@ -19,8 +21,8 @@ has been published. Finish the [launch checklist](BETA_RELEASE.md) first.
 
 **Tide: a native music player for listening while gaming**
 
-I started building Tide because I wanted to listen to YouTube Music while gaming
-without keeping a full music website running. It's an open-source Windows player
+I started building Tide to keep music's RAM use low while gaming, without keeping
+a full music website running. It's an open-source Windows player
 with native audio, your existing playlists, song radio, a draggable queue, and
 a mini mode.
 
@@ -33,8 +35,8 @@ I'd especially like feedback on first-time setup, song transitions and the UI.
 
 [Project, setup and downloads](https://github.com/yotam1001/tide-music)
 
-Do not send this draft before the public release and README link work. Use the
-current demo with its existing attribution; describe its memory comparison as
+Verify the public release and README link before sharing download announcements.
+Use the current demo with its existing attribution; describe its memory comparison as
 one measured example rather than a guaranteed saving or gaming-FPS improvement.
 
 ## Community outreach needs its own review

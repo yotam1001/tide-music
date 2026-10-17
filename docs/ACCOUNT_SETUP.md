@@ -19,9 +19,9 @@ Already installed? Rerun setup to enable the companion. **Connect YouTube Music*
 in Tide opens the instructions; the explicit Chrome import completes connection.
 **Check local connection** checks the helper, not your Google sign-in.
 
-Chrome is the preview path with a recorded successful import. A complete
-fresh-user acceptance check is still pending. Zen's native connection is
-unresolved; Edge and Firefox are not recommended setup paths yet.
+Chrome is the preview path with a recorded successful import. Broader fresh-user
+coverage remains a preview test item. Zen's native connection is unresolved;
+Edge and Firefox are not recommended setup paths yet.
 
 ## Check that it is your account
 

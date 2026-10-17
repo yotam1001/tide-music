@@ -653,9 +653,17 @@ mod tests {
         let source = root.path().join("fixture.cs");
         let exe = root.path().join("TideSetup.exe");
         let receipt = root.path().join("TideSetup.exe.receipt");
-        fs::write(&source, r#"class Fixture { static void Main(string[] args) {
-            System.IO.File.WriteAllText(System.Reflection.Assembly.GetExecutingAssembly().Location + ".receipt", System.String.Join("|", args));
-        } }"#).unwrap();
+        // Publish only a complete receipt so the reader cannot observe
+        // File.WriteAllText's newly created, but still empty, output file.
+        fs::write(
+            &source,
+            r#"class Fixture { static void Main(string[] args) {
+            var receipt = System.Reflection.Assembly.GetExecutingAssembly().Location + ".receipt";
+            System.IO.File.WriteAllText(receipt + ".tmp", System.String.Join("|", args));
+            System.IO.File.Move(receipt + ".tmp", receipt);
+        } }"#,
+        )
+        .unwrap();
         let compiler = PathBuf::from(std::env::var_os("SystemRoot").unwrap())
             .join("Microsoft.NET/Framework64/v4.0.30319/csc.exe");
         let result = std::process::Command::new(compiler)
@@ -685,12 +693,22 @@ mod tests {
         fs::write(&exe, bytes).unwrap();
         launch(&exe, &release).unwrap();
         let started = Instant::now();
-        while !receipt.exists() && started.elapsed() < Duration::from_secs(15) {
-            std::thread::sleep(Duration::from_millis(20));
-        }
-        assert_eq!(
-            fs::read_to_string(receipt).unwrap(),
-            format!("--update-from|{}", std::process::id())
-        );
+        let actual = loop {
+            match fs::read_to_string(&receipt) {
+                Ok(actual) => break actual,
+                Err(error) => {
+                    assert!(
+                        started.elapsed() < Duration::from_secs(15)
+                            && matches!(
+                                error.kind(),
+                                std::io::ErrorKind::NotFound | std::io::ErrorKind::PermissionDenied
+                            ),
+                        "Could not read updater test receipt: {error}"
+                    );
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+            }
+        };
+        assert_eq!(actual, format!("--update-from|{}", std::process::id()));
     }
 }
