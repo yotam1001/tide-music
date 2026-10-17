@@ -77,8 +77,33 @@ only its Tide native-host registration. Manual import remains available in
 
 ## Update
 
-Tide currently has no automatic app update check or background downloader.
-Download the newer installer when updating; updating does not require uninstalling.
+Installed Windows copies check GitHub for a newer **published stable release**
+once after startup. Turn this off with **Settings → Startup checks**; **Check for
+updates** remains available. Drafts, prereleases and CI artifacts are excluded.
+The current app version comes from Cargo; maintainers must increase it for each
+new published release and make the release tag match `v<version>`.
+
+When an update is available, Settings gains an indicator. Choose **Install and
+restart** to download it, stop playback, run setup and reopen Tide. Nothing is
+downloaded or installed merely because a version is available. This initial
+updater-enabled build still needs installing manually in older copies of Tide.
+Portable/development copies can check versions but do not install automatically.
+
+The updater requires the exact Tide repository's `TideSetup.exe` asset and its
+GitHub SHA-256 digest. Downloads use HTTPS, restricted redirect hosts, bounded
+streaming and checksum verification again immediately before launch. This trusts
+Tide's GitHub release publishing account; it is not a separate code-signing
+signature. No Google session, account data, API key or listening history is sent.
+The public version check contacts GitHub, which sees normal connection metadata.
+There is no resident update service or continuously running download thread.
+
+Only one installer and one partial download are retained in the owned local
+`TideMusic/updates` cache, each limited to 96 MiB. Failed verification leaves the
+previous installer intact. Setup waits up to two minutes for Tide to exit;
+it never force-stops playback processes. Existing browser choices are preserved.
+
+You can also download and run the newer installer yourself; uninstalling first
+is unnecessary.
 
 Close Tide and let any pending companion request finish. Run the new
 **TideSetup.exe** and choose **Install Tide** again. Setup refuses to stop running processes. It builds

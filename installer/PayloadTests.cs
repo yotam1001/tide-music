@@ -34,7 +34,8 @@ internal static class PayloadTests {
         }
         bytes.Position = 0; return bytes;
     }
-    [STAThread] public static int Main() {
+    [STAThread] public static int Main(string[] args) {
+        if (args.Length == 1 && args[0] == "--handoff-child") { System.Threading.Thread.Sleep(1200); return 0; }
         using (var form = new SetupWindow(true)) {
             var chromeControl = (CheckBox)form.Controls["chromeConnection"];
             var idControl = (TextBox)form.Controls["chromeExtensionId"];
@@ -49,7 +50,27 @@ internal static class PayloadTests {
             }
         }
         var script = Path.Combine(Path.GetTempPath(), "fixture folder", "install-windows.ps1");
+        if (Payload.AppVersion != "0.1.0-preview.1") throw new Exception("Embedded installer version was lost.");
+        foreach (var invalid in new string[][] { new[] { "--update-from", "0" }, new[] { "--update-from", "-1" }, new[] { "--update-from", "1", "extra" }, new[] { "--unknown" }, new[] { "--update-from", Process.GetCurrentProcess().Id.ToString() } }) {
+            try { UpdateOptions.Parse(invalid); throw new Exception("Invalid update handoff accepted."); }
+            catch (ArgumentException) { }
+        }
+        if (UpdateOptions.Parse(new string[0]) != null || UpdateOptions.Parse(new[] { "--preview" }) != null)
+            throw new Exception("Normal setup unexpectedly enabled automatic installation.");
+        var deadParent = UpdateOptions.Parse(new[] { "--update-from", Int32.MaxValue.ToString() });
+        deadParent.WaitForPlayer();
+        var handoffRoot = Path.Combine(Path.GetTempPath(), "tide-handoff-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(handoffRoot);
+        var childPath = Path.Combine(handoffRoot, "tide-music.exe");
+        try {
+            File.Copy(System.Reflection.Assembly.GetExecutingAssembly().Location, childPath);
+            using (var child = Process.Start(new ProcessStartInfo { FileName = childPath, Arguments = "--handoff-child", UseShellExecute = false, CreateNoWindow = true })) {
+                UpdateOptions.Parse(new[] { "--update-from", child.Id.ToString() }).WaitForPlayer();
+                if (!child.HasExited || child.ExitCode != 0) throw new Exception("Setup did not wait for normal Tide shutdown.");
+            }
+        } finally { File.Delete(childPath); Directory.Delete(handoffRoot); }
         var plain = new InstallOptions(false, "ignored untrusted input");
+        if (!plain.Arguments(script).Contains("-AppVersion 0.1.0-preview.1")) throw new Exception("Update version not forwarded.");
         if (plain.Chrome || plain.Arguments(script).Contains("-Browser") || !plain.Arguments(script).Contains("-File \"" + script + "\""))
             throw new Exception("Default installer arguments changed browser consent or path quoting.");
         var chrome = new InstallOptions(true, "  ABCDEFGHIJKLMNOPABCDEFGHIJKLMNOP  ");
@@ -65,7 +86,7 @@ internal static class PayloadTests {
         var previousModules = Environment.GetEnvironmentVariable("PSModulePath");
         try {
             var fixtureScript = Path.Combine(scratch, "fixture.ps1");
-            File.WriteAllText(fixtureScript, "param($Mode,$Browser,$ChromiumExtensionId)\n$ErrorActionPreference='Stop'\nGet-FileHash -LiteralPath $PSCommandPath | Out-Null\nif ($Mode -ne 'Install' -or $Browser -ne 'Chrome' -or $ChromiumExtensionId -ne 'abcdefghijklmnopabcdefghijklmnop') { throw 'Argument transfer failed' }\nWrite-Output 'PASS native setup process arguments and system modules'\n");
+            File.WriteAllText(fixtureScript, "param($Mode,$Browser,$ChromiumExtensionId,$AppVersion)\n$ErrorActionPreference='Stop'\nGet-FileHash -LiteralPath $PSCommandPath | Out-Null\nif ($Mode -ne 'Install' -or $Browser -ne 'Chrome' -or $ChromiumExtensionId -ne 'abcdefghijklmnopabcdefghijklmnop' -or $AppVersion -ne '0.1.0-preview.1') { throw 'Argument transfer failed' }\nWrite-Output 'PASS native setup process arguments and system modules'\n");
             Environment.SetEnvironmentVariable("PSModulePath", Path.Combine(scratch, "nonexistent-pwsh-modules"));
             using (var process = Process.Start(chrome.StartInfo(fixtureScript))) {
                 var stdout = process.StandardOutput.ReadToEndAsync();

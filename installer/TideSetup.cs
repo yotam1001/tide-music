@@ -14,6 +14,19 @@ using System.Windows.Forms;
 
 namespace TideSetup {
     internal static class Payload {
+        internal static string AppVersion {
+            get {
+                using (var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("Tide.Version")) {
+                    if (stream == null) throw new InvalidDataException("Installer version is missing.");
+                    using (var reader = new StreamReader(stream)) {
+                        var value = reader.ReadToEnd().Trim();
+                        if (!Regex.IsMatch(value, @"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$"))
+                            throw new InvalidDataException("Installer version is invalid.");
+                        return value;
+                    }
+                }
+            }
+        }
         internal static readonly string[] Files = {
             "tide-music.exe", "LICENSE", "THIRD_PARTY_NOTICES.md", "DEPENDENCIES.md", "START_HERE.md",
             "docs/ACCOUNT_SETUP.md", "scripts/setup-runtime.ps1", "scripts/setup-provider.ps1",
@@ -56,6 +69,7 @@ namespace TideSetup {
             }
         }
         internal static string Extract() {
+            if (String.IsNullOrEmpty(AppVersion)) throw new InvalidDataException("Installer version is missing.");
             var assembly = Assembly.GetExecutingAssembly();
             using (var stream = assembly.GetManifestResourceStream("Tide.Payload"))
             using (var digest = assembly.GetManifestResourceStream("Tide.Payload.sha256")) {
@@ -118,6 +132,7 @@ namespace TideSetup {
         }
         internal string Arguments(string script) {
             return "-NoLogo -NoProfile -ExecutionPolicy Bypass -File \"" + script + "\" -Mode Install"
+                + " -AppVersion " + Payload.AppVersion
                 + (Chrome ? " -Browser Chrome -ChromiumExtensionId " + ExtensionId : "");
         }
         internal ProcessStartInfo StartInfo(string script) {
@@ -135,6 +150,30 @@ namespace TideSetup {
         }
     }
 
+    internal sealed class UpdateOptions {
+        internal readonly int ParentId;
+        UpdateOptions(int parentId) { ParentId = parentId; }
+        internal static UpdateOptions Parse(string[] args) {
+            if (args.Length == 0 || (args.Length == 1 && (args[0] == "--preview" || args[0] == "--verify-payload"))) return null;
+            int id;
+            if (args.Length != 2 || args[0] != "--update-from" || !Int32.TryParse(args[1], out id)
+                || id <= 0 || id == Process.GetCurrentProcess().Id) throw new ArgumentException("Invalid update handoff.");
+            return new UpdateOptions(id);
+        }
+        internal void WaitForPlayer() {
+            Process parent;
+            try { parent = Process.GetProcessById(ParentId); }
+            catch (ArgumentException) { return; } // The player already finished shutting down.
+            using (parent) {
+                try {
+                    if (parent.HasExited) return;
+                    if (!String.Equals(parent.ProcessName, "tide-music", StringComparison.OrdinalIgnoreCase)) throw new IOException("The update handoff does not identify Tide.");
+                } catch (InvalidOperationException) { return; }
+                if (!parent.WaitForExit(120000)) throw new IOException("Tide is still closing. Close it before retrying setup.");
+            }
+        }
+    }
+
     internal sealed class SetupWindow : Form {
         readonly Label heading = new Label(), description = new Label(), status = new Label();
         readonly Button action = new Button(), close = new Button(), connect = new Button();
@@ -146,13 +185,15 @@ namespace TideSetup {
         readonly Button guide = new Button();
         readonly BackgroundWorker worker = new BackgroundWorker();
         readonly bool preview;
+        readonly UpdateOptions update;
         bool busy, completed;
         string installed;
         InstallOptions options;
         // Layout previews must not take keyboard focus from a running game.
         protected override bool ShowWithoutActivation { get { return preview; } }
         readonly string installRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Tide");
-        internal SetupWindow(bool demo) {
+        internal SetupWindow(bool demo, UpdateOptions handoff = null) {
+            update = handoff;
             preview = demo; Text = "Tide Setup"; ClientSize = new Size(580, 510); MinimumSize = Size; MaximumSize = Size;
             StartPosition = FormStartPosition.CenterScreen; MaximizeBox = false; AutoScaleMode = AutoScaleMode.Dpi;
             BackColor = Color.FromArgb(247, 242, 236); ForeColor = Color.FromArgb(51, 43, 47); Font = new Font("Segoe UI", 10);
@@ -213,8 +254,10 @@ namespace TideSetup {
                         : "Open Tide to start listening. Existing account connections are preserved.\n\nFor a new Chrome connection, follow the guide, load Tide's extension, then run this installer again with Enable Chrome companion connection selected.\n\nConnect YouTube Music opens Account in Tide. Firefox/Zen automatic connection and public extension-store distribution remain unavailable.";
                     action.Text = "Open Tide"; close.Text = "Finish";
                     connect.Visible = true;
+                    if (update != null) OpenTide(false);
                 }
             };
+            if (update != null) Shown += delegate { Install(); };
         }
         void Install() {
             try { options = new InstallOptions(chrome.Checked, extensionId.Text); }
@@ -231,6 +274,7 @@ namespace TideSetup {
             if (preview) { worker.ReportProgress(100, "Preview complete · nothing installed"); args.Result = null; return; }
             string root = null, result = null; var errors = new StringBuilder();
             try {
+                if (update != null) { worker.ReportProgress(0, "Waiting for Tide to close…"); update.WaitForPlayer(); }
                 root = Payload.Extract();
                 var start = options.StartInfo(Path.Combine(root, "scripts", "install-windows.ps1"));
                 using (var process = new Process { StartInfo = start }) {
@@ -259,9 +303,10 @@ namespace TideSetup {
     internal static class Program {
         [STAThread] static int Main(string[] args) {
             try {
+                var update = UpdateOptions.Parse(args);
                 if (args.Length == 1 && args[0] == "--verify-payload") { var root = Payload.Extract(); Payload.Remove(root); return 0; }
                 Application.EnableVisualStyles(); Application.SetCompatibleTextRenderingDefault(false);
-                Application.Run(new SetupWindow(args.Length == 1 && args[0] == "--preview")); return 0;
+                Application.Run(new SetupWindow(args.Length == 1 && args[0] == "--preview", update)); return 0;
             } catch (Exception error) {
                 if (args.Length > 0) { Console.Error.WriteLine(error.Message); return 1; }
                 MessageBox.Show("Tide Setup could not start. Download the installer again.\n\n" + error.Message, "Tide Setup"); return 1;
