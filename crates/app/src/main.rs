@@ -722,17 +722,16 @@ fn configure_account_playback(s: &mut State, u: &AppWindow) -> bool {
 
 fn refresh_library_models(s: &State, u: &AppWindow) {
     let mut artwork = s.artwork.borrow_mut();
+    let row_height = u.global::<LayoutMetrics>().get_browse_row_height();
     let playlist_images = artwork_view::visible_range(
         u.get_library_artwork_y(),
         u.get_library_artwork_height(),
-        s.library_playlists.iter().map(|_| 76.0),
+        s.library_playlists.iter().map(|_| row_height),
     );
     let home_images = artwork_view::visible_range(
         u.get_home_artwork_y(),
         u.get_home_artwork_height(),
-        s.recommendations
-            .iter()
-            .map(|p| if p.kind == "song" { 66.0 } else { 76.0 }),
+        s.recommendations.iter().map(|_| row_height),
     );
     let playlists: Vec<PlaylistRow> = s
         .library_playlists
@@ -855,9 +854,16 @@ fn sanitize_queue(queue: &mut Queue) -> bool {
     changed |= queue.current != old_current;
     changed
 }
-fn content_rows(tracks: &[Track], s: &State, visible: bool, y: f32, height: f32) -> Vec<TrackRow> {
+fn content_rows(
+    tracks: &[Track],
+    s: &State,
+    visible: bool,
+    y: f32,
+    height: f32,
+    row_height: f32,
+) -> Vec<TrackRow> {
     let mut artwork = s.artwork.borrow_mut();
-    let images = artwork_view::visible_range(y, height, tracks.iter().map(|_| 66.0));
+    let images = artwork_view::visible_range(y, height, tracks.iter().map(|_| row_height));
     tracks
         .iter()
         .enumerate()
@@ -885,6 +891,7 @@ fn refresh_content_models(s: &State, u: &AppWindow) {
             u.get_detail_open(),
             u.get_detail_artwork_y(),
             u.get_detail_artwork_height(),
+            u.global::<LayoutMetrics>().get_browse_row_height(),
         ),
     ));
     u.set_search_rows(update_model(
@@ -895,6 +902,7 @@ fn refresh_content_models(s: &State, u: &AppWindow) {
             u.get_search_open(),
             u.get_search_artwork_y(),
             u.get_search_artwork_height(),
+            u.global::<LayoutMetrics>().get_browse_row_height(),
         ),
     ));
 }
@@ -964,6 +972,9 @@ fn queue_choice(s: &mut State, u: &AppWindow, track: Track, play_next: bool) {
 fn refresh(ui: &AppWindow, state: &State) {
     let mut artwork = state.artwork.borrow_mut();
     let current = state.settings.queue.current.unwrap_or(0);
+    let metrics = ui.global::<LayoutMetrics>();
+    let row_height = metrics.get_queue_row_height();
+    let heading_height = metrics.get_queue_heading_height();
     let queue_images = artwork_view::visible_range(
         ui.get_queue_artwork_y(),
         ui.get_queue_artwork_height(),
@@ -979,11 +990,7 @@ fn refresh(ui: &AppWindow, state: &State) {
                     || index == current + 1
                     || track.recommended
                         != state.settings.queue.tracks[index.saturating_sub(1)].recommended;
-                if heading {
-                    94.0
-                } else {
-                    66.0
-                }
+                row_height + if heading { heading_height } else { 0.0 }
             }),
     );
     let current_art = state
@@ -1631,7 +1638,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
     if let Some(index) = startup_account.filter(|_| !test_mode) {
-        ui.set_settings_open(true);
+        ui.set_account_open(true);
         request_library(
             &mut state.borrow_mut(),
             &ui,
@@ -1661,7 +1668,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
     if std::env::args().any(|a| a == "--connect-account") && !test_mode {
-        ui.set_settings_open(true);
+        ui.set_account_open(true);
         connect_picker(&picker_busy, state.clone(), &ui, library_tx.clone());
     }
     {
@@ -2007,7 +2014,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Some(u) = weak.upgrade() {
                 let mut s = state.borrow_mut();
                 if s.account_error {
-                    u.set_settings_open(true);
+                    u.set_account_open(true);
                 } else {
                     if s.library_worker.is_some() && s.library_retry.is_some() {
                         return;
@@ -2448,7 +2455,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
     if std::env::args().any(|argument| argument == "--connect-account") {
-        ui.set_settings_open(true);
+        ui.set_account_open(true);
     }
     ui.show()?;
     let media = Rc::new(RefCell::new(None::<tide_windows::MediaSession>));

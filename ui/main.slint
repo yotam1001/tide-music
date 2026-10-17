@@ -1,5 +1,12 @@
 import { AboutSlint, Button, ComboBox, LineEdit, ListView, Palette, ScrollView, Slider } from "std-widgets.slint";
 
+// Artwork viewport calculations read these same logical dimensions from Rust.
+export global LayoutMetrics {
+    out property <length> browse-row-height: 72px;
+    out property <length> queue-row-height: 66px;
+    out property <length> queue-heading-height: 28px;
+}
+
 export struct TrackRow {
     title: string,
     artist: string,
@@ -157,6 +164,7 @@ component TideButton inherits Rectangle {
     in property <color> pressed-color;
     in property <bool> active: false;
     in property <bool> round: false;
+    in property <bool> quiet: false;
     in property <bool> enabled: true;
     in property <length> caption-size: 14px;
     callback clicked;
@@ -166,27 +174,28 @@ component TideButton inherits Rectangle {
         root.caption == "⏮" ? "previous" : root.caption == "⏭" ? "next"
         : root.caption == "▶" ? "play" : root.caption == "Ⅱ" ? "pause"
         : root.caption == "↻" ? "repeat" : root.caption == "⌄" ? "collapse"
-        : root.caption == "↗" ? "expand" : root.caption == "◐" || root.caption == "☼" ? "mode"
+        : root.caption == "↗" ? "expand" : root.caption == "☼" ? "sun" : root.caption == "☾" ? "moon" : root.caption == "◐" ? "mode"
         : root.caption == "⌫" ? "clear" : root.caption == "＋" ? "add"
         : root.caption == "⇄" ? "shuffle" : root.caption == "→" ? "send"
         : root.caption == "..." ? "more" : root.caption == "×" ? "close" : "";
     private property <color> icon-color: root.active ? root.accent-text-color : root.text-color;
 
     border-radius: root.round ? self.height / 2 : 9px;
-    border-width: control.has-focus ? 2px : root.active ? 0px : 1px;
+    border-width: control.has-focus ? 2px : root.active || root.quiet ? 0px : 1px;
     border-color: control.has-focus ? root.focus-color : root.outline-color;
     background: root.active ? root.accent-color
-        : control.pressed ? root.pressed-color : root.surface-color;
+        : control.pressed || hover-area.has-hover ? root.pressed-color : root.quiet ? Colors.transparent : root.surface-color;
     opacity: root.enabled ? 1 : 0.45;
 
-    control := Button {
-        width: parent.width;
-        height: parent.height;
-        text: "";
-        opacity: 0;
-        accessible-label: root.label;
-        enabled: root.enabled;
-        clicked => { root.clicked(); }
+    hover-area := TouchArea {
+        width: parent.width; height: parent.height; enabled: root.enabled;
+        mouse-cursor: pointer;
+        control := Button {
+            width: parent.width; height: parent.height;
+            text: ""; opacity: 0;
+            accessible-label: root.label; enabled: root.enabled;
+            clicked => { root.clicked(); }
+        }
     }
 
     Text {
@@ -218,6 +227,8 @@ component TideButton inherits Rectangle {
             : root.icon-kind == "shuffle" ? "M 3 6 L 7 6 C 11 6 13 18 17 18 L 21 18 M 17 14 L 21 18 L 17 22 M 3 18 L 7 18 C 11 18 13 6 17 6 L 21 6 M 17 2 L 21 6 L 17 10"
             : root.icon-kind == "collapse" ? "M 5 9 L 12 16 L 19 9"
             : root.icon-kind == "expand" ? "M 14 4 L 20 4 L 20 10 M 20 4 L 10 14 M 10 5 L 5 5 L 5 19 L 19 19 L 19 14"
+            : root.icon-kind == "sun" ? "M 12 8 A 4 4 0 1 0 12 16 A 4 4 0 1 0 12 8 Z M 12 2 L 12 4 M 12 20 L 12 22 M 2 12 L 4 12 M 20 12 L 22 12 M 5 5 L 6.5 6.5 M 17.5 17.5 L 19 19 M 5 19 L 6.5 17.5 M 17.5 6.5 L 19 5"
+            : root.icon-kind == "moon" ? "M 19 15 A 8 8 0 0 1 9 5 A 8 8 0 1 0 19 15 Z"
             : root.icon-kind == "mode" ? "M 12 3 A 9 9 0 1 0 12 21 A 9 9 0 1 0 12 3 Z M 12 3 L 12 21 M 12 6 L 17 6 M 12 9 L 19 9 M 12 12 L 20 12 M 12 15 L 19 15 M 12 18 L 17 18"
             : root.icon-kind == "clear" ? "M 6 7 L 18 7 L 17 21 L 7 21 Z M 4 7 L 20 7 M 9 7 L 9 3 L 15 3 L 15 7 M 10 10 L 10 18 M 14 10 L 14 18"
             : root.icon-kind == "add" ? "M 12 5 L 12 19 M 5 12 L 19 12"
@@ -336,6 +347,7 @@ component TransportButtons inherits Rectangle {
 }
 
 component LibraryButton inherits TideButton {
+    quiet: true;
     in property <bool> light-mode: false;
     height: 36px;
     caption-size: 12px;
@@ -358,18 +370,22 @@ component NavigationButton inherits Rectangle {
     height: 40px;
     border-radius: 9px;
     background: root.active ? (root.light-mode ? #e8d5cb : #30232e)
-        : control.pressed ? (root.light-mode ? #e5dbd2 : #242831) : Colors.transparent;
+        : control.pressed || row-hover.has-hover ? (root.light-mode ? #e5dbd2 : #242831) : Colors.transparent;
     border-width: control.has-focus ? 2px : 0px;
     border-color: root.light-mode ? #8e594e : #db7f9d;
     private property <color> ink: root.active ? (root.light-mode ? #88463e : #edb5c6)
         : (root.light-mode ? #716773 : #a1a5ae);
-    control := Button {
-        width: parent.width;
-        height: parent.height;
-        opacity: 0;
-        enabled: root.enabled;
-        accessible-label: root.library ? "Open your Library" : "Open Home";
-        clicked => { root.clicked(); }
+    row-hover := TouchArea {
+        width: parent.width; height: parent.height;
+        enabled: root.enabled; mouse-cursor: pointer;
+        control := Button {
+            width: parent.width;
+            height: parent.height;
+            opacity: 0;
+            enabled: root.enabled;
+            accessible-label: root.library ? "Open your Library" : "Open Home";
+            clicked => { root.clicked(); }
+        }
     }
     HorizontalLayout {
         padding-left: 12px;
@@ -391,7 +407,7 @@ component NavigationButton inherits Rectangle {
             horizontal-stretch: 1;
             text: root.library ? "Library" : "Home";
             color: root.ink;
-            font-size: 12px;
+            font-size: 13px;
             font-weight: root.active ? 600 : 500;
         }
     }
@@ -428,10 +444,10 @@ component EmptyState inherits Rectangle {
     in property <bool> light-mode;
     in property <string> heading;
     in property <string> detail;
-    background: root.light-mode ? #f9f4ee : #191c22;
+    background: Colors.transparent;
     border-radius: 10px;
     border-color: root.light-mode ? #ded0c4 : #292e37;
-    border-width: 1px;
+    border-width: 0px;
     VerticalLayout {
         padding: 28px;
         spacing: 10px;
@@ -457,30 +473,37 @@ component SongRow inherits Rectangle {
     callback remove();
     callback queue(bool);
     callback radio();
-    private property <bool> menu-open: false;
-    height: root.menu-open ? (root.removable && !root.current ? 102px : 140px) : 66px;
+    height: root.removable ? LayoutMetrics.queue-row-height : LayoutMetrics.browse-row-height;
     opacity: root.dragging ? 0.55 : 1;
-    changed drag-in-progress => { if root.drag-in-progress { root.menu-open = false; } }
+    changed drag-in-progress => { if root.drag-in-progress { song-menu.close(); } }
+    changed enabled => { if !root.enabled { song-menu.close(); } }
+    changed track => { song-menu.close(); }
+    changed index => { song-menu.close(); }
+    changed current => { song-menu.close(); }
     border-radius: 7px;
     background: root.current ? (root.light-mode ? #e8d5cb : #30232e)
-        : action.pressed ? (root.light-mode ? #e9e0d6 : #20252d) : Colors.transparent;
+        : action.pressed || row-hover.has-hover ? (root.light-mode ? #e9e0d6 : #20252d) : Colors.transparent;
     border-width: action.has-focus ? 2px : 0px;
     border-color: root.light-mode ? #985955 : #d16b89;
-    action := Button {
-        width: parent.width;
-        height: 66px;
-        text: "";
-        opacity: 0;
-        enabled: root.enabled && !root.drag-in-progress;
-        accessible-label: "Play " + root.track.title + " by " + root.track.artist;
-        clicked => { root.select(); }
+    row-hover := TouchArea {
+        width: parent.width; height: root.height;
+        enabled: root.enabled && !root.drag-in-progress; mouse-cursor: pointer;
+        action := Button {
+            width: parent.width;
+            height: root.height;
+            text: "";
+            opacity: 0;
+            enabled: root.enabled && !root.drag-in-progress;
+            accessible-label: "Play " + root.track.title + " by " + root.track.artist;
+            clicked => { root.select(); }
+        }
     }
     VerticalLayout {
         padding-left: 10px;
         padding-right: 10px;
         spacing: 0px;
         HorizontalLayout {
-            height: 66px;
+            height: root.height;
             spacing: 10px;
             cross-axis-alignment: center;
             if root.removable : Rectangle {
@@ -499,11 +522,11 @@ component SongRow inherits Rectangle {
                     }
                 }
             }
-            Cover { width: 42px; height: 42px; artwork: root.track.artwork; light-mode: root.light-mode; }
+            Cover { width: root.removable ? 42px : 48px; height: self.width; artwork: root.track.artwork; light-mode: root.light-mode; }
             Rectangle {
                 horizontal-stretch: 1;
                 min-width: 0px;
-                height: 36px;
+                height: root.removable ? 36px : 42px;
                 // Mixed-direction glyphs can paint outside an elided Text's
                 // bounds. Clip metadata only, keeping row focus/actions intact.
                 clip: true;
@@ -511,29 +534,38 @@ component SongRow inherits Rectangle {
                     width: parent.width;
                     height: parent.height;
                     spacing: 4px;
-                    Text { min-width: 0px; text: root.track.title; color: root.light-mode ? #392e33 : #f0eeef; font-size: 14px; font-weight: root.current ? 600 : 500; overflow: elide; }
-                    Text { min-width: 0px; text: (root.current ? "Now playing · " : "") + root.track.artist; color: root.light-mode ? #716773 : #a1a5ae; font-size: 11px; overflow: elide; }
+                    Text { min-width: 0px; text: root.track.title; color: root.light-mode ? #392e33 : #f0eeef; font-size: root.removable ? 14px : 16px; font-weight: root.current ? 600 : 500; overflow: elide; }
+                    Text { min-width: 0px; text: root.track.artist; color: root.light-mode ? #716773 : #a1a5ae; font-size: root.removable ? 12px : 13px; overflow: elide; }
                 }
             }
             if root.show-duration && root.track.duration != "" && root.track.duration != "—" : Text { width: 42px; text: root.track.duration; color: root.light-mode ? #716773 : #a1a5ae; font-size: 11px; horizontal-alignment: right; }
-            if root.show-menu : LibraryButton { width: 30px; height: 30px; caption: "..."; label: "Actions for " + root.track.title; light-mode: root.light-mode; enabled: root.enabled && !root.drag-in-progress; active: root.menu-open; clicked => { root.menu-open = !root.menu-open; } }
-            if root.removable : LibraryButton { width: 28px; height: 30px; caption: "×"; label: "Remove " + root.track.title + " from queue"; light-mode: root.light-mode; enabled: root.enabled && !root.drag-in-progress; clicked => { root.remove(); } }
-        }
-        if root.menu-open : VerticalLayout {
-            height: root.removable && !root.current ? 36px : 70px;
-            spacing: 4px;
-            if !root.removable || root.current : HorizontalLayout {
-                height: 32px;
-                spacing: 6px;
-                LibraryButton { width: 78px; height: 30px; caption: root.removable ? "Repeat next" : "Play next"; label: "Play " + root.track.title + " next"; light-mode: root.light-mode; enabled: root.enabled; clicked => { root.queue(true); root.menu-open = false; } }
-                LibraryButton { width: 96px; height: 30px; caption: root.removable ? "Repeat later" : "Add to queue"; label: "Add " + root.track.title + " to queue"; light-mode: root.light-mode; enabled: root.enabled; clicked => { root.queue(false); root.menu-open = false; } }
-                Rectangle { horizontal-stretch: 1; }
-            }
-            LibraryButton { height: 30px; caption: "Replace upcoming with song radio"; label: "Replace upcoming tracks with a radio from " + root.track.title; light-mode: root.light-mode; enabled: root.enabled; clicked => { root.radio(); root.menu-open = false; } }
+            if root.show-menu : LibraryButton { width: 30px; height: 30px; caption: "..."; label: "Actions for " + root.track.title; light-mode: root.light-mode; enabled: root.enabled && !root.drag-in-progress; clicked => { song-menu.show({ x: max(0px, root.width - 290px), y: 52px }); } }
         }
     }
-    if !root.current && !root.menu-open : Rectangle {
-        x: root.removable ? 72px : 62px;
+    song-menu := ContextMenuArea {
+        enabled: root.enabled && root.show-menu && !root.drag-in-progress;
+        Menu {
+            if !root.removable || root.current : MenuItem {
+                title: root.removable ? "Repeat next" : "Play next";
+                activated => { if root.enabled { root.queue(true); } }
+            }
+            if !root.removable || root.current : MenuItem {
+                title: root.removable ? "Repeat later" : "Add to queue";
+                activated => { if root.enabled { root.queue(false); } }
+            }
+            if !root.removable || root.current : MenuSeparator { }
+            MenuItem {
+                title: "Start song radio";
+                activated => { if root.enabled { root.radio(); } }
+            }
+            if root.removable : MenuItem {
+                title: "Remove from queue";
+                activated => { if root.enabled { root.remove(); } }
+            }
+        }
+    }
+    if !root.current : Rectangle {
+        x: root.removable ? 72px : 68px;
         y: parent.height - 1px;
         height: 1px;
         width: max(0px, parent.width - self.x - 10px);
@@ -550,32 +582,36 @@ component LibraryEntry inherits Rectangle {
     in property <bool> navigable: true;
     in property <string> unavailable-label: "Unavailable";
     callback open();
-    height: 76px;
+    height: LayoutMetrics.browse-row-height;
     border-radius: 9px;
-    background: action.pressed ? (root.light-mode ? #e9e0d6 : #20252d) : Colors.transparent;
+    background: action.pressed || row-hover.has-hover ? (root.light-mode ? #e9e0d6 : #20252d) : Colors.transparent;
     border-width: action.has-focus ? 2px : 0px;
     border-color: root.light-mode ? #985955 : #d16b89;
-    action := Button { width: parent.width; height: parent.height; text: ""; opacity: 0; enabled: root.enabled && root.navigable; accessible-label: root.navigable ? "Open " + root.title : root.title + ", " + root.unavailable-label; clicked => { root.open(); } }
+    row-hover := TouchArea {
+        width: parent.width; height: parent.height;
+        enabled: root.enabled && root.navigable; mouse-cursor: pointer;
+        action := Button { width: parent.width; height: parent.height; text: ""; opacity: 0; enabled: root.enabled && root.navigable; accessible-label: root.navigable ? "Open " + root.title : root.title + ", " + root.unavailable-label; clicked => { root.open(); } }
+    }
     HorizontalLayout {
-        padding: 12px;
-        spacing: 14px;
+        padding: 10px;
+        spacing: 10px;
         cross-axis-alignment: center;
-        Cover { width: 50px; height: 50px; artwork: root.artwork; light-mode: root.light-mode; }
+        Cover { width: 48px; height: 48px; artwork: root.artwork; light-mode: root.light-mode; }
         VerticalLayout {
             horizontal-stretch: 1;
-            min-width: 80px;
+            min-width: 0px;
             spacing: 4px;
-            Text { text: root.title; color: root.light-mode ? #392e33 : #f0eeef; font-weight: 600; overflow: elide; }
-            Text { text: root.subtitle; color: root.light-mode ? #716773 : #a1a5ae; font-size: 12px; overflow: elide; }
+            Text { text: root.title; color: root.light-mode ? #392e33 : #f0eeef; font-size: 16px; font-weight: 500; overflow: elide; }
+            Text { text: root.subtitle; color: root.light-mode ? #716773 : #a1a5ae; font-size: 13px; overflow: elide; }
         }
         if root.navigable : Text { width: 20px; text: "›"; color: root.light-mode ? #716773 : #a1a5ae; font-size: 20px; horizontal-alignment: center; }
         if !root.navigable : Text { width: 116px; text: root.unavailable-label; color: root.light-mode ? #716773 : #a1a5ae; font-size: 11px; horizontal-alignment: right; }
     }
     Rectangle {
-        x: 76px;
+        x: 68px;
         y: parent.height - 1px;
         height: 1px;
-        width: max(0px, parent.width - 88px);
+        width: max(0px, parent.width - 78px);
         background: root.light-mode ? #e1d7ce : #242932;
     }
 }
@@ -606,22 +642,22 @@ component QueueItem inherits Rectangle {
     callback hover(int, int);
     private property <bool> press-hit: root.press-active && root.index > root.current-index
         && root.press-x >= song.absolute-position.x && root.press-x < song.absolute-position.x + 44px
-        && root.press-y >= song.absolute-position.y && root.press-y < song.absolute-position.y + 66px;
+        && root.press-y >= song.absolute-position.y && root.press-y < song.absolute-position.y + LayoutMetrics.queue-row-height;
     changed press-hit => { if root.press-hit { root.hit(root.index, root.track.recommended); } }
     private property <int> hover-half: root.drag-in-list && root.drag-source >= 0 && root.index > root.current-index && root.track.recommended == root.drag-recommended
         && root.drag-x >= self.absolute-position.x && root.drag-x < self.absolute-position.x + self.width
         && root.drag-y >= self.absolute-position.y && root.drag-y < self.absolute-position.y + self.height
-        ? (root.drag-y < song.absolute-position.y + 33px ? 0 : 1) : -1;
+        ? (root.drag-y < song.absolute-position.y + LayoutMetrics.queue-row-height / 2 ? 0 : 1) : -1;
     private property <int> insertion-index: root.index + root.hover-half;
     private property <int> final-index: root.insertion-index - (root.insertion-index > root.drag-source ? 1 : 0);
     private property <{ revision: int, half: int }> hover-state: { revision: root.drag-revision, half: root.hover-half };
     changed hover-state => { root.hover(root.index, root.hover-half); }
-    height: song.height + (root.heading ? 28px : 0px);
+    height: song.height + (root.heading ? LayoutMetrics.queue-heading-height : 0px);
     VerticalLayout {
         spacing: 0px;
         if root.heading : Text {
-            height: 28px;
-            text: root.index == root.current-index ? "NOW PLAYING" : root.track.recommended ? "AUTOPLAY" : "UP NEXT";
+            height: LayoutMetrics.queue-heading-height;
+            text: root.index == root.current-index ? "Now playing" : root.track.recommended ? "Autoplay" : "Up next";
             color: root.light-mode ? #956a61 : #bd8496;
             font-size: 10px;
             font-weight: 650;
@@ -671,7 +707,6 @@ component QueueDrawer inherits Rectangle {
     callback toggle-repeat();
     callback shuffle();
     callback clear();
-    private property <bool> overflow-open: false;
     private property <int> drag-source: -1;
     private property <bool> drag-recommended: false;
     private property <length> drag-x;
@@ -704,6 +739,14 @@ component QueueDrawer inherits Rectangle {
     border-width: 1px;
     border-color: root.light-mode ? #ded0c4 : #292e37;
     TouchArea { }
+    queue-menu := ContextMenuArea {
+        enabled: root.enabled;
+        Menu {
+            MenuItem { title: "Shuffle upcoming"; enabled: root.enabled && root.rows.length > 1; activated => { if root.enabled { root.shuffle(); } } }
+            MenuItem { title: "Clear queue"; enabled: root.enabled && root.rows.length > 0; activated => { if root.enabled { root.clear(); } } }
+        }
+    }
+
     VerticalLayout {
         padding: 14px;
         spacing: 10px;
@@ -712,14 +755,8 @@ component QueueDrawer inherits Rectangle {
             spacing: 7px;
             cross-axis-alignment: center;
             Text { horizontal-stretch: 1; text: "Queue"; color: root.light-mode ? #392e33 : #f0eeef; font-size: 20px; font-weight: 600; }
-            LibraryButton { width: 30px; height: 30px; enabled: root.enabled; caption: "..."; label: "More queue actions"; light-mode: root.light-mode; active: root.overflow-open; clicked => { root.overflow-open = !root.overflow-open; } }
+            LibraryButton { width: 30px; height: 30px; enabled: root.enabled; caption: "..."; label: "More queue actions"; light-mode: root.light-mode; clicked => { queue-menu.show({ x: max(0px, root.width - 294px), y: 48px }); } }
             LibraryButton { width: 30px; height: 30px; enabled: root.enabled; caption: "×"; label: "Close queue drawer"; light-mode: root.light-mode; clicked => { root.cancel-drag(); root.close(); } }
-        }
-        if root.overflow-open : HorizontalLayout {
-            height: 34px;
-            spacing: 6px;
-            LibraryButton { horizontal-stretch: 1; light-mode: root.light-mode; caption: "Shuffle upcoming"; label: "Shuffle the upcoming queue"; enabled: root.enabled && root.rows.length > 1; clicked => { root.shuffle(); root.overflow-open = false; } }
-            LibraryButton { width: 98px; light-mode: root.light-mode; caption: "Clear queue"; label: "Clear the playback queue"; enabled: root.enabled && root.rows.length > 0; clicked => { root.clear(); root.overflow-open = false; } }
         }
         // The fixed rail owns pointer capture while ListView recycles song rows.
         if root.rows.length > 0 : queue-area := Rectangle {
@@ -1009,6 +1046,7 @@ export component AppWindow inherits Window {
     in property <string> error-message;
     in property <bool> error-is-account;
     in-out property <bool> settings-open: false;
+    in-out property <bool> account-open: false;
     callback close-detail();
     callback close-search();
     callback play-detail();
@@ -1028,8 +1066,9 @@ export component AppWindow inherits Window {
     private property <color> outline: root.light-mode ? #ded0c4 : #292e37;
     private property <image> current-artwork: root.track-artwork;
     private property <bool> wide: true;
+    private property <bool> narrow-navigation: false;
     private property <bool> advanced-open: false;
-    private property <bool> browsing-enabled: !root.settings-open && !(root.queue-open && !root.wide);
+    private property <bool> browsing-enabled: !root.settings-open && !root.account-open && !(root.queue-open && !root.wide);
     title: "Tide";
     icon: @image-url("assets/tide-icon.png");
     default-font-family: "Segoe UI";
@@ -1039,10 +1078,13 @@ export component AppWindow inherits Window {
     min-width: 650px;
     min-height: root.collapsed ? 112px : 420px;
     background: root.light-mode ? #f4eee6 : #111318;
-    init => { Palette.color-scheme = root.light-mode ? light : dark; root.wide = root.width >= 1050px; }
-    changed width => { root.wide = root.width >= 1050px; }
+    init => { Palette.color-scheme = root.light-mode ? light : dark; root.wide = root.width >= 1050px; root.narrow-navigation = root.width < 900px; }
+    changed width => { root.wide = root.width >= 1050px; root.narrow-navigation = root.width < 900px; }
     changed settings-open => {
-        if root.settings-open { app-focus.focus(); }
+        if root.settings-open { root.account-open = false; app-focus.focus(); }
+    }
+    changed account-open => {
+        if root.account-open { root.settings-open = false; app-focus.focus(); }
         else { root.advanced-open = false; }
     }
     changed queue-open => { if root.queue-open && !root.wide { app-focus.focus(); } }
@@ -1067,6 +1109,7 @@ export component AppWindow inherits Window {
         key-pressed(event) => {
             if event.text == Key.Escape {
                 if root.settings-open { root.settings-open = false; return accept; }
+                if root.account-open { root.account-open = false; return accept; }
                 if root.queue-open { root.queue-open = false; return accept; }
             }
             return reject;
@@ -1084,9 +1127,10 @@ export component AppWindow inherits Window {
                     Image { width: 28px; height: 28px; source: @image-url("assets/tide-icon.png"); image-fit: contain; }
                     Text { width: 56px; text: "Tide"; color: root.foreground; font-size: 21px; font-weight: 700; }
                     SearchMark { ink: root.secondary; }
-                    LineEdit { horizontal-stretch: 1; enabled: root.browsing-enabled; text <=> root.source-input; placeholder-text: "Search music or paste a link"; accessible-label: "Search music or paste a YouTube link"; accepted(value) => { if value != "" { root.add-source(value); } } }
+                    LineEdit { horizontal-stretch: 1; height: 36px; font-size: 13px; enabled: root.browsing-enabled; text <=> root.source-input; placeholder-text: "Search music or paste a link"; accessible-label: "Search music or paste a YouTube link"; accepted(value) => { if value != "" { root.add-source(value); } } }
                     LibraryButton { width: 74px; light-mode: root.light-mode; enabled: root.browsing-enabled; caption: "Search"; label: "Search for music or open the pasted link"; clicked => { if root.source-input != "" { root.add-source(root.source-input); } } }
-                    LibraryButton { width: 92px; light-mode: root.light-mode; caption: "Account"; label: "Open account and settings"; active: root.settings-open; clicked => { root.settings-open = !root.settings-open; } }
+                    LibraryButton { width: 36px; height: 36px; light-mode: root.light-mode; caption: root.light-mode ? "☾" : "☼"; label: root.light-mode ? "Switch to dark theme" : "Switch to light theme"; clicked => { root.switch-mode(); } }
+                    LibraryButton { width: 84px; quiet: false; light-mode: root.light-mode; caption: "Settings"; label: "Open settings"; active: root.settings-open; clicked => { root.settings-open = !root.settings-open; } }
                 }
             }
             if !root.collapsed : content-area := Rectangle {
@@ -1098,7 +1142,7 @@ export component AppWindow inherits Window {
                 HorizontalLayout {
                     spacing: 0px;
                     Rectangle {
-                        width: 112px;
+                        width: root.compact-mode || root.narrow-navigation ? 120px : 152px;
                         background: root.light-mode ? #eee5db : #15181d;
                         VerticalLayout {
                             padding-left: 10px;
@@ -1108,12 +1152,27 @@ export component AppWindow inherits Window {
                             NavigationButton { light-mode: root.light-mode; enabled: root.browsing-enabled; active: !root.library-open; library: false; clicked => { root.library-open = false; root.home-open = true; root.close-detail(); root.close-search(); } }
                             NavigationButton { light-mode: root.light-mode; enabled: root.browsing-enabled; active: root.library-open; library: true; clicked => { root.library-open = true; root.home-open = false; root.close-detail(); root.close-search(); } }
                             Rectangle { vertical-stretch: 1; }
+                            Rectangle { height: 1px; background: root.outline; }
+                            Rectangle {
+                                height: 70px;
+                                border-radius: 9px;
+                                border-width: account-control.has-focus ? 2px : 0px;
+                                border-color: root.outline;
+                                background: account-control.pressed || root.account-open ? root.surface : Colors.transparent;
+                                account-control := Button { width: parent.width; height: parent.height; opacity: 0; accessible-label: "Open YouTube Music account"; clicked => { root.account-open = !root.account-open; } }
+                                VerticalLayout {
+                                    padding-left: 10px; padding-right: 6px; spacing: 5px; alignment: center;
+                                    Text { text: "Account"; color: root.foreground; font-size: 12px; font-weight: 600; overflow: elide; }
+                                    Text { text: root.account-busy ? "Connecting…" : root.account-verified ? "Connected" : "Connect account"; color: root.secondary; font-size: 11px; overflow: elide; }
+                                }
+                            }
+
                         }
                     }
                     Rectangle {
                         horizontal-stretch: 1;
                         VerticalLayout {
-                            padding: root.compact-mode ? 16px : 22px;
+                            padding: root.compact-mode ? 18px : 28px;
                             spacing: 12px;
                             if root.error-message != "" : Rectangle {
                                 height: 58px;
@@ -1195,8 +1254,7 @@ export component AppWindow inherits Window {
                                     spacing: 10px;
                                     cross-axis-alignment: center;
                                     VerticalLayout { horizontal-stretch: 1; spacing: 4px; Text { text: "For you"; color: root.foreground; font-size: 28px; font-weight: 600; } Text { text: "Music from your YouTube Music Home"; color: root.secondary; font-size: 12px; overflow: elide; } }
-                                    if root.current-index >= 0 && root.paused : LibraryButton { width: 78px; light-mode: root.light-mode; enabled: root.browsing-enabled; caption: "Resume"; label: "Resume your current queue"; clicked => { root.toggle-pause(); } }
-                                    LibraryButton { width: 78px; light-mode: root.light-mode; caption: "Refresh"; label: "Refresh your recommendations"; enabled: root.browsing-enabled && root.account-connected && !root.account-busy; clicked => { root.refresh-recommendations(); } }
+                                        LibraryButton { width: 78px; light-mode: root.light-mode; caption: "Refresh"; label: "Refresh your recommendations"; enabled: root.browsing-enabled && root.account-connected && !root.account-busy; clicked => { root.refresh-recommendations(); } }
                                 }
                                 if root.recommendations.length > 0 : ListView {
                                     content-y <=> root.home-artwork-y;
@@ -1216,7 +1274,7 @@ export component AppWindow inherits Window {
                     if root.queue-open && root.wide : QueueDrawer {
                         artwork-scroll-y <=> root.queue-artwork-y;
                         artwork-view-height <=> root.queue-artwork-height;
-                        enabled: !root.settings-open;
+                        enabled: !root.settings-open && !root.account-open;
                         width: 340px;
                         rows: root.rows;
                         current-index: root.current-index;
@@ -1242,7 +1300,7 @@ export component AppWindow inherits Window {
                     QueueDrawer {
                         artwork-scroll-y <=> root.queue-artwork-y;
                         artwork-view-height <=> root.queue-artwork-height;
-                        enabled: !root.settings-open;
+                        enabled: !root.settings-open && !root.account-open;
                         x: max(0px, parent.width - 340px);
                         width: 340px;
                         height: parent.height;
@@ -1264,9 +1322,48 @@ export component AppWindow inherits Window {
                     }
                 }
                 if root.settings-open : Rectangle {
+                    width: parent.width; height: parent.height;
+                    Rectangle { x: 0px; y: 0px; width: max(0px, parent.width - 384px); height: parent.height; background: #00000060; TouchArea { clicked => { root.settings-open = false; } } }
+                    Rectangle {
+                        x: max(0px, parent.width - 384px); width: 384px; height: parent.height;
+                        background: root.surface; border-width: 1px; border-color: root.outline;
+                        TouchArea { }
+                        ScrollView {
+                            width: parent.width; height: parent.height; horizontal-scrollbar-policy: always-off;
+                            VerticalLayout {
+                                padding: 24px; spacing: 14px;
+                                HorizontalLayout { height: 42px; cross-axis-alignment: center; Text { horizontal-stretch: 1; text: "Settings"; color: root.foreground; font-size: 25px; font-weight: 650; } LibraryButton { width: 32px; height: 32px; caption: "×"; label: "Close settings"; light-mode: root.light-mode; clicked => { root.settings-open = false; } } }
+                                Text { text: "Appearance"; color: root.foreground; font-size: 15px; font-weight: 600; }
+                                HorizontalLayout {
+                                    height: 40px; spacing: 8px;
+                                    LibraryButton { horizontal-stretch: 1; height: 40px; quiet: false; caption: "Light"; label: "Use light theme"; light-mode: root.light-mode; active: root.light-mode; clicked => { if !root.light-mode { root.switch-mode(); } } }
+                                    LibraryButton { horizontal-stretch: 1; height: 40px; quiet: false; caption: "Dark"; label: "Use dark theme"; light-mode: root.light-mode; active: !root.light-mode; clicked => { if root.light-mode { root.switch-mode(); } } }
+                                }
+                                Rectangle { height: 10px; }
+                                Rectangle { height: 1px; background: root.outline; }
+                                Text { text: "Layout"; color: root.foreground; font-size: 15px; font-weight: 600; }
+                                HorizontalLayout {
+                                    height: 40px; spacing: 8px;
+                                    LibraryButton { horizontal-stretch: 1; height: 40px; quiet: false; caption: "Normal"; label: "Use normal window size"; light-mode: root.light-mode; active: !root.compact-mode; clicked => { if root.compact-mode { root.toggle-compact(); } } }
+                                    LibraryButton { horizontal-stretch: 1; height: 40px; quiet: false; caption: "Compact"; label: "Use compact window size"; light-mode: root.light-mode; active: root.compact-mode; clicked => { if !root.compact-mode { root.toggle-compact(); } } }
+                                }
+                                Text { text: "Theme and window size are independent."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
+                                Rectangle { height: 10px; }
+                                Rectangle { height: 1px; background: root.outline; }
+                                Text { text: "Playback"; color: root.foreground; font-size: 15px; font-weight: 600; }
+                                LibraryButton { height: 40px; quiet: false; caption: "Open audio file"; label: "Open a local audio file"; light-mode: root.light-mode; clicked => { root.open-file(); root.settings-open = false; } }
+                                Rectangle { height: 10px; }
+                                Rectangle { height: 1px; background: root.outline; }
+                                Text { text: "About Tide · 0.1.0 preview"; color: root.secondary; font-size: 12px; }
+                                AboutSlint { height: 112px; horizontal-stretch: 0; }
+                            }
+                        }
+                    }
+                }
+                if root.account-open : Rectangle {
                     width: parent.width;
                     height: parent.height;
-                    Rectangle { x: 0px; y: 0px; width: max(0px, parent.width - 420px); height: parent.height; background: #00000060; TouchArea { clicked => { root.settings-open = false; } } }
+                    Rectangle { x: 0px; y: 0px; width: max(0px, parent.width - 420px); height: parent.height; background: #00000060; TouchArea { clicked => { root.account-open = false; } } }
                     Rectangle {
                         x: max(0px, parent.width - 420px);
                         width: 420px;
@@ -1282,9 +1379,9 @@ export component AppWindow inherits Window {
                             VerticalLayout {
                             padding: 20px;
                             spacing: 10px;
-                            HorizontalLayout { height: 34px; cross-axis-alignment: center; Text { horizontal-stretch: 1; text: "Account & settings"; color: root.foreground; font-size: 20px; font-weight: 650; } LibraryButton { width: 30px; height: 30px; light-mode: root.light-mode; caption: "×"; label: "Close account and settings"; clicked => { root.settings-open = false; } } }
+                            HorizontalLayout { height: 34px; cross-axis-alignment: center; Text { horizontal-stretch: 1; text: "Your account"; color: root.foreground; font-size: 20px; font-weight: 650; } LibraryButton { width: 30px; height: 30px; light-mode: root.light-mode; caption: "×"; label: "Close account"; clicked => { root.account-open = false; } } }
                             Text { height: 25px; text: root.account-busy ? "Connecting…" : root.account-verified ? "Connected" + (root.account-name == "" ? "" : " · " + root.account-name) : root.account-connected ? "Saved session · not verified" : "Connect YouTube Music"; color: root.foreground; font-size: 14px; font-weight: 600; overflow: elide; }
-                            Text { height: 42px; text: root.account-status; color: root.secondary; font-size: 11px; wrap: word-wrap; overflow: elide; accessible-live-region: polite; }
+                            if root.account-status != "" : Text { height: 42px; text: root.account-status; color: root.secondary; font-size: 11px; wrap: word-wrap; overflow: elide; accessible-live-region: polite; }
                             if root.account-connected || root.advanced-open : HorizontalLayout { height: 34px; spacing: 8px; ComboBox { horizontal-stretch: 1; model: ["Account 1", "Account 2", "Account 3", "Account 4", "Account 5", "Account 6", "Account 7", "Account 8", "Account 9", "Account 10"]; current-index <=> root.account-index; enabled: root.account-connected && !root.account-busy; } LibraryButton { width: 76px; light-mode: root.light-mode; caption: "Switch"; label: "Connect selected Google account"; enabled: root.account-connected && !root.account-busy; clicked => { root.switch-account(root.account-index); } } }
                             if !root.account-verified : Text { height: 54px; text: "Use Tide's Chrome companion to import your selected YouTube Music tab. Tide detects the imported session automatically. Manual methods are under Advanced."; color: root.secondary; font-size: 11px; wrap: word-wrap; }
                             HorizontalLayout {
@@ -1294,10 +1391,7 @@ export component AppWindow inherits Window {
                                 if root.account-busy : LibraryButton { width: 76px; light-mode: root.light-mode; caption: "Cancel"; label: "Cancel account request"; clicked => { root.cancel-account(); } }
                             }
                             Rectangle { height: 1px; background: root.outline; }
-                            HorizontalLayout { height: 36px; cross-axis-alignment: center; Text { horizontal-stretch: 1; text: "Appearance"; color: root.secondary; font-size: 12px; } LibraryButton { width: 116px; light-mode: root.light-mode; caption: root.light-mode ? "Use dark" : "Use light"; label: "Switch color theme"; clicked => { root.switch-mode(); } } }
-                            HorizontalLayout { height: 36px; cross-axis-alignment: center; Text { horizontal-stretch: 1; text: "Window size"; color: root.secondary; font-size: 12px; } LibraryButton { width: 116px; light-mode: root.light-mode; caption: root.compact-mode ? "Full size" : "Compact"; label: "Switch window size"; clicked => { root.toggle-compact(); } } }
-                            LibraryButton { height: 36px; light-mode: root.light-mode; caption: "Open audio file"; label: "Open a local audio file"; clicked => { root.open-file(); root.settings-open = false; } }
-                            LibraryButton { height: 34px; light-mode: root.light-mode; caption: root.advanced-open ? "Advanced -" : "Advanced +"; label: root.advanced-open ? "Hide advanced account options" : "Show advanced account options"; active: root.advanced-open; clicked => { root.advanced-open = !root.advanced-open; } }
+                            LibraryButton { height: 34px; light-mode: root.light-mode; caption: root.advanced-open ? "Hide advanced" : "Advanced"; label: root.advanced-open ? "Hide advanced account options" : "Show advanced account options"; clicked => { root.advanced-open = !root.advanced-open; } }
                             if root.advanced-open : LibraryButton { height: 34px; light-mode: root.light-mode; caption: "Import Zen profile"; label: "Select an existing Zen cookie database for advanced import"; enabled: !root.account-busy; clicked => { root.connect-account(); } }
                             if root.advanced-open : HorizontalLayout {
                                 height: 34px;
@@ -1308,8 +1402,6 @@ export component AppWindow inherits Window {
                             }
                             Rectangle { height: 12px; }
                             Rectangle { height: 1px; background: root.outline; }
-                            Text { text: "About Tide · 0.1.0 preview"; color: root.secondary; font-size: 12px; }
-                            AboutSlint { height: 112px; horizontal-stretch: 0; }
                             }
                         }
                     }

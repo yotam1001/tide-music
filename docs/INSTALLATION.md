@@ -72,6 +72,9 @@ only its Tide native-host registration. Manual import remains available in
 
 ## Update
 
+Tide currently has no automatic app update check or background downloader.
+Download the newer installer when updating; updating does not require uninstalling.
+
 Close Tide and let any pending companion request finish. Run the new
 **TideSetup.exe** and choose **Install Tide** again. Setup refuses to stop running processes. It builds
 a fresh private release and verifies dependencies before changing Start menu
