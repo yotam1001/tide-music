@@ -2,6 +2,13 @@
 
 A native Windows music player built for listening while gaming.
 
+[![Watch the Tide Music demo](docs/media/tide-promo-preview.gif)](docs/media/tide-promo.mp4)
+
+[Watch the 48-second demo](docs/media/tide-promo.mp4)
+
+The demo shows an earlier prototype; its memory comparison is one measured
+example, not a fixed RAM guarantee.
+
 Play YouTube Music, bring in your playlists and recommendations, and keep the
 player out of the way with a mini mode. Tide uses native audio playback rather
 than keeping an embedded browser running.
@@ -13,11 +20,9 @@ after the remaining setup checks.
 
 ![Tide's dark interface](docs/screenshots/full.png)
 
-[Light theme](docs/screenshots/light.png) · [Queue](docs/screenshots/queue.png) ·
-[Watch the demo](docs/media/tide-promo.mp4)
+[Light theme](docs/screenshots/light.png) · [Queue](docs/screenshots/queue.png)
 
-Screenshots use sample music metadata. The demo shows an earlier prototype; its
-memory comparison is one measured example, not a fixed RAM guarantee.
+Screenshots use sample music metadata.
 
 ## Get started
 
