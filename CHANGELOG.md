@@ -17,6 +17,14 @@ Tide is a Windows preview. A stable release is pending the checks in
 - Application shutdown explicitly joins the playback worker before returning.
 - Window fitting for changes in display scale and player mode.
 - Automated Windows preview packaging with checksums and dependency notices.
+- Theme-matched song menus, a visible Account entry, a direct theme switch,
+  and removal of the routine Playing status strip.
+- Published-stable update checks and verified install/restart, with optional
+  startup checking. Preview releases still need manual installer updates.
+- Smaller development compiler output and guarded local builds; build caches
+  and toolchains are rejected by the installer package gate.
+- User-first installation, Chrome connection, everyday-use and troubleshooting
+  guides, with contributor and release instructions kept separately.
 
 Known limitations and the scope of completed tests are documented in
 [validation](docs/VALIDATION.md). Session longevity, game-focused physical media

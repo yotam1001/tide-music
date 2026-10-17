@@ -1,54 +1,54 @@
-# Tide Windows preview
+# Start using Tide
 
-This is a preview, not a verified stable release. Current evidence and remaining
-release checks are available in the [source repository](https://github.com/yotam1001/tide-music).
+Tide is a native Windows music player for listening while gaming. This is an
+unsigned preview, not a verified stable release. You need Windows x64 and internet
+access. No Rust, Python installation or API key is needed with the installer.
 
-Double-click **TideSetup.exe**, then choose **Install Tide**. The window shows
-setup progress and offers **Open Tide** or **Connect YouTube Music** when finished.
-No ZIP extraction or commands are needed. Setup installs Tide
-for your Windows user, downloads pinned playback tools and a private Python
-runtime, and adds **Tide** and **Uninstall Tide** to the Start menu. Internet access
-and Windows x64 are required; no administrator privileges, system Python or manual
-PowerShell commands are needed. See [the installation guide](docs/INSTALLATION.md)
-for update behavior, Windows Settings removal and the optional advanced browser
-helper setup. The ZIP and command launcher remain an alternative for developers.
+## 1. Install and open
 
-Launch Tide from the Start menu. Open a local audio file, paste a music link, or
-search from the header. Home and Library are the main destinations; Queue opens
-the upcoming tracks. The sun/moon button switches theme directly. Settings holds
-window size and local-file playback; Account sits beside Settings in the header. Mini has an expand icon to return to the full
-window. Song actions open a floating menu without expanding the row. Use an
-upcoming song's drag handle to reorder it, or its menu to remove it.
+Want YouTube Music? Begin with the
+[Chrome connection guide](https://github.com/yotam1001/tide-music/blob/main/docs/BROWSER_COMPANION_BETA.md)
+before opening setup. Load its companion first so you can enable its connection
+during the first installation. For local files only, go straight to the installer.
 
-## Connect YouTube Music
+Open **TideSetup.exe**, choose **Install Tide**, and wait for setup to finish.
+Choose **Open Tide**, or find **Tide** in the Windows Start menu.
 
-The optional browser companion is distributed separately. If this package includes
-`tide-session-host.exe`, setup can register the helper for your selected browser;
-Chrome and Edge require the exact ID of the extension you actually installed.
-Chrome native transfer has passed a real import, while Zen's native-host lookup
-and signed public companion distribution remain unresolved. Registration alone
-does not establish that a browser can connect.
+Reading this inside the advanced ZIP and cannot find the EXE? Get the installer
+from the [official Releases page](https://github.com/yotam1001/tide-music/releases).
+Advanced users can instead run the ZIP's **Install Tide.cmd**. No public installer
+has been released yet; maintainer draft downloads are not public downloads.
 
-Manual connection remains available in [the account guide](docs/ACCOUNT_SETUP.md).
-For an isolated session, sign into your existing account in a private Zen window,
-copy the local request headers, then close that window without signing out. Zen
-does not need to stay open. Tide verifies access before showing Connected.
-Weekly session lifetime is still under validation.
+## 2. Connect YouTube Music
 
-Credentials remain on your computer, encrypted for your Windows user. Never
-upload cookies, session files or your browser profile to GitHub or send them in
-chat. Premium playback depends on the supplied account and service compatibility.
+Follow the [Chrome connection guide](https://github.com/yotam1001/tide-music/blob/main/docs/BROWSER_COMPANION_BETA.md).
+It shows how to load the companion, enable its connection in setup, and import
+your selected YouTube Music tab. Sign in to Google in Chrome, not in Tide.
+No request-header copying is needed for that path.
 
-## Updates and removal
+The extension is currently loaded manually, not from the Chrome Web Store.
+Other browser connection paths are not ready for recommendation. Keep the
+companion files in a stable folder.
 
-Close Tide and run the next **TideSetup.exe**.
-Dependencies are prepared before switching the installed app. Saved preferences
-and encrypted sessions are preserved. Choose **Tide → Uninstall** in **Windows Settings → Apps**, or **Uninstall Tide**
-in the Start menu, to remove owned app files, shortcuts and matching native-host
-registration.
-Use Disconnect inside Account first if you also want to remove the saved session.
-Browser extensions are removed separately in the browser.
+To try Tide without an account, skip this step and play a local audio file.
 
-The app source uses MIT; third-party licenses are included in LICENSE,
-THIRD_PARTY_NOTICES.md and DEPENDENCIES.md. Downloaded tools retain their own
-licenses and are obtained directly from upstream rather than bundled in this ZIP.
+## 3. Play music
+
+- After connecting, search in the top bar, choose a playlist in **Library**, or
+  pick a **Home** recommendation.
+- Open **Queue** to see upcoming tracks. Drag an upcoming song's handle to reorder.
+- Use **Settings → Open audio file** for music on your PC.
+- The sun/moon button changes theme. **Mini** makes the player smaller.
+
+## Updates and help
+
+**Settings → Check for updates** finds published stable releases. **Install and
+restart** verifies the download and keeps your account and preferences. Preview
+releases need a manual installer update.
+
+[Installation and removal](https://github.com/yotam1001/tide-music/blob/main/docs/INSTALLATION.md) ·
+[Troubleshooting](https://github.com/yotam1001/tide-music/blob/main/docs/TROUBLESHOOTING.md) ·
+[Privacy](https://github.com/yotam1001/tide-music/blob/main/PRIVACY.md)
+
+Never share cookies, request headers, session files or screenshots containing
+them. Report the app version and exact error message instead.

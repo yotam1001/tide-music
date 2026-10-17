@@ -1,6 +1,11 @@
 # Optional Tide browser session companion
 
-This is an optional **source prototype**, not a signed or store-published login solution. A real Chrome import and subsequent authenticated Tide startup passed the local comparison test recorded in [browser connection evidence](../docs/BROWSER_CONNECTION.md#acceptance-evidence). Zen could not reach its registered host in that test; Firefox and Edge are not established by the Chrome result. No extension installation, profile access, native-host registration, or live Google request is performed by the automated tests. The native receiver is implemented in `crates/provider/src/bin/tide-session-host.rs`. This alternative does not choose the application's default login backend.
+**Trying to connect your account?** Start with the
+[step-by-step Chrome guide](https://github.com/yotam1001/tide-music/blob/main/docs/BROWSER_COMPANION_BETA.md).
+This file is the contributor reference for manifests, permissions and protocol
+tests. Normal users do not need its development commands.
+
+This is an optional **source prototype**, not a signed or store-published login solution. A real Chrome import and subsequent authenticated Tide startup passed the local comparison test recorded in [browser connection evidence](https://github.com/yotam1001/tide-music/blob/main/docs/BROWSER_CONNECTION.md#acceptance-evidence). Zen could not reach its registered host in that test; Firefox and Edge are not established by the Chrome result. Mocked browser tests do not install extensions, read profiles or make live Google requests. Separate Windows lifecycle CI exercises actual native-host registration with a synthetic extension ID. The native receiver is implemented in `crates/provider/src/bin/tide-session-host.rs`. This alternative does not choose the application's default login backend.
 
 For Windows beta installation, connection, troubleshooting and removal, follow
 the [Chrome companion beta guide](https://github.com/yotam1001/tide-music/blob/main/docs/BROWSER_COMPANION_BETA.md). Loading the
@@ -87,7 +92,7 @@ older receiver's valid `invalid_request` reply prompts a host update. Fixed
 messages distinguish unusable registration, permission, launch and timeout
 errors without displaying raw browser errors. Real Zen testing currently fails
 at native-host lookup/validation despite a valid direct framed-host check; see
-[browser connection evidence](../docs/BROWSER_CONNECTION.md).
+[browser connection evidence](https://github.com/yotam1001/tide-music/blob/main/docs/BROWSER_CONNECTION.md).
 
 For session import, the port posts exactly one object:
 
