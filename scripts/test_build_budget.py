@@ -115,7 +115,7 @@ function Assert-TideBuildBudget([string]$TargetDirectory) {
                     }
                 }
                 Set-Location $env:TIDE_TEST_ROOT
-                $requested = @(ConvertFrom-Json $env:TIDE_TEST_REQUEST)
+                $requested = ConvertFrom-Json $env:TIDE_TEST_REQUEST
                 & (Join-Path $env:TIDE_TEST_ROOT 'scripts/cargo-local.ps1') -CargoArgs $requested
                 """, TIDE_TEST_ROOT=root, TIDE_TEST_MARKER=marker,
                 TIDE_TEST_ARGS=root / "metadata-args.json",
