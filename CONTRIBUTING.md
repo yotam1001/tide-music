@@ -4,6 +4,13 @@ Keep playback, provider access and interface code separate. Preserve the full ch
 
 Run `cargo fmt --all -- --check`, `cargo test --workspace` and `cargo clippy --workspace --all-targets -- -D warnings` before proposing changes. Windows runtime smoke checks are required for playback and media-control changes.
 
+Development and test profiles disable incremental compilation and use limited
+debug information by default. Slint's generated code can otherwise retain very
+large compiler snapshots across repeated builds. The tradeoff is slower repeat
+compilation and less debugger detail; source builds still need several GB of
+disk space. Release settings are unchanged. Installed-player users do not need
+Rust, a `target/` directory or these development caches.
+
 Do not commit credentials, local toolchains, runtime binaries, personal music, logs or machine-specific paths. Explain resource impact when changing buffering, rendering or background work.
 
 After source checks pass, Windows CI builds a preview, generates target-specific

@@ -7,6 +7,16 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 
+# Generated UI code makes full debug information and incremental snapshots large.
+# Keep routine contributor builds lean; release packaging is unchanged.
+[profile.dev]
+debug = 1
+incremental = false
+
+[profile.test]
+debug = 1
+incremental = false
+
 [profile.release]
 lto = "thin"
 codegen-units = 1
