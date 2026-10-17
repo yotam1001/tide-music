@@ -4,16 +4,19 @@ This is the maintainer checklist. For normal use, start with [Install Tide](INST
 
 ## What is available now?
 
-- [v0.1.0-preview.1](https://github.com/yotam1001/tide-music/releases/tag/v0.1.0-preview.1)
-  is the public Windows prerelease, with the installer, matching Chrome companion,
-  setup guide and download checksums.
+- [v0.1.0-preview.2](https://github.com/yotam1001/tide-music/releases/tag/v0.1.0-preview.2)
+  is the Windows preview for the Home recommendation fix. Publication requires
+  its matching automated checks and package verification to pass.
+  [Preview 1](https://github.com/yotam1001/tide-music/releases/tag/v0.1.0-preview.1)
+  remains available as the previous public version.
 - On 2026-10-17 the maintainer confirmed that the installer worked in their test
   and authorized publication. That report is scoped to the installer; the broader
   manual checks below remain useful for subsequent previews and stable readiness.
 - `v0.1.0-beta.1` is an unpublished, older draft with binaries from `f026915`.
   It does not contain the latest UI or in-app updater. Do not publish it as the
   current build or silently replace its reviewed assets.
-- Current source identifies itself as `0.1.0-preview.1`. The verified updater
+- Current source identifies itself as `0.1.0-preview.2`. Never replace the
+  published preview 1 assets in place. The verified updater
   implementation is in merged PR #13 (`ce0d142`). Its source `e02e99e` passed
   [push CI](https://github.com/yotam1001/tide-music/actions/runs/39041897082) and
   [PR CI](https://github.com/yotam1001/tide-music/actions/runs/39041899612), including
@@ -28,7 +31,8 @@ procedure, not a claim that every manual test has already passed.
 - [ ] Choose the reviewed `main` commit and record it. Keep experimental Jams
   unmerged until the user has tested it.
 - [ ] Make the release tag match `v` plus the Cargo workspace version. For the
-  current version, use a new `v0.1.0-preview.1` prerelease rather than the old beta.
+  current candidate, use a new `v0.1.0-preview.2` prerelease rather than modifying
+  preview 1 or the old beta.
 - [ ] Require the Windows source checks, preview package and real install/update/
   removal jobs to pass for the candidate. Do not build large Rust caches locally.
 - [ ] Get the installer and companion from that same successful run. Verify the

@@ -13,10 +13,10 @@ Play YouTube Music, bring in your playlists and recommendations, and keep the
 player out of the way with a mini mode. Tide uses native audio playback rather
 than keeping an embedded browser running.
 
-**Windows preview:** [Download TideSetup.exe](https://github.com/yotam1001/tide-music/releases/download/v0.1.0-preview.1/TideSetup.exe)
-from [v0.1.0-preview.1](https://github.com/yotam1001/tide-music/releases/tag/v0.1.0-preview.1).
+**Windows preview:** [Download TideSetup.exe](https://github.com/yotam1001/tide-music/releases/download/v0.1.0-preview.2/TideSetup.exe)
+from [v0.1.0-preview.2](https://github.com/yotam1001/tide-music/releases/tag/v0.1.0-preview.2).
 For YouTube Music, also download the matching
-[Chrome companion](https://github.com/yotam1001/tide-music/releases/download/v0.1.0-preview.1/tide-browser-chromium.zip)
+[Chrome companion](https://github.com/yotam1001/tide-music/releases/download/v0.1.0-preview.2/tide-browser-chromium.zip)
 and follow the connection guide below. This is an unsigned prerelease.
 
 ![Tide's dark interface](docs/screenshots/full.png)

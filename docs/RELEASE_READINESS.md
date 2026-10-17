@@ -35,6 +35,26 @@ The old `v0.1.0-beta.1` draft still contains `f026915` binaries. They lack later
 and updater work and must not be presented as the latest candidate. Historical
 candidate evidence remains in [VALIDATION.md](VALIDATION.md).
 
+## Home relevance correction in preview 2
+
+The maintainer confirmed that Tide uses the intended account profile. The
+reported Home regression follows client selection changes: eight shelves,
+global unseen-first ranking and shelf/type balancing displaced leading
+upstream cards. Preview 2 restores the first three rows and provider order,
+then applies only bounded repeat penalties within the leading 48 playable
+cards. Regression tests cover original ordering, playlist displacement,
+repeated refreshes, new leading cards, malformed inputs and memory bounds.
+Provider order is a relevance baseline, not a numeric taste score. The
+maintainer still needs to judge the result while listening. This does not
+change song-radio generation or send playback-history updates to YouTube.
+
+My Supermix is independently pinned beside Liked Songs in Library. Its on-demand
+lookup is bounded, uses the selected account and does not depend on displayed
+Home cards. Provider tests cover current mix resolution, malformed/unavailable
+responses, wrong-mix rejection, safe track bounds and failure classification.
+Native UI coverage checks its click target with no saved playlists/Home cards,
+at full/compact/minimum sizes, and disabled behavior while disconnected.
+
 ## Broader stable-release gates
 
 The rows below retain their scoped historical live-test evidence; they do not

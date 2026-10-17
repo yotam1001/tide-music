@@ -73,8 +73,17 @@ Playback requires a temporary Netscape cookie file restricted to `.youtube.com` 
 ## What sync does
 
 - Reads up to 200 playlists and 2,000 tracks per playlist/Liked Songs, reporting truncation.
-- Reads up to eight Home shelves, with up to 40 items per shelf and 240 candidates overall; Home shows a rotating selection of 24 cards. Song and playlist recommendations are playable. Album/artist cards are displayed but do not yet open.
+- Preview 2 restores the first three Home shelves, with up to 40 items
+  per shelf and 120 candidates overall. Home shows up to 24 playable song/playlist
+  cards, preserving provider order with limited variation within the leading 48.
+  Unsupported album/artist cards are filtered. Preview 1 used eight shelves and
+  aggressive novelty/shelf balancing, which could promote less relevant items.
 - Fetches fresh account data on refresh; selecting a playlist replaces Tide's queue. This does not copy audio files, change your YouTube library, or migrate data to another service.
+- My Supermix is a permanent Library shortcut. Opening it scans up to 20 Home
+  rows (40 items per row) for the signed-in account's actual Supermix, then reads
+  its watch playlist. This lookup does not add those extra rows to Home. If the
+  service does not offer Supermix, the shortcut remains and reports availability;
+  it never substitutes another mix or saves a playlist to your YouTube library.
 - Sends no likes, playlist edits or playback-history updates. Listening in Tide therefore does not currently train YouTube recommendations.
 
 YouTube playback is gated until the imported account has been verified by a successful library response. Local audio continues to work without library verification. A successful library response verifies account access, **not Premium entitlement**. For additional Google accounts, native extraction passes the selected account header and skips YouTube webpage/config bootstraps so they cannot replace that selection. This uses documented yt-dlp options; some videos may need additional provider metadata or tokens. No ad-blocking feature is implemented: signed-in playback uses the session you supplied. A local selected-account extraction test detected a Premium subscription and returned playable audio formats. This is a short live check, not a guarantee for every track; extraction can fail or require additional provider tokens on some content. Tide does not silently discard the imported cookies to retry anonymous playback.

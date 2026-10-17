@@ -366,6 +366,35 @@ fn settings_theme_account_and_song_menu_remain_independent() {
     ui.set_light_mode(true);
     export("queue-light", 1140, 800, &draw(&window, 1140, 800));
     ui.set_queue_open(false);
+    // Pinned entries must work even when no saved playlists or Home cards exist.
+    let supermix_opens = Rc::new(Cell::new(0));
+    let capture = supermix_opens.clone();
+    ui.on_open_supermix(move || capture.set(capture.get() + 1));
+    let saved_home = ui.get_recommendations();
+    ui.set_recommendations(Rc::new(slint::VecModel::<RecommendationRow>::default()).into());
+    ui.set_library_open(true);
+    for (width, height, light) in [(1140, 800, false), (780, 720, true), (650, 420, false)] {
+        ui.set_light_mode(light);
+        let pixels = draw(&window, width, height);
+        export(&format!("library-supermix-{width}"), width, height, &pixels);
+        click(&ui, 240.0, 205.0);
+    }
+    assert_eq!(
+        supermix_opens.get(),
+        3,
+        "My Supermix stays reachable in Library at every window size"
+    );
+    ui.set_account_connected(false);
+    draw(&window, 650, 420);
+    click(&ui, 240.0, 205.0);
+    assert_eq!(
+        supermix_opens.get(),
+        3,
+        "Disconnected Supermix must not send a request"
+    );
+    ui.set_account_connected(true);
+    ui.set_recommendations(saved_home);
+    ui.set_light_mode(true);
     ui.set_library_playlists(
         Rc::new(slint::VecModel::from(vec![
             PlaylistRow {

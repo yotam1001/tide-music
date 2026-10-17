@@ -1,7 +1,7 @@
 # First preview launch
 
 Early source-preview introductions have been shared. The Windows installer is
-available in [v0.1.0-preview.1](https://github.com/yotam1001/tide-music/releases/tag/v0.1.0-preview.1).
+available in [v0.1.0-preview.2](https://github.com/yotam1001/tide-music/releases/tag/v0.1.0-preview.2).
 Keep future posts consistent with the [release checklist](BETA_RELEASE.md) and
 the preview's known limitations.
 

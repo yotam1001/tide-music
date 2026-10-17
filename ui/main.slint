@@ -1079,6 +1079,7 @@ export component AppWindow inherits Window {
     callback disconnect-account();
     callback select-library-playlist(int);
     callback play-liked();
+    callback open-supermix();
     callback refresh-recommendations();
     callback select-recommendation(int);
     callback open-account-help();
@@ -1309,7 +1310,12 @@ export component AppWindow inherits Window {
                                     Text { horizontal-stretch: 1; text: "Your library"; color: root.foreground; font-size: 28px; font-weight: 600; }
                                     LibraryButton { width: 78px; light-mode: root.light-mode; caption: "Refresh"; label: "Refresh your playlists"; enabled: root.browsing-enabled && root.account-connected && !root.account-busy; clicked => { root.refresh-library(); } }
                                 }
-                                LibraryEntry { title: "Liked Songs"; subtitle: "Your favorites in one place"; light-mode: root.light-mode; enabled: root.browsing-enabled && root.account-connected && !root.account-busy; open => { root.play-liked(); } }
+                                HorizontalLayout {
+                                    height: LayoutMetrics.browse-row-height;
+                                    spacing: 12px;
+                                    LibraryEntry { horizontal-stretch: 1; min-width: 0px; title: "My Supermix"; subtitle: "A mix across your music tastes"; light-mode: root.light-mode; enabled: root.browsing-enabled && root.account-connected && !root.account-busy; open => { root.open-supermix(); } }
+                                    LibraryEntry { horizontal-stretch: 1; min-width: 0px; title: "Liked Songs"; subtitle: "Your favorites in one place"; light-mode: root.light-mode; enabled: root.browsing-enabled && root.account-connected && !root.account-busy; open => { root.play-liked(); } }
+                                }
                                 if root.library-playlists.length > 0 : ListView {
                                     content-y <=> root.library-artwork-y;
                                     changed visible-height => { root.library-artwork-height = self.visible-height; }

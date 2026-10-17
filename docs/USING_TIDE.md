@@ -16,10 +16,16 @@ physical keyboard/Fn behavior while a game has focus still needs user validation
 
 ## Home and Library
 
-- **Home:** recommendations from your YouTube Music account. Refresh rotates the
-  selection, though a small upstream recommendation pool can still repeat.
+- **Home:** recommendations from your YouTube Music account. Preview 2
+  restores the leading rows and their original order, with limited refresh
+  variety near those recommendations. Preview 1 rotates more aggressively;
+  small upstream pools can repeat in either version.
 - **Library:** your playlists and Liked Songs. Selecting a playlist opens its
   tracks; **Play** or **Shuffle** starts it.
+- **My Supermix:** always pinned beside Liked Songs in Library. Opening it finds
+  your current account's mix and loads its songs, independent of Home's visible
+  recommendations. If YouTube does not offer the mix, retry later; its absence
+  does not mean your account needs reconnecting.
 - **Search:** stays separate from the queue until you select or queue a song.
 
 Tide reads your existing library. It does not copy it to another service, edit
