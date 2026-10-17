@@ -4,8 +4,8 @@ You need **Windows x64** and internet access. The installer sets up the playback
 tools for you. No Rust, Python, terminal commands or API key are needed.
 Installation is for your Windows user and does not require administrator access.
 
-Download [TideSetup.exe](https://github.com/yotam1001/tide-music/releases/download/v0.1.0-preview.2/TideSetup.exe)
-from the [Windows preview release](https://github.com/yotam1001/tide-music/releases/tag/v0.1.0-preview.2).
+Download [TideSetup.exe](https://github.com/yotam1001/tide-music/releases/download/v0.1.0/TideSetup.exe)
+from the [Windows release](https://github.com/yotam1001/tide-music/releases/tag/v0.1.0).
 For YouTube Music, get its matching **tide-browser-chromium.zip** too.
 
 ## Install and open
@@ -39,9 +39,11 @@ For a new **stable** version, open **Settings → Check for updates**. Choose
 installs the update and reopens Tide. Your account and preferences are kept.
 You can turn startup checks off in Settings.
 
-The updater skips prereleases and drafts. During the preview, download the newer
-**TideSetup.exe**, close Tide, and run setup again. There is no need to uninstall
-first. Older copies without an updater need this manual update once too.
+Preview 1 and preview 2 can discover stable **0.1.0** through this updater.
+The updater skips prerelease targets and drafts; it does not skip an installed
+preview when a newer stable version exists. If needed, download **TideSetup.exe**,
+close Tide and run setup again without uninstalling first. Copies without an
+updater need that manual update once.
 
 App updates retain the browser choice recorded by setup. The unpacked Chrome
 extension is updated separately: replace its files and choose **Reload** in

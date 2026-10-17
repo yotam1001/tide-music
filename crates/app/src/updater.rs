@@ -529,12 +529,13 @@ mod tests {
                 .to_string(),
             "0.2.0"
         );
-        assert!(parse_release(
-            &serde_json::to_vec(&metadata("v0.1.0")).unwrap(),
-            "0.1.0-beta.1"
-        )
-        .unwrap()
-        .is_some());
+        for installed in ["0.1.0-beta.1", "0.1.0-preview.1", "0.1.0-preview.2"] {
+            assert!(
+                parse_release(&serde_json::to_vec(&metadata("v0.1.0")).unwrap(), installed)
+                    .unwrap()
+                    .is_some()
+            );
+        }
         for flag in ["draft", "prerelease"] {
             let mut value = metadata("v0.2.0");
             value[flag] = json!(true);

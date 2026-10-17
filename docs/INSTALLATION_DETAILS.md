@@ -86,8 +86,9 @@ once after startup. Turn this off with **Settings → Startup checks**; **Check 
 updates** remains available. Drafts, prereleases and CI artifacts are excluded.
 The current app version comes from Cargo; maintainers must increase it for each
 new published release and make the release tag match `v<version>`.
-This development build identifies itself as `0.1.0-preview.2`, so it can also
-recognize a future stable `0.1.0` as newer than the preview.
+This build identifies itself as `0.1.0`. Installed preview 1 and preview 2
+recognize stable `0.1.0` as newer. Its release metadata and embedded installer
+version must both identify this same stable version.
 
 When an update is available, Settings gains an indicator. Choose **Install and
 restart** to download it, stop playback, run setup and reopen Tide. Nothing is
@@ -131,7 +132,7 @@ does not inspect or delete saved preferences or encrypted sessions. To remove
 a saved session, use **Disconnect** in Tide before uninstalling. Remove the browser
 companion extension through the browser's extension manager separately.
 
-This is a graphical, unsigned preview installer, not a verified stable release. Windows may display an unsigned-download warning.
+This is a graphical, unsigned installer. Windows may display an unsigned-download warning.
 Enterprise PowerShell policy may prevent the launcher from running. Real clean
 Windows install/update/removal and graphical update/restart have passed CI.
 Fresh-user interactive Chrome onboarding, public companion distribution and

@@ -1,13 +1,13 @@
-# First preview launch
+# First release launch
 
 Early source-preview introductions have been shared. The Windows installer is
-available in [v0.1.0-preview.2](https://github.com/yotam1001/tide-music/releases/tag/v0.1.0-preview.2).
+available in [v0.1.0](https://github.com/yotam1001/tide-music/releases/tag/v0.1.0).
 Keep future posts consistent with the [release checklist](BETA_RELEASE.md) and
-the preview's known limitations.
+the release's known limitations.
 
 ## Start small
 
-1. Publish the reviewed GitHub prerelease with the EXE, matching Chrome companion,
+1. Publish the reviewed GitHub release with the EXE, matching Chrome companion,
    connection guide and checksums. Check the public download without maintainer
    access. Update README's publication notice and link to that exact release.
 2. Share the demo and repository on the project's or maintainer's own channels,

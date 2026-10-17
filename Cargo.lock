@@ -4235,14 +4235,14 @@ dependencies = [
 
 [[package]]
 name = "tide-core"
-version = "0.1.0-preview.2"
+version = "0.1.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "tide-music"
-version = "0.1.0-preview.2"
+version = "0.1.0"
 dependencies = [
  "image",
  "raw-window-handle",
@@ -4265,7 +4265,7 @@ dependencies = [
 
 [[package]]
 name = "tide-playback"
-version = "0.1.0-preview.2"
+version = "0.1.0"
 dependencies = [
  "serde_json",
  "tide-core",
@@ -4277,7 +4277,7 @@ dependencies = [
 
 [[package]]
 name = "tide-provider"
-version = "0.1.0-preview.2"
+version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4289,7 +4289,7 @@ dependencies = [
 
 [[package]]
 name = "tide-windows"
-version = "0.1.0-preview.2"
+version = "0.1.0"
 dependencies = [
  "windows",
 ]

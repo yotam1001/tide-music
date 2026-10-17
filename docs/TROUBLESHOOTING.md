@@ -4,13 +4,13 @@ Start with the app version under **Settings → About Tide** (scroll if needed)
 and the exact error message. If the app cannot open, give the installer release.
 Use downloads from the [official repository](https://github.com/yotam1001/tide-music/releases).
 The current public installer is in the
-[Windows preview release](https://github.com/yotam1001/tide-music/releases/tag/v0.1.0-preview.2).
+[Windows release](https://github.com/yotam1001/tide-music/releases/tag/v0.1.0).
 
 ## Installation and opening
 
 | Problem | Next step |
 | --- | --- |
-| I cannot find a public download | Open the Windows preview release above, expand Assets and choose **TideSetup.exe**. Source code ZIPs are not installers. |
+| I cannot find a public download | Open the Windows release above, expand Assets and choose **TideSetup.exe**. Source code ZIPs are not installers. |
 | I cannot find Tide after installing | Open Start and search **Tide**. Confirm setup reached its completion screen; merely downloading the EXE does not install it. |
 | Windows blocked the installer | Check the repository source and record the exact message. Do not disable protections or device policies. Report the block. |
 | Setup failed during downloads | Check your connection and free disk space, close Tide, and use **Try again**. Keep the error text if it fails again. |
