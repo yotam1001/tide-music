@@ -139,13 +139,24 @@ fn settings_theme_account_and_song_menu_remain_independent() {
     let queue_action = Rc::new(Cell::new(None));
     let capture = queue_action.clone();
     ui.on_queue_search_track(move |index, next| capture.set(Some((index, next))));
+    let radio_action = Rc::new(Cell::new(None));
+    let capture = radio_action.clone();
+    ui.on_start_track_radio(move |source, index| capture.set(Some((source, index))));
+
     ui.show().unwrap();
+    let without_status = draw(&window, 1140, 800);
+    ui.set_status_text("Playing".into());
+    assert_eq!(
+        draw(&window, 1140, 800),
+        without_status,
+        "routine playback status must not add a strip or shift the layout"
+    );
 
     ui.set_account_connected(false);
     ui.set_account_verified(false);
     let idle = draw(&window, 1140, 800);
     ui.window().dispatch_event(WindowEvent::PointerMoved {
-        position: LogicalPosition::new(1010.0, 32.0),
+        position: LogicalPosition::new(922.0, 32.0),
     });
     assert_ne!(
         draw(&window, 1140, 800),
@@ -153,7 +164,7 @@ fn settings_theme_account_and_song_menu_remain_independent() {
         "theme control needs hover feedback"
     );
     assert!(!ui.get_light_mode(), "hover must not switch the theme");
-    click(&ui, 1080.0, 32.0);
+    click(&ui, 992.0, 32.0);
     assert!(
         ui.get_settings_open(),
         "Settings must work without an account"
@@ -174,7 +185,7 @@ fn settings_theme_account_and_song_menu_remain_independent() {
             &draw(&window, width, height),
         );
         // The theme switch is reachable without opening an account or resizing.
-        click(&ui, width as f32 - 130.0, 32.0);
+        click(&ui, width as f32 - 218.0, 32.0);
         assert!(
             ui.get_light_mode(),
             "direct theme control is inaccessible at {width}"
@@ -189,7 +200,7 @@ fn settings_theme_account_and_song_menu_remain_independent() {
             &draw(&window, width, height),
         );
 
-        click(&ui, width as f32 - 60.0, 32.0);
+        click(&ui, width as f32 - 148.0, 32.0);
         assert!(
             ui.get_settings_open(),
             "Settings must be a top-level control"
@@ -203,10 +214,10 @@ fn settings_theme_account_and_song_menu_remain_independent() {
         key(&ui, Key::Escape);
         assert!(!ui.get_settings_open(), "Escape must close Settings");
         draw(&window, width, height);
-        click(&ui, 60.0, height as f32 - 145.0);
+        click(&ui, width as f32 - 57.0, 32.0);
         assert!(
             ui.get_account_open(),
-            "separate account entry is inaccessible at {width}"
+            "header Account entry is inaccessible at {width}"
         );
         assert!(!ui.get_settings_open());
         export(
@@ -223,6 +234,16 @@ fn settings_theme_account_and_song_menu_remain_independent() {
         draw(&window, width, height);
     }
 
+    ui.set_account_connected(false);
+    ui.set_account_verified(false);
+    ui.set_account_name("".into());
+    ui.set_account_open(true);
+    export("account-disconnected", 1140, 800, &draw(&window, 1140, 800));
+    ui.set_account_open(false);
+    ui.set_account_connected(true);
+    ui.set_account_verified(true);
+    ui.set_account_name("Sample listener".into());
+
     ui.set_light_mode(false);
     ui.set_search_open(true);
     let before = draw(&window, 1140, 800);
@@ -230,6 +251,30 @@ fn settings_theme_account_and_song_menu_remain_independent() {
     let menu = draw(&window, 1140, 800);
     export("song-menu-dark", 1140, 800, &menu);
     assert_ne!(menu, before, "song action did not display a menu");
+    assert_eq!(
+        menu[220 * 1140 + 900],
+        Rgb8Pixel {
+            r: 25,
+            g: 28,
+            b: 34
+        },
+        "dark popup must use Tide's surface, not an OS menu theme"
+    );
+    ui.set_light_mode(true);
+    let light_menu = draw(&window, 1140, 800);
+    export("song-menu-light", 1140, 800, &light_menu);
+    assert_eq!(
+        light_menu[220 * 1140 + 900],
+        Rgb8Pixel {
+            r: 249,
+            g: 244,
+            b: 238
+        },
+        "open popup must follow Tide's light surface"
+    );
+    ui.set_light_mode(false);
+    draw(&window, 1140, 800);
+
     // Opening actions must not move the next song or grow the original row.
     for y in 225..280 {
         let range = y * 1140 + 190..y * 1140 + 600;
@@ -268,6 +313,33 @@ fn settings_theme_account_and_song_menu_remain_independent() {
         Some((0, true)),
         "keyboard menu action must target the selected song"
     );
+    for light in [false, true] {
+        ui.set_light_mode(light);
+        draw(&window, 1140, 800);
+        click(&ui, 1087.0, 185.0);
+        draw(&window, 1140, 800);
+        key(&ui, Key::DownArrow);
+        key(&ui, Key::DownArrow);
+        key(&ui, Key::Return);
+        draw(&window, 1140, 800);
+        assert_eq!(
+            queue_action.get(),
+            Some((0, false)),
+            "Add to queue must target this search row"
+        );
+        click(&ui, 1087.0, 185.0);
+        draw(&window, 1140, 800);
+        key(&ui, Key::UpArrow);
+        key(&ui, Key::Return);
+        draw(&window, 1140, 800);
+        assert_eq!(
+            radio_action.get(),
+            Some((2, 0)),
+            "Radio must target the search song, not the queue"
+        );
+        radio_action.set(None);
+    }
+    ui.set_light_mode(false);
     ui.set_search_open(false);
     ui.set_queue_open(true);
     export("queue-dark", 1140, 800, &draw(&window, 1140, 800));

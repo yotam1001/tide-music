@@ -8,11 +8,13 @@ light palette are retained at the user's request.
 
 | Finding | Change |
 | --- | --- |
-| Appearance and window sizing were hidden behind Account | A direct sun/moon control and separate Settings entry stay in the header. Settings groups Appearance, Layout, local playback and About; account connection has its own navigation entry and panel |
-| Song actions expanded a row into horizontal button bars | Song and queue actions use anchored native menus with keyboard selection, Escape and outside-click dismissal, keeping list geometry fixed |
+| Appearance and window sizing were hidden behind Account | A direct sun/moon control and separate Settings entry stay in the header. Settings groups Layout, local playback and About; theme switching lives only in the header and Account has its own labeled header button |
+| Account was hard to find and exposed numbered account slots before the user needed them | Account moves beside Settings; its panel leads with profile and connection state, with account-slot selection and manual import under Advanced |
+| Song actions expanded a row into horizontal button bars | Song and queue actions use explicitly styled Slint popups with keyboard selection, Escape and outside-click dismissal, keeping list geometry fixed; their colors no longer depend on the OS context-menu style |
 | Queue duration, title, menu and a separate remove button competed for width | Remove moves into the song menu. Drag handles stay visible; the playing row shows its artist without duplicating the Now playing heading |
 | Most secondary actions looked like primary boxed controls | Secondary controls have a quieter treatment with hover/focus feedback; the main play button remains dominant |
 | Navigation and mixed playlist/song rows lacked consistent spacing | A wider normal navigation rail, consistent list-row height and content gutters clarify the hierarchy; narrow windows keep a smaller rail |
+| Routine Playing status consumed a separate strip above playback | Remove the status strip; actionable errors retain their existing banner |
 | Home repeated Resume above the existing transport | The redundant action is removed; playback stays in the centered transport |
 | Empty screens framed a large blank rectangle | Empty-state copy remains, with open space instead of an unnecessary card outline |
 
