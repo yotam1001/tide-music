@@ -205,6 +205,7 @@ class ProviderTests(unittest.TestCase):
                         [{"contents": [None, "unsupported",
                             {"title": "My Supermix", "playlistId": "PLpublic"},
                             {"title": "Discover Mix", "playlistId": "RDTMAKother"},
+                            {"title": "My Supermix 2", "playlistId": "RDTMAKotherVersion"},
                             {"title": "My Supermix", "playlistId": "https://other.test"},
                             {"title": "My Supermix", "playlistId": "RDTMAKunavailable", "isAvailable": False}]}]]:
             client.get_home.return_value = shelves

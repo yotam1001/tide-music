@@ -573,7 +573,7 @@ def run(client, request):
                     if not isinstance(item, dict) or item.get("isAvailable") is False:
                         continue
                     playlist = identifier(item.get("playlistId"))
-                    title = re.sub(r"[^a-z]", "", clean(item.get("title")).lower())
+                    title = "".join(clean(item.get("title")).casefold().split())
                     if not playlist.startswith("RDTMAK") or title not in ("mysupermix", "yoursupermix", "supermix"):
                         continue
                     data = client.get_watch_playlist(playlistId=playlist, limit=50)
