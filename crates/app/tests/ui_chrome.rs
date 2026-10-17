@@ -88,6 +88,7 @@ fn settings_theme_account_and_song_menu_remain_independent() {
     let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
     slint::platform::set_platform(Box::new(TestPlatform(window.clone()))).unwrap();
     let ui = AppWindow::new().unwrap();
+    ui.set_app_version(env!("CARGO_PKG_VERSION").into());
     ui.set_rows(tracks());
     ui.set_current_index(0);
     ui.set_track_title("A Quiet Sun".into());
