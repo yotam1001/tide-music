@@ -22,6 +22,10 @@ physical keyboard/Fn behavior while a game has focus still needs user validation
   small upstream pools can repeat in either version.
 - **Library:** your playlists and Liked Songs. Selecting a playlist opens its
   tracks; **Play** or **Shuffle** starts it.
+- **My Supermix:** always pinned beside Liked Songs in Library. Opening it finds
+  your current account's mix and loads its songs, independent of Home's visible
+  recommendations. If YouTube does not offer the mix, retry later; its absence
+  does not mean your account needs reconnecting.
 - **Search:** stays separate from the queue until you select or queue a song.
 
 Tide reads your existing library. It does not copy it to another service, edit

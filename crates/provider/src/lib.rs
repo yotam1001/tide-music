@@ -141,6 +141,7 @@ pub enum Request {
     Playlist { id: String },
     Radio { video_id: String },
     Liked,
+    Supermix,
     Home,
 }
 #[derive(Deserialize)]
@@ -1301,7 +1302,9 @@ fn execute_helper(
         Response::Error { code } if code == "container" => {
             Err("Sign-in was found in a Zen container. Tide currently needs YouTube Music signed in on a tab outside that container.".into())
         }
-        Response::Error { code } if code == "session" || code == "request" => {
+        Response::Error { code }
+            if code == "session" || code == "request" || code == "supermix_unavailable" =>
+        {
             Ok(Response::Error { code })
         }
         Response::Error { code } if code == "login_browser" => Err(
@@ -2011,6 +2014,13 @@ mod tests {
             serde_json::json!({
                 "action": "radio", "video_id": "K4DyBUG242c"
             })
+        );
+    }
+    #[test]
+    fn supermix_request_matches_helper_contract() {
+        assert_eq!(
+            serde_json::to_value(Request::Supermix).unwrap(),
+            serde_json::json!({"action": "supermix"})
         );
     }
     #[test]

@@ -19,6 +19,7 @@ MAX_RADIO_TRACKS = 25
 MAX_HOME_SHELVES = 3
 MAX_HOME_ITEMS_PER_SHELF = 40
 MAX_HOME_CARDS = MAX_HOME_SHELVES * MAX_HOME_ITEMS_PER_SHELF
+MAX_SUPERMIX_SHELVES = 20
 ARTWORK_HOSTS = ("ytimg.com", "ggpht.com", "googleusercontent.com")
 LOGIN_SECONDS = 8 * 60
 LOGIN_RETRY_SECONDS = 15
@@ -561,6 +562,31 @@ def run(client, request):
                                "artwork_url": artwork_url(p)}
                               for p in playlists[:200] if isinstance(p, dict) and identifier(p.get("playlistId"))],
                 "truncated": len(playlists) > 200}
+    if action == "supermix":
+        # Resolve this account's dynamic mix on demand, independently of Home's
+        # small display pool. Never substitute another mix or a public playlist.
+        try:
+            shelves = client.get_home(limit=MAX_SUPERMIX_SHELVES)
+            for shelf in shelves[:MAX_SUPERMIX_SHELVES] if isinstance(shelves, list) else []:
+                items = shelf.get("contents") if isinstance(shelf, dict) else None
+                for item in items[:MAX_HOME_ITEMS_PER_SHELF] if isinstance(items, list) else []:
+                    if not isinstance(item, dict) or item.get("isAvailable") is False:
+                        continue
+                    playlist = identifier(item.get("playlistId"))
+                    title = re.sub(r"[^a-z]", "", clean(item.get("title")).lower())
+                    if not playlist.startswith("RDTMAK") or title not in ("mysupermix", "yoursupermix", "supermix"):
+                        continue
+                    data = client.get_watch_playlist(playlistId=playlist, limit=50)
+                    songs = data.get("tracks") if isinstance(data, dict) else None
+                    if not isinstance(songs, list):
+                        return {"type": "error", "code": "supermix_unavailable"}
+                    selected = tracks(songs, MAX_TRACKS, (), True)
+                    if not selected:
+                        return {"type": "error", "code": "supermix_unavailable"}
+                    return {"type": "tracks", "tracks": selected, "truncated": len(songs) > MAX_TRACKS}
+            return {"type": "error", "code": "supermix_unavailable"}
+        except Exception as error:
+            return verified_request_failure(error, client)
     if action == "radio":
         video = identifier(request.get("video_id"), True)
         empty = {"type": "tracks", "tracks": [], "truncated": False}

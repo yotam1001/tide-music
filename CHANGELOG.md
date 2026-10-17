@@ -4,6 +4,8 @@
 
 ## 0.1.0-preview.2 — 2026-10-17
 
+- Pin My Supermix beside Liked Songs in Library, resolving the connected
+  account's mix on demand even when it is absent from Home's displayed cards.
 - Restore the leading YouTube Music Home rows and their original order, instead
   of balancing unrelated shelves and forcing equal song/playlist exposure.
 - Keep refresh variety close to the leading recommendations, with a bounded

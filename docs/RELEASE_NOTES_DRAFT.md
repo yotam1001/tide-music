@@ -22,13 +22,16 @@ required. GitHub's Source code archives are for contributors, not normal setup.
 
 ## Changed since preview 1
 
+- My Supermix is always pinned at the top of Library beside Liked Songs. It
+  fetches your connected account's current mix when opened, even if it is not
+  among Home's visible cards. Temporary mix unavailability does not sign you out.
 - Home uses the leading three YouTube Music rows again. First load preserves
   their original order, without forced shelf or song/playlist balancing.
 - Refresh varies a limited selection near the leading recommendations,
   rather than promoting every unseen item ahead of familiar suggestions.
 - Songs, titles, artwork and shelf context still come from YouTube Music.
   Small recommendation pools can repeat. No new account connection is needed
-  solely for this update. Playback, login and companion protocol are unchanged.
+  solely for this update. The audio engine, login and companion protocol are unchanged.
 
 Close Tide and run this installer to update preview 1; your saved account and
 preferences are retained. The existing preview 1 Chrome extension remains

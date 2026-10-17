@@ -245,6 +245,9 @@ fn request_library(
         tide_provider::Request::Liked => LibraryAction::Preview {
             title: "Liked Songs".into(),
         },
+        tide_provider::Request::Supermix => LibraryAction::Preview {
+            title: "My Supermix".into(),
+        },
         _ => LibraryAction::Replace,
     };
     let Some(provider) = s
@@ -419,6 +422,7 @@ fn content_retry_request(request: &tide_provider::Request) -> Option<tide_provid
         tide_provider::Request::Library
         | tide_provider::Request::Home
         | tide_provider::Request::Playlist { .. }
+        | tide_provider::Request::Supermix
         | tide_provider::Request::Liked => Some(request.clone()),
         // Account selection needs explicit account UI; radio retries must retain
         // their generation and seed checks through request_radio.
@@ -1776,6 +1780,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let state = state.clone();
         let weak = ui.as_weak();
         let tx = library_tx.clone();
+        ui.on_open_supermix(move || {
+            if let Some(u) = weak.upgrade() {
+                request_library(
+                    &mut state.borrow_mut(),
+                    &u,
+                    &tx,
+                    tide_provider::Request::Supermix,
+                );
+            }
+        });
+    }
+    {
+        let state = state.clone();
+        let weak = ui.as_weak();
+        let tx = library_tx.clone();
         ui.on_play_liked(move || {
             if let Some(u) = weak.upgrade() {
                 request_library(
@@ -2846,6 +2865,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                             }
                         }
+                        Ok(tide_provider::Response::Error { code }) if code == "supermix_unavailable" => {
+                            library_failure(&mut s, &u, false);
+                            u.set_error_message("YouTube Music did not return My Supermix. Try again later.".into());
+                            u.set_account_status("My Supermix is unavailable right now. Your account is still connected.".into());
+                        }
                         Ok(tide_provider::Response::Error { code }) => {
                             library_failure(&mut s, &u, code == "session" && !playback_session_updated);
                         }
@@ -3798,6 +3822,7 @@ mod tests {
             Request::Library,
             Request::Home,
             Request::Liked,
+            Request::Supermix,
             Request::Playlist {
                 id: "fixture-playlist".into(),
             },
