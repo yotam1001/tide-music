@@ -689,12 +689,22 @@ mod tests {
         fs::write(&exe, bytes).unwrap();
         launch(&exe, &release).unwrap();
         let started = Instant::now();
-        while !receipt.exists() && started.elapsed() < Duration::from_secs(15) {
-            std::thread::sleep(Duration::from_millis(20));
-        }
-        assert_eq!(
-            fs::read_to_string(receipt).unwrap(),
-            format!("--update-from|{}", std::process::id())
-        );
+        let actual = loop {
+            match fs::read_to_string(&receipt) {
+                Ok(actual) => break actual,
+                Err(error) => {
+                    assert!(
+                        started.elapsed() < Duration::from_secs(15)
+                            && matches!(
+                                error.kind(),
+                                std::io::ErrorKind::NotFound | std::io::ErrorKind::PermissionDenied
+                            ),
+                        "Could not read updater test receipt: {error}"
+                    );
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+            }
+        };
+        assert_eq!(actual, format!("--update-from|{}", std::process::id()));
     }
 }
