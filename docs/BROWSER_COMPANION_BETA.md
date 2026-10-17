@@ -1,145 +1,114 @@
-# Chrome companion: Windows beta setup
+# Connect YouTube Music with Chrome
 
-The companion transfers a session from a YouTube Music tab you choose to Tide's
-local helper. You sign into Google in your browser; Tide does not ask for your
-password. This is an unpacked developer extension, **not a Chrome Web Store
-release**. A Chrome transfer and subsequent Tide startup passed one local test;
-fresh-machine setup, browser-closure continuity and longer session reliability
-still need validation. See [recorded evidence](BROWSER_CONNECTION.md#acceptance-evidence).
+This connects your existing YouTube Music account to Tide without copying request
+headers. Sign in to Google in Chrome; Tide never asks for your password.
 
-Use Chrome for this beta path. Zen's native connection check failed in the
-recorded test. Edge and Firefox require their own validation before we recommend
-this flow for them. Manual import remains available in [account setup](ACCOUNT_SETUP.md).
+**Preview setup:** the companion is not on the Chrome Web Store yet. You load it
+once from a folder and enable its connection in Tide's installer. Chrome is the
+connection path with a recorded successful import. Fresh-user setup still needs
+its final acceptance check; Zen's native connection is unresolved, and Edge and
+Firefox are not recommended paths yet.
 
-## Get the matching packages
+## 1. Get the two matching downloads
 
-Use **TideSetup.exe** and the Chromium companion from the **same release
-or successful build** in the [official repository](https://github.com/yotam1001/tide-music).
-If there is no published release yet, a successful GitHub Actions build supplies
-`tide-windows-preview-<commit>` and
-`tide-browser-companion-prototypes-<commit>` artifacts. GitHub may require sign-in
-to download Actions artifacts. Do not use packages posted in comments or messages.
+From the same release on the [official Releases page](https://github.com/yotam1001/tide-music/releases), get:
 
-Extract the companion download to a folder you control. The Windows artifact
-contains **TideSetup.exe**; the full preview ZIP is an advanced alternative. In
-the companion artifact, use
-`tide-browser-chromium/extension/`: **the selected folder must contain
-`manifest.json` directly**. Alternatively, extract the inner
-`tide-browser-chromium.zip` to a dedicated folder and use that folder.
+- **TideSetup.exe** — installs the Windows player and its local connection helper.
+- **tide-browser-chromium.zip** — the Chrome companion.
 
-Keep this extension folder in a stable location; Chrome loads it from disk.
-Do not select a ZIP file or the parent artifact folder. The companion's
-`SHA256SUMS` covers its extension files and inner ZIP. If release-level checksums
-are provided, check those before running setup too. Checksums detect changed
-downloads; they do not replace using the official source.
+No public release is available yet. Approved testers can use matching successful
+[Windows build artifacts](https://github.com/yotam1001/tide-music/actions/workflows/ci.yml);
+GitHub may require sign-in for those downloads. The app artifact is named
+`tide-windows-preview-<commit>` and the companion artifact
+`tide-browser-companion-prototypes-<commit>`. Use the same commit for both.
 
-## Load the Chrome extension
+Extract the companion into a folder you will keep, rather than a temporary folder.
+For the release's inner ZIP, the extracted folder contains `manifest.json`
+directly. For an outer Actions artifact, look inside
+`tide-browser-chromium/extension/`. **Choose the folder containing `manifest.json`,
+not the ZIP, parent folder or Firefox package.**
 
-1. In Chrome, open `chrome://extensions`.
-2. Turn on **Developer mode**, then select **Load unpacked**.
-3. Select the stable folder containing the Chromium `manifest.json`.
-4. Find **Tide session companion (prototype)**. Copy its displayed **ID**, a
-   32-letter value. This ID is not a credential.
-5. Optionally pin Tide using Chrome's Extensions menu so its popup is easy to find.
+## 2. Load the companion in Chrome
 
-Chrome may display developer-extension notices. Loading this extension does not
-install or register Tide's local helper, and the popup cannot do that for you.
+1. Open `chrome://extensions` in Chrome.
+2. Turn on **Developer mode** and choose **Load unpacked**.
+3. Select the folder containing the Chromium `manifest.json`.
+4. Find **Tide session companion (prototype)** and copy its **ID**.
+   It is a 32-letter extension identifier, not a password.
+5. Pin Tide from Chrome's Extensions menu if you want its icon on the toolbar.
 
-## Register Tide's local helper
+Keep the folder in place after loading it. Chrome reads the extension from disk.
 
-Close Tide and finish or cancel any companion transfer first. Run
-**TideSetup.exe**, select **Enable Chrome companion connection (optional)**, and paste
-the exact extension ID from Chrome into its ID field. The option starts
-unchecked. Setup accepts only a complete 32-character ID made of lowercase
-letters `a` through `p`; it does not guess an ID or allow wildcard origins.
-Choose **Install Tide**. This installs or updates Tide for your Windows user and
-registers the local helper for that extension ID. Internet access is needed for
-runtime downloads; administrator access is not.
+## 3. Enable its connection in setup
 
-If Tide is already installed, rerun the matching setup with the Chrome option
-enabled. Leaving it unchecked skips registration on a first install; an update
-preserves the previously recorded browser choice. The installer's guide link
-explains loading the extension; setup does not load it into Chrome. The
-completion screen reports registration when this option succeeds, but that is
-not yet proof of a working browser connection or an imported account.
+1. Close Tide if it is running and finish or cancel pending companion imports.
+2. Open **TideSetup.exe**. Already installed? Run it again; do not uninstall first.
+3. Check **Enable Chrome companion connection (optional)**.
+4. Paste the exact extension ID copied from Chrome into **Extension ID**.
+5. Choose **Install Tide** and wait for setup to finish.
 
-The advanced alternative is to extract the full Windows preview ZIP, confirm it
-contains `Install Tide.cmd` and `tide-session-host.exe`, and run **Install
-Tide.cmd**. Choose **Chrome** at its browser-helper prompt and paste the same
-actual extension ID. Do not guess an ID or use another person's ID. Setup
-refuses to replace a conflicting Tide registration: report that conflict rather
-than editing the registry or deleting it by hand.
+This registers the local helper for your extension and Windows user. It does not
+sign into Google or import your account yet. The checkbox starts off; leaving it
+off on a first install does not enable the connection. Later app updates retain
+the browser choice already recorded by setup.
 
-**Connect YouTube Music** on setup's completion screen opens Tide's Account
-panel; session transfer still requires the separate explicit import below.
+Open Tide's Chrome extension popup and select **Check local connection**. Continue
+when it says **The browser can reach Tide's local host**. This checks setup only;
+it does not read a session. If it fails, use the table below.
 
-Open the companion popup and choose **Check local connection**. Continue only
-when it says **The browser can reach Tide's local host**. This check transfers no
-session and does not prove that your Google account is connected.
+## 4. Import your selected YouTube Music tab
 
-## Connect the intended account
+1. Open [YouTube Music](https://music.youtube.com/) in Chrome and sign in to your
+   existing Google account. Select the YouTube Music profile you actually use.
+   If you have several identities, check the avatar menu before continuing.
+2. Go to **Home** in YouTube Music and keep that tab selected.
+3. Open Tide's extension popup and choose **Import selected tab** or **Retry import**.
+4. Close the popup, then click **Library** in YouTube Music within two minutes.
+5. Reopen the popup and wait for **Session imported. Open Tide to use your Library.**
+6. Open Tide from Start. In **Account**, confirm the name and connected state.
+   Open **Library** and check that the expected playlists appear.
 
-1. Open `https://music.youtube.com/` in Chrome and sign into your existing Google
-   account. Select the intended YouTube Music identity, including the right
-   channel if you use more than one. Confirm the account in the browser.
-2. With that Music tab selected, open Tide's companion popup and choose
-   **Import selected tab** (or **Retry import**).
-3. Close the popup and click **Library** in YouTube Music within two minutes.
-   Opening the popup alone does not authorize capture.
-4. Reopen the popup. Wait for **Session imported. Open Tide to use your Library.**
-5. Open Tide from the Start menu. Check the account, playlists and recommendations
-   before playing. If an already-open Tide does not adopt the connection, close
-   and reopen it, then refresh Library. Confirm the intended identity before
-   importing again; a successful import replaces Tide's saved session.
+If Tide was already open and does not show the imported account, close and reopen
+it, then refresh Library. **Connect YouTube Music** on the installer's completion
+screen opens Tide's Account panel; it does not replace the import steps above.
 
-The helper verifies the captured session before saving an encrypted copy for
-your Windows user. The extension does not refresh sessions in the background.
-You should not need to keep Chrome open after import, but that continuity still
-requires release validation. Browser cookie rotation or YouTube rejection may
-require reconnecting; a weekly minimum lifetime is not guaranteed.
+The Music tab can be closed after import; the browser is for connection and Tide
+handles playback. Sessions can expire or rotate. A minimum session lifetime is
+not guaranteed, and repeated reconnect prompts should be reported as a bug.
 
-## If it fails
+## If something goes wrong
 
-| Popup result | Next step |
+| What you see | What to do |
 | --- | --- |
-| Browser cannot find or accept the local host | Confirm setup completed with its Chrome option enabled, under the same Windows user, using the ID currently displayed in `chrome://extensions`. The advanced launcher's Chrome choice is equivalent. |
-| Host does not allow this extension ID | Check for an ID change after moving or reloading the unpacked folder. Use the matching setup; do not weaken its allowed-origin policy. |
-| Host cannot start, is outdated, or gives an invalid reply | Update from matching official app/companion packages and retry **Check local connection**. Preserve existing accounts; report persistent failures. |
-| Capture expired or background stopped | Select the Music tab, retry import, close the popup and click Library promptly. Chrome may suspend the service worker. |
-| No explicit account, rejected session, or failed Music request | Confirm the intended account is signed in and Library works in Chrome, then retry once. Report repeated failures rather than repeatedly exporting credentials. |
-| Session imported, wrong library in Tide | Confirm the Music identity in Chrome and explicitly import again from that identity's tab. |
+| Folder name is invalid / cannot load extension | Extract the ZIP first. Select the folder that contains `manifest.json` directly. |
+| Browser cannot find the local host | Rerun matching Tide setup with its Chrome checkbox enabled and the exact ID currently shown in `chrome://extensions`. Use the same Windows user. |
+| ID not allowed / invalid reply / host outdated | Check the ID and matching app/companion versions. Retry setup once. Report a persistent conflict rather than editing the registry. |
+| Capture expired / nothing imported | Open Music Home, retry import, close the popup, then click Library promptly. Capture lasts at most two minutes and Chrome can suspend it. |
+| Wrong account or playlists | Select the intended Music identity in Chrome and explicitly import again. Successful import replaces Tide's saved session. |
+| YouTube rejected the session | Confirm Library works in Chrome, then try one fresh import. Report repeated failures without sending credentials. |
 
-Bug reports can include Tide version/commit, Chrome version, the fixed popup
-message and which step failed. **Do not include cookies, request headers,
-authentication files or developer-tools screenshots containing them.**
+## Update or remove the companion
 
-## Update or remove
+For an extension update, cancel pending imports, replace the files in the same
+folder with the matching new package, then choose **Reload** on its card at
+`chrome://extensions`. Recheck its ID and **Check local connection**. Moving the
+folder can change the ID; if it changes, rerun setup with the new ID. App updates
+do not update these unpacked extension files automatically.
 
-For extension updates, close the popup and cancel pending capture. Replace files
-in the same extension folder with the matching new Chromium package, then use
-**Reload** on its card at `chrome://extensions`. Check its ID and local connection
-again. Moving the folder can change the unpacked ID; the helper only permits the
-ID it was registered for. App updates preserve the recorded browser selection.
+To remove the saved session, use **Account → Disconnect account** in Tide first.
+Remove the extension from Chrome separately. Uninstalling Tide removes its owned
+local-helper registration but preserves saved preferences and sessions.
 
-To remove Tide's saved credentials, choose **Disconnect** in Tide first. In
-`chrome://extensions`, choose **Remove** for the companion. Remove Tide through
-Windows Settings or **Uninstall Tide** in the Start menu to remove its owned
-native-host registration. Removing the extension alone does not remove Tide's
-saved session or the Windows registration; uninstalling Tide preserves saved
-preferences and sessions. The stable unpacked extension folder can be deleted
-after removing the extension from Chrome.
+## Privacy
 
-## What the permissions mean
+Import transfers allowed sign-in/session information from one selected Music tab
+to Tide's local helper, which verifies and encrypts it for your Windows user.
+It does not send your Google password or session to the project maintainers.
+The helper and player contact YouTube to verify access and play music.
 
-- **YouTube Music site access / webRequest:** observe the allowlisted Music
-  request. Capture is armed only after your explicit action for the selected tab.
-- **activeTab:** identify the tab you selected for this transfer.
-- **nativeMessaging:** send the bounded session inputs to the registered local
-  Tide host. It does not upload them to a Tide server.
+Never put cookies, request headers or session files in chat, issues or screenshots.
+For a bug report, give the app version, Chrome version, exact popup message and
+step that failed. [Privacy details](https://github.com/yotam1001/tide-music/blob/main/PRIVACY.md) ·
+[Troubleshooting](https://github.com/yotam1001/tide-music/blob/main/docs/TROUBLESHOOTING.md) · [Advanced imports](https://github.com/yotam1001/tide-music/blob/main/docs/ACCOUNT_SETUP_ADVANCED.md)
 
-The controller only transfers allowed headers from one successful Music browse
-request in the selected tab. It has no content scripts, browser storage,
-telemetry, remote scripts or independent network fetch. It does not collect your
-Google password or unrelated browsing history. The local provider contacts
-YouTube to verify and use the session; native playback uses temporary scoped
-cookies as described in [account setup](ACCOUNT_SETUP.md).
+Chrome's own [unpacked-extension instructions](https://developer.chrome.com/docs/extensions/get-started/tutorial/hello-world#load-unpacked) explain Developer mode and Load unpacked.

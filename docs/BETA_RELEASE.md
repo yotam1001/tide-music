@@ -1,85 +1,82 @@
-# Windows beta release preparation
+# Prepare the first public Windows preview
 
-The candidate binaries come from successful Windows CI at `f026915`. They are
-unsigned previews, not a stable release. The graphical installer contains the
-player and native session receiver; playback tools and the private Python
-runtime are downloaded and checksum-verified during installation.
+This is the maintainer checklist. For normal use, start with [Install Tide](INSTALLATION.md).
 
-## Candidate downloads
+## What is available now?
 
-The `v0.1.0-beta.1` candidate is an **unpublished draft**. No public release is
-available yet. Check the [official releases page](https://github.com/yotam1001/tide-music/releases)
-for publication; signed-in maintainers can inspect the draft. The matching
-[successful CI run](https://github.com/yotam1001/tide-music/actions/runs/38751976892)
-also provides artifacts, which may require GitHub sign-in to download.
+- The source is public; no installer release has been published.
+- `v0.1.0-beta.1` is an unpublished, older draft with binaries from `f026915`.
+  It does not contain the latest UI or in-app updater. Do not publish it as the
+  current build or silently replace its reviewed assets.
+- Current source identifies itself as `0.1.0-preview.1`. The verified updater
+  implementation is in merged PR #13 (`ce0d142`). Its source `e02e99e` passed
+  [push CI](https://github.com/yotam1001/tide-music/actions/runs/39041897082) and
+  [PR CI](https://github.com/yotam1001/tide-music/actions/runs/39041899612), including
+  the real graphical update/restart lifecycle. Documentation changes need their
+  own matching package validation before becoming release assets.
 
-- `TideSetup.exe`: graphical per-user installation, launch and Windows Settings removal.
-- `tide-windows-preview.zip`: advanced installation, including explicit Chrome native-helper registration.
-- `tide-browser-chromium.zip`: unpacked Chrome extension; extract to a stable folder and load the folder containing `manifest.json`.
-- `CHROME_SETUP.md`: complete beta connection instructions.
-- `SHA256SUMS.txt`: download integrity checks; use only assets from this repository.
+## 1. Prepare a matching candidate
 
-The Chrome companion is not on the Chrome Web Store. The candidate's graphical
-setup offers optional native-helper registration after the extension is loaded
-and its exact ID is supplied. Follow [Chrome beta setup](BROWSER_COMPANION_BETA.md) and use matching
-packages. Loading the unpacked extension and importing a selected session remain
-explicit steps; do not advertise automatic one-click login.
+- [ ] Choose the reviewed `main` commit and record it. Keep experimental Jams
+  unmerged until the user has tested it.
+- [ ] Make the release tag match `v` plus the Cargo workspace version. For the
+  current version, use a new `v0.1.0-preview.1` prerelease rather than the old beta.
+- [ ] Require the Windows source checks, preview package and real install/update/
+  removal jobs to pass for the candidate. Do not build large Rust caches locally.
+- [ ] Get the installer and companion from that same successful run. Verify the
+  preview ZIP's allowlist/checksums/privacy and setup's embedded payload.
+- [ ] Prepare a new draft with the [release notes](RELEASE_NOTES_DRAFT.md) and:
+  **TideSetup.exe**, **tide-browser-chromium.zip**, **CHROME_SETUP.md** copied from
+  the current Chrome guide, and **SHA256SUMS.txt** for the downloadable files.
+  The full preview ZIP is an optional advanced download. Do not offer Firefox/Zen
+  packages as a verified onboarding path.
 
-## Verification performed
+Use the companion's inner ZIP, whose extracted files include `manifest.json`
+directly. A GitHub Actions artifact is an outer download and is not itself the
+Chrome loadable folder.
 
-The downloaded CI installer passes its actual embedded-resource extraction and
-checksum verification. Its matching ZIP passes payload allowlist, checksum and
-privacy checks. CI checks and preview packaging both passed.
+## 2. Finish the human preview check
 
-Both final push and PR CI runs passed the real clean-Windows lifecycle job:
-installation, update, actual Start-menu shortcuts and HKCU uninstall/native-host
-registration, runtime checks, installed native local-audio UI and registered-command
-removal. Downloaded evidence confirms success. The installer embeds the exact
-matching app ZIP; both companion archives match the candidate source (text line
-endings normalized), icon bytes and their checksum manifests. See
-[final candidate validation](VALIDATION.md#final-candidate-and-real-windows-lifecycle-2026-10-15).
-These immutable binaries remain tied to `f026915`; later evidence-only documentation
-changes do not produce a new binary candidate.
+Record the Windows version, candidate commit, result and exact nonsensitive error
+for each step. Use a clean Windows user or machine when possible.
 
-`scripts/verify-installed-preview.ps1` is an opt-in network/desktop integration
-probe. It uses the actual packaged installer core with real downloads, private
-runtimes, files, Start-menu-format shortcuts in a disposable folder, and installed
-app UI assertions with silent local audio. It tests an update and removal too.
-Only Windows uninstall registry I/O is replaced by an in-memory fixture. The
-player receives isolated application-data directories, so it does not use the
-developer's saved account. Screenshots and diagnostics remain under ignored
-`.local/verify-install-<random>/` directories. It does not install into the real
-Start menu or modify the current Tide installation.
+- [ ] Follow only the public getting-started guides. Install through the GUI,
+  reach its completion screen, and find Tide in Start.
+- [ ] Load the matching Chrome companion, enter its actual ID in setup, pass
+  **Check local connection**, and import the intended Google/Music identity.
+- [ ] Confirm the account name and expected playlists. Play several songs,
+  including natural transitions, manual skips, pause/resume and seek. Close the
+  Music tab and continue playback. Test radio/Autoplay beyond the initial queue.
+- [ ] Update the installed app through its GUI; verify account and preferences
+  remain. Remove it through Windows Settings and check owned integration cleanup.
 
-```powershell
-pwsh -NoProfile -File scripts/verify-installed-preview.ps1 -PackageRoot <extracted-preview-folder>
-```
+Automated Windows CI covers real files, Start-menu shortcuts, HKCU registration,
+private runtimes, update/restart, local-audio UI and removal. It uses a synthetic
+Chrome identity, not a signed-in browser. That is why it does not replace the
+fresh-user connection check above.
 
-This probe is not a clean Windows VM test or a test of clicking through the actual
-setup GUI. It also does not establish authenticated streaming/session longevity,
-physical media keys in games, or Chrome Web Store availability.
+Physical Fn keys in a focused game, monitor/DPI changes and long-term account
+continuity remain tracked in [Release readiness](RELEASE_READINESS.md). Record
+results or explicitly accepted preview limitations; do not describe pending
+checks as passed. Stable release needs the broader reliability evidence there.
 
-## Checks required before publishing the beta
+## 3. Publish, then announce
 
-The `installed-preview` CI job adds a separate check on a disposable hosted
-Windows runner using actual HKCU registrations, Start-menu shortcuts, private
-runtimes, a synthetic Chrome origin, update and removal. Its guarded script
-refuses this development machine and preserves diagnostic artifacts in CI.
-This closes only the system-integration checks it actually passes; it does not
-replace clicking through setup or connecting a real Google account.
+- [ ] Have the user review the concrete candidate, manual results and release text
+  and authorize publication. The existing hold on the unpublished beta remains
+  until then.
+- [ ] Replace the no-public-download notices in README, START_HERE, Installation,
+  Chrome connection and Troubleshooting with the actual release link. Make sure
+  the packaged copies also reflect the published state. If runtime/installer code
+  changes, repeat the relevant acceptance checks.
+- [ ] Validate the final docs, privacy scan and matching packages. Publish as a
+  **prerelease**, not stable. Do not modify historical assets in place.
+- [ ] Check the release and download links without maintainer access. Confirm the
+  EXE and companion filenames, checksums and Chrome guide are clear.
+- [ ] Review [launch copy and channel notes](LAUNCH_PLAN.md). Approve each external
+  post before sending it; keep time available to answer setup reports.
 
-On a disposable Windows x64 VM or another test user/machine:
+The in-app updater intentionally ignores prereleases. Preview users still install
+newer preview installers manually. Do not advertise automatic beta updates.
 
-1. Download the candidate installer from the official draft/release and verify its checksum.
-2. Run the actual GUI; confirm clear download progress, successful launch, and Start-menu discovery.
-3. Follow the Chrome companion guide, register the exact extension ID, and import the intended account.
-4. Confirm playlists and recommendations; close Chrome and test natural transitions, skip, pause and seek.
-5. Test physical Fn media keys with a game focused and minimize/restore without resizing.
-6. Close Tide; update through the GUI; verify the account and preferences remain available.
-7. Remove Tide through Windows Settings; verify owned files/shortcuts/registrations are removed and unrelated files remain intact.
-8. Record Windows version, tested commit, results and limitations without credentials, library contents or private paths.
-
-Publish as a prerelease only after recording these results and disclosing any
-accepted beta limitations. Stable release additionally requires longer live
-session/recovery evidence. Windows signing and store distribution improve trust
-but have not been completed by preparing these assets.
+[Full evidence](VALIDATION.md) · [Security](../SECURITY.md) · [Privacy](../PRIVACY.md)

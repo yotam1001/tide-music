@@ -2,7 +2,9 @@
 
 Keep playback, provider access and interface code separate. Preserve the full charcoal/burgundy and compact earthy palette directions. Avoid adding continuous animations, polling or unbounded artwork caches.
 
-Run `cargo fmt --all -- --check`, `cargo test --workspace` and `cargo clippy --workspace --all-targets -- -D warnings` before proposing changes. Windows runtime smoke checks are required for playback and media-control changes.
+Follow the guarded format, test and Clippy commands in the
+[developer guide](docs/DEVELOPMENT.md) before proposing changes. Windows runtime
+smoke checks are required for playback and media-control changes.
 
 Development and test profiles disable incremental compilation and use limited
 debug information by default. Slint's generated code can otherwise retain very

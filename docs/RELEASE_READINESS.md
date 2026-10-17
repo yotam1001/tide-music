@@ -4,27 +4,40 @@ Tide is not yet verified ready for a stable release. These gates retain the full
 playback, account, UI and open-source release requirements. A short passing test
 cannot establish long-term service reliability.
 
-Latest installer evidence (2026-10-15): candidate `f026915` passed both
-[push CI](https://github.com/yotam1001/tide-music/actions/runs/38751976892) and
-[PR CI](https://github.com/yotam1001/tide-music/actions/runs/38751986879),
-including real-download installation, update, real HKCU uninstall/native-host
-registration, actual Start-menu shortcuts, installed runtimes/local-audio UI smoke
-checks and registered-command removal on a disposable hosted Windows runner.
-Downloaded evidence reports success. Chrome used a synthetic extension ID;
-no browser, authenticated import, interactive installer clicks or high-DPI setup
-were tested. Downloaded candidate artifacts pass payload/privacy/checksum checks,
-including the fixed CMD launchers. The unpublished beta draft uses these matching
-`f026915` binaries; older `1e403b7` downloads have been superseded.
-This does not close GUI installation or public account-onboarding gates.
-See [beta release preparation](BETA_RELEASE.md)
-and [validation details](VALIDATION.md#final-candidate-and-real-windows-lifecycle-2026-10-15).
+## Latest verified runtime (2026-10-17)
 
-Newer development source includes player-indicator and queue-text fixes, varied
-Home selections, and setup hardening that downloads pinned playback releases
-without a GitHub release-metadata API lookup. Actual downloaded files must still
-match their pinned checksums. These changes are not in the existing `f026915`
-draft assets. The volume repaint mitigation and a new installer candidate still
-need the user's manual checks; experimental Jams remain unmerged for user review.
+Source `e02e99e`, merged through PR #13 (`ce0d142`), passed both
+[push CI](https://github.com/yotam1001/tide-music/actions/runs/39041897082) and
+[PR CI](https://github.com/yotam1001/tide-music/actions/runs/39041899612).
+This includes workspace/updater/UI tests, strict Clippy, package/privacy checks
+and the real Windows installation lifecycle. Actual graphical setup waited for
+an installed Tide process to close, updated the owned release, retained the
+synthetic Chrome registration, reopened the new player and preserved saved
+settings. Installed local-audio UI and registered removal also passed.
+
+Exact-head menu, Account, Settings and updater renders were reviewed in both
+themes. The downloaded installer/ZIP passed checksum, allowlist and privacy
+validation, and its embedded ZIP matched the separately validated package.
+No personal browser, saved account or user installation was used by these tests.
+Live updating between published releases remains untested because no stable
+release has been published.
+
+## Before the public preview
+
+The remaining fresh-user gate is following the installer and Chrome connection
+guides with a real selected account, then confirming playback and browser-closure
+continuity. Physical media keys in games, monitor migration and longer session
+life remain separate manual checks. See the [launch checklist](BETA_RELEASE.md)
+for the preview/stable distinction.
+
+The old `v0.1.0-beta.1` draft still contains `f026915` binaries. They lack later UI
+and updater work and must not be presented as the latest candidate. Historical
+candidate evidence remains in [VALIDATION.md](VALIDATION.md).
+
+## Broader stable-release gates
+
+The rows below retain their scoped historical live-test evidence; they do not
+claim a new authenticated test for every later UI/documentation revision.
 
 | Gate | Required evidence | Current evidence |
 | --- | --- | --- |
@@ -35,8 +48,8 @@ need the user's manual checks; experimental Jams remain unmerged for user review
 | UI controls | Actual sliders, volume display, queue drag, modal focus, Escape, media keys and normal close during playback | Eleven focused native checks, queue drag/autoscroll, production broker transport, async-picker EOF/control/close, and fifty Mini/Expand pairs pass. Normal packaged authenticated GUI playback and title-bar close passed with exit zero and nine observed helpers ended. Physical Fn keys with game focus remain unverified |
 | Rendered layouts | Full/compact/mini, dark/light, panels, minima, resizing and high DPI all usable | Rendered layouts and new 650 by 420 minimum reviewed. Native synthetic 150%/200% DPI messages, maximize/DPI-change/restore and Mini/Expand fit the monitor work area with audio continuing. Account settings remain reachable by scrolling. Physical monitor migration remains unverified |
 | Accounts | Identity changes isolate private state; expiry is actionable; temporary failures do not falsely invalidate verified login; reconnect rarely needed | The completed latest one-hour run and a subsequent current-provider Library check passed with the saved session and no new import. Historical private-Zen sessions passed shorter checks and six-hour playback. Weekly session longevity and direct profile reconnect remain unproven |
-| Public login setup | Simple connection using the user's browser, exact selected account, verified native handoff and documented distribution/removal | Both companion packages and native host pass synthetic protocol/package/adoption tests. Actual Zen lookup fails with both GNU and downloaded MSVC hosts despite matching registration and successful direct framing. Actual Chrome local-host check and selected-tab session import passed, followed by an authenticated Tide Library check. Zen lookup and signed distribution remain pending; temporary/unpacked loading is not public onboarding |
-| Open-source package | Documented fresh installation, license/security/privacy/dependencies, current CI, fresh remote audit and portable validation | Both f026915 CI runs and fresh public-clone privacy audit pass. Real clean hosted Windows install/update/remove and downloaded installer/ZIP/companion verification pass. All five draft assets were downloaded back with matching hashes. Interactive GUI setup, signed distribution and the other stable-release gates remain open |
+| Public login setup | Simple connection using the user's browser, exact selected account, verified native handoff and documented distribution/removal | Both companion packages and native host pass synthetic protocol/package/adoption tests. Actual Zen lookup fails with both GNU and downloaded MSVC hosts despite matching registration and successful direct framing. Actual Chrome local-host check and selected-tab session import passed, followed by an authenticated Tide Library check. Fresh-user Chrome onboarding, Zen lookup and store/signed distribution remain pending |
+| Open-source package | Documented fresh installation, license/security/privacy/dependencies, current CI, fresh remote audit and portable validation | Latest e02e99e CI and fresh public-clone privacy audit pass; see the current evidence above. Real clean hosted Windows install/update/remove and downloaded installer/ZIP/companion verification pass. The five historical f026915 draft assets were downloaded back with matching hashes. Interactive GUI setup, signed distribution and the other stable-release gates remain open |
 
 See [VALIDATION.md](VALIDATION.md) for revisions, scope and measurements. Validation
 uses transient settings and generic diagnostics. Never publish session values,
