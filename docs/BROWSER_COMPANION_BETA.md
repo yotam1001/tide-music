@@ -5,19 +5,19 @@ headers. Sign in to Google in Chrome; Tide never asks for your password.
 
 **Preview setup:** the companion is not on the Chrome Web Store yet. You load it
 once from a folder and enable its connection in Tide's installer. Chrome is the
-connection path with a recorded successful import. Fresh-user setup still needs
-its final acceptance check; Zen's native connection is unresolved, and Edge and
-Firefox are not recommended paths yet.
+connection path with a recorded successful import. Broader fresh-user setup
+coverage remains a preview test item; Zen's native connection is unresolved,
+and Edge and Firefox are not recommended paths yet.
 
 ## 1. Get the two matching downloads
 
-From the same release on the [official Releases page](https://github.com/yotam1001/tide-music/releases), get:
+From [v0.1.0-preview.1](https://github.com/yotam1001/tide-music/releases/tag/v0.1.0-preview.1), get:
 
-- **TideSetup.exe** — installs the Windows player and its local connection helper.
-- **tide-browser-chromium.zip** — the Chrome companion.
+- [**TideSetup.exe**](https://github.com/yotam1001/tide-music/releases/download/v0.1.0-preview.1/TideSetup.exe) — installs the Windows player and its local connection helper.
+- [**tide-browser-chromium.zip**](https://github.com/yotam1001/tide-music/releases/download/v0.1.0-preview.1/tide-browser-chromium.zip) — the Chrome companion.
 
-No public release is available yet. Approved testers can use matching successful
-[Windows build artifacts](https://github.com/yotam1001/tide-music/actions/workflows/ci.yml);
+Contributors testing later source changes can use matching successful
+[Windows build artifacts](https://github.com/yotam1001/tide-music/actions/workflows/ci.yml).
 GitHub may require sign-in for those downloads. The app artifact is named
 `tide-windows-preview-<commit>` and the companion artifact
 `tide-browser-companion-prototypes-<commit>`. Use the same commit for both.

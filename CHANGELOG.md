@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.0-preview.1 — 2026-10-17
+
 Tide is a Windows preview. A stable release is pending the checks in
 [release readiness](docs/RELEASE_READINESS.md).
 

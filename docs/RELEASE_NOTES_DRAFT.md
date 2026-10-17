@@ -3,15 +3,17 @@
 Maintainer draft: publish only with a reviewed matching candidate and completed
 [preview checks](BETA_RELEASE.md). Remove this paragraph from the published notes.
 
-Tide is a native Windows music player built for listening while gaming. Play
+Tide is a native Windows music player built to keep RAM use low while gaming. Play
 YouTube Music, use your existing playlists and recommendations, and switch to a
 mini player when you want it out of the way.
 
 ## Start here
 
-1. Download **TideSetup.exe** from this release and choose **Install Tide**.
-2. For YouTube Music, get **tide-browser-chromium.zip** from the same release and
-   follow **CHROME_SETUP.md**, or the [online connection guide](https://github.com/yotam1001/tide-music/blob/main/docs/BROWSER_COMPANION_BETA.md).
+1. For YouTube Music, download **tide-browser-chromium.zip** and follow
+   **CHROME_SETUP.md** first, or the [online connection guide](https://github.com/yotam1001/tide-music/blob/main/docs/BROWSER_COMPANION_BETA.md).
+   Load the companion so you can enter its extension ID during setup.
+2. Download **TideSetup.exe** from this release and choose **Install Tide**.
+   For local files only, you can skip the companion and start with this step.
 3. Open Tide from Start. Connect your account, then choose a song or playlist.
    Local files work without an account through **Settings → Open audio file**.
 

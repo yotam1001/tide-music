@@ -22,13 +22,14 @@ No personal browser, saved account or user installation was used by these tests.
 Live updating between published releases remains untested because no stable
 release has been published.
 
-## Before the public preview
+## Public preview decision (2026-10-17)
 
-The remaining fresh-user gate is following the installer and Chrome connection
-guides with a real selected account, then confirming playback and browser-closure
-continuity. Physical media keys in games, monitor migration and longer session
-life remain separate manual checks. See the [launch checklist](BETA_RELEASE.md)
-for the preview/stable distinction.
+The maintainer reported a successful installer test and authorized publication of
+[v0.1.0-preview.1](https://github.com/yotam1001/tide-music/releases/tag/v0.1.0-preview.1).
+This is an unsigned public prerelease, not a stable-release sign-off. The report
+does not independently verify every Chrome onboarding or playback step. Broader
+fresh-user coverage, physical media keys in games, monitor migration and longer
+session life remain separate test items. See the [launch checklist](BETA_RELEASE.md).
 
 The old `v0.1.0-beta.1` draft still contains `f026915` binaries. They lack later UI
 and updater work and must not be presented as the latest candidate. Historical
