@@ -10,7 +10,8 @@ Chrome extension installation or authenticated session transfer. Evidence remain
 in RUNNER_TEMP even after a failure. Never run this on a personal Windows machine.
 #>
 [CmdletBinding()]
-param([Parameter(Mandatory = $true)][string]$PackageRoot)
+param([Parameter(Mandatory = $true)][string]$PackageRoot,
+      [Parameter(Mandatory = $true)][string]$SetupExecutable)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
@@ -25,6 +26,8 @@ if (![OperatingSystem]::IsWindows() -or ![Environment]::Is64BitProcess -or
 if (!$env:RUNNER_TEMP -or !$env:LOCALAPPDATA) { throw 'Required hosted-runner directories are unavailable.' }
 
 $taskPackage = [IO.Path]::GetFullPath($PackageRoot)
+$taskSetup = [IO.Path]::GetFullPath($SetupExecutable)
+if (!(Test-Path -LiteralPath $taskSetup -PathType Leaf)) { throw 'The verified graphical setup is required.' }
 $taskInstaller = Join-Path $taskPackage 'scripts/install-windows.ps1'
 $taskCommon = Join-Path $taskPackage 'scripts/install-common.ps1'
 foreach ($required in @($taskInstaller, $taskCommon, (Join-Path $taskPackage 'tide-session-host.exe'))) {
@@ -76,7 +79,7 @@ $taskIsolatedProfile = Join-Path $taskEvidence 'appdata'
 $taskSentinelDirectory = Join-Path $taskIsolatedProfile 'TideMusic'
 [IO.Directory]::CreateDirectory($taskSentinelDirectory) | Out-Null
 $taskSettings = Join-Path $taskSentinelDirectory 'settings.json'
-$taskSentinel = '{"queue":{"tracks":[],"current":null},"light_mode":false,"compact_mode":false,"autoplay":false,"volume":0,"repeat":false}'
+$taskSentinel = '{"queue":{"tracks":[],"current":null},"light_mode":false,"compact_mode":false,"autoplay":false,"check_updates":false,"volume":0,"repeat":false}'
 [IO.File]::WriteAllText($taskSettings, $taskSentinel, [Text.UTF8Encoding]::new($false))
 $taskExpectedSettingsHash = (Get-FileHash -LiteralPath $taskSettings -Algorithm SHA256).Hash
 $taskExtensionId = 'abcdefghijklmnopabcdefghijklmnop' # Deliberately synthetic: not a browser installation.
@@ -187,14 +190,42 @@ try {
     $taskPythonArgs = @('-I', '-c', 'import ytmusicapi, requests, certifi; assert callable(ytmusicapi.YTMusic)')
     Invoke-CleanChild (Join-Path $taskFirstRelease '.tools/provider-venv/Scripts/python.exe') $taskPythonArgs 'private-python' 30 | Out-Null
 
-    # Omitting Browser on the second install must retain the managed Chrome choice.
-    $updateArgs = @('-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $taskInstaller,
-        '-Mode', 'Install', '-InstallRoot', $taskInstallRoot, '-AppVersion', '0.1.1-clean-probe')
-    Invoke-CleanChild $taskPowerShell $updateArgs 'update' | Out-Null
-    $taskUpdatedRelease = Assert-CleanInstallation '0.1.1-clean-probe'
+    # Exercise the actual graphical setup's automatic update handoff. The old
+    # synthetic player exits normally; setup must wait, retain Chrome and reopen
+    # the new installed player. These are disposable-runner processes only.
+    $taskVersionAssembly = [Reflection.Assembly]::LoadFile($taskSetup)
+    $taskVersionStream = $taskVersionAssembly.GetManifestResourceStream('Tide.Version')
+    if ($null -eq $taskVersionStream) { throw 'Setup has no embedded app version.' }
+    $taskVersionReader = [IO.StreamReader]::new($taskVersionStream)
+    try { $taskUpdatedVersion = $taskVersionReader.ReadToEnd().Trim() } finally { $taskVersionReader.Dispose() }
+    $taskPreviousAppdata = $env:APPDATA
+    try {
+        $env:APPDATA = $taskIsolatedProfile
+        $taskParent = Start-Process -FilePath (Join-Path $taskFirstRelease 'tide-music.exe') `
+            -ArgumentList @('--smoke-ui', ('"' + (Join-Path $taskEvidence 'before-update') + '"')) `
+            -WorkingDirectory $env:RUNNER_TEMP -PassThru `
+            -RedirectStandardOutput (Join-Path $taskEvidence 'update-parent.stdout.log') `
+            -RedirectStandardError (Join-Path $taskEvidence 'update-parent.stderr.log')
+        $taskSetupProcess = Start-Process -FilePath $taskSetup -ArgumentList @('--update-from', $taskParent.Id) `
+            -WorkingDirectory $env:RUNNER_TEMP -PassThru
+    } finally { $env:APPDATA = $taskPreviousAppdata }
+    if (!$taskSetupProcess.WaitForExit(600000) -or $taskSetupProcess.ExitCode -ne 0) { throw 'Automatic setup handoff did not finish.' }
+    if (!$taskParent.HasExited -or $taskParent.ExitCode -ne 0) { throw 'The previous player did not close normally.' }
+    $taskUpdatedRelease = Assert-CleanInstallation $taskUpdatedVersion
     if ($taskUpdatedRelease -eq $taskFirstRelease -or (Test-Path -LiteralPath $taskFirstRelease)) {
         throw 'Update did not replace and remove the previous owned release.'
     }
+    $taskRestarted = @(Get-Process -Name tide-music -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq (Join-Path $taskUpdatedRelease 'tide-music.exe') })
+    if ($taskRestarted.Count -ne 1) { throw 'Setup did not reopen exactly one updated player.' }
+    $taskRestartDeadline = [DateTime]::UtcNow.AddSeconds(30)
+    while (!$taskRestarted[0].HasExited -and $taskRestarted[0].MainWindowHandle -eq 0 -and [DateTime]::UtcNow -lt $taskRestartDeadline) {
+        Start-Sleep -Milliseconds 200; $taskRestarted[0].Refresh()
+    }
+    if ($taskRestarted[0].HasExited -or !$taskRestarted[0].CloseMainWindow() -or !$taskRestarted[0].WaitForExit(15000)) {
+        throw 'The restarted player did not show and close normally.'
+    }
+    Assert-CleanSentinel
+    Write-Host 'PASS actual graphical setup waited, installed, retained Chrome and restarted Tide'
 
     # Ninety seconds of mono 16-bit PCM zeros; no internet audio or credentials.
     $taskWave = Join-Path $taskEvidence 'silence.wav'
@@ -241,7 +272,7 @@ try {
         }
     }
     Assert-CleanSentinel
-    [IO.File]::WriteAllText((Join-Path $taskEvidence 'result.txt'), 'PASS real clean Windows installation, update, runtimes, synthetic Chrome registration, installed local-audio UI and removal. No browser or authenticated import tested.')
+    [IO.File]::WriteAllText((Join-Path $taskEvidence 'result.txt'), 'PASS real clean Windows installation, graphical automatic update/restart, runtimes, synthetic Chrome registration, installed local-audio UI and removal. No browser or authenticated import tested.')
     Write-Host 'PASS clean Windows integration; this does not validate GUI clicks or authenticated Chrome import.'
 } catch {
     [IO.File]::WriteAllText((Join-Path $taskEvidence 'result.txt'), 'FAIL clean Windows integration. Owned failure evidence retained; no automatic cleanup was attempted.')

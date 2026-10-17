@@ -88,6 +88,7 @@ fn settings_theme_account_and_song_menu_remain_independent() {
     let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
     slint::platform::set_platform(Box::new(TestPlatform(window.clone()))).unwrap();
     let ui = AppWindow::new().unwrap();
+    ui.set_app_version(env!("CARGO_PKG_VERSION").into());
     ui.set_rows(tracks());
     ui.set_current_index(0);
     ui.set_track_title("A Quiet Sun".into());
@@ -234,6 +235,25 @@ fn settings_theme_account_and_song_menu_remain_independent() {
         draw(&window, width, height);
     }
 
+    ui.set_update_available(true);
+    ui.set_update_installable(true);
+    ui.set_update_status("Tide 0.2.0 is available".into());
+    ui.set_settings_open(true);
+    for light in [true, false] {
+        ui.set_light_mode(light);
+        export(
+            if light {
+                "updates-light"
+            } else {
+                "updates-dark"
+            },
+            1140,
+            800,
+            &draw(&window, 1140, 800),
+        );
+    }
+    ui.set_update_available(false);
+    ui.set_settings_open(false);
     ui.set_account_connected(false);
     ui.set_account_verified(false);
     ui.set_account_name("".into());

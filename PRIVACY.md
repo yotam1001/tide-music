@@ -1,6 +1,6 @@
 # Tide privacy notice
 
-Last updated: 2026-10-15
+Last updated: 2026-10-17
 
 This notice covers the Tide Windows player, its optional session companion
 extension, and its local native helper in this repository. Tide is an unofficial
@@ -14,6 +14,16 @@ advertising SDK, analytics service or automatic crash-report uploader in this
 version. Tide does not send your session to the project maintainers or a Tide
 server, sell it, or use it for advertisements, profiling or unrelated purposes.
 Google/YouTube and download providers have their own data practices.
+
+Installed Windows players check the public Tide GitHub release endpoint once
+after startup for newer stable versions. Disable startup checks in Settings;
+manual checks are also available. GitHub receives normal network metadata such
+as the IP address and Tide's app version in its User-Agent, without Google
+credentials, account names, listening history or a GitHub token. Installer
+downloads start only after choosing **Install and restart** and can contact
+GitHub's release-asset hosts. One installer and one partial download are kept
+in the local `TideMusic/updates` cache, each capped at 96 MiB. No telemetry or
+crash reporting is included in the updater.
 
 ## What the browser companion processes
 

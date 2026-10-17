@@ -98,7 +98,7 @@ jobs:
       - name: Exercise real per-user install, Chrome host, update and removal
         id: clean-install
         shell: pwsh
-        run: ./scripts/verify-clean-windows.ps1 -PackageRoot .local/clean-payload
+        run: ./scripts/verify-clean-windows.ps1 -PackageRoot .local/clean-payload -SetupExecutable .local/clean-installer-artifact/TideSetup.exe
       - uses: actions/upload-artifact@v4
         if: ${{ always() && steps.clean-install.outputs.evidence-directory != '' }}
         with:

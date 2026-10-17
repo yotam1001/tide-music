@@ -20,6 +20,7 @@ mod listening;
 mod metadata;
 mod radio;
 mod settings_location;
+mod updater;
 slint::include_modules!();
 
 #[derive(Serialize, Deserialize)]
@@ -30,6 +31,8 @@ struct Settings {
     compact_mode: bool,
     #[serde(default = "enabled_by_default")]
     autoplay: bool,
+    #[serde(default = "enabled_by_default")]
+    check_updates: bool,
     volume: Option<f64>,
     repeat: bool,
     #[serde(skip)]
@@ -42,6 +45,7 @@ impl Default for Settings {
             light_mode: false,
             compact_mode: false,
             autoplay: true,
+            check_updates: true,
             volume: None,
             repeat: false,
             transient: false,
@@ -1555,6 +1559,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ui.set_light_mode(state.borrow().settings.light_mode);
     ui.set_compact_mode(state.borrow().settings.compact_mode);
     ui.set_autoplay_enabled(state.borrow().settings.autoplay);
+    ui.set_auto_update_checks(state.borrow().settings.check_updates);
     ui.set_volume(state.borrow().settings.volume.unwrap_or(70.0) as f32);
     ui.set_repeat_enabled(state.borrow().settings.repeat);
     ui.set_paused(true);
@@ -2274,6 +2279,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 slint::LogicalSize::new(1140.0, 800.0)
             });
         }
+        save(&s.settings);
+    });
+    bind!(on_toggle_update_checks, |s, u| {
+        s.settings.check_updates = !s.settings.check_updates;
+        u.set_auto_update_checks(s.settings.check_updates);
         save(&s.settings);
     });
     bind!(on_toggle_autoplay, |s, u| {
@@ -3649,6 +3659,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(|seconds| listening::start(state.clone(), &ui, seconds, local_listening_source));
     // Sustained probes must not expose a second interactive player or compete
     // with the user's window. Keep timers running without a visible window.
+    let _updater = updater::wire(&ui, !state.borrow().settings.transient);
     let result = if listening_seconds.is_some() || smoke_autoplay_depletion {
         ui.hide()?;
         slint::run_event_loop_until_quit()

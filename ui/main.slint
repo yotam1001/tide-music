@@ -1082,6 +1082,15 @@ export component AppWindow inherits Window {
     callback refresh-recommendations();
     callback select-recommendation(int);
     callback open-account-help();
+    in property <string> app-version: "0.1.0";
+    in property <string> update-status: "Check for a new version of Tide";
+    in property <bool> update-busy: false;
+    in property <bool> update-available: false;
+    in property <bool> update-installable: false;
+    in property <bool> auto-update-checks: true;
+    callback check-updates();
+    callback install-update();
+    callback toggle-update-checks();
     in property <[TrackRow]> rows;
     in property <int> current-index;
     in property <string> track-title;
@@ -1205,7 +1214,7 @@ export component AppWindow inherits Window {
                     LineEdit { horizontal-stretch: 1; height: 36px; font-size: 13px; enabled: root.browsing-enabled; text <=> root.source-input; placeholder-text: "Search music or paste a link"; accessible-label: "Search music or paste a YouTube link"; accepted(value) => { if value != "" { root.add-source(value); } } }
                     LibraryButton { width: 74px; light-mode: root.light-mode; enabled: root.browsing-enabled; caption: "Search"; label: "Search for music or open the pasted link"; clicked => { if root.source-input != "" { root.add-source(root.source-input); } } }
                     LibraryButton { width: 36px; height: 36px; light-mode: root.light-mode; caption: root.light-mode ? "☾" : "☼"; label: root.light-mode ? "Switch to dark theme" : "Switch to light theme"; clicked => { root.switch-mode(); } }
-                    LibraryButton { width: 84px; quiet: false; light-mode: root.light-mode; caption: "Settings"; label: "Open settings"; active: root.settings-open; clicked => { root.settings-open = !root.settings-open; } }
+                    LibraryButton { width: 84px; quiet: false; light-mode: root.light-mode; caption: root.update-available ? "Settings •" : "Settings"; label: root.update-available ? "Open settings, update available" : "Open settings"; active: root.settings-open; clicked => { root.settings-open = !root.settings-open; } }
                     LibraryButton { width: 78px; quiet: false; light-mode: root.light-mode; caption: "Account"; label: "Open YouTube Music account"; active: root.account-open; clicked => { root.account-open = !root.account-open; } }
                 }
             }
@@ -1408,7 +1417,17 @@ export component AppWindow inherits Window {
                                 LibraryButton { height: 40px; quiet: false; caption: "Open audio file"; label: "Open a local audio file"; light-mode: root.light-mode; clicked => { root.open-file(); root.settings-open = false; } }
                                 Rectangle { height: 10px; }
                                 Rectangle { height: 1px; background: root.outline; }
-                                Text { height: 18px; text: "About Tide · 0.1.0 preview"; color: root.secondary; font-size: 12px; }
+                                Text { height: 20px; text: "Updates"; color: root.foreground; font-size: 15px; font-weight: 600; }
+                                Text { text: root.update-status; color: root.secondary; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
+                                LibraryButton { height: 40px; quiet: false; caption: root.update-busy ? "Please wait…" : "Check for updates"; label: "Check GitHub for a newer stable Tide release"; light-mode: root.light-mode; enabled: !root.update-busy; clicked => { root.check-updates(); } }
+                                if root.update-available : VerticalLayout {
+                                    spacing: 8px;
+                                    Text { text: root.update-installable ? "Installing stops playback and restarts Tide. Your account and preferences are kept." : "Automatic installation is available in an installed Windows copy of Tide."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
+                                    LibraryButton { height: 40px; quiet: false; active: true; caption: "Install and restart"; label: "Download the verified update, stop playback and restart Tide"; light-mode: root.light-mode; enabled: root.update-installable && !root.update-busy; clicked => { root.install-update(); } }
+                                }
+                                LibraryButton { height: 36px; caption: root.auto-update-checks ? "Startup checks: on" : "Startup checks: off"; label: "Toggle automatic update checks on startup"; light-mode: root.light-mode; clicked => { root.toggle-update-checks(); } }
+                                Rectangle { height: 1px; background: root.outline; }
+                                Text { height: 18px; text: "About Tide · " + root.app-version; color: root.secondary; font-size: 12px; }
                                 AboutSlint { height: 112px; horizontal-stretch: 0; }
                             }
                         }
