@@ -1,4 +1,4 @@
-# Tide Music 0.1.0
+# Tide Music 0.1.1
 
 Maintainer draft: publish only with a reviewed matching candidate and completed
 [preview checks](BETA_RELEASE.md). Remove this paragraph from the published notes.
@@ -22,16 +22,33 @@ required. GitHub's Source code archives are for contributors, not normal setup.
 
 ## Update from an installed preview
 
-In preview 1 or preview 2, open **Settings → Check for updates**, then choose
-**Install and restart**. Tide verifies the installer download, stops playback,
-updates the installed app and reopens it. Your account and preferences are kept.
-Portable/development copies should use **TideSetup.exe** manually instead.
-
-This is the preview 2 feature set with matching stable app, installer and release
-versions, published at the maintainer's request to test public in-app updating.
-It includes the Home relevance fix and the pinned My Supermix Library shortcut.
-No updater policy, audio engine or account behavior changes in this promotion.
+In Tide 0.1.0 or an installed preview, open **Settings → Check for updates**,
+then choose **Install and restart**. Tide verifies the installer download, stops
+playback, updates the installed app and reopens it. Your account and preferences
+are kept. Portable/development copies should use **TideSetup.exe** manually.
 The existing Chrome companion remains compatible and does not need replacing.
+
+## New in 0.1.1
+
+- **Settings → Gaming controls:** optional global Play / pause, Next and Previous
+  shortcuts for background control. No shortcuts are registered by default.
+  Enter a Ctrl or Alt combination, then apply. Blank fields disable shortcuts;
+  conflicts leave your previous bindings intact. No keyboard hooks are used.
+- **Windows media keys on/off:** choose whether Tide participates in Windows
+  media controls, independently of custom shortcuts. Fn behavior still depends
+  on your keyboard and Windows settings.
+- **Default audio output recovery:** shared WASAPI follows the Windows default
+  output. After an output initialization failure, returning a default multimedia
+  output triggers one retry of the current song, keeping position and pause
+  intent. Stop, a different song, natural completion and unrelated network errors
+  do not trigger this recovery. Device identifiers are not stored.
+
+Automated Windows tests cover shortcut registration/dispatch/conflicts/cleanup,
+output notifications and recovery policy, settings migration, native UI controls,
+package verification and the clean install/update/remove lifecycle. Physical
+USB/Bluetooth/HDMI switching and actual keyboard behavior with games or elevated
+apps still need hands-on validation. Stable-channel publication is not a claim
+that those checks have passed.
 
 ## Included
 

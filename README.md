@@ -13,10 +13,10 @@ Play YouTube Music, bring in your playlists and recommendations, and keep the
 player out of the way with a mini mode. Tide uses native audio playback rather
 than keeping an embedded browser running.
 
-**Windows release:** [Download TideSetup.exe](https://github.com/yotam1001/tide-music/releases/download/v0.1.0/TideSetup.exe)
-from [v0.1.0](https://github.com/yotam1001/tide-music/releases/tag/v0.1.0).
+**Windows release:** [Download TideSetup.exe](https://github.com/yotam1001/tide-music/releases/download/v0.1.1/TideSetup.exe)
+from [v0.1.1](https://github.com/yotam1001/tide-music/releases/tag/v0.1.1).
 For YouTube Music, also download the matching
-[Chrome companion](https://github.com/yotam1001/tide-music/releases/download/v0.1.0/tide-browser-chromium.zip)
+[Chrome companion](https://github.com/yotam1001/tide-music/releases/download/v0.1.1/tide-browser-chromium.zip)
 and follow the connection guide below. The Windows installer is currently unsigned.
 
 ![Tide's dark interface](docs/screenshots/full.png)
@@ -83,7 +83,7 @@ the demo's figures. Installed Tide does not create Rust build caches.
 
 **Settings → Check for updates** finds published stable releases and offers
 **Install and restart**. Startup checks can be disabled. The updater skips beta
-and draft releases. Installed previews can update to stable 0.1.0; future
+and draft releases. Installed previews can update to stable 0.1.1; future
 preview-only updates still need their installer. Accounts and
 preferences are kept during app updates. Update the unpacked companion separately
 through its guide.

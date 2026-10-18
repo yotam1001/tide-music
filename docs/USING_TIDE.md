@@ -14,7 +14,7 @@ The centered player buttons handle previous, pause/play and next. The bottom
 sliders control position and volume. Windows media controls are supported;
 physical keyboard/Fn behavior while a game has focus still needs user validation.
 
-## Gaming controls (next build)
+## Gaming controls (0.1.1 and later)
 
 In **Settings → Gaming controls**, Windows media keys can be switched off if
 another app should receive them. Laptop Fn behavior depends on its hardware and

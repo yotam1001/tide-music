@@ -517,6 +517,22 @@ mod tests {
         parse_release(&serde_json::to_vec(value).unwrap(), "0.1.0")
     }
     #[test]
+    fn installed_stable_and_previews_offer_0_1_1_but_equal_versions_do_not() {
+        let bytes = serde_json::to_vec(&metadata("v0.1.1")).unwrap();
+        for installed in [
+            "0.1.0",
+            "0.1.0-beta.1",
+            "0.1.0-preview.1",
+            "0.1.0-preview.2",
+        ] {
+            let release = parse_release(&bytes, installed).unwrap().unwrap();
+            assert_eq!(release.version.to_string(), "0.1.1");
+            assert!(release.url.ends_with("/v0.1.1/TideSetup.exe"));
+        }
+        assert!(parse_release(&bytes, "0.1.1").unwrap().is_none());
+        assert!(parse_release(&bytes, "0.1.2").unwrap().is_none());
+    }
+    #[test]
     fn only_strictly_newer_stable_versions_are_offered() {
         for tag in ["v0.1.0", "v0.0.9", "v0.2.0-beta.1"] {
             assert!(parse(&metadata(tag)).unwrap().is_none());

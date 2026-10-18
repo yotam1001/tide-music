@@ -1,5 +1,20 @@
 # Release readiness
 
+## Stable 0.1.1 update (2026-10-18)
+
+The maintainer requested a new stable installer after merging PR #19. Version
+0.1.1 adds opt-in background shortcuts, an independent Windows media-key switch,
+and recovery when a default audio output returns after output initialization
+failure. Existing source, native UI, Windows registration/recovery policy,
+packaging and clean install/update/remove checks passed in
+[PR #19 CI](https://github.com/yotam1001/tide-music/actions/runs/39143328948).
+The final versioned 0.1.1 candidate must pass the same CI and package checks
+before publication. This channel decision does not mark physical headset/game
+checks, fresh-user onboarding or long-term account continuity as passed. Jams
+remain excluded. The Chrome companion is unchanged and remains compatible.
+
+## Stable 0.1.0 history
+
 The maintainer requested stable-channel **0.1.0** on 2026-10-17 so installed
 previews can test the public Install and restart flow. It contains the preview 2
 feature set with matching stable app/installer metadata. The channel decision
