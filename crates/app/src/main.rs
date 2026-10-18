@@ -3645,6 +3645,43 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Some(0),
                 "Media Previous moves back once"
             );
+            {
+                let mut s = state.borrow_mut();
+                let previous_tracks = s.detail_tracks.clone();
+                let previous_queue = s.settings.queue.tracks.clone();
+                let previous_generation = s.generation;
+                let connected = ui.get_account_connected();
+                ui.set_account_connected(true);
+                ui.set_detail_title("Back navigation fixture".into());
+                let mut song = previous_tracks[0].clone();
+                song.artists = vec![
+                    tide_core::Artist {
+                        id: "UC1234567890123456789012".into(),
+                        name: "Band".into(),
+                    },
+                    tide_core::Artist {
+                        id: "UCabcdefghijklmnopqrstuv".into(),
+                        name: "Guest".into(),
+                    },
+                ];
+                artists::open(&mut s, &ui, &library_tx, song);
+                assert!(ui.get_artist_picker_open());
+                assert!(
+                    s.detail_tracks.is_empty(),
+                    "previous detail tracks must move into bounded history"
+                );
+                artists::back(&mut s, &ui);
+                assert_eq!(s.detail_tracks, previous_tracks);
+                assert_eq!(s.settings.queue.tracks, previous_queue);
+                assert_eq!(s.generation, previous_generation);
+                assert!(s.active_playback && ui.get_detail_open() && !ui.get_detail_is_artist());
+                assert_eq!(ui.get_detail_title(), "Back navigation fixture");
+                assert!(s.artist_origin.is_none() && !ui.get_artist_picker_open());
+                ui.set_account_connected(connected);
+                println!(
+                    "PASS: artist Back restores playlist without changing queue or active playback"
+                );
+            }
             let title = state.borrow().settings.queue.tracks[2].title.clone();
             ui.invoke_reorder_queue_track(2, 1);
             assert_eq!(state.borrow().settings.queue.tracks[1].title, title);
