@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add opt-in Windows global shortcuts for play/pause, next and previous in
+  Settings, with conflict detection, transactional changes and no keyboard hooks.
+- Allow Windows media controls to be disabled independently of custom shortcuts.
+- Follow the shared Windows default audio output and retry the current song after
+  an audio-output failure when a default output returns, preserving position and
+  pause intent. Hardware/game-focus checks remain pending.
+
 ## 0.1.0 — 2026-10-17
 
 - Publish the preview 2 feature set on the stable update channel at the

@@ -437,6 +437,43 @@ fn settings_theme_account_and_song_menu_remain_independent() {
     ui.set_detail_rows(tracks());
     export("playlist-detail", 1140, 800, &draw(&window, 1140, 800));
     ui.set_detail_open(false);
+    ui.set_settings_open(true);
+    ui.set_shortcut_toggle("Ctrl+Alt+P".into());
+    ui.set_shortcut_next("Ctrl+Alt+N".into());
+    ui.set_shortcut_previous("Ctrl+Alt+B".into());
+    let weak = ui.as_weak();
+    ui.on_toggle_media_controls(move || {
+        let ui = weak.upgrade().unwrap();
+        ui.set_media_controls_enabled(!ui.get_media_controls_enabled());
+    });
+    let applied = Rc::new(Cell::new(false));
+    let capture = applied.clone();
+    let weak = ui.as_weak();
+    ui.on_apply_shortcuts(move || {
+        let ui = weak.upgrade().unwrap();
+        assert_eq!(ui.get_shortcut_toggle(), "Ctrl+Alt+P");
+        assert_eq!(ui.get_shortcut_next(), "Ctrl+Alt+N");
+        assert_eq!(ui.get_shortcut_previous(), "Ctrl+Alt+B");
+        capture.set(true);
+    });
+    // The tall fixture shows the complete settings drawer and its real hitboxes.
+    draw(&window, 1140, 1200);
+    click(&ui, 920.0, 450.0);
+    assert!(!ui.get_media_controls_enabled());
+    click(&ui, 920.0, 808.0);
+    assert!(
+        applied.get(),
+        "Apply is reachable and reads the entered bindings"
+    );
+    export(
+        "gaming-controls-dark",
+        1140,
+        1200,
+        &draw(&window, 1140, 1200),
+    );
+    ui.set_light_mode(true);
+    export("gaming-controls-light", 780, 720, &draw(&window, 780, 720));
+    ui.set_settings_open(false);
     ui.set_collapsed(true);
     export("collapsed", 700, 132, &draw(&window, 700, 132));
     ui.set_collapsed(false);

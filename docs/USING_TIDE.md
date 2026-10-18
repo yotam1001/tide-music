@@ -14,6 +14,30 @@ The centered player buttons handle previous, pause/play and next. The bottom
 sliders control position and volume. Windows media controls are supported;
 physical keyboard/Fn behavior while a game has focus still needs user validation.
 
+## Gaming controls (next build)
+
+In **Settings → Gaming controls**, Windows media keys can be switched off if
+another app should receive them. Laptop Fn behavior depends on its hardware and
+Windows settings; Tide does not remap Fn itself.
+
+Optional global shortcuts control **Play / pause**, **Next song** and
+**Previous song** while Tide is in the background. Enter a Ctrl or Alt combination
+(for example `Ctrl+Alt+P`) and choose **Apply shortcuts**. Shift can also be used.
+Letters, digits, Space and F1–F24 are supported, except Windows-reserved F12.
+Blank fields disable individual shortcuts; clear all three and apply to disable
+all custom shortcuts. No global shortcuts are registered by default. If Windows
+or another app already owns a combination, Tide reports the conflict and keeps
+your previous shortcuts. Choose combinations unused by your games; exclusive
+keyboard handling in some games or elevated apps still needs hardware testing.
+
+Tide uses Windows' shared default audio output so games can use the same device.
+Normal output changes are handled by its WASAPI backend. If output initialization
+fails and its bounded retries stop, returning a default multimedia output triggers
+one retry of the same song, retaining position and pause intent. Stop, a different
+song, natural completion and unrelated network failures are not resumed by this
+path. No device identifiers are stored. This needs physical Bluetooth/USB/HDMI
+switching checks before claiming compatibility with every device.
+
 ## Home and Library
 
 - **Home:** recommendations from your YouTube Music account. Preview 2
