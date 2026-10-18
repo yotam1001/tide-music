@@ -18,6 +18,8 @@ mod connection;
 mod discovery;
 mod listening;
 mod metadata;
+#[cfg(any(windows, test))]
+mod output_recovery;
 mod radio;
 mod settings_location;
 mod updater;
@@ -33,6 +35,10 @@ struct Settings {
     autoplay: bool,
     #[serde(default = "enabled_by_default")]
     check_updates: bool,
+    #[serde(default = "enabled_by_default")]
+    media_controls: bool,
+    #[serde(default)]
+    shortcuts: [String; 3],
     volume: Option<f64>,
     repeat: bool,
     #[serde(skip)]
@@ -46,6 +52,8 @@ impl Default for Settings {
             compact_mode: false,
             autoplay: true,
             check_updates: true,
+            media_controls: true,
+            shortcuts: Default::default(),
             volume: None,
             repeat: false,
             transient: false,
@@ -1083,7 +1091,11 @@ fn start_window_media(ui: &AppWindow) -> Result<tide_windows::MediaSession, Stri
                 tide_windows::MediaAction::Stop => (5, 0.0),
                 tide_windows::MediaAction::Seek(seconds) => (6, seconds as f32),
             };
-            let _ = weak.upgrade_in_event_loop(move |u| u.invoke_media_command(code, value));
+            let _ = weak.upgrade_in_event_loop(move |u| {
+                if u.get_media_controls_enabled() {
+                    u.invoke_media_command(code, value);
+                }
+            });
         })
     }
     #[cfg(not(windows))]
@@ -1564,6 +1576,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ui.set_compact_mode(state.borrow().settings.compact_mode);
     ui.set_autoplay_enabled(state.borrow().settings.autoplay);
     ui.set_auto_update_checks(state.borrow().settings.check_updates);
+    ui.set_media_controls_enabled(state.borrow().settings.media_controls);
+    {
+        let s = state.borrow();
+        ui.set_shortcut_toggle(s.settings.shortcuts[0].clone().into());
+        ui.set_shortcut_next(s.settings.shortcuts[1].clone().into());
+        ui.set_shortcut_previous(s.settings.shortcuts[2].clone().into());
+    }
     ui.set_volume(state.borrow().settings.volume.unwrap_or(70.0) as f32);
     ui.set_repeat_enabled(state.borrow().settings.repeat);
     ui.set_paused(true);
@@ -2300,6 +2319,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         save(&s.settings);
     });
+    bind!(on_toggle_media_controls, |s, u| {
+        s.settings.media_controls = !s.settings.media_controls;
+        u.set_media_controls_enabled(s.settings.media_controls);
+        save(&s.settings);
+    });
     bind!(on_toggle_update_checks, |s, u| {
         s.settings.check_updates = !s.settings.check_updates;
         u.set_auto_update_checks(s.settings.check_updates);
@@ -2490,6 +2514,104 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let media = Rc::new(RefCell::new(None::<tide_windows::MediaSession>));
     let media_enabled =
         cfg!(windows) && !test_mode && listening_seconds.is_none() && !smoke_autoplay;
+    #[cfg(windows)]
+    let shortcuts = Rc::new(RefCell::new(
+        None::<tide_windows::shortcuts::GlobalShortcuts>,
+    ));
+    #[cfg(windows)]
+    if media_enabled {
+        let weak = ui.as_weak();
+        match tide_windows::shortcuts::GlobalShortcuts::new(move |action| {
+            let code = match action {
+                tide_windows::MediaAction::Toggle => 2,
+                tide_windows::MediaAction::Next => 3,
+                tide_windows::MediaAction::Previous => 4,
+                _ => return,
+            };
+            let _ = weak.upgrade_in_event_loop(move |u| u.invoke_media_command(code, 0.0));
+        }) {
+            Ok(mut manager) => {
+                let result =
+                    tide_windows::shortcuts::parse_bindings(&state.borrow().settings.shortcuts)
+                        .and_then(|bindings| manager.apply(bindings));
+                if let Err(error) = result {
+                    ui.set_shortcut_status(error.into());
+                }
+                *shortcuts.borrow_mut() = Some(manager);
+            }
+            Err(error) => ui.set_shortcut_status(error.into()),
+        }
+    }
+    #[cfg(windows)]
+    {
+        let state = state.clone();
+        let weak = ui.as_weak();
+        let shortcuts = shortcuts.clone();
+        ui.on_apply_shortcuts(move || {
+            let Some(u) = weak.upgrade() else {
+                return;
+            };
+            let values = [
+                u.get_shortcut_toggle().to_string().trim().to_owned(),
+                u.get_shortcut_next().to_string().trim().to_owned(),
+                u.get_shortcut_previous().to_string().trim().to_owned(),
+            ];
+            let result = tide_windows::shortcuts::parse_bindings(&values).and_then(|bindings| {
+                shortcuts
+                    .borrow_mut()
+                    .as_mut()
+                    .ok_or_else(|| "Global shortcuts are unavailable in this mode.".to_string())?
+                    .apply(bindings)
+            });
+            match result {
+                Ok(()) => {
+                    let mut s = state.borrow_mut();
+                    s.settings.shortcuts = values;
+                    save(&s.settings);
+                    u.set_shortcut_status("Shortcuts saved. Blank fields are disabled.".into());
+                }
+                Err(error) => u.set_shortcut_status(error.into()),
+            }
+        });
+    }
+    let output_timer = slint::Timer::default();
+    #[cfg(windows)]
+    if media_enabled && state.borrow().engine.is_some() {
+        match tide_windows::OutputWatcher::new() {
+            Ok(watcher) => {
+                let state = state.clone();
+                let weak = ui.as_weak();
+                let mut recovery = output_recovery::OutputRecovery::default();
+                output_timer.start(
+                    slint::TimerMode::Repeated,
+                    Duration::from_millis(250),
+                    move || {
+                        let Some(u) = weak.upgrade() else {
+                            return;
+                        };
+                        let mut s = state.borrow_mut();
+                        let now = Instant::now();
+                        if let Some(available) = watcher.take_available() {
+                            recovery.changed(available, s.generation, now);
+                        }
+                        let Some(engine) = &s.engine else {
+                            return;
+                        };
+                        if let Some((position, paused)) =
+                            recovery.resume(s.generation, &engine.snapshot(), now)
+                        {
+                            if play(&mut s, &u) {
+                                send(&mut s, &u, PlaybackCommand::Seek(position));
+                                send(&mut s, &u, PlaybackCommand::SetPaused(paused));
+                                u.set_paused(paused);
+                            }
+                        }
+                    },
+                );
+            }
+            Err(error) => ui.set_status_text(error.into()),
+        }
+    }
     // Prepare as soon as current playback is loaded, rather than waiting until
     // EOF approaches. Keep the candidate through Pause so an early skip can
     // use it. The resolver deduplicates requests and retains only one stream.
@@ -2571,6 +2693,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let Some(u) = weak.upgrade() else {
                     return;
                 };
+                if !u.get_media_controls_enabled() {
+                    media.borrow_mut().take();
+                    registration_attempts = 0;
+                    return;
+                }
                 // Winit creates the native window after the event loop starts.
                 // ui.show() alone does not make its handle available at startup.
                 if media.borrow().is_none() && registration_attempts < 20 {
@@ -3690,6 +3817,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     timer.stop();
     preparation_timer.stop();
     media_timer.stop();
+    output_timer.stop();
+    #[cfg(windows)]
+    shortcuts.borrow_mut().take();
+    media.borrow_mut().take();
     window_fit_timer.stop();
     smoke_timer.stop();
     if let Some((timer, _)) = &listening {
@@ -3732,6 +3863,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn old_settings_keep_media_keys_and_do_not_register_global_shortcuts() {
+        let mut value = serde_json::to_value(Settings::default()).unwrap();
+        value.as_object_mut().unwrap().remove("media_controls");
+        value.as_object_mut().unwrap().remove("shortcuts");
+        let restored: Settings = serde_json::from_value(value).unwrap();
+        assert!(restored.media_controls);
+        assert_eq!(
+            restored.shortcuts,
+            [String::new(), String::new(), String::new()]
+        );
+    }
 
     #[test]
     fn artwork_row_updates_preserve_model_identity_for_dragging() {

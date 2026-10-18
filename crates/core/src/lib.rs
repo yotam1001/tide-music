@@ -38,6 +38,8 @@ pub struct PlaybackSnapshot {
     pub ended: bool,
     pub volume: f64,
     pub error: Option<String>,
+    /// Classified audio-output failure; never an authentication/network error.
+    pub output_unavailable: bool,
     pub title: Option<String>,
 }
 
@@ -52,6 +54,7 @@ impl Default for PlaybackSnapshot {
             ended: false,
             volume: 100.0,
             error: None,
+            output_unavailable: false,
             title: None,
         }
     }

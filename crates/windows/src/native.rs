@@ -20,14 +20,14 @@ use windows::Win32::UI::WindowsAndMessaging::IsWindow;
 
 use crate::MediaAction;
 
-struct Apartment {
+pub(super) struct Apartment {
     initialized: bool,
     // WinRT initialization/uninitialization must balance on one thread.
     _ui_thread: PhantomData<Rc<()>>,
 }
 
 impl Apartment {
-    fn initialize() -> Result<Self, String> {
+    pub(super) fn initialize() -> Result<Self, String> {
         // SAFETY: The !Send guard balances successful initialization on this thread.
         let initialized = match unsafe { RoInitialize(RO_INIT_SINGLETHREADED) } {
             Ok(()) => true,

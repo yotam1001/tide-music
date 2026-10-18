@@ -226,6 +226,7 @@ impl PlaybackHandle {
                 snapshot.loading = true;
                 snapshot.ended = false;
                 snapshot.error = None;
+                snapshot.output_unavailable = false;
                 snapshot.title = None;
                 Ok(())
             }
@@ -884,6 +885,10 @@ async fn run_worker(
                                 fault |= prepared_failed;
                                 loaded = active && event == Some("file-loaded");
                                 let mut view = snapshot_write(&snapshot);
+                                if matching_end && fault {
+                                    view.output_unavailable = recovery::output_failure(&message);
+                                }
+                                if loaded { view.output_unavailable = false; }
                                 // Do not publish an intermediate ended/error state: the app
                                 // may otherwise advance the queue before recovery is scheduled.
                                 if !fault {
@@ -1001,7 +1006,11 @@ async fn run_worker(
                     view.ended = false;
                     view.paused = intent.lock().unwrap_or_else(|p| p.into_inner()).paused;
                     view.position = current.position;
-                    view.error = (!retry).then(|| "Playback could not recover after two reconnect attempts. Try this track again or check your connection.".into());
+                    view.error = (!retry).then(|| if view.output_unavailable {
+                        "Audio output is unavailable. Tide will retry when a default output returns.".into()
+                    } else {
+                        "Playback could not recover after two reconnect attempts. Try this track again or check your connection.".into()
+                    });
                     retry
                 } else {
                     false
@@ -1064,6 +1073,11 @@ async fn launch_player(
         .arg("--vid=no")
         .arg("--vo=null")
         .arg("--audio-display=no")
+        // WASAPI follows default-device/unplug/format changes. Shared mode lets
+        // games use the same output without exclusive-device ownership.
+        .arg("--ao=wasapi")
+        .arg("--audio-device=auto")
+        .arg("--audio-exclusive=no")
         .arg("--osc=no")
         .arg("--osd-level=0")
         .arg("--ytdl=yes")
@@ -1562,6 +1576,7 @@ async fn terminate_player(player: &mut RunningPlayer) {
 }
 
 fn reset_snapshot(snapshot: &mut PlaybackSnapshot) {
+    snapshot.output_unavailable = false;
     snapshot.position = 0.0;
     snapshot.duration = 0.0;
     snapshot.paused = true;
@@ -2085,6 +2100,20 @@ mod tests {
         let _ = fs::remove_file(path);
     }
 
+    #[test]
+    fn stop_clears_audio_failure_without_retaining_a_resume_signal() {
+        let mut snapshot = PlaybackSnapshot {
+            output_unavailable: true,
+            error: Some("Audio output unavailable".into()),
+            position: 81.5,
+            ..Default::default()
+        };
+        reset_snapshot(&mut snapshot);
+        assert!(!snapshot.output_unavailable);
+        assert!(snapshot.error.is_none());
+        assert!(snapshot.paused);
+        assert_eq!(snapshot.position, 0.0);
+    }
     #[test]
     fn rejects_invalid_control_values() {
         assert!(finite_non_negative(&json!(-1.0)).is_none());
