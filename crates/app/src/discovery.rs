@@ -99,6 +99,7 @@ mod tests {
 
     fn card(index: usize) -> Card {
         Card {
+            artists: Vec::new(),
             id: format!("candidate-{index}"),
             title: format!("Personalized title {index}"),
             subtitle: format!("Artist {index}"),

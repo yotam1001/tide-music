@@ -4,9 +4,30 @@ use std::collections::HashSet;
 pub const MAX_QUEUE_TRACKS: usize = 2000;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct Artist {
+    pub id: String,
+    pub name: String,
+}
+impl Artist {
+    pub fn is_valid(&self) -> bool {
+        self.id.len() == 24
+            && self.id.starts_with("UC")
+            && self
+                .id
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-')
+            && !self.name.trim().is_empty()
+            && self.name.chars().count() <= 300
+            && !self.name.chars().any(char::is_control)
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Track {
     pub title: String,
     pub artist: String,
+    #[serde(default)]
+    pub artists: Vec<Artist>,
     pub album: String,
     pub source: String,
     #[serde(default)]
@@ -35,6 +56,11 @@ pub struct PlaybackSnapshot {
     pub duration: f64,
     pub paused: bool,
     pub loading: bool,
+    pub buffering: bool,
+    pub retry_attempt: u8,
+    pub audio_codec: Option<String>,
+    pub audio_bitrate_bps: Option<u64>,
+    pub audio_sample_rate: Option<u32>,
     pub ended: bool,
     pub volume: f64,
     pub error: Option<String>,
@@ -51,6 +77,11 @@ impl Default for PlaybackSnapshot {
             duration: 0.0,
             paused: true,
             loading: false,
+            buffering: false,
+            retry_attempt: 0,
+            audio_codec: None,
+            audio_bitrate_bps: None,
+            audio_sample_rate: None,
             ended: false,
             volume: 100.0,
             error: None,
@@ -335,6 +366,7 @@ mod tests {
     }
     fn track(title: &str) -> Track {
         Track {
+            artists: Vec::new(),
             title: title.into(),
             artist: String::new(),
             album: String::new(),

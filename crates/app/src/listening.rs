@@ -47,6 +47,7 @@ pub(super) fn start(
                     s.settings.repeat = true;
                     for index in 0..3 {
                         s.settings.queue.tracks.push(Track {
+                            artists: Vec::new(),
                             title: format!("Local verification {}", index + 1),
                             artist: String::new(), album: String::new(), source: source.clone(),
                             duration_seconds: None, artwork_url: None, recommended: false,

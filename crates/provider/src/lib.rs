@@ -130,6 +130,8 @@ pub struct Card {
     pub kind: String,
     pub shelf: String,
     #[serde(default)]
+    pub artists: Vec<tide_core::Artist>,
+    #[serde(default)]
     pub artwork_url: Option<String>,
 }
 #[derive(Clone, Serialize)]
@@ -143,11 +145,21 @@ pub enum Request {
     Liked,
     Supermix,
     Home,
+    Artist { id: String },
+    Artists { video_id: String },
 }
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Response {
     Connected,
+    Artist {
+        name: String,
+        tracks: Vec<Track>,
+        truncated: bool,
+    },
+    Artists {
+        artists: Vec<tide_core::Artist>,
+    },
     Session {
         headers: BTreeMap<String, String>,
     },
@@ -193,7 +205,11 @@ fn decode_helper_reply(bytes: &[u8]) -> Result<HelperReply, &'static str> {
     let mut refreshed = RefreshedHeaders::default();
     if matches!(
         response,
-        Response::Library { .. } | Response::Tracks { .. } | Response::Home { .. }
+        Response::Library { .. }
+            | Response::Tracks { .. }
+            | Response::Home { .. }
+            | Response::Artist { .. }
+            | Response::Artists { .. }
     ) {
         let mut document: serde_json::Value = serde_json::from_slice(bytes)
             .map_err(|_| "Account helper returned an unsupported response")?;
@@ -1303,7 +1319,7 @@ fn execute_helper(
             Err("Sign-in was found in a Zen container. Tide currently needs YouTube Music signed in on a tab outside that container.".into())
         }
         Response::Error { code }
-            if code == "session" || code == "request" || code == "supermix_unavailable" =>
+            if code == "session" || code == "request" || code == "supermix_unavailable" || code == "artist_unavailable" =>
         {
             Ok(Response::Error { code })
         }
@@ -1761,6 +1777,19 @@ mod tests {
             let reply = refresh_fixture("tracks", invalid);
             assert!(matches!(reply.response, Response::Tracks { .. }));
             assert!(reply.refreshed.0.is_none());
+        }
+        for response in [
+            serde_json::json!({"type":"artist", "name":"Band", "tracks":[], "truncated":false}),
+            serde_json::json!({"type":"artists", "artists":[]}),
+        ] {
+            let mut response = response;
+            response["refreshed_headers"] =
+                serde_json::json!({"cookie":"__Secure-3PAPISID=fresh", "x-goog-authuser":"1"});
+            let reply = decode_helper_reply(&serde_json::to_vec(&response).unwrap()).unwrap();
+            assert!(
+                reply.refreshed.0.is_some(),
+                "artist navigation must retain refreshed session cookies"
+            );
         }
         let reply = decode_helper_reply(br#"{"type":"home","cards":[]}"#).unwrap();
         assert!(reply.refreshed.0.is_none());

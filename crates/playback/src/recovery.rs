@@ -39,6 +39,10 @@ impl Track {
         }
     }
 
+    pub fn retry_attempt(&self) -> u8 {
+        self.attempts.min(2) as u8
+    }
+
     pub fn session_started(&mut self, now: Instant) {
         self.retry_at = None;
         self.loaded = false;

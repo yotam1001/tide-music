@@ -253,6 +253,21 @@ try {
     }
     Assert-CleanSentinel
 
+    # Reuse the PCM header with a three-second payload for transition coverage.
+    $taskShortWave = Join-Path $taskEvidence 'transition-fixture.wav'
+    $taskShortBytes = [IO.File]::ReadAllBytes($taskWave)[0..48043]
+    [BitConverter]::GetBytes([int]48036).CopyTo($taskShortBytes, 4)
+    [BitConverter]::GetBytes([int]48000).CopyTo($taskShortBytes, 40)
+    [IO.File]::WriteAllBytes($taskShortWave, [byte[]]$taskShortBytes)
+    $taskPerformance = Join-Path $taskEvidence 'playback-performance.json'
+    $taskResources = Join-Path $taskEvidence 'resource-samples.json'
+    & (Join-Path $PSScriptRoot 'measure-process.ps1') -Executable (Join-Path $taskUpdatedRelease 'tide-music.exe') `
+        -Seconds 90 -AppArguments @('--smoke-performance', $taskPerformance, $taskShortWave) `
+        -Output $taskResources -RequireSuccessfulExit
+    & python (Join-Path $PSScriptRoot 'check-performance.py') $taskResources $taskPerformance (Join-Path $taskEvidence 'performance-summary.json')
+    if ($LASTEXITCODE -ne 0) { throw 'Installed local performance benchmark failed.' }
+    Assert-CleanSentinel
+
     # Exercise the actual registered command, including the harder legacy case
     # where the invoking process starts inside the installation being removed.
     $taskUninstallCommand = (Get-TideUninstallEntry).UninstallString

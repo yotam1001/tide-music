@@ -63,6 +63,7 @@ fn tracks() -> slint::ModelRc<TrackRow> {
         TrackRow {
             title: "A Quiet Sun".into(),
             artist: "True North".into(),
+            artist_enabled: true,
             duration: "4:21".into(),
             ..Default::default()
         },
@@ -436,6 +437,70 @@ fn settings_theme_account_and_song_menu_remain_independent() {
     ui.set_detail_title("Late night focus".into());
     ui.set_detail_rows(tracks());
     export("playlist-detail", 1140, 800, &draw(&window, 1140, 800));
+    ui.set_detail_is_artist(true);
+    ui.set_detail_title("True North".into());
+    ui.set_detail_note("Top songs from YouTube Music".into());
+    ui.set_track_artist_enabled(true);
+    ui.set_audio_quality("Opus · ~160 kbps · 48 kHz".into());
+    let artist_action = Rc::new(Cell::new(None));
+    let capture = artist_action.clone();
+    ui.on_open_artist(move |source, index| capture.set(Some((source, index))));
+    let track_action = Rc::new(Cell::new(None));
+    let capture = track_action.clone();
+    ui.on_select_detail_track(move |index| capture.set(Some(index)));
+    export("artist-before-click", 1140, 800, &draw(&window, 1140, 800));
+    // The artist page's source note adds a line above the list.
+    click(&ui, 300.0, 277.0);
+    assert_eq!(
+        artist_action.get(),
+        Some((1, 0)),
+        "artist click must open the band"
+    );
+    assert!(
+        track_action.get().is_none(),
+        "artist click must not also play the row"
+    );
+    export("artist-top-songs", 1140, 800, &draw(&window, 1140, 800));
+    ui.set_light_mode(true);
+    export("artist-light-minimum", 650, 420, &draw(&window, 650, 420));
+    ui.set_light_mode(false);
+    ui.set_artist_choices(
+        Rc::new(slint::VecModel::from(vec![
+            ArtistRow {
+                id: "UC1234567890123456789012".into(),
+                name: "True North".into(),
+            },
+            ArtistRow {
+                id: "UCabcdefghijklmnopqrstuv".into(),
+                name: "Guest artist".into(),
+            },
+        ]))
+        .into(),
+    );
+    let chosen = Rc::new(Cell::new(None));
+    let capture = chosen.clone();
+    ui.on_choose_artist(move |index| capture.set(Some(index)));
+    ui.set_artist_picker_open(true);
+    export("artist-choice", 650, 420, &draw(&window, 650, 420));
+    click(&ui, 500.0, 32.0);
+    assert!(
+        !ui.get_settings_open() && !ui.get_account_open(),
+        "artist picker must not stack settings/account panels"
+    );
+    key(&ui, Key::DownArrow);
+    key(&ui, Key::Return);
+    assert_eq!(
+        chosen.get(),
+        Some(1),
+        "artist choice must support keyboard navigation"
+    );
+    let back = Rc::new(Cell::new(false));
+    let capture = back.clone();
+    ui.on_back_detail(move || capture.set(true));
+    key(&ui, Key::Escape);
+    assert!(back.get(), "Escape must return to the previous view");
+    ui.set_artist_picker_open(false);
+    ui.set_detail_is_artist(false);
     ui.set_detail_open(false);
     ui.set_settings_open(true);
     ui.set_shortcut_toggle("Ctrl+Alt+P".into());
