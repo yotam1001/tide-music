@@ -227,6 +227,8 @@ impl PlaybackHandle {
                 snapshot.ended = false;
                 snapshot.error = None;
                 snapshot.output_unavailable = false;
+                clear_audio_details(&mut snapshot);
+                snapshot.retry_attempt = 0;
                 snapshot.title = None;
                 Ok(())
             }
@@ -1003,6 +1005,8 @@ async fn run_worker(
                     let retry = current.schedule_retry(Instant::now());
                     let mut view = snapshot_write(&snapshot);
                     view.loading = retry;
+                    view.retry_attempt = current.retry_attempt();
+                    clear_audio_details(&mut view);
                     view.ended = false;
                     view.paused = intent.lock().unwrap_or_else(|p| p.into_inner()).paused;
                     view.position = current.position;
@@ -1293,6 +1297,10 @@ async fn observe_properties(player: &mut RunningPlayer) -> io::Result<()> {
         (3, "pause"),
         (4, "volume"),
         (5, "media-title"),
+        (6, "paused-for-cache"),
+        (7, "audio-codec-name"),
+        (8, "audio-bitrate"),
+        (9, "audio-params/samplerate"),
     ] {
         send_ipc_command(
             &mut player.writer,
@@ -1507,6 +1515,29 @@ fn active_is_current(state: &PlayerState, desired_generation: u64, desired_epoch
 
 fn apply_property(snapshot: &mut PlaybackSnapshot, name: &str, value: &Value) {
     match name {
+        "paused-for-cache" => snapshot.buffering = value.as_bool().unwrap_or(false),
+        "audio-codec-name" => {
+            snapshot.audio_codec = value
+                .as_str()
+                .filter(|s| {
+                    !s.is_empty()
+                        && s.len() <= 48
+                        && s.bytes()
+                            .all(|c| c.is_ascii_alphanumeric() || b" _-./()".contains(&c))
+                })
+                .map(str::to_owned);
+        }
+        "audio-bitrate" => {
+            snapshot.audio_bitrate_bps = finite_non_negative(value)
+                .filter(|b| *b > 0.0 && *b <= 100_000_000.0)
+                .map(|b| b.round() as u64)
+        }
+        "audio-params/samplerate" => {
+            snapshot.audio_sample_rate = value
+                .as_u64()
+                .filter(|rate| (1..=1_536_000).contains(rate))
+                .map(|rate| rate as u32)
+        }
         "time-pos" => {
             if let Some(position) = finite_non_negative(value) {
                 snapshot.position = position;
@@ -1575,7 +1606,16 @@ async fn terminate_player(player: &mut RunningPlayer) {
     }
 }
 
+fn clear_audio_details(snapshot: &mut PlaybackSnapshot) {
+    snapshot.buffering = false;
+    snapshot.audio_codec = None;
+    snapshot.audio_bitrate_bps = None;
+    snapshot.audio_sample_rate = None;
+}
+
 fn reset_snapshot(snapshot: &mut PlaybackSnapshot) {
+    clear_audio_details(snapshot);
+    snapshot.retry_attempt = 0;
     snapshot.output_unavailable = false;
     snapshot.position = 0.0;
     snapshot.duration = 0.0;
@@ -1597,6 +1637,50 @@ fn snapshot_write(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn observed_quality_is_bounded_and_cleared_on_stop() {
+        let mut p = PlaybackSnapshot::default();
+        apply_property(&mut p, "audio-codec-name", &json!("opus"));
+        apply_property(&mut p, "audio-bitrate", &json!(159500.0));
+        apply_property(&mut p, "audio-params/samplerate", &json!(48000));
+        apply_property(&mut p, "paused-for-cache", &json!(true));
+        assert_eq!(p.audio_codec.as_deref(), Some("opus"));
+        assert_eq!(p.audio_bitrate_bps, Some(159500));
+        assert_eq!(p.audio_sample_rate, Some(48000));
+        assert!(p.buffering);
+        assert!(p.paused, "cache state must not change user pause intent");
+        p.retry_attempt = 2;
+        reset_snapshot(&mut p);
+        assert!(p.audio_codec.is_none());
+        assert!(p.audio_bitrate_bps.is_none());
+        assert!(p.audio_sample_rate.is_none());
+        assert!(!p.buffering);
+        assert_eq!(p.retry_attempt, 0);
+        for value in [
+            Value::Null,
+            json!("https://private.invalid/?secret"),
+            json!("opus\ninjected"),
+            json!("x".repeat(49)),
+        ] {
+            apply_property(&mut p, "audio-codec-name", &value);
+            assert!(p.audio_codec.is_none());
+        }
+        for value in [Value::Null, json!(-1), json!(100_000_001), json!("160000")] {
+            apply_property(&mut p, "audio-bitrate", &value);
+            assert!(p.audio_bitrate_bps.is_none());
+        }
+        for value in [
+            Value::Null,
+            json!(-1),
+            json!(0),
+            json!(2_000_000),
+            json!("48000"),
+        ] {
+            apply_property(&mut p, "audio-params/samplerate", &value);
+            assert!(p.audio_sample_rate.is_none());
+        }
+    }
 
     // Opt-in: own muted local silence and only the mpv owned by this test.
     // No process enumeration, account session, network, or persisted queue.
@@ -2164,6 +2248,17 @@ mod tests {
         assert!(snapshot.loading);
         assert!(snapshot.error.is_none());
         assert!(snapshot.title.is_none());
+        apply_ipc_message(
+            &mut state,
+            &mut snapshot,
+            &json!({"event":"property-change","name":"audio-codec-name","data":"opus"}),
+            5,
+            2,
+        );
+        assert!(
+            snapshot.audio_codec.is_none(),
+            "superseded quality must not label the new song"
+        );
     }
 
     #[cfg(windows)]

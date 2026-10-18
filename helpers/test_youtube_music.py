@@ -38,6 +38,57 @@ class FakeClient:
         ] * 20}] * 4
 
 
+class ArtistTests(unittest.TestCase):
+    artist = "UC1234567890123456789012"
+    other = "UCabcdefghijklmnopqrstuv"
+
+    def test_resolution_matches_seed_and_never_guesses_from_uploader(self):
+        client = SimpleNamespace(get_watch_playlist=MagicMock(return_value={"tracks": [
+            {"videoId": "00000000001", "artists": [{"id": self.other, "name": "Other"}]},
+            {"videoId": "K4DyBUG242c", "artists": [None, {"id": "https://evil.invalid", "name": "Bad"},
+                {"id": self.artist, "name": "Band"}, {"id": self.artist, "name": "Duplicate"},
+                {"id": self.other, "name": "Guest"}]}]}))
+        result = run(client, {"action": "artists", "video_id": "K4DyBUG242c"})
+        self.assertEqual(result, {"type": "artists", "artists": [
+            {"id": self.artist, "name": "Band"}, {"id": self.other, "name": "Guest"}]})
+        client.get_watch_playlist.assert_called_once_with(videoId="K4DyBUG242c", limit=1)
+        client.get_watch_playlist.return_value = {"tracks": [{"videoId": "00000000001"}]}
+        self.assertEqual(run(client, {"action": "artists", "video_id": "K4DyBUG242c"})["artists"], [])
+
+    def test_invalid_id_cannot_reach_api(self):
+        client = MagicMock()
+        for value in (None, True, "https://evil.invalid", "bad", "UC" + "a" * 23):
+            self.assertEqual(run(client, {"action": "artist", "id": value}),
+                             {"type": "error", "code": "artist_unavailable"})
+        self.assertEqual(run(client, {"action": "artists", "video_id": "bad/url"})["code"], "artist_unavailable")
+        self.assertEqual(client.mock_calls, [])
+
+    def test_top_songs_preserve_upstream_order_bound_and_canonical_identity(self):
+        songs = [{"videoId": f"{i:011}", "title": f"Song {i}"} for i in range(60)]
+        client = SimpleNamespace(get_artist=MagicMock(return_value={"name": "Band", "channelId": self.other,
+                    "songs": {"browseId": "PLfixture", "results": songs[:5]}}),
+                    get_playlist=MagicMock(return_value={"tracks": songs}))
+        result = run(client, {"action": "artist", "id": self.artist})
+        self.assertEqual(result["type"], "artist")
+        self.assertEqual(len(result["tracks"]), 50)
+        self.assertEqual([t["title"] for t in result["tracks"]], [f"Song {i}" for i in range(50)])
+        self.assertEqual(result["tracks"][0]["artists"], [{"id": self.artist, "name": "Band"}])
+        self.assertTrue(result["truncated"])
+        client.get_playlist.assert_called_once_with("PLfixture", limit=51)
+
+    def test_optional_expansion_failure_retains_playable_top_songs(self):
+        song = {"videoId": "K4DyBUG242c", "title": "First"}
+        client = SimpleNamespace(get_artist=MagicMock(return_value={"name": "Band", "songs": {
+            "browseId": "PLfixture", "results": [song, song, {"videoId": "00000000001", "isAvailable": False}]}}),
+            get_playlist=MagicMock(side_effect=TimeoutError("private source")))
+        result = run(client, {"action": "artist", "id": self.artist})
+        self.assertEqual([t["title"] for t in result["tracks"]], ["First"])
+        self.assertNotIn("private source", json.dumps(result))
+        self.assertFalse(result["truncated"])
+        client.get_artist.return_value = {}
+        self.assertEqual(run(client, {"action": "artist", "id": self.artist})["code"], "artist_unavailable")
+
+
 class ProviderTests(unittest.TestCase):
     def test_track_and_home_duration_metadata_is_optional_and_validated(self):
         for data, expected in [

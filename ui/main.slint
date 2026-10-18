@@ -10,11 +10,14 @@ export global LayoutMetrics {
 export struct TrackRow {
     title: string,
     artist: string,
+    artist-enabled: bool,
     album: string,
     duration: string,
     recommended: bool,
     artwork: image,
 }
+
+export struct ArtistRow { id: string, name: string }
 
 export struct PlaylistRow {
     id: string,
@@ -525,6 +528,29 @@ component ActionMenu inherits PopupWindow {
     }
 }
 
+component ArtistLink inherits Rectangle {
+    in property <string> artist;
+    in property <bool> enabled: false;
+    in property <bool> light-mode;
+    in property <length> label-size: 12px;
+    callback activated();
+    min-width: 0px; height: 18px; clip: true;
+    border-width: action.has-focus && root.enabled ? 1px : 0px;
+    border-color: root.light-mode ? #985955 : #d16b89;
+    border-radius: 3px;
+    Text { width: parent.width; height: parent.height; text: root.artist;
+        color: root.enabled && (hover.has-hover || action.has-focus) ? (root.light-mode ? #985955 : #e493ad) : (root.light-mode ? #716773 : #a1a5ae);
+        font-size: root.label-size; overflow: elide; vertical-alignment: center;
+    }
+    hover := TouchArea {
+        width: parent.width; height: parent.height; enabled: root.enabled; mouse-cursor: pointer;
+        action := Button { width: parent.width; height: parent.height; opacity: 0;
+            enabled: root.enabled; accessible-label: "Open artist " + root.artist;
+            clicked => { root.activated(); }
+        }
+    }
+}
+
 component SongRow inherits Rectangle {
     in property <TrackRow> track;
     in property <int> index;
@@ -541,6 +567,7 @@ component SongRow inherits Rectangle {
     callback remove();
     callback queue(bool);
     callback radio();
+    callback artist();
     height: root.removable ? LayoutMetrics.queue-row-height : LayoutMetrics.browse-row-height;
     opacity: root.dragging ? 0.55 : 1;
     changed drag-in-progress => { if root.drag-in-progress { song-menu.close(); } }
@@ -603,7 +630,7 @@ component SongRow inherits Rectangle {
                     height: parent.height;
                     spacing: 4px;
                     Text { min-width: 0px; text: root.track.title; color: root.light-mode ? #392e33 : #f0eeef; font-size: root.removable ? 14px : 16px; font-weight: root.current ? 600 : 500; overflow: elide; }
-                    Text { min-width: 0px; text: root.track.artist; color: root.light-mode ? #716773 : #a1a5ae; font-size: root.removable ? 12px : 13px; overflow: elide; }
+                    ArtistLink { height: root.removable ? 14px : 18px; artist: root.track.artist; enabled: root.enabled && !root.drag-in-progress && root.track.artist-enabled; light-mode: root.light-mode; label-size: root.removable ? 12px : 13px; activated => { root.artist(); } }
                 }
             }
             if root.show-duration && root.track.duration != "" && root.track.duration != "—" : Text { width: 42px; text: root.track.duration; color: root.light-mode ? #716773 : #a1a5ae; font-size: 11px; horizontal-alignment: right; }
@@ -710,6 +737,7 @@ component QueueItem inherits Rectangle {
     callback remove();
     callback requeue(bool);
     callback radio();
+    callback artist();
     callback hit(int, bool);
     callback hover(int, int);
     private property <bool> press-hit: root.press-active && root.index > root.current-index
@@ -750,6 +778,7 @@ component QueueItem inherits Rectangle {
             remove => { root.remove(); }
             queue(next) => { root.requeue(next); }
             radio => { root.radio(); }
+            artist => { root.artist(); }
         }
     }
     if root.hover-half >= 0 && root.final-index != root.drag-source : Rectangle {
@@ -775,6 +804,7 @@ component QueueDrawer inherits Rectangle {
     callback requeue(int, bool);
     callback reorder(int, int);
     callback radio(int);
+    callback artist(int);
     callback toggle-autoplay();
     callback toggle-repeat();
     callback shuffle();
@@ -891,6 +921,7 @@ component QueueDrawer inherits Rectangle {
                     remove => { root.remove(self.index); }
                     requeue(next) => { root.requeue(self.index, next); }
                     radio => { root.radio(self.index); }
+                    artist => { root.artist(self.index); }
                     hover(row-index, half) => {
                         if half >= 0 { root.hover-row = row-index; root.hover-half = half; }
                         else if root.hover-row == row-index { root.hover-row = -1; root.hover-half = -1; }
@@ -961,12 +992,18 @@ component PlayerBar inherits Rectangle {
     // surface until resize. Invalidate only this small bar on live updates.
     changed volume => { root.repaint-phase = !root.repaint-phase; }
     changed position => { root.repaint-phase = !root.repaint-phase; }
+    changed playback-hint => { root.repaint-phase = !root.repaint-phase; }
+    changed audio-quality => { root.repaint-phase = !root.repaint-phase; }
     in property <bool> light-mode;
     in property <bool> compact;
     in property <bool> collapsed;
     in property <bool> queue-open;
     in property <string> track-title;
     in property <string> track-artist;
+    in property <bool> artist-enabled;
+    in property <string> audio-quality;
+    in property <string> playback-hint;
+    callback artist();
     in property <image> artwork;
     in property <float> position;
     in property <float> duration;
@@ -1009,9 +1046,11 @@ component PlayerBar inherits Rectangle {
                 Cover { width: 44px; height: 44px; artwork: root.artwork; light-mode: root.light-mode; }
                 VerticalLayout {
                     horizontal-stretch: 1;
-                    spacing: 4px;
+                    spacing: 1px;
                     Text { text: root.track-title == "" ? "Nothing playing" : root.track-title; color: root.foreground; font-size: 14px; font-weight: 600; overflow: elide; }
-                    Text { text: root.track-artist; color: root.secondary; font-size: 12px; overflow: elide; }
+                    ArtistLink { artist: root.track-artist; enabled: root.artist-enabled; light-mode: root.light-mode; activated => { root.artist(); } }
+                    if root.playback-hint != "" : Text { text: root.playback-hint; color: root.light-mode ? #985955 : #e493ad; font-size: 10px; overflow: elide; accessible-live-region: polite; }
+                    if root.playback-hint == "" && root.audio-quality != "" : Text { text: root.audio-quality; color: root.secondary; font-size: 10px; overflow: elide; }
                 }
             }
             TransportButtons { x: (parent.width - self.width) / 2; y: 2px; width: 150px; height: 48px; paused: root.paused; light-mode: root.light-mode; show-repeat: false; show-shuffle: false; toggle-pause => { root.toggle-pause(); } previous-track => { root.previous-track(); } next-track => { root.next-track(); } }
@@ -1103,6 +1142,17 @@ export component AppWindow inherits Window {
     in property <int> current-index;
     in property <string> track-title;
     in property <string> track-artist;
+    in property <bool> track-artist-enabled;
+    in property <string> audio-quality;
+    in property <string> playback-hint;
+    in property <string> playback-error-action;
+    callback open-artist(int, int);
+    callback choose-artist(int);
+    callback back-detail();
+    in property <[ArtistRow]> artist-choices;
+    in-out property <bool> artist-picker-open;
+    private property <int> artist-choice-index: 0;
+    changed artist-picker-open => { root.artist-choice-index = 0; if root.artist-picker-open { app-focus.focus(); } }
     in property <string> track-album;
     in property <image> track-artwork;
     in property <float> position;
@@ -1130,6 +1180,8 @@ export component AppWindow inherits Window {
 
     in property <bool> detail-open;
     in property <string> detail-title;
+    in property <bool> detail-is-artist;
+    in property <string> detail-note;
     in property <[TrackRow]> detail-rows;
     in property <bool> detail-busy;
     in property <bool> search-open;
@@ -1160,7 +1212,7 @@ export component AppWindow inherits Window {
     private property <bool> wide: true;
     private property <bool> narrow-navigation: false;
     private property <bool> advanced-open: false;
-    private property <bool> browsing-enabled: !root.settings-open && !root.account-open && !(root.queue-open && !root.wide);
+    private property <bool> browsing-enabled: !root.settings-open && !root.account-open && !root.artist-picker-open && !(root.queue-open && !root.wide);
     title: "Tide";
     icon: @image-url("assets/tide-icon.png");
     default-font-family: "Segoe UI";
@@ -1199,6 +1251,12 @@ export component AppWindow inherits Window {
 
     app-focus := FocusScope {
         key-pressed(event) => {
+            if root.artist-picker-open {
+                if event.text == Key.Escape { root.back-detail(); return accept; }
+                if event.text == Key.DownArrow || event.text == Key.Tab { root.artist-choice-index = root.artist-choice-index < root.artist-choices.length - 1 ? root.artist-choice-index + 1 : 0; return accept; }
+                if event.text == Key.UpArrow { root.artist-choice-index = root.artist-choice-index > 0 ? root.artist-choice-index - 1 : max(0, root.artist-choices.length - 1); return accept; }
+                if event.text == Key.Return || event.text == " " { root.choose-artist(root.artist-choice-index); return accept; }
+            }
             if event.text == Key.Escape {
                 if root.settings-open { root.settings-open = false; return accept; }
                 if root.account-open { root.account-open = false; return accept; }
@@ -1221,9 +1279,9 @@ export component AppWindow inherits Window {
                     SearchMark { ink: root.secondary; }
                     LineEdit { horizontal-stretch: 1; height: 36px; font-size: 13px; enabled: root.browsing-enabled; text <=> root.source-input; placeholder-text: "Search music or paste a link"; accessible-label: "Search music or paste a YouTube link"; accepted(value) => { if value != "" { root.add-source(value); } } }
                     LibraryButton { width: 74px; light-mode: root.light-mode; enabled: root.browsing-enabled; caption: "Search"; label: "Search for music or open the pasted link"; clicked => { if root.source-input != "" { root.add-source(root.source-input); } } }
-                    LibraryButton { width: 36px; height: 36px; light-mode: root.light-mode; caption: root.light-mode ? "☾" : "☼"; label: root.light-mode ? "Switch to dark theme" : "Switch to light theme"; clicked => { root.switch-mode(); } }
-                    LibraryButton { width: 84px; quiet: false; light-mode: root.light-mode; caption: root.update-available ? "Settings •" : "Settings"; label: root.update-available ? "Open settings, update available" : "Open settings"; active: root.settings-open; clicked => { root.settings-open = !root.settings-open; } }
-                    LibraryButton { width: 78px; quiet: false; light-mode: root.light-mode; caption: "Account"; label: "Open YouTube Music account"; active: root.account-open; clicked => { root.account-open = !root.account-open; } }
+                    LibraryButton { width: 36px; height: 36px; enabled: !root.artist-picker-open; light-mode: root.light-mode; caption: root.light-mode ? "☾" : "☼"; label: root.light-mode ? "Switch to dark theme" : "Switch to light theme"; clicked => { root.switch-mode(); } }
+                    LibraryButton { width: 84px; quiet: false; enabled: !root.artist-picker-open; light-mode: root.light-mode; caption: root.update-available ? "Settings •" : "Settings"; label: root.update-available ? "Open settings, update available" : "Open settings"; active: root.settings-open; clicked => { root.settings-open = !root.settings-open; } }
+                    LibraryButton { width: 78px; quiet: false; enabled: !root.artist-picker-open; light-mode: root.light-mode; caption: "Account"; label: "Open YouTube Music account"; active: root.account-open; clicked => { root.account-open = !root.account-open; } }
                 }
             }
             if !root.collapsed : content-area := Rectangle {
@@ -1263,7 +1321,7 @@ export component AppWindow inherits Window {
                                     spacing: 10px;
                                     cross-axis-alignment: center;
                                     Text { horizontal-stretch: 1; text: root.error-message; color: root.foreground; font-size: 12px; wrap: word-wrap; overflow: elide; accessible-live-region: assertive; }
-                                    LibraryButton { width: root.error-is-account ? 128px : 70px; light-mode: root.light-mode; caption: root.error-is-account ? "Account settings" : root.error-retryable ? "Retry" : "Dismiss"; enabled: root.browsing-enabled; label: root.error-is-account ? "Open account settings to resolve the connection problem" : root.error-retryable ? "Retry interrupted playback or recommendations" : "Dismiss this error"; clicked => { root.retry-error(); } }
+                                    LibraryButton { width: root.error-is-account || root.playback-error-action != "" ? 128px : 70px; light-mode: root.light-mode; caption: root.error-is-account ? "Account settings" : root.error-retryable ? (root.playback-error-action != "" ? root.playback-error-action : "Retry") : "Dismiss"; enabled: root.browsing-enabled; label: root.error-is-account ? "Open account settings to resolve the connection problem" : root.error-retryable ? "Retry interrupted playback or recommendations" : "Dismiss this error"; clicked => { root.retry-error(); } }
                                 }
                             }
                             if root.detail-open : VerticalLayout {
@@ -1272,8 +1330,8 @@ export component AppWindow inherits Window {
                                     height: 48px;
                                     spacing: 10px;
                                     cross-axis-alignment: center;
-                                    VerticalLayout { horizontal-stretch: 1; spacing: 4px; Text { text: root.detail-title; color: root.foreground; font-size: 26px; font-weight: 600; overflow: elide; } Text { text: root.detail-busy ? "Loading tracks…" : "" + root.detail-rows.length + " tracks"; color: root.secondary; font-size: 12px; } }
-                                    LibraryButton { width: 62px; light-mode: root.light-mode; enabled: root.browsing-enabled; caption: "Back"; label: "Close playlist details"; clicked => { root.close-detail(); } }
+                                    VerticalLayout { horizontal-stretch: 1; spacing: 4px; Text { text: root.detail-title; color: root.foreground; font-size: 26px; font-weight: 600; overflow: elide; } Text { text: root.detail-busy ? (root.detail-is-artist ? "Loading top songs…" : "Loading tracks…") : root.detail-is-artist ? "Top songs · " + root.detail-rows.length + " songs" : "" + root.detail-rows.length + " tracks"; color: root.secondary; font-size: 12px; } }
+                                    LibraryButton { width: 62px; light-mode: root.light-mode; enabled: root.browsing-enabled; caption: "Back"; label: root.detail-is-artist ? "Back from artist page" : "Close playlist details"; clicked => { if root.detail-is-artist { root.back-detail(); } else { root.close-detail(); } } }
                                 }
                                 HorizontalLayout {
                                     height: 36px;
@@ -1282,14 +1340,15 @@ export component AppWindow inherits Window {
                                     LibraryButton { width: 84px; light-mode: root.light-mode; caption: "Shuffle"; label: "Shuffle " + root.detail-title; enabled: root.browsing-enabled && !root.detail-busy && root.detail-rows.length > 0; clicked => { root.shuffle-detail(); } }
                                     Rectangle { horizontal-stretch: 1; }
                                 }
+                                if root.detail-note != "" : Text { text: root.detail-note; color: root.secondary; font-size: 12px; wrap: word-wrap; }
                                 if root.detail-rows.length > 0 : ListView {
                                     content-y <=> root.detail-artwork-y;
                                     changed visible-height => { root.detail-artwork-height = self.visible-height; }
                                     vertical-stretch: 1;
                                     accessible-label: "Tracks in " + root.detail-title;
-                                    for row[index] in root.detail-rows : SongRow { enabled: root.browsing-enabled; track: row; index: index; light-mode: root.light-mode; select => { root.select-detail-track(index); } queue(next) => { root.queue-detail-track(index, next); } radio => { root.start-track-radio(1, index); } }
+                                    for row[index] in root.detail-rows : SongRow { enabled: root.browsing-enabled; track: row; index: index; light-mode: root.light-mode; select => { root.select-detail-track(index); } queue(next) => { root.queue-detail-track(index, next); } radio => { root.start-track-radio(1, index); } artist => { root.open-artist(1, index); } }
                                 }
-                                if root.detail-rows.length == 0 : EmptyState { vertical-stretch: 1; light-mode: root.light-mode; heading: root.detail-busy ? "Loading tracks…" : "No tracks to show"; detail: root.detail-busy ? "Your playlist will appear here shortly." : "Choose another playlist from your Library."; }
+                                if root.detail-rows.length == 0 : EmptyState { vertical-stretch: 1; light-mode: root.light-mode; heading: root.detail-busy ? (root.detail-is-artist ? "Loading top songs…" : "Loading tracks…") : root.detail-is-artist ? "No top songs available" : "No tracks to show"; detail: root.detail-busy ? "Please wait for YouTube Music." : root.detail-is-artist ? "Try another artist, or go back to your music." : "Choose another playlist from your Library."; }
                             }
                             if root.search-open && !root.detail-open : VerticalLayout {
                                 spacing: 12px;
@@ -1305,7 +1364,7 @@ export component AppWindow inherits Window {
                                     changed visible-height => { root.search-artwork-height = self.visible-height; }
                                     vertical-stretch: 1;
                                     accessible-label: "Music search results";
-                                    for row[index] in root.search-rows : SongRow { enabled: root.browsing-enabled; track: row; index: index; light-mode: root.light-mode; select => { root.select-search-track(index); } queue(next) => { root.queue-search-track(index, next); } radio => { root.start-track-radio(2, index); } }
+                                    for row[index] in root.search-rows : SongRow { enabled: root.browsing-enabled; track: row; index: index; light-mode: root.light-mode; select => { root.select-search-track(index); } queue(next) => { root.queue-search-track(index, next); } radio => { root.start-track-radio(2, index); } artist => { root.open-artist(2, index); } }
                                 }
                                 if root.search-rows.length == 0 : EmptyState { vertical-stretch: 1; light-mode: root.light-mode; heading: root.search-busy ? "Searching…" : "No results yet"; detail: root.search-busy ? "Finding music for your search." : "Try another song title or artist in the search box."; }
                             }
@@ -1348,7 +1407,7 @@ export component AppWindow inherits Window {
                                     accessible-label: "Home recommendations";
                                     for row[index] in root.recommendations : VerticalLayout {
                                         spacing: 0px;
-                                        if row.kind == "song" : SongRow { track: { title: row.title, artist: row.subtitle, album: row.shelf, duration: "", artwork: row.artwork, recommended: false }; index: index; light-mode: root.light-mode; show-duration: false; enabled: root.browsing-enabled && root.account-connected && !root.account-busy; select => { root.select-recommendation(index); } queue(next) => { root.queue-recommendation(index, next); } radio => { root.start-track-radio(3, index); } }
+                                        if row.kind == "song" : SongRow { track: { title: row.title, artist: row.subtitle, artist-enabled: row.subtitle != "", album: row.shelf, duration: "", artwork: row.artwork, recommended: false }; index: index; light-mode: root.light-mode; show-duration: false; enabled: root.browsing-enabled && root.account-connected && !root.account-busy; select => { root.select-recommendation(index); } queue(next) => { root.queue-recommendation(index, next); } radio => { root.start-track-radio(3, index); } artist => { root.open-artist(3, index); } }
                                         if row.kind != "song" : LibraryEntry { navigable: row.kind == "playlist"; unavailable-label: row.kind == "album" ? "Album unavailable" : "Unavailable"; title: row.title; subtitle: row.subtitle + (row.shelf == "" ? "" : " · " + row.shelf); artwork: row.artwork; light-mode: root.light-mode; enabled: root.browsing-enabled && root.account-connected && !root.account-busy && row.kind == "playlist"; open => { root.select-recommendation(index); } }
                                     }
                                 }
@@ -1372,6 +1431,7 @@ export component AppWindow inherits Window {
                         requeue(index, next) => { root.requeue-track(index, next); }
                         reorder(source, target) => { root.reorder-queue-track(source, target); }
                         radio(index) => { root.start-track-radio(0, index); }
+                        artist(index) => { root.open-artist(0, index); }
                         toggle-autoplay => { root.toggle-autoplay(); }
                         toggle-repeat => { root.toggle-repeat(); }
                         shuffle => { root.shuffle-queue(); }
@@ -1400,6 +1460,7 @@ export component AppWindow inherits Window {
                         requeue(index, next) => { root.requeue-track(index, next); }
                         reorder(source, target) => { root.reorder-queue-track(source, target); }
                         radio(index) => { root.start-track-radio(0, index); }
+                        artist(index) => { root.open-artist(0, index); }
                         toggle-autoplay => { root.toggle-autoplay(); }
                         toggle-repeat => { root.toggle-repeat(); }
                         shuffle => { root.shuffle-queue(); }
@@ -1512,6 +1573,25 @@ export component AppWindow inherits Window {
                         }
                     }
                 }
+                if root.artist-picker-open : Rectangle {
+                    width: parent.width; height: parent.height; background: #00000060;
+                    TouchArea { clicked => { root.back-detail(); } }
+                    Rectangle {
+                        width: min(360px, parent.width - 24px); height: min(parent.height - 24px, 94px + root.artist-choices.length * 48px);
+                        x: (parent.width - self.width) / 2; y: max(12px, (parent.height - self.height) / 2);
+                        background: root.surface; border-width: 1px; border-color: root.outline; border-radius: 12px;
+                        TouchArea { }
+                        VerticalLayout {
+                            padding: 16px; spacing: 10px;
+                            HorizontalLayout { height: 32px; Text { horizontal-stretch: 1; text: "Choose an artist"; font-weight: 600; color: root.foreground; } LibraryButton { width: 30px; height: 30px; caption: "×"; label: "Cancel artist selection"; light-mode: root.light-mode; clicked => { root.back-detail(); } } }
+                            ScrollView { horizontal-scrollbar-policy: always-off; vertical-stretch: 1;
+                                VerticalLayout { spacing: 8px; alignment: start;
+                                    for artist[index] in root.artist-choices : LibraryButton { height: 40px; caption: artist.name; label: "Open artist " + artist.name; active: root.artist-choice-index == index; light-mode: root.light-mode; clicked => { root.choose-artist(index); } }
+                                }
+                            }
+                        }
+                    }
+                }
             }
             PlayerBar {
                 window-minimized: root.minimized;
@@ -1521,6 +1601,10 @@ export component AppWindow inherits Window {
                 vertical-stretch: root.collapsed ? 1 : 0;
                 track-title: root.track-title;
                 track-artist: root.track-artist;
+                artist-enabled: root.track-artist-enabled && !root.account-busy;
+                audio-quality: root.audio-quality;
+                playback-hint: root.playback-hint;
+                artist => { root.open-artist(4, 0); }
                 artwork: root.current-artwork;
                 position: root.position;
                 duration: root.duration;

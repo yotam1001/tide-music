@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Open artist names from the player, queue, search and Home to browse YouTube
+  Music top songs, with Play, Shuffle, queue actions and Back navigation.
+- Show loading, buffering and bounded retry feedback in the player, along with
+  the observed audio codec, approximate bitrate and sample rate when available.
+- Preserve specific audio-output recovery guidance and position/pause intent
+  when retrying playback.
+- Check muted local transitions, skips, process-tree memory and observed helper
+  cleanup in the hosted Windows installer test.
+
 ## 0.1.1 — 2026-10-18
 
 - Add opt-in Windows global shortcuts for play/pause, next and previous in

@@ -12,6 +12,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tide_core::{PlaybackCommand, Queue, Track};
+mod artists;
 mod artwork;
 mod artwork_view;
 mod connection;
@@ -20,6 +21,8 @@ mod listening;
 mod metadata;
 #[cfg(any(windows, test))]
 mod output_recovery;
+mod performance;
+mod playback_feedback;
 mod radio;
 mod settings_location;
 mod updater;
@@ -68,6 +71,7 @@ enum LibraryAction {
     #[default]
     Replace,
     Connect,
+    Artist,
     Shuffle,
     Preview {
         title: String,
@@ -99,6 +103,7 @@ struct State {
     engine: Option<tide_playback::PlaybackHandle>,
     generation: u64,
     active_playback: bool,
+    load_requested_at: Option<(u64, Instant)>,
     command_error: Option<String>,
     search_generation: u64,
     search_cancel: Arc<AtomicBool>,
@@ -120,6 +125,7 @@ struct State {
     recommendations: Vec<tide_provider::Card>,
     discovery: discovery::Discovery,
     detail_tracks: Vec<Track>,
+    artist_origin: Option<artists::Origin>,
     search_tracks: Vec<Track>,
     account_error: bool,
     account_verified: bool,
@@ -256,6 +262,9 @@ fn request_library(
         tide_provider::Request::Supermix => LibraryAction::Preview {
             title: "My Supermix".into(),
         },
+        tide_provider::Request::Artist { .. } | tide_provider::Request::Artists { .. } => {
+            LibraryAction::Artist
+        }
         _ => LibraryAction::Replace,
     };
     let Some(provider) = s
@@ -268,14 +277,19 @@ fn request_library(
     };
     s.library_cancel.store(false, Ordering::Release);
     if let LibraryAction::Preview { title } = &action {
+        s.artist_origin = None;
+        u.set_detail_is_artist(false);
+        u.set_detail_note("".into());
         s.detail_tracks.clear();
         u.set_detail_title(title.clone().into());
-        u.set_detail_artwork_y(0.0);
         u.set_detail_artwork_y(0.0);
         u.set_detail_open(true);
         u.set_detail_busy(true);
         u.set_search_open(false);
         u.set_detail_rows(ModelRc::new(VecModel::default()));
+    }
+    if matches!(action, LibraryAction::Artist) {
+        u.set_detail_busy(true);
     }
     s.library_action = action;
     s.library_request = Some(request.clone());
@@ -356,6 +370,7 @@ fn request_radio(s: &mut State, u: &AppWindow, tx: &mpsc::SyncSender<LibraryResu
 }
 
 fn library_failure(s: &mut State, u: &AppWindow, authentication: bool) {
+    u.set_playback_error_action("".into());
     if !s.library_action.accepts_response(
         s.generation,
         current_video_id(s).as_deref(),
@@ -431,7 +446,9 @@ fn content_retry_request(request: &tide_provider::Request) -> Option<tide_provid
         | tide_provider::Request::Home
         | tide_provider::Request::Playlist { .. }
         | tide_provider::Request::Supermix
-        | tide_provider::Request::Liked => Some(request.clone()),
+        | tide_provider::Request::Liked
+        | tide_provider::Request::Artist { .. }
+        | tide_provider::Request::Artists { .. } => Some(request.clone()),
         // Account selection needs explicit account UI; radio retries must retain
         // their generation and seed checks through request_radio.
         _ => None,
@@ -514,6 +531,9 @@ fn stage_saved_connection(
     s.recommendations.clear();
     s.discovery.clear();
     s.detail_tracks.clear();
+    s.artist_origin = None;
+    u.set_artist_picker_open(false);
+    u.set_artist_choices(ModelRc::new(VecModel::default()));
     s.artwork.borrow_mut().clear();
     u.set_detail_open(false);
     u.set_detail_busy(false);
@@ -703,6 +723,9 @@ fn configure_account_playback(s: &mut State, u: &AppWindow) -> bool {
     s.radio_resume_when_ready = false;
     s.radio_requests.reset();
     s.detail_tracks.clear();
+    s.artist_origin = None;
+    u.set_artist_picker_open(false);
+    u.set_artist_choices(ModelRc::new(VecModel::default()));
     u.set_detail_open(false);
     u.set_detail_busy(false);
     u.set_detail_title("".into());
@@ -835,6 +858,8 @@ fn sanitize_queue(queue: &mut Queue) -> bool {
     let mut successor = None;
     queue.current = None;
     for (index, mut track) in std::mem::take(&mut queue.tracks).into_iter().enumerate() {
+        track.artists.retain(tide_core::Artist::is_valid);
+        track.artists.truncate(5);
         let source = track.source.trim();
         if source.is_empty() || source.chars().any(char::is_control) {
             changed = true;
@@ -886,6 +911,7 @@ fn content_rows(
         .map(|(index, t)| TrackRow {
             title: t.title.clone().into(),
             artist: t.artist.clone().into(),
+            artist_enabled: artists::can_open(t),
             album: t.album.clone().into(),
             duration: metadata::format_duration(t.duration_seconds).into(),
             recommended: t.recommended,
@@ -924,6 +950,7 @@ fn refresh_content_models(s: &State, u: &AppWindow) {
 }
 fn recommendation_track(card: &tide_provider::Card) -> Track {
     Track {
+        artists: card.artists.clone(),
         title: card.title.clone(),
         artist: card.subtitle.clone(),
         album: String::new(),
@@ -1026,6 +1053,7 @@ fn refresh(ui: &AppWindow, state: &State) {
         .map(|(index, t)| TrackRow {
             title: t.title.clone().into(),
             artist: t.artist.clone().into(),
+            artist_enabled: artists::can_open(t),
             album: t.album.clone().into(),
             duration: metadata::format_duration(t.duration_seconds).into(),
             recommended: t.recommended,
@@ -1052,16 +1080,21 @@ fn refresh(ui: &AppWindow, state: &State) {
     {
         ui.set_track_title(t.title.clone().into());
         ui.set_track_artist(t.artist.clone().into());
+        ui.set_track_artist_enabled(artists::can_open(t));
         ui.set_track_album(t.album.clone().into());
         ui.set_track_artwork(current_art);
     } else {
         ui.set_track_title("Nothing playing".into());
         ui.set_track_artist("Add a file or paste a music link".into());
+        ui.set_track_artist_enabled(false);
+        ui.set_audio_quality("".into());
+        ui.set_playback_hint("".into());
         ui.set_track_album("".into());
         ui.set_track_artwork(slint::Image::default());
     }
 }
 fn report_error(state: &mut State, ui: &AppWindow, error: String) {
+    ui.set_playback_error_action("".into());
     state.library_retry = None;
     ui.set_error_retryable(false);
     state.command_error = Some(error.clone());
@@ -1125,6 +1158,7 @@ fn upcoming_source(queue: &Queue, repeat: bool) -> Option<&str> {
 }
 
 fn send(state: &mut State, ui: &AppWindow, cmd: PlaybackCommand) -> bool {
+    let clears_audio = matches!(cmd, PlaybackCommand::Stop | PlaybackCommand::Shutdown);
     if let Some((_, _, position, paused)) = &mut state.connection_resume {
         match &cmd {
             PlaybackCommand::TogglePause => *paused = !*paused,
@@ -1143,6 +1177,10 @@ fn send(state: &mut State, ui: &AppWindow, cmd: PlaybackCommand) -> bool {
         .and_then(|engine| engine.send(cmd));
     match result {
         Ok(()) => {
+            if clears_audio {
+                ui.set_audio_quality("".into());
+                ui.set_playback_hint("".into());
+            }
             state.command_error = None;
             true
         }
@@ -1191,6 +1229,7 @@ fn play(state: &mut State, ui: &AppWindow) -> bool {
         return false;
     }
     let engine = &state.engine;
+    let requested_at = Instant::now();
     let result = submit_load(
         &mut state.generation,
         &mut state.active_playback,
@@ -1205,6 +1244,14 @@ fn play(state: &mut State, ui: &AppWindow) -> bool {
         report_error(state, ui, error);
         return false;
     }
+    state.load_requested_at = Some((state.generation, requested_at));
+    if !ui.get_playback_error_action().is_empty() {
+        ui.set_error_message("".into());
+        ui.set_error_retryable(false);
+        ui.set_playback_error_action("".into());
+    }
+    ui.set_audio_quality("".into());
+    ui.set_playback_hint("Loading audio…".into());
     state.command_error = None;
     state.radio_resume_when_ready = false;
     refresh(ui, state);
@@ -1264,6 +1311,7 @@ fn add(state: &mut State, ui: &AppWindow, source: String) -> bool {
         state,
         ui,
         vec![Track {
+            artists: Vec::new(),
             duration_seconds: None,
             artwork_url: None,
             recommended: false,
@@ -1394,6 +1442,7 @@ fn search(query: String, cancel: Arc<AtomicBool>) -> Result<Vec<Track>, String> 
                 return None;
             }
             Some(Track {
+                artists: Vec::new(),
                 duration_seconds: metadata::seconds(e["duration"].as_f64().unwrap_or(0.0)),
                 artwork_url: None,
                 recommended: false,
@@ -1407,7 +1456,9 @@ fn search(query: String, cancel: Arc<AtomicBool>) -> Result<Vec<Track>, String> 
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    if std::env::args().any(|arg| arg == "--smoke-ui" || arg.starts_with("--smoke-early-skip")) {
+    if std::env::args().any(|arg| {
+        arg == "--smoke-ui" || arg == "--smoke-performance" || arg.starts_with("--smoke-early-skip")
+    }) {
         let panic_hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
             panic_hook(info);
@@ -1440,6 +1491,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let smoke_autoplay_depletion = std::env::args().any(|a| a == "--smoke-autoplay-depletion");
     let smoke_autoplay =
         smoke_autoplay_depletion || std::env::args().any(|a| a == "--smoke-autoplay");
+    let performance_args = std::env::args()
+        .position(|arg| arg == "--smoke-performance")
+        .map(|at| {
+            let args: Vec<_> = std::env::args().collect();
+            let output = args
+                .get(at + 1)
+                .ok_or("Performance report path is missing")?;
+            let source = args
+                .get(at + 2)
+                .ok_or("Local performance fixture is missing")?;
+            let source = tide_playback::validate_playback_source(source)?;
+            if !Path::new(&source).is_file() {
+                return Err("Performance verification requires an existing local file".to_string());
+            }
+            if Path::new(output).exists() {
+                return Err("Performance report already exists".to_string());
+            }
+            Ok::<_, String>((PathBuf::from(output), source))
+        })
+        .transpose()?;
     let local_listening_source = std::env::args()
         .skip_while(|a| a != "--smoke-local-listening")
         .nth(2);
@@ -1460,7 +1531,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let smoke_skip_session = std::env::args().any(|a| a == "--smoke-early-skip-session");
     let smoke_early_skip =
         smoke_skip_session || std::env::args().any(|a| a == "--smoke-early-skip");
-    if connection_smoke.is_some()
+    if performance_args.is_some()
+        || connection_smoke.is_some()
         || smoke_autoplay
         || listening_seconds.is_some()
         || smoke_early_skip
@@ -1468,8 +1540,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         settings = Settings {
             transient: true,
-            volume: (smoke_autoplay || smoke_early_skip || listening_seconds.is_some())
-                .then_some(0.0),
+            volume: (performance_args.is_some()
+                || smoke_autoplay
+                || smoke_early_skip
+                || listening_seconds.is_some())
+            .then_some(0.0),
             ..Settings::default()
         };
     }
@@ -1484,7 +1559,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if sanitize_queue(&mut settings.queue) {
         save(&settings);
     }
-    let test_mode = (smoke_early_skip && !smoke_skip_session)
+    let test_mode = performance_args.is_some()
+        || (smoke_early_skip && !smoke_skip_session)
         || local_listening_source.is_some()
         || std::env::args().any(|a| a == "--smoke-ui" || a == "--benchmark-mode");
     let provider = if test_mode {
@@ -1520,6 +1596,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         engine,
         generation: 0,
         active_playback: false,
+        load_requested_at: None,
         command_error: None,
         search_generation: 0,
         search_cancel: Arc::new(AtomicBool::new(false)),
@@ -1541,6 +1618,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         recommendations: Vec::new(),
         discovery: discovery::Discovery::default(),
         detail_tracks: Vec::new(),
+        artist_origin: None,
         search_tracks: Vec::new(),
         account_error: false,
         account_verified: false,
@@ -2034,10 +2112,88 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
     {
+        let state = state.clone();
         let weak = ui.as_weak();
+        let tx = library_tx.clone();
+        ui.on_open_artist(move |source, index| {
+            let Some(u) = weak.upgrade() else {
+                return;
+            };
+            let mut s = state.borrow_mut();
+            let i = usize::try_from(index).ok();
+            let track = match source {
+                0 => i.and_then(|i| s.settings.queue.tracks.get(i)).cloned(),
+                1 => i.and_then(|i| s.detail_tracks.get(i)).cloned(),
+                2 => i.and_then(|i| s.search_tracks.get(i)).cloned(),
+                3 => i
+                    .and_then(|i| s.recommendations.get(i))
+                    .filter(|c| c.kind == "song")
+                    .map(recommendation_track),
+                4 => s
+                    .settings
+                    .queue
+                    .current
+                    .and_then(|i| s.settings.queue.tracks.get(i))
+                    .cloned(),
+                _ => None,
+            };
+            if let Some(track) = track {
+                artists::open(&mut s, &u, &tx, track);
+            }
+        });
+    }
+    {
+        let state = state.clone();
+        let weak = ui.as_weak();
+        let tx = library_tx.clone();
+        ui.on_choose_artist(move |index| {
+            let Some(u) = weak.upgrade() else {
+                return;
+            };
+            let Some(artist) = usize::try_from(index)
+                .ok()
+                .and_then(|i| u.get_artist_choices().row_data(i))
+            else {
+                return;
+            };
+            let artist = tide_core::Artist {
+                id: artist.id.to_string(),
+                name: artist.name.to_string(),
+            };
+            if !artist.is_valid() {
+                return;
+            }
+            let mut s = state.borrow_mut();
+            if s.library_worker.is_some() {
+                return;
+            }
+            u.set_artist_picker_open(false);
+            u.set_detail_title(artist.name.into());
+            request_library(
+                &mut s,
+                &u,
+                &tx,
+                tide_provider::Request::Artist { id: artist.id },
+            );
+        });
+    }
+    {
+        let state = state.clone();
+        let weak = ui.as_weak();
+        ui.on_back_detail(move || {
+            if let Some(u) = weak.upgrade() {
+                artists::back(&mut state.borrow_mut(), &u);
+            }
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        let state = state.clone();
         ui.on_close_detail(move || {
             if let Some(u) = weak.upgrade() {
                 u.set_detail_open(false);
+                u.set_artist_picker_open(false);
+                state.borrow_mut().artist_origin = None;
             }
         });
     }
@@ -2071,7 +2227,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .as_ref()
                         .is_some_and(|e| e.snapshot().error.is_some())
                     {
-                        play(&mut s, &u);
+                        let snapshot = s.engine.as_ref().unwrap().snapshot();
+                        if snapshot.generation == s.generation && play(&mut s, &u) {
+                            send(&mut s, &u, PlaybackCommand::Seek(snapshot.position));
+                            send(&mut s, &u, PlaybackCommand::SetPaused(snapshot.paused));
+                            u.set_paused(snapshot.paused);
+                        }
                     } else if let Some((request, shuffle)) = s.library_retry.take() {
                         s.shuffle_request = shuffle;
                         request_library(&mut s, &u, &tx, request);
@@ -2812,7 +2973,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         &result,
                         Ok(tide_provider::Response::Library { .. }
                             | tide_provider::Response::Tracks { .. }
-                            | tide_provider::Response::Home { .. })
+                            | tide_provider::Response::Home { .. }
+                            | tide_provider::Response::Artist { .. }
+                            | tide_provider::Response::Artists { .. })
                     ) {
                         if !matches!(s.library_action, LibraryAction::Radio { .. })
                             && s.library_retry.take().is_some()
@@ -2878,6 +3041,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             u.set_account_status(
                                 "Your YouTube Music recommendations are refreshed".into(),
                             );
+                        }
+                        Ok(tide_provider::Response::Artists { artists }) => {
+                            artists::resolved(&mut s, &u, &library_tx, artists);
+                        }
+                        Ok(tide_provider::Response::Artist { name, tracks, truncated }) => {
+                            if matches!(s.library_action, LibraryAction::Artist) && u.get_detail_open() && u.get_detail_is_artist() {
+                                s.detail_tracks = tracks.into_iter().take(50).collect();
+                                u.set_detail_title(name.chars().filter(|c| !c.is_control()).take(300).collect::<String>().into());
+                                u.set_detail_busy(false);
+                                u.set_detail_note(if truncated { "Showing the first 50 top songs from YouTube Music" } else { "Top songs from YouTube Music" }.into());
+                                refresh_content_models(&s, &u);
+                            }
                         }
                         Ok(tide_provider::Response::Tracks { tracks, truncated }) => {
                             let tracks: Vec<Track> = tracks
@@ -2992,6 +3167,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                             }
                         }
+                        Ok(tide_provider::Response::Error { code }) if code == "artist_unavailable" => {
+                            if u.get_detail_is_artist() {
+                                u.set_detail_busy(false);
+                                u.set_detail_note("YouTube Music did not return this artist page. Try another artist.".into());
+                            }
+                        }
                         Ok(tide_provider::Response::Error { code }) if code == "supermix_unavailable" => {
                             library_failure(&mut s, &u, false);
                             u.set_error_message("YouTube Music did not return My Supermix. Try again later.".into());
@@ -3063,12 +3244,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         save(&s.settings);
                         refresh(&u, &s);
                     }
+                    u.set_audio_quality(playback_feedback::quality(&p).into());
+                    u.set_playback_hint(playback_feedback::hint(&p).into());
                     u.set_position(p.position as f32);
                     u.set_duration(p.duration as f32);
                     u.set_paused(p.paused);
                     let failed = p.error.is_some();
-                    if let Some(e) = p.error {
-                        u.set_status_text(e.into());
+                    if let Some(e) = &p.error {
+                        u.set_status_text(e.clone().into());
                     } else if let Some(error) = &s.command_error {
                         u.set_status_text(error.clone().into());
                     } else if p.loading {
@@ -3076,10 +3259,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     } else if s.active_playback {
                         u.set_status_text(if p.paused { "Paused" } else { "Playing" }.into());
                     }
-                    if let Some(title) = p.title.filter(|t| !t.is_empty()) {
+                    if let Some(title) = p.title.as_ref().filter(|t| !t.is_empty()) {
                         if let Some(i) = s.settings.queue.current {
                             if s.settings.queue.tracks[i].title == "Linked track" {
-                                s.settings.queue.tracks[i].title = title;
+                                s.settings.queue.tracks[i].title = title.clone();
                                 refresh(&u, &s);
                             }
                         }
@@ -3114,12 +3297,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     } else if failed {
                         s.active_playback = false;
                         u.set_paused(true);
-                        s.account_error = false;
-                        u.set_error_is_account(false);
-                        u.set_error_retryable(true);
-                        u.set_error_message(
-                            "Playback interrupted. Check your connection and retry.".into(),
-                        );
+                        if !s.account_error {
+                            let (message, action) = playback_feedback::failure(&p);
+                            u.set_error_is_account(false);
+                            u.set_error_retryable(true);
+                            u.set_playback_error_action(action.into());
+                            u.set_error_message(message.into());
+                        }
                     }
                 }
             },
@@ -3151,6 +3335,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             s.settings.queue = Queue {
                 tracks: (0..count.min(tide_core::MAX_QUEUE_TRACKS))
                     .map(|index| Track {
+                        artists: Vec::new(),
                         title: format!("Fixture song {}", index + 1),
                         artist: "Fixture artist".into(),
                         album: "Fixture album".into(),
@@ -3274,6 +3459,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ];
             s.recommendations = vec![
                 tide_provider::Card {
+                    artists: Vec::new(),
                     duration_seconds: None,
                     artwork_url: None,
                     id: "fixture0001".into(),
@@ -3283,6 +3469,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     shelf: "Listen again".into(),
                 },
                 tide_provider::Card {
+                    artists: Vec::new(),
                     duration_seconds: None,
                     artwork_url: None,
                     id: "PLfixture".into(),
@@ -3292,6 +3479,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     shelf: "For you".into(),
                 },
                 tide_provider::Card {
+                    artists: Vec::new(),
                     duration_seconds: None,
                     artwork_url: None,
                     id: "MPREfixture".into(),
@@ -3312,6 +3500,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             s.settings.queue = Queue {
                 tracks: vec![
                     Track {
+                        artists: Vec::new(),
                         duration_seconds: None,
                         artwork_url: None,
                         recommended: false,
@@ -3321,6 +3510,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         source: String::new(),
                     },
                     Track {
+                        artists: Vec::new(),
                         duration_seconds: None,
                         artwork_url: None,
                         recommended: false,
@@ -3330,6 +3520,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         source: String::new(),
                     },
                     Track {
+                        artists: Vec::new(),
                         duration_seconds: None,
                         artwork_url: None,
                         recommended: false,
@@ -3340,6 +3531,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         source: String::new(),
                     },
                     Track {
+                        artists: Vec::new(),
                         duration_seconds: None,
                         artwork_url: None,
                         recommended: false,
@@ -3349,6 +3541,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         source: String::new(),
                     },
                     Track {
+                        artists: Vec::new(),
                         duration_seconds: None,
                         artwork_url: None,
                         recommended: false,
@@ -3602,6 +3795,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     let mut s = drag_state.borrow_mut();
                                     s.settings.queue = Queue {
                                         tracks: (0..100).map(|index| Track {
+                                            artists: Vec::new(),
                                             title: format!("Drag fixture {index}"),
                                             artist: "Fixture artist".into(), album: String::new(),
                                             source: String::new(), duration_seconds: None, artwork_url: None, recommended: false,
@@ -3686,6 +3880,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .iter()
                     .enumerate()
                     .map(|(index, source)| Track {
+                        artists: Vec::new(),
                         title: format!("Early skip probe {}", index + 1),
                         artist: String::new(),
                         album: String::new(),
@@ -3807,6 +4002,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(|seconds| listening::start(state.clone(), &ui, seconds, local_listening_source));
     // Sustained probes must not expose a second interactive player or compete
     // with the user's window. Keep timers running without a visible window.
+    let performance = performance_args
+        .map(|(output, source)| performance::start(state.clone(), &ui, output, source));
     let _updater = updater::wire(&ui, !state.borrow().settings.transient);
     let result = if listening_seconds.is_some() || smoke_autoplay_depletion {
         ui.hide()?;
@@ -3815,6 +4012,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ui.run()
     };
     timer.stop();
+    if let Some((timer, _)) = &performance {
+        timer.stop();
+    }
     preparation_timer.stop();
     media_timer.stop();
     output_timer.stop();
@@ -3845,6 +4045,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         drop(engine);
     }
     result?;
+    if performance
+        .as_ref()
+        .is_some_and(|(_, passed)| !passed.get())
+    {
+        return Err("Local performance verification did not complete".into());
+    }
     if listening
         .as_ref()
         .is_some_and(|(_, passed)| !*passed.borrow())
@@ -3932,6 +4138,7 @@ mod tests {
 
     fn track(source: &str) -> Track {
         Track {
+            artists: Vec::new(),
             duration_seconds: None,
             artwork_url: None,
             recommended: false,

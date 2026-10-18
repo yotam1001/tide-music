@@ -90,3 +90,21 @@ quality depends on the song, account and extractor.
   Preview updates still need the newer installer.
 
 [Troubleshooting](TROUBLESHOOTING.md) · [Privacy](../PRIVACY.md)
+
+## Artist pages (next update)
+
+Select an artist name under a song in the player, queue, Home, search or a song
+list. Tide uses YouTube Music artist IDs; songs with multiple credited artists
+show a choice. Older saved songs are resolved from their video ID when needed.
+If YouTube does not return an artist, Tide explains that in the page.
+
+Artist pages show up to 50 top songs in YouTube Music's order. Use **Play**,
+**Shuffle**, or the song menu to queue a track. **Back** returns to the prior
+list or search. Browsing does not change the playing song. Artist pages need a
+connected account and do not follow artists or change your library.
+
+The small line under the playing artist distinguishes loading, buffering,
+pausing and automatic retries. Otherwise it shows the audio format reported by
+mpv when available, for example **Opus · ~160 kbps · 48 kHz**. The bitrate is an
+approximate packet measurement that can vary during a song; it does not certify
+Premium membership or a fixed source quality. Missing values are omitted.

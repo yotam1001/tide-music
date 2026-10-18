@@ -510,6 +510,24 @@ def artist_names(item):
     return clean(", ".join(name for name in names if name))
 
 
+def artist_links(item):
+    """Retain at most five canonical artist references; never guess from a name."""
+    values = item.get("artists") or item.get("author") or []
+    result = []
+    seen = set()
+    for item in values[:30] if isinstance(values, list) else []:
+        if not isinstance(item, dict):
+            continue
+        artist = item.get("id")
+        name = clean(item.get("name"))
+        if isinstance(artist, str) and re.fullmatch(r"UC[A-Za-z0-9_-]{22}", artist) and name and artist not in seen:
+            result.append({"id": artist, "name": name})
+            seen.add(artist)
+            if len(result) == 5:
+                break
+    return result
+
+
 def duration_seconds(item):
     value = item.get("duration_seconds")
     if isinstance(value, int) and not isinstance(value, bool) and 0 < value < 2**32:
@@ -541,6 +559,7 @@ def tracks(items, limit=MAX_TRACKS, exclude=(), deduplicate=False):
         result.append({
             "title": clean(item.get("title")),
             "artist": artist_names(item),
+            "artists": artist_links(item),
             "album": clean(album.get("name") if isinstance(album, dict) else ""),
             "source": "https://www.youtube.com/watch?v=" + video,
             "artwork_url": artwork_url(item),
@@ -553,6 +572,47 @@ def tracks(items, limit=MAX_TRACKS, exclude=(), deduplicate=False):
 
 def run(client, request):
     action = request["action"]
+    if action == "artists":
+        video = identifier(request.get("video_id"), True)
+        if not video:
+            return {"type": "error", "code": "artist_unavailable"}
+        data = client.get_watch_playlist(videoId=video, limit=1)
+        items = data.get("tracks") if isinstance(data, dict) else None
+        for item in items[:50] if isinstance(items, list) else []:
+            if isinstance(item, dict) and item.get("videoId") == video:
+                return {"type": "artists", "artists": artist_links(item)}
+        return {"type": "artists", "artists": []}
+    if action == "artist":
+        artist = request.get("id")
+        if not isinstance(artist, str) or not re.fullmatch(r"UC[A-Za-z0-9_-]{22}", artist):
+            return {"type": "error", "code": "artist_unavailable"}
+        data = client.get_artist(artist)
+        if not isinstance(data, dict) or not clean(data.get("name")):
+            return {"type": "error", "code": "artist_unavailable"}
+        name = clean(data["name"])
+        songs = data.get("songs")
+        songs = songs if isinstance(songs, dict) else {}
+        items = songs.get("results")
+        items = items if isinstance(items, list) else []
+        playlist = identifier(songs.get("browseId"))
+        if playlist:
+            # Top-song lists may initially contain only five results. Expansion
+            # is bounded and optional: retain the returned top songs on failure.
+            try:
+                expanded = client.get_playlist(playlist, limit=51)
+                if isinstance(expanded, dict) and isinstance(expanded.get("tracks"), list):
+                    items = expanded["tracks"]
+            except Exception:
+                pass
+        bounded = []
+        for item in items[:51]:
+            if isinstance(item, dict):
+                item = dict(item)
+                if not artist_links(item):
+                    item["artists"] = [{"id": artist, "name": name}]
+                bounded.append(item)
+        return {"type": "artist", "name": name, "tracks": tracks(bounded, 50, (), True),
+                "truncated": len(items) > 50}
     if action == "library":
         info = client.get_account_info()
         playlists = client.get_library_playlists(limit=201)
@@ -648,7 +708,7 @@ def run(client, request):
                     continue
                 seen.add(key)
                 cards.append({"id": item_id, "title": clean(item.get("title")),
-                              "subtitle": artist_names(item),
+                              "subtitle": artist_names(item), "artists": artist_links(item),
                               "kind": kind, "shelf": clean(shelf.get("title")),
                               "artwork_url": artwork_url(item),
                               "duration_seconds": duration_seconds(item)})
