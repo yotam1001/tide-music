@@ -4,6 +4,9 @@ This is the maintainer checklist. For normal use, start with [Install Tide](INST
 
 ## What is available now?
 
+- The maintainer requested stable **v0.1.1** on 2026-10-18, including the merged
+  gaming controls and default-output recovery changes. Publish only the matching
+  checked app/installer as Latest. Physical headset/game tests remain pending.
 - [v0.1.0](https://github.com/yotam1001/tide-music/releases/tag/v0.1.0) is the
   stable-channel package requested by the maintainer to test public in-app
   updating from previews. Publish only its matching checked build as Latest.
@@ -19,7 +22,7 @@ This is the maintainer checklist. For normal use, start with [Install Tide](INST
 - `v0.1.0-beta.1` is an unpublished, older draft with binaries from `f026915`.
   It does not contain the latest UI or in-app updater. Do not publish it as the
   current build or silently replace its reviewed assets.
-- Current source identifies itself as `0.1.0`. Never replace the
+- Current source identifies itself as `0.1.1`. Never replace the
   published preview assets in place. The verified updater
   implementation is in merged PR #13 (`ce0d142`). Its source `e02e99e` passed
   [push CI](https://github.com/yotam1001/tide-music/actions/runs/39041897082) and
@@ -35,8 +38,8 @@ procedure, not a claim that every manual test has already passed.
 - [ ] Choose the reviewed `main` commit and record it. Keep experimental Jams
   unmerged until the user has tested it.
 - [ ] Make the release tag match `v` plus the Cargo workspace version. For the
-  current candidate, use a new stable `v0.1.0` release rather than modifying
-  either published preview or the old beta.
+  current candidate, use a new stable `v0.1.1` release rather than modifying
+  any previously published assets.
 - [ ] Require the Windows source checks, preview package and real install/update/
   removal jobs to pass for the candidate. Do not build large Rust caches locally.
 - [ ] Get the installer and companion from that same successful run. Verify the
@@ -84,7 +87,7 @@ checks as passed. Stable release needs the broader reliability evidence there.
   connection and Troubleshooting. Make sure packaged copies match. If runtime/
   installer code changes, repeat the relevant acceptance checks.
 - [ ] Validate the final docs, privacy scan and matching packages. Publish as a
-  stable **0.1.0** as Latest for the authorized updater test. Future preview
+  stable **0.1.1** as Latest for the authorized update. Future preview
   candidates should be prereleases. Do not modify historical assets in place.
 - [ ] Check the release and download links without maintainer access. Confirm the
   EXE and companion filenames, checksums and Chrome guide are clear.
