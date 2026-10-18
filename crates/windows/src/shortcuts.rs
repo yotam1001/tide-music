@@ -306,6 +306,26 @@ mod registered {
                 rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap(),
                 MediaAction::Next
             );
+            // A partial acquisition must roll back the newly registered chord
+            // while preserving this owner's previous registrations.
+            let private =
+                super::super::parse_bindings(&["Ctrl+Alt+Shift+F22".into(), "".into(), "".into()])
+                    .unwrap();
+            other.apply(private).unwrap();
+            let mut partial =
+                super::super::parse_bindings(&["Ctrl+Alt+Shift+F21".into(), "".into(), "".into()])
+                    .unwrap();
+            partial[1] = chords[0];
+            assert!(other.apply(partial).is_err());
+            let mut probe = GlobalShortcuts::new(|_| {}).unwrap();
+            assert!(
+                probe.apply(private).is_err(),
+                "previous chord remains owned after a conflict"
+            );
+            partial[1] = None;
+            probe.apply(partial).unwrap();
+            drop(probe);
+            assert!(owner.apply([chords[0], chords[0], None]).is_err());
             let conflicting = [chords[0], None, None];
             assert!(other.apply(conflicting).is_err());
             drop(owner);
