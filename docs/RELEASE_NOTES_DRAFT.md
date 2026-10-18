@@ -1,4 +1,4 @@
-# Tide Music 0.1.1
+# Tide Music 0.1.2
 
 Maintainer draft: publish only with a reviewed matching candidate and completed
 [preview checks](BETA_RELEASE.md). Remove this paragraph from the published notes.
@@ -22,33 +22,34 @@ required. GitHub's Source code archives are for contributors, not normal setup.
 
 ## Update from an installed preview
 
-In Tide 0.1.0 or an installed preview, open **Settings → Check for updates**,
+In Tide 0.1.1, 0.1.0 or an installed preview, open **Settings → Check for updates**,
 then choose **Install and restart**. Tide verifies the installer download, stops
 playback, updates the installed app and reopens it. Your account and preferences
 are kept. Portable/development copies should use **TideSetup.exe** manually.
 The existing Chrome companion remains compatible and does not need replacing.
 
-## New in 0.1.1
+## New in 0.1.2
 
-- **Settings → Gaming controls:** optional global Play / pause, Next and Previous
-  shortcuts for background control. No shortcuts are registered by default.
-  Enter a Ctrl or Alt combination, then apply. Blank fields disable shortcuts;
-  conflicts leave your previous bindings intact. No keyboard hooks are used.
-- **Windows media keys on/off:** choose whether Tide participates in Windows
-  media controls, independently of custom shortcuts. Fn behavior still depends
-  on your keyboard and Windows settings.
-- **Default audio output recovery:** shared WASAPI follows the Windows default
-  output. After an output initialization failure, returning a default multimedia
-  output triggers one retry of the current song, keeping position and pause
-  intent. Stop, a different song, natural completion and unrelated network errors
-  do not trigger this recovery. Device identifiers are not stored.
+- **Artist pages:** select an artist name in the player, queue, search or Home
+  to see up to 50 top songs from YouTube Music. Play, shuffle or queue from the
+  list. Multiple artists offer a choice; Back restores the previous view and
+  queue drawer without changing playback.
+- **Playback feedback:** loading, buffering, pause and automatic retries appear
+  in the player. Specific audio-output errors retain useful recovery guidance;
+  manual retry preserves position and pause intent.
+- **Audio format:** see the observed codec, approximate bitrate and sample rate
+  when mpv reports them. Measured bitrate varies and does not certify Premium
+  membership or a fixed source quality.
+- **Performance regression checks:** Windows CI exercises local song transitions,
+  repeated skips, process-tree memory and observed helper cleanup.
 
-Automated Windows tests cover shortcut registration/dispatch/conflicts/cleanup,
-output notifications and recovery policy, settings migration, native UI controls,
-package verification and the clean install/update/remove lifecycle. Physical
-USB/Bluetooth/HDMI switching and actual keyboard behavior with games or elevated
-apps still need hands-on validation. Stable-channel publication is not a claim
-that those checks have passed.
+Windows source/UI/package and actual install/update/remove checks passed for the
+feature implementation. A live public artist lookup also passed without a saved
+account. The final matching versioned candidate must pass CI before publication.
+The synthetic three-second local-audio benchmark uses an explicit null audio
+output: it does not measure YouTube startup latency, WASAPI device compatibility
+or gaming impact. Physical keyboard/headset checks and long-term service behavior
+remain separate; the stable channel does not mark those checks as passed.
 
 ## Included
 

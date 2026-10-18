@@ -1,5 +1,22 @@
 # Release readiness
 
+## Stable 0.1.2 update (2026-10-19)
+
+The maintainer requested publication after PR #21 merged. Version 0.1.2 adds
+canonical artist pages/top songs and bounded Back navigation, playback loading,
+buffering and retry feedback, observed audio format, and retained retry intent.
+[PR #21 CI](https://github.com/yotam1001/tide-music/actions/runs/39168100534)
+passed source, UI, package and installed lifecycle checks. A live unauthenticated
+artist lookup returned 50 top songs and resolved a seed to the same artist ID.
+The final versioned candidate must pass its matching CI before publication.
+
+The installed synthetic local benchmark passed six natural transitions and
+three skips, with a 75.76 MiB observed process-tree working-set peak. It uses an
+explicit null audio output and cannot establish YouTube latency, WASAPI device
+compatibility or gaming impact. See [performance scope](PERFORMANCE.md).
+Personal-account artist browsing, physical device/game tests and longer session
+checks remain distinct. Jams stay excluded; the Chrome companion is unchanged.
+
 ## Stable 0.1.1 update (2026-10-18)
 
 The maintainer requested a new stable installer after merging PR #19. Version

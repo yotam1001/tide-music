@@ -13,10 +13,10 @@ Play YouTube Music, bring in your playlists and recommendations, and keep the
 player out of the way with a mini mode. Tide uses native audio playback rather
 than keeping an embedded browser running.
 
-**Windows release:** [Download TideSetup.exe](https://github.com/yotam1001/tide-music/releases/download/v0.1.1/TideSetup.exe)
-from [v0.1.1](https://github.com/yotam1001/tide-music/releases/tag/v0.1.1).
+**Windows release:** [Download TideSetup.exe](https://github.com/yotam1001/tide-music/releases/download/v0.1.2/TideSetup.exe)
+from [v0.1.2](https://github.com/yotam1001/tide-music/releases/tag/v0.1.2).
 For YouTube Music, also download the matching
-[Chrome companion](https://github.com/yotam1001/tide-music/releases/download/v0.1.1/tide-browser-chromium.zip)
+[Chrome companion](https://github.com/yotam1001/tide-music/releases/download/v0.1.2/tide-browser-chromium.zip)
 and follow the connection guide below. The Windows installer is currently unsigned.
 
 ![Tide's dark interface](docs/screenshots/full.png)
@@ -49,6 +49,8 @@ companion without uninstalling Tide. [Installation help](docs/INSTALLATION.md)
 ## What you can do
 
 - Play songs, playlists and local audio with native playback.
+- Select an artist name to browse their top songs, then play, shuffle or queue.
+- See loading/retry feedback and the observed audio format in the player.
 - See your playlists, Liked Songs and personalized recommendations.
 - Shuffle playlists, queue songs next, and drag upcoming tracks into order.
 - Start song radio or enable Autoplay for related recommendations.
@@ -83,7 +85,7 @@ the demo's figures. Installed Tide does not create Rust build caches.
 
 **Settings → Check for updates** finds published stable releases and offers
 **Install and restart**. Startup checks can be disabled. The updater skips beta
-and draft releases. Installed previews can update to stable 0.1.1; future
+and draft releases. Installed previews can update to stable 0.1.2; future
 preview-only updates still need their installer. Accounts and
 preferences are kept during app updates. Update the unpacked companion separately
 through its guide.
