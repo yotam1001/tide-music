@@ -10,6 +10,7 @@ pub(super) struct Origin {
     tracks: Vec<Track>,
     scroll: f32,
     search: bool,
+    queue: bool,
 }
 
 pub(super) fn video_id(source: &str) -> Option<String> {
@@ -64,6 +65,7 @@ pub(super) fn open(
             },
             scroll: u.get_detail_artwork_y(),
             search: u.get_search_open(),
+            queue: u.get_queue_open(),
         });
     }
     s.detail_tracks.clear();
@@ -150,6 +152,7 @@ pub(super) fn back(s: &mut State, u: &AppWindow) {
         u.set_detail_artwork_y(origin.scroll);
         u.set_detail_open(origin.open);
         u.set_search_open(origin.search);
+        u.set_queue_open(origin.queue);
     } else {
         u.set_detail_open(false);
     }

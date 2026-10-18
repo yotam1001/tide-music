@@ -3653,6 +3653,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let connected = ui.get_account_connected();
                 ui.set_account_connected(true);
                 ui.set_detail_title("Back navigation fixture".into());
+                ui.set_queue_open(true);
                 let mut song = previous_tracks[0].clone();
                 song.artists = vec![
                     tide_core::Artist {
@@ -3676,6 +3677,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 assert_eq!(s.generation, previous_generation);
                 assert!(s.active_playback && ui.get_detail_open() && !ui.get_detail_is_artist());
                 assert_eq!(ui.get_detail_title(), "Back navigation fixture");
+                assert!(
+                    ui.get_queue_open(),
+                    "Back must restore the queue drawer too"
+                );
+                ui.set_queue_open(false);
                 assert!(s.artist_origin.is_none() && !ui.get_artist_picker_open());
                 ui.set_account_connected(connected);
                 println!(

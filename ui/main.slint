@@ -1601,7 +1601,7 @@ export component AppWindow inherits Window {
                 vertical-stretch: root.collapsed ? 1 : 0;
                 track-title: root.track-title;
                 track-artist: root.track-artist;
-                artist-enabled: root.track-artist-enabled && !root.account-busy;
+                artist-enabled: root.track-artist-enabled && !root.account-busy && !root.artist-picker-open && !root.settings-open && !root.account-open;
                 audio-quality: root.audio-quality;
                 playback-hint: root.playback-hint;
                 artist => { root.open-artist(4, 0); }
