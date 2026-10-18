@@ -448,8 +448,9 @@ fn settings_theme_account_and_song_menu_remain_independent() {
     let track_action = Rc::new(Cell::new(None));
     let capture = track_action.clone();
     ui.on_select_detail_track(move |index| capture.set(Some(index)));
-    draw(&window, 1140, 800);
-    click(&ui, 300.0, 263.0);
+    export("artist-before-click", 1140, 800, &draw(&window, 1140, 800));
+    // The artist page's source note adds a line above the list.
+    click(&ui, 300.0, 277.0);
     assert_eq!(
         artist_action.get(),
         Some((1, 0)),
