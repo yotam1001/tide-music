@@ -78,6 +78,21 @@ pub fn start_with_account(
     cookies: Option<PathBuf>,
     account_index: u32,
 ) -> Result<PlaybackHandle, String> {
+    start_with_output(cookies, account_index, false)
+}
+
+/// Explicit synthetic local benchmark sink; never used by ordinary playback.
+#[cfg(windows)]
+pub fn start_local_benchmark() -> Result<PlaybackHandle, String> {
+    start_with_output(None, 0, true)
+}
+
+#[cfg(windows)]
+fn start_with_output(
+    cookies: Option<PathBuf>,
+    account_index: u32,
+    null_output: bool,
+) -> Result<PlaybackHandle, String> {
     if account_index > 9 {
         return Err("Invalid signed-in account selection".into());
     }
@@ -87,6 +102,7 @@ pub fn start_with_account(
     let mut runtimes = RuntimePaths::discover()?;
     runtimes.cookies = cookies;
     runtimes.account_index = account_index;
+    runtimes.null_output = null_output;
     let yt_dlp_available = runtimes.yt_dlp.is_some();
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_io()
@@ -168,6 +184,10 @@ pub fn start_with_cookie_file(_: Option<PathBuf>) -> Result<PlaybackHandle, Stri
 }
 #[cfg(not(windows))]
 pub fn start_with_account(_: Option<PathBuf>, _: u32) -> Result<PlaybackHandle, String> {
+    start()
+}
+#[cfg(not(windows))]
+pub fn start_local_benchmark() -> Result<PlaybackHandle, String> {
     start()
 }
 
@@ -450,6 +470,7 @@ struct WorkerControls {
 
 #[derive(Clone, Debug)]
 struct RuntimePaths {
+    null_output: bool,
     cookies: Option<PathBuf>,
     account_index: u32,
     mpv: PathBuf,
@@ -463,6 +484,7 @@ impl RuntimePaths {
                 "mpv.exe was not found. Place it in the app's tools directory, .tools/runtime, or add it to PATH.".to_owned()
             })?;
         Ok(Self {
+            null_output: false,
             cookies: None,
             account_index: 0,
             mpv,
@@ -1079,7 +1101,11 @@ async fn launch_player(
         .arg("--audio-display=no")
         // WASAPI follows default-device/unplug/format changes. Shared mode lets
         // games use the same output without exclusive-device ownership.
-        .arg("--ao=wasapi")
+        .arg(if runtimes.null_output {
+            "--ao=null"
+        } else {
+            "--ao=wasapi"
+        })
         .arg("--audio-device=auto")
         .arg("--audio-exclusive=no")
         .arg("--osc=no")

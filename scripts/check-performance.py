@@ -29,7 +29,7 @@ def summarize(samples, cleanup, playback, max_memory=512, max_start=5000):
     helpers = [row for row in observed if row.get("is_root") is False]
     if cleanup.get("exit_code") != 0 or cleanup.get("helpers_ended") is not True or not helpers or any(row.get("has_exited") is not True for row in helpers):
         raise ValueError("Missing successful process cleanup evidence")
-    if playback.get("schema") != 1 or playback.get("workload") != "muted_local_3s":
+    if playback.get("schema") != 1 or playback.get("workload") != "muted_local_3s_null_output":
         raise ValueError("Unsupported benchmark")
     delays = playback.get("request_to_progress_ms", [])
     if not 6 <= len(delays) <= 128 or playback.get("natural_transitions", 0) < 4 or playback.get("skips") != 3:
@@ -37,7 +37,7 @@ def summarize(samples, cleanup, playback, max_memory=512, max_start=5000):
     delays = [number(delay) for delay in delays]
     if metrics["working_set_mib"]["peak"] > max_memory or max(delays) > max_start:
         raise ValueError("Local benchmark exceeded its regression budget")
-    return {"schema": 1, "workload": "muted_local_3s", "samples": len(samples),
+    return {"schema": 1, "workload": "muted_local_3s_null_output", "samples": len(samples),
             "metrics": metrics, "observed_helpers": len(helpers),
             "sampling_races": number(cleanup.get("sampling_races", 0)),
             "natural_transitions": playback["natural_transitions"], "skips": playback["skips"],

@@ -13,7 +13,7 @@ class PerformanceTests(unittest.TestCase):
         return ([dict(working_set_mib=100, private_mib=80, cpu_one_core_percent=1) for _ in range(25)],
                 dict(exit_code=0, helpers_ended=True, cleanup_observations=[
                     dict(is_root=False, has_exited=True, name="private fixture", process_id=123)]),
-                dict(schema=1, workload="muted_local_3s", natural_transitions=6, skips=3,
+                dict(schema=1, workload="muted_local_3s_null_output", natural_transitions=6, skips=3,
                      request_to_progress_ms=[100, 200, 100, 300, 100, 100], source="private fixture"))
 
     def test_startup_peak_preserved_and_private_metadata_excluded(self):

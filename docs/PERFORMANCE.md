@@ -1,7 +1,9 @@
 # Repeatable local playback checks
 
 The hosted Windows installer check runs a muted, synthetic three-second WAV
-through the installed Tide executable. It follows natural song transitions and
+through the installed Tide executable with an explicit mpv null audio output.
+Hosted runners need no sound device for this workload. Ordinary Tide playback
+always uses WASAPI; output failures never trigger a silent fallback. It follows natural song transitions and
 three skips for about 30 seconds, then requires the app to exit successfully.
 It uses transient settings and no account, browser, internet audio or saved queue.
 
@@ -30,7 +32,7 @@ Windows integration artifact for seven days.
 
 This test detects local playback, cleanup and large memory/start-time regressions.
 It does not measure YouTube extraction latency, long-term session reliability,
-audio device compatibility or a game's performance. Those need separate tests.
+WASAPI latency, audio device compatibility or a game's performance. Those need separate tests.
 Use hosted CI for builds; follow `AGENTS.md` and the local disk budget when
 developing. Running the existing installed executable with
 `--smoke-performance <new-report.json> <local-three-second.wav>` is opt-in and

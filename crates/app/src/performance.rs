@@ -36,7 +36,8 @@ pub(super) fn start(
         }
         let Some(engine) = &s.engine else { fail("engine unavailable"); return; };
         let p = engine.snapshot();
-        if p.error.is_some() || p.volume != 0.0 { fail("playback failed or was not muted"); return; }
+        if p.error.is_some() { fail(if p.output_unavailable { "audio output unavailable" } else { "engine failure" }); return; }
+        if p.volume != 0.0 { fail("playback was not muted"); return; }
         if s.generation != generation {
             if generation > 0 && skip_generation != Some(s.generation) { natural += 1; }
             generation = s.generation;
@@ -56,7 +57,7 @@ pub(super) fn start(
         if elapsed >= Duration::from_secs(45) { fail("timed out"); return; }
         if elapsed >= Duration::from_secs(30) && !p.loading {
             if natural < 4 || skips != 3 || delays.len() < 6 { fail("insufficient transition coverage"); return; }
-            let report = serde_json::json!({"schema":1,"workload":"muted_local_3s",
+            let report = serde_json::json!({"schema":1,"workload":"muted_local_3s_null_output",
                 "elapsed_ms":elapsed.as_millis() as u64,"sampling_interval_ms":100,
                 "natural_transitions":natural,"skips":skips,"request_to_progress_ms":delays});
             let saved = std::fs::OpenOptions::new().write(true).create_new(true).open(&output)

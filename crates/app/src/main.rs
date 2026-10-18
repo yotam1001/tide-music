@@ -1581,10 +1581,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let (engine, error) = match credential_error.map_or_else(
         || {
-            tide_playback::start_with_account(
-                cookie_lease.as_ref().map(|l| l.path().to_path_buf()),
-                saved_connection.as_ref().map_or(0, |c| c.account_index),
-            )
+            if performance_args.is_some() {
+                tide_playback::start_local_benchmark()
+            } else {
+                tide_playback::start_with_account(
+                    cookie_lease.as_ref().map(|l| l.path().to_path_buf()),
+                    saved_connection.as_ref().map_or(0, |c| c.account_index),
+                )
+            }
         },
         Err,
     ) {
