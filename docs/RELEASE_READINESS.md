@@ -1,5 +1,14 @@
 # Release readiness
 
+## Stable 0.1.3 update (2026-10-19)
+
+Version 0.1.3 packages PR #23's reductions in temporary account-response,
+thumbnail and playlist rollback allocations. The implementation passed
+[Windows CI](https://github.com/yotam1001/tide-music/actions/runs/39199969922),
+including source tests, native UI, packaging and actual install/update/remove.
+The final versioned candidate must pass the same checks before publication.
+Jams remain a separate private experimental preview and are excluded here.
+
 ## Stable 0.1.2 update (2026-10-19)
 
 The maintainer requested publication after PR #21 merged. Version 0.1.2 adds

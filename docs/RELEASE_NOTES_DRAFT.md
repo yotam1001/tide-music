@@ -1,4 +1,4 @@
-# Tide Music 0.1.2
+# Tide Music 0.1.3
 
 Maintainer draft: publish only with a reviewed matching candidate and completed
 [preview checks](BETA_RELEASE.md). Remove this paragraph from the published notes.
@@ -22,13 +22,21 @@ required. GitHub's Source code archives are for contributors, not normal setup.
 
 ## Update from an installed preview
 
-In Tide 0.1.1, 0.1.0 or an installed preview, open **Settings → Check for updates**,
+In Tide 0.1.2, 0.1.1, 0.1.0 or an installed preview, open **Settings → Check for updates**,
 then choose **Install and restart**. Tide verifies the installer download, stops
 playback, updates the installed app and reopens it. Your account and preferences
 are kept. Portable/development copies should use **TideSetup.exe** manually.
 The existing Chrome companion remains compatible and does not need replacing.
 
-## New in 0.1.2
+## New in 0.1.3
+
+- Reduce temporary RAM allocations when loading account results and playlists.
+- Resize album covers without copying the full cropped source image, preserving
+  thumbnail pixels and channel precision.
+- Replace playlists without cloning the previous queue; playback failures still
+  restore the original queue.
+
+## Recent updates included
 
 - **Artist pages:** select an artist name in the player, queue, search or Home
   to see up to 50 top songs from YouTube Music. Play, shuffle or queue from the
