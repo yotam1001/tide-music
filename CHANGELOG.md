@@ -4,6 +4,7 @@
 
 ## 0.1.3 — 2026-10-19
 
+- Match the setup executable's Windows file/product versions to the app release.
 - Reduce transient RAM allocations when loading account results, generating
   album thumbnails and replacing playlists, preserving queue rollback and art quality.
 

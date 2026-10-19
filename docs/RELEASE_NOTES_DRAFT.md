@@ -30,6 +30,7 @@ The existing Chrome companion remains compatible and does not need replacing.
 
 ## New in 0.1.3
 
+- Match the installer file properties to the app version.
 - Reduce temporary RAM allocations when loading account results and playlists.
 - Resize album covers without copying the full cropped source image, preserving
   thumbnail pixels and channel precision.
