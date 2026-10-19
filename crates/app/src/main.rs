@@ -974,11 +974,13 @@ fn start_tracks(
     for t in &mut tracks {
         t.recommended = false;
     }
-    let previous = s.settings.queue.clone();
-    s.settings.queue = Queue {
-        tracks,
-        current: Some(index),
-    };
+    let previous = std::mem::replace(
+        &mut s.settings.queue,
+        Queue {
+            tracks,
+            current: Some(index),
+        },
+    );
     if shuffle {
         let seed = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -3140,11 +3142,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     "No playable tracks were returned for this playlist".into(),
                                 );
                             } else {
-                                let previous = s.settings.queue.clone();
-                                s.settings.queue = Queue {
-                                    tracks,
-                                    current: Some(0),
-                                };
+                                let previous = std::mem::replace(
+                                    &mut s.settings.queue,
+                                    Queue {
+                                        tracks,
+                                        current: Some(0),
+                                    },
+                                );
                                 if matches!(s.library_action, LibraryAction::Shuffle) {
                                     let seed = std::time::SystemTime::now()
                                         .duration_since(std::time::UNIX_EPOCH)
@@ -3582,6 +3586,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 s.detail_tracks = s.settings.queue.tracks.clone();
                 s.search_tracks = s.detail_tracks.iter().take(3).cloned().collect();
+            }
+            {
+                let mut s = state.borrow_mut();
+                let engine = s.engine.take();
+                let original_tracks = s.settings.queue.tracks.as_ptr();
+                let original_current = s.settings.queue.current;
+                let original_len = s.settings.queue.tracks.len();
+                let candidate = vec![s.search_tracks[0].clone()];
+                assert!(!start_tracks(&mut s, &ui, candidate, 0, false));
+                assert_eq!(s.settings.queue.current, original_current);
+                assert_eq!(s.settings.queue.tracks.len(), original_len);
+                assert_eq!(
+                    s.settings.queue.tracks.as_ptr(),
+                    original_tracks,
+                    "Failed playlist playback must restore the original queue allocation"
+                );
+                s.engine = engine;
+                s.command_error = None;
+                ui.set_error_message("".into());
             }
             ui.set_search_open(true);
             ui.set_library_open(false);
