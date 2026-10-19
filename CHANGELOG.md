@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Reduce transient RAM allocations when loading account results, generating
+  album thumbnails and replacing playlists, preserving queue rollback and art quality.
+
 ## 0.1.2 — 2026-10-19
 
 - Open artist names from the player, queue, search and Home to browse YouTube
