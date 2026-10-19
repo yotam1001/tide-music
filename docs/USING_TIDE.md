@@ -91,7 +91,7 @@ quality depends on the song, account and extractor.
 
 [Troubleshooting](TROUBLESHOOTING.md) · [Privacy](../PRIVACY.md)
 
-## Artist pages (next update)
+## Artist pages (0.1.2 and later)
 
 Select an artist name under a song in the player, queue, Home, search or a song
 list. Tide uses YouTube Music artist IDs; songs with multiple credited artists

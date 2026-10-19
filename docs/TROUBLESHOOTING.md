@@ -4,7 +4,7 @@ Start with the app version under **Settings → About Tide** (scroll if needed)
 and the exact error message. If the app cannot open, give the installer release.
 Use downloads from the [official repository](https://github.com/yotam1001/tide-music/releases).
 The current public installer is in the
-[Windows release](https://github.com/yotam1001/tide-music/releases/tag/v0.1.1).
+[Windows release](https://github.com/yotam1001/tide-music/releases/tag/v0.1.2).
 
 ## Installation and opening
 

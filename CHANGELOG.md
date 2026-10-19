@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.2 — 2026-10-19
+
 - Open artist names from the player, queue, search and Home to browse YouTube
   Music top songs, with Play, Shuffle, queue actions and Back navigation.
 - Show loading, buffering and bounded retry feedback in the player, along with
