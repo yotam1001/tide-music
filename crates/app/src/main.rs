@@ -428,7 +428,7 @@ fn library_failure(s: &mut State, u: &AppWindow, authentication: bool) {
         s.account_error = true;
         u.set_error_is_account(true);
         u.set_error_message("Reconnect your YouTube Music account".into());
-        u.set_account_status("YouTube rejected this session. Reconnect using the signed-in Zen profile and selected account.".into());
+        u.set_account_status("YouTube rejected this session. Reconnect using your signed-in YouTube Music browser tab and selected account.".into());
         return;
     }
     if let LibraryAction::Radio { generation, .. } = &s.library_action {
