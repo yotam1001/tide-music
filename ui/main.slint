@@ -605,7 +605,7 @@ component SongRow inherits Rectangle {
             text: "";
             opacity: 0;
             enabled: root.enabled && !root.drag-in-progress;
-            accessible-label: "Play " + root.track.title + " by " + root.track.artist;
+            accessible-label: (root.shared-queue ? "Add to shared queue: " : "Play ") + root.track.title + " by " + root.track.artist;
             clicked => { root.select(); }
         }
     }
@@ -650,7 +650,7 @@ component SongRow inherits Rectangle {
                 }
             }
             if root.show-duration && root.track.duration != "" && root.track.duration != "—" : Text { width: 42px; text: root.track.duration; color: root.light-mode ? #716773 : #a1a5ae; font-size: 11px; horizontal-alignment: right; }
-            if root.show-menu : LibraryButton { width: 30px; height: 30px; caption: "..."; label: "Actions for " + root.track.title; light-mode: root.light-mode; enabled: root.enabled && !root.drag-in-progress; clicked => { song-menu.show(); } }
+            if root.show-menu : LibraryButton { width: 30px; height: 30px; caption: root.shared-queue ? "＋" : "..."; label: (root.shared-queue ? "Add to shared queue: " : "Actions for ") + root.track.title; light-mode: root.light-mode; enabled: root.enabled && !root.drag-in-progress; clicked => { if root.shared-queue { root.queue(false); } else { song-menu.show(); } } }
         }
     }
     song-menu := ActionMenu {
@@ -1444,7 +1444,7 @@ export component AppWindow inherits Window {
                                     height: 48px;
                                     spacing: 10px;
                                     cross-axis-alignment: center;
-                                    VerticalLayout { horizontal-stretch: 1; spacing: 4px; Text { text: "For you"; color: root.foreground; font-size: 28px; font-weight: 600; } Text { text: "Music from your YouTube Music Home"; color: root.secondary; font-size: 12px; overflow: elide; } }
+                                    VerticalLayout { horizontal-stretch: 1; spacing: 4px; Text { text: "For you"; color: root.foreground; font-size: 28px; font-weight: 600; } Text { text: root.jam-guest ? "Choose a song or press + to add it to the shared queue" : "Music from your YouTube Music Home"; color: root.secondary; font-size: 12px; overflow: elide; } }
                                         LibraryButton { width: 78px; light-mode: root.light-mode; caption: "Refresh"; label: "Refresh your recommendations"; enabled: root.browsing-enabled && root.account-connected && !root.account-busy; clicked => { root.refresh-recommendations(); } }
 
                                 }
