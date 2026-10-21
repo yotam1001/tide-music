@@ -1,0 +1,130 @@
+//! Render/input checks with synthetic data. No provider, session or account.
+use slint::platform::{
+    software_renderer::{MinimalSoftwareWindow, RepaintBufferType},
+    PointerEventButton, WindowEvent,
+};
+use slint::{ComponentHandle, LogicalPosition, PhysicalSize, Rgb8Pixel};
+use std::{cell::RefCell, rc::Rc};
+slint::include_modules!();
+struct Platform(Rc<MinimalSoftwareWindow>);
+impl slint::platform::Platform for Platform {
+    fn create_window_adapter(
+        &self,
+    ) -> Result<Rc<dyn slint::platform::WindowAdapter>, slint::PlatformError> {
+        Ok(self.0.clone())
+    }
+}
+fn draw(window: &MinimalSoftwareWindow, width: u32, height: u32, name: &str) {
+    window.set_size(PhysicalSize::new(width, height));
+    let mut pixels = vec![Rgb8Pixel::default(); width as usize * height as usize];
+    for _ in 0..3 {
+        slint::platform::update_timers_and_animations();
+        window.request_redraw();
+        window.draw_if_needed(|renderer| {
+            renderer.render(&mut pixels, width as usize);
+        });
+    }
+    if let Some(path) = std::env::var_os("TIDE_UI_REVIEW_DIR") {
+        let path = std::path::PathBuf::from(path);
+        std::fs::create_dir_all(&path).unwrap();
+        let bytes = pixels.into_iter().flat_map(|p| [p.r, p.g, p.b]).collect();
+        image::RgbImage::from_raw(width, height, bytes)
+            .unwrap()
+            .save(path.join(format!("{name}.png")))
+            .unwrap();
+    }
+}
+fn click(ui: &AppWindow, x: f32, y: f32) {
+    let position = LogicalPosition::new(x, y);
+    ui.window()
+        .dispatch_event(WindowEvent::PointerMoved { position });
+    ui.window().dispatch_event(WindowEvent::PointerPressed {
+        position,
+        button: PointerEventButton::Left,
+    });
+    ui.window().dispatch_event(WindowEvent::PointerReleased {
+        position,
+        button: PointerEventButton::Left,
+    });
+}
+#[test]
+fn native_ratings_remain_reachable_and_do_not_take_over_transport() {
+    let window = MinimalSoftwareWindow::new(RepaintBufferType::ReusedBuffer);
+    slint::platform::set_platform(Box::new(Platform(window.clone()))).unwrap();
+    let ui = AppWindow::new().unwrap();
+    ui.set_track_title("Synthetic feedback song".into());
+    ui.set_track_artist("Fixture artist".into());
+    ui.set_rating_enabled(true);
+    let ratings = Rc::new(RefCell::new(Vec::new()));
+    let captured = ratings.clone();
+    let weak = ui.as_weak();
+    ui.on_rate_song(move |rating| {
+        captured.borrow_mut().push(rating);
+        weak.upgrade().unwrap().set_current_rating(rating);
+    });
+    let transport = Rc::new(RefCell::new(0));
+    let captured = transport.clone();
+    ui.on_toggle_pause(move || *captured.borrow_mut() += 1);
+    ui.show().unwrap();
+    for (width, height, light) in [(1140, 800, false), (650, 420, true)] {
+        ui.set_light_mode(light);
+        ui.set_current_rating(0);
+        draw(&window, width, height, &format!("ratings-{width}"));
+        let x = width as f32 - 210.0;
+        let y = height as f32 - 74.0;
+        let start = ratings.borrow().len();
+        for position in [x, x, x + 40.0, x + 40.0] {
+            click(&ui, position, y);
+        }
+        assert_eq!(
+            ratings.borrow().len(),
+            start + 4,
+            "Rating buttons are not reachable at width {width}"
+        );
+        assert_eq!(&ratings.borrow()[start..], &[1, 0, -1, 0]);
+        assert_eq!(*transport.borrow(), 0);
+        ui.set_rating_busy(true);
+        let before = ratings.borrow().len();
+        click(&ui, x, y);
+        assert_eq!(
+            ratings.borrow().len(),
+            before,
+            "Busy ratings issued another write"
+        );
+        ui.set_rating_busy(false);
+    }
+    ui.set_light_mode(false);
+    ui.set_jam_available(true);
+    ui.set_jam_active(true);
+    ui.set_jam_guest(true);
+    ui.set_collapsed(true);
+    draw(&window, 700, 166, "ratings-mini-guest");
+    let before = ratings.borrow().len();
+    click(&ui, 588.0, 67.0);
+    assert_eq!(
+        ratings.borrow().len(),
+        before + 1,
+        "Guest mini-player lost local rating controls"
+    );
+    click(&ui, 350.0, 67.0);
+    assert_eq!(*transport.borrow(), 0, "A rating enabled guest transport");
+    ui.set_collapsed(false);
+    ui.set_jam_active(false);
+    ui.set_jam_guest(false);
+    ui.set_settings_open(true);
+    let consent = Rc::new(RefCell::new(false));
+    let captured = consent.clone();
+    let weak = ui.as_weak();
+    ui.on_toggle_history_feedback(move || {
+        *captured.borrow_mut() = true;
+        weak.upgrade().unwrap().set_history_feedback_enabled(true);
+    });
+    draw(&window, 1140, 1400, "history-settings-off");
+    assert!(!ui.get_history_feedback_enabled());
+    click(&ui, 920.0, 937.0);
+    assert!(
+        *consent.borrow(),
+        "History consent is not reachable in Settings"
+    );
+    draw(&window, 1140, 1400, "history-settings-on");
+}

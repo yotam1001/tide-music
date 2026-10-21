@@ -999,6 +999,25 @@ component QueueDrawer inherits Rectangle {
     }
 }
 
+component RatingButton inherits Rectangle {
+    in property <bool> negative: false;
+    in property <bool> enabled: true;
+    in property <bool> light-mode: false;
+    in property <bool> active: false;
+    in property <string> label;
+    callback clicked();
+    LibraryButton { width: parent.width; height: parent.height; enabled: root.enabled; light-mode: root.light-mode; active: root.active; caption: ""; label: root.label; clicked => { root.clicked(); } }
+    Path {
+        x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+        width: 18px; height: 18px; viewbox-width: 24; viewbox-height: 24;
+        fill: root.active ? (root.light-mode ? #c48776 : #a94164) : Colors.transparent;
+        stroke: root.light-mode ? #716773 : #b6bac3; stroke-width: 1.5px;
+        commands: root.negative ? "M 17 14 L 13 21 Q 10 21 11 16 L 11 15 L 5 15 Q 3 15 3.5 13 L 5.5 5 Q 6 3 8 3 L 17 3 Z M 21 14 L 18 14 L 18 3 L 21 3 Z"
+            : "M 7 10 L 11 3 Q 14 3 13 8 L 13 9 L 19 9 Q 21 9 20.5 11 L 18.5 19 Q 18 21 16 21 L 7 21 Z M 3 10 L 6 10 L 6 21 L 3 21 Z";
+        opacity: root.enabled ? 1 : 0.45;
+    }
+}
+
 component PlayerBar inherits Rectangle {
     in property <bool> transport-enabled: true;
     in property <bool> window-minimized: false;
@@ -1023,6 +1042,10 @@ component PlayerBar inherits Rectangle {
     in property <string> audio-quality;
     in property <string> playback-hint;
     callback artist();
+    in property <int> rating: 0;
+    in property <bool> rating-enabled: false;
+    in property <bool> rating-busy: false;
+    callback rate(int);
     in property <image> artwork;
     in property <float> position;
     in property <float> duration;
@@ -1076,11 +1099,13 @@ component PlayerBar inherits Rectangle {
             HorizontalLayout {
                 x: parent.width - self.width;
                 y: 8px;
-                width: root.collapsed ? 38px : 148px;
+                width: root.collapsed ? 110px : 208px;
                 height: 36px;
-                spacing: 12px;
-                if !root.collapsed : LibraryButton { width: 80px; light-mode: root.light-mode; caption: "Queue"; label: root.queue-open ? "Close queue drawer" : "Open queue drawer"; active: root.queue-open; clicked => { root.toggle-queue(); } }
-                if !root.collapsed : LibraryButton { width: 56px; light-mode: root.light-mode; caption: "Mini"; label: "Collapse to mini player"; clicked => { root.mini(); } }
+                spacing: root.collapsed ? 4px : 8px;
+                RatingButton { width: 32px; height: 36px; enabled: root.rating-enabled && !root.rating-busy; light-mode: root.light-mode; active: root.rating == 1; label: root.rating == 1 ? "Remove like" : "Like this song on YouTube Music"; clicked => { root.rate(root.rating == 1 ? 0 : 1); } }
+                RatingButton { width: 32px; height: 36px; negative: true; enabled: root.rating-enabled && !root.rating-busy; light-mode: root.light-mode; active: root.rating == -1; label: root.rating == -1 ? "Remove dislike" : "Dislike this song on YouTube Music"; clicked => { root.rate(root.rating == -1 ? 0 : -1); } }
+                if !root.collapsed : LibraryButton { width: 72px; light-mode: root.light-mode; caption: "Queue"; label: root.queue-open ? "Close queue drawer" : "Open queue drawer"; active: root.queue-open; clicked => { root.toggle-queue(); } }
+                if !root.collapsed : LibraryButton { width: 48px; light-mode: root.light-mode; caption: "Mini"; label: "Collapse to mini player"; clicked => { root.mini(); } }
                 if root.collapsed : LibraryButton { width: 38px; light-mode: root.light-mode; caption: "↗"; label: "Expand to full Tide window"; clicked => { root.restore(); } }
             }
         }
@@ -1181,6 +1206,12 @@ export component AppWindow inherits Window {
     in property <bool> history-feedback-enabled: false;
     in property <string> history-feedback-status;
     callback toggle-history-feedback();
+    in property <int> current-rating: 0;
+    in property <bool> rating-enabled: false;
+    in property <bool> rating-busy: false;
+    in property <string> feedback-notice;
+    callback rate-song(int);
+    callback dismiss-feedback();
     callback apply-shortcuts();
     in property <[TrackRow]> rows;
     in property <int> current-index;
@@ -1723,7 +1754,11 @@ export component AppWindow inherits Window {
                 track-artist: root.track-artist;
                 artist-enabled: root.track-artist-enabled && !root.account-busy && !root.artist-picker-open && !root.settings-open && !root.account-open;
                 audio-quality: root.audio-quality;
-                playback-hint: root.playback-hint;
+                playback-hint: root.collapsed && root.feedback-notice != "" ? root.feedback-notice : root.playback-hint;
+                rating: root.current-rating;
+                rating-enabled: root.rating-enabled;
+                rating-busy: root.rating-busy;
+                rate(value) => { root.rate-song(value); }
                 artist => { root.open-artist(4, 0); }
                 artwork: root.current-artwork;
                 position: root.position;
@@ -1742,6 +1777,15 @@ export component AppWindow inherits Window {
                 restore => { root.collapse-player(); }
                 mini => { root.collapse-player(); }
                 toggle-queue => { root.queue-open = !root.queue-open; }
+            }
+        }
+        if !root.collapsed && root.feedback-notice != "" : Rectangle {
+            x: root.width - self.width - 18px; y: root.height - self.height - 122px;
+            width: min(360px, root.width - 36px); height: 76px;
+            background: root.surface; border-width: 1px; border-color: root.outline; border-radius: 8px;
+            HorizontalLayout { padding: 12px; spacing: 10px;
+                Text { horizontal-stretch: 1; text: root.feedback-notice; color: root.foreground; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
+                LibraryButton { width: 28px; height: 28px; light-mode: root.light-mode; caption: "×"; label: "Dismiss feedback message"; clicked => { root.dismiss-feedback(); } }
             }
         }
     }
