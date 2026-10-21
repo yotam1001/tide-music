@@ -1320,8 +1320,8 @@ export component AppWindow inherits Window {
                     spacing: 10px;
                     cross-axis-alignment: center;
                     Image { width: 28px; height: 28px; source: @image-url("assets/tide-icon.png"); image-fit: contain; }
-                    Text { width: 56px; text: "Tide"; color: root.foreground; font-size: 21px; font-weight: 700; }
-                    SearchMark { ink: root.secondary; }
+                    if root.width >= 780px : Text { width: 56px; text: "Tide"; color: root.foreground; font-size: 21px; font-weight: 700; }
+                    if root.width >= 780px : SearchMark { ink: root.secondary; }
                     LineEdit { horizontal-stretch: 1; height: 36px; font-size: 13px; enabled: root.browsing-enabled; text <=> root.source-input; placeholder-text: "Search music or paste a link"; accessible-label: "Search music or paste a YouTube link"; accepted(value) => { if value != "" { root.add-source(value); } } }
                     LibraryButton { width: 74px; light-mode: root.light-mode; enabled: root.browsing-enabled; caption: "Search"; label: "Search for music or open the pasted link"; clicked => { if root.source-input != "" { root.add-source(root.source-input); } } }
                     if root.jam-available : LibraryButton { width: 70px; light-mode: root.light-mode; caption: "Jam"; label: "Listen together with friends"; enabled: !root.artist-picker-open; active: root.jam-active || root.jam-open; clicked => { root.jam-open = !root.jam-open; } }

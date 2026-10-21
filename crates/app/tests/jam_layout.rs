@@ -123,7 +123,7 @@ fn guest_mini_keeps_leave_and_volume_reachable_and_blocks_transport() {
             } else if active {
                 "Hosting · 2 guests · private invite saved"
             } else {
-                "Private relay experiment"
+                "Start a Jam or paste an invite"
             }
             .into(),
         );
@@ -166,7 +166,25 @@ fn guest_mini_keeps_leave_and_volume_reachable_and_blocks_transport() {
                 .unwrap();
         }
     }
+    // The Jam action must not push Account or Settings outside the minimum
+    // supported window. Exercise the visible controls, not only the pixels.
     ui.set_collapsed(false);
+    ui.set_jam_active(false);
+    ui.set_jam_guest(false);
+    ui.set_jam_open(false);
+    draw(&window, 650, 420);
+    click(&ui, 600.0, 32.0);
+    assert!(ui.get_account_open(), "Account is clipped at minimum width");
+    ui.set_account_open(false);
+    click(&ui, 500.0, 32.0);
+    assert!(
+        ui.get_settings_open(),
+        "Settings is clipped at minimum width"
+    );
+    ui.set_settings_open(false);
+    click(&ui, 370.0, 32.0);
+    assert!(ui.get_jam_open(), "Jam is inaccessible at minimum width");
+    ui.set_jam_open(false);
     ui.set_jam_guest(true);
     ui.set_jam_open(false);
     let closed = draw(&window, 1140, 800);
