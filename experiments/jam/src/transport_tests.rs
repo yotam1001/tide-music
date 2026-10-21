@@ -504,6 +504,9 @@ fn only_host_can_lock_rotate_or_remove_and_removal_revokes_the_previous_invite()
     let replacement = client.remove_member(&room.room, &room.host, aid).unwrap();
     assert!(!replacement.matches(&room.invite));
     assert!(client.poll(&room.room, &a.member).is_err());
+    // Repeating an acknowledged removal simulates a lost first reply. It
+    // re-authenticates as host and yields a usable fresh code, not a stale one.
+    let replacement = client.remove_member(&room.room, &room.host, aid).unwrap();
     assert!(
         client.join(&invite).is_err(),
         "removed listener cannot rejoin with the old invite"

@@ -192,12 +192,18 @@ impl Client {
         if member == 0 || member > i32::MAX as u32 {
             return Err(Error::Invalid);
         }
-        let value: RotatedInvite = self.json(
+        let value: RotatedInvite = match self.json(
             "DELETE",
             &Self::path(room, &format!("/members/{member}"))?,
             Some(host),
             b"",
-        )?;
+        ) {
+            Ok(value) => value,
+            // A previous delete may have succeeded before its reply was lost.
+            // Recover a fresh invite only after re-authenticating as this host.
+            Err(Error::Unavailable) => return self.rotate_invite(room, host),
+            Err(error) => return Err(error),
+        };
         if value.invite.matches(host) {
             return Err(Error::Invalid);
         }

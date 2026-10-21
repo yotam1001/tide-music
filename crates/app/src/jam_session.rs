@@ -37,6 +37,7 @@ pub enum Start {
         code: Zeroizing<String>,
     },
 }
+#[derive(Clone, Copy)]
 pub enum Admin {
     Admission(bool),
     RotateInvite,
@@ -288,13 +289,18 @@ fn host(
     let mut sampled = Instant::now();
     let mut revision = 0u64;
     let mut failures = 0;
+    let mut pending_admin: Option<(Admin, u8)> = None;
     while !shared.stopped() {
-        let command = shared
-            .admin
-            .lock()
-            .map_err(|_| "Jam controls unavailable")?
-            .pop_front();
-        if let Some(command) = command {
+        let command = match pending_admin.take() {
+            Some(command) => Some(command),
+            None => shared
+                .admin
+                .lock()
+                .map_err(|_| "Jam controls unavailable")?
+                .pop_front()
+                .map(|command| (command, 0)),
+        };
+        if let Some((command, attempt)) = command {
             let result = match command {
                 Admin::Admission(open) => client
                     .set_admission(&room.room.room, &room.room.host, open)
@@ -312,10 +318,19 @@ fn host(
                     invite_code = invitation.to_code()?;
                 }
                 Ok(None) => {}
-                Err(_) => shared.event(Event::Problem {
-                    message: "Could not update room controls; try again",
-                    terminal: false,
-                }),
+                Err(_) => {
+                    if !matches!(command, Admin::Admission(_)) {
+                        // Never restore a possibly revoked code to the clipboard UI.
+                        invite_code = Zeroizing::new(String::new());
+                    }
+                    if attempt < 2 {
+                        pending_admin = Some((command, attempt + 1));
+                    }
+                    shared.event(Event::Problem {
+                        message: "Could not update room controls; retrying is bounded",
+                        terminal: false,
+                    });
+                }
             }
         }
         if let Some(frame) = shared
