@@ -17,6 +17,8 @@ mod artwork;
 mod artwork_view;
 mod connection;
 mod discovery;
+#[cfg(test)]
+mod history_feedback;
 #[cfg(feature = "experimental-jams")]
 mod jam;
 #[cfg(feature = "experimental-jams")]
