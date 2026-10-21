@@ -244,6 +244,27 @@ impl Drop for Membership<'_> {
         let _ = self.client.leave(&self.room, &self.token);
     }
 }
+fn wake_relay(shared: &Shared, client: &Client) -> Result<bool, &'static str> {
+    if !client.needs_wakeup() {
+        return Ok(!shared.stopped());
+    }
+    let began = Instant::now();
+    shared.event(Event::Problem {
+        message: "Starting the free Jam server; this can take about a minute",
+        terminal: false,
+    });
+    while !shared.stopped() && began.elapsed() < Duration::from_secs(90) {
+        if client.ready().is_ok() {
+            return Ok(!shared.stopped());
+        }
+        shared.wait();
+    }
+    if shared.stopped() {
+        Ok(false)
+    } else {
+        Err("Jam server did not start in time; retry shortly")
+    }
+}
 fn host(
     shared: &Shared,
     endpoint: &str,
@@ -263,12 +284,21 @@ fn host(
     if shared.stopped() {
         return Ok(());
     }
+    if shared_mode && !wake_relay(shared, &client)? {
+        return Ok(());
+    }
     let created = match &key {
         Some(key) => client.create_with_key(key),
         None if shared_mode && endpoint.is_remote() => client.create_shared(),
         None => client.create(),
     }
-    .map_err(|_| "Cannot create Jam; check the relay and operator key")?;
+    .map_err(|_| {
+        if shared_mode {
+            "Cannot create Jam; the server may be busy or its free allowance exhausted"
+        } else {
+            "Cannot create Jam; check the relay and operator key"
+        }
+    })?;
     drop(key);
     let room = Hosted {
         client: &client,
@@ -405,6 +435,9 @@ fn follow(shared: &Shared, invite: Invite) -> Result<(), &'static str> {
     let client = Client::new(&invite.endpoint)
         .map_err(|_| "Invite requires a canonical HTTPS relay or literal loopback address")?;
     if shared.stopped() {
+        return Ok(());
+    }
+    if !wake_relay(shared, &client)? {
         return Ok(());
     }
     let joined = client

@@ -53,6 +53,19 @@ impl Client {
     pub fn endpoint(&self) -> &str {
         self.endpoint.as_str()
     }
+    /// Render's free service can take about a minute to start. Wake it using
+    /// a credential-free GET before creating a room; never retry room creation.
+    pub fn needs_wakeup(&self) -> bool {
+        self.endpoint.is_remote() && self.endpoint.authority().ends_with(".onrender.com")
+    }
+    pub fn ready(&self) -> Result<(), Error> {
+        let bytes = self.request("GET", "/healthz", None, b"")?;
+        if bytes == b"tide-jam-ready-v1" {
+            Ok(())
+        } else {
+            Err(Error::Invalid)
+        }
+    }
     fn request(
         &self,
         method: &str,

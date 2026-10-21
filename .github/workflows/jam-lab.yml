@@ -23,6 +23,23 @@ on:
 permissions:
   contents: read
 jobs:
+  render-container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the free Render relay container
+        run: docker build -f experiments/jam/render/Dockerfile -t tide-jam-render .
+      - name: Exercise proxy isolation, quotas and process shutdown
+        run: |
+          docker run -d --name tide-render-test -p 127.0.0.1:18765:10000 -e RENDER_EXTERNAL_HOSTNAME=relay-test.onrender.com tide-jam-render
+          python3 experiments/jam/render/check_container.py
+      - name: Diagnose disposable container
+        if: failure()
+        run: docker logs --tail 30 tide-render-test
+      - name: Stop disposable container
+        if: always()
+        run: docker rm -f tide-render-test || true
   shared-relay-linux:
     runs-on: ubuntu-latest
     timeout-minutes: 15

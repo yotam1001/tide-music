@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: tide-jam-trial
+    runtime: docker
+    plan: free
+    region: frankfurt
+    branch: codex/jam-feasibility
+    dockerfilePath: ./experiments/jam/render/Dockerfile
+    dockerContext: .
+    healthCheckPath: /healthz
+    autoDeployTrigger: off
