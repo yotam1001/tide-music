@@ -11,6 +11,23 @@ fn timeline() -> Timeline {
         loading: false,
     }
 }
+#[test]
+fn maximum_queue_and_counters_fit_the_existing_transport_limit() {
+    let mut timeline = timeline();
+    timeline.queue = vec![VideoId::parse("abcdefghijk").unwrap(); MAX_QUEUE];
+    timeline.index = MAX_QUEUE - 1;
+    timeline.revision = u64::MAX;
+    timeline.play_id = u64::MAX;
+    timeline.position_ms = MAX_POSITION_MS;
+    timeline.validate().unwrap();
+    let view = View {
+        timeline: Some(timeline),
+        age_ms: 7_200_000,
+        members: 8,
+    };
+    view.validate().unwrap();
+    assert!(serde_json::to_vec(&view).unwrap().len() < MAX_BODY);
+}
 fn view() -> View {
     View {
         timeline: Some(timeline()),

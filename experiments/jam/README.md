@@ -23,7 +23,7 @@ public service is provisioned by these changes.
 
 - Private in-memory rooms, separate host/invite/member capabilities, at most eight
   guests. Only the host can publish queue/index/pause/position state or close a room.
-- Shared queues containing up to 100 strict YouTube video IDs. No remote paths,
+- Shared queues containing up to 2,000 strict YouTube video IDs. No remote paths,
   URLs, signed streams, artwork requests or arbitrary player commands are accepted.
 - Generation-aware loading, late joining, drift correction, host pause/seek/skip,
   repeated-track reloads, stale-host pausing and bounded connection retries.
@@ -102,7 +102,7 @@ terminals, run:
 # Terminal 1: relay, bound only to this computer
 experiments/jam/target/debug/tide-jam-lab.exe relay --port 8765
 
-# Terminal 2: host. Queue file: 1–100 YouTube IDs, one per line, not links.
+# Terminal 2: host. Queue file: 1–2,000 YouTube IDs, one per line, not links.
 experiments/jam/target/debug/tide-jam-lab.exe host --endpoint http://127.0.0.1:8765 --queue-file <private-queue-file> --invite-file <private-folder>/test.jam-invite.json --seconds 300 --mute
 
 # Terminal 3: independent guest player using the host-created invite
@@ -131,7 +131,7 @@ cargo run -p tide-music --locked --features experimental-jams
 ```
 
 This is a developer build, not the normal installer. Open **Jam** in the header.
-Hosting shares the playing YouTube song and up to 99 upcoming tracks. Enter the
+Hosting shares the playing YouTube song and up to 1,999 upcoming tracks. Enter the
 trusted relay endpoint; for HTTPS choose its operator key, then save a **new**
 private guest invite. Send only that invite to intended guests. Joining opens a
 trusted invite file, without reading the operator key. Setup of the private relay

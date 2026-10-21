@@ -3,7 +3,9 @@ use std::fmt;
 use subtle::ConstantTimeEq;
 use zeroize::Zeroizing;
 
-pub const MAX_QUEUE: usize = 100;
+// Matches Tide's existing local queue cap. Strict 11-byte IDs keep even the
+// complete View below MAX_BODY; no artwork, URLs or metadata are included.
+pub const MAX_QUEUE: usize = 2000;
 pub const MAX_BODY: usize = 32 * 1024;
 pub const MAX_REQUESTS: usize = 32;
 
