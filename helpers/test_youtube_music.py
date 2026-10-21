@@ -594,6 +594,7 @@ class LoginTests(unittest.TestCase):
     def test_client_sets_browser_auth_marker_and_network_timeout(self):
         api = MagicMock()
         requests = MagicMock()
+        transport = requests.Session.return_value.request
         helpers = SimpleNamespace(initialize_headers=lambda: {"origin": MUSIC_URL})
         with patch.dict("sys.modules", {"ytmusicapi": api, "ytmusicapi.helpers": helpers, "requests": requests}):
             create_client({"cookie": "__Secure-3PAPISID=fixture", "x-goog-authuser": "0"})
@@ -601,6 +602,9 @@ class LoginTests(unittest.TestCase):
         self.assertEqual(options["auth"]["authorization"], "SAPISIDHASH")
         self.assertIn("x-goog-visitor-id", options["auth"])
         self.assertEqual(requests.Session.return_value.request.keywords["timeout"], 20)
+        requests.Session.return_value.request("GET", MUSIC_URL, allow_redirects=True, timeout=None)
+        self.assertFalse(transport.call_args.kwargs["allow_redirects"])
+        self.assertEqual(transport.call_args.kwargs["timeout"], 20)
 
     def test_cookie_rotation_updates_next_request_and_signing_cookie(self):
         requests = MagicMock()

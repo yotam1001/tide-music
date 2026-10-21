@@ -276,7 +276,16 @@ def create_client(auth):
     import requests
     from functools import partial
     session = requests.Session()
-    session.request = partial(session.request, timeout=20, allow_redirects=False)
+    transport = session.request
+
+    def contained_request(*args, **kwargs):
+        # Session.get supplies allow_redirects=True itself, which would override
+        # a partial's default. Enforce the boundary at the final request call.
+        kwargs["allow_redirects"] = False
+        kwargs["timeout"] = 20
+        return transport(*args, **kwargs)
+
+    session.request = partial(contained_request, timeout=20)
     headers = initialize_headers()
     headers.update(auth)
     # Avoid ytmusicapi's unrelated anonymous webpage bootstrap. Captured browser
