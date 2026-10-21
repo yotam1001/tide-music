@@ -3,6 +3,7 @@ use super::*;
 use tide_core::Artist;
 
 pub(super) struct Origin {
+    playlist: Option<tide_provider::PlaylistDetails>,
     open: bool,
     title: String,
     artist: bool,
@@ -53,7 +54,9 @@ pub(super) fn open(
         return;
     }
     if s.artist_origin.is_none() {
+        let playlist = music_feedback::take_playlist(s, u);
         s.artist_origin = Some(Origin {
+            playlist,
             open: u.get_detail_open(),
             title: u.get_detail_title().to_string(),
             artist: u.get_detail_is_artist(),
@@ -146,6 +149,7 @@ pub(super) fn back(s: &mut State, u: &AppWindow) {
     u.set_detail_busy(false);
     if let Some(origin) = s.artist_origin.take() {
         s.detail_tracks = origin.tracks;
+        music_feedback::restore_playlist(s, u, origin.playlist);
         u.set_detail_title(origin.title.into());
         u.set_detail_is_artist(origin.artist);
         u.set_detail_note(origin.note.into());
@@ -154,6 +158,7 @@ pub(super) fn back(s: &mut State, u: &AppWindow) {
         u.set_search_open(origin.search);
         u.set_queue_open(origin.queue);
     } else {
+        music_feedback::set_playlist(s, u, None, None);
         u.set_detail_open(false);
     }
     refresh_content_models(s, u);

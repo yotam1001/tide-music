@@ -319,6 +319,7 @@ fn request_library(
     };
     s.library_cancel.store(false, Ordering::Release);
     if let LibraryAction::Preview { title } = &action {
+        music_feedback::set_playlist(s, u, None, None);
         s.artist_origin = None;
         u.set_detail_is_artist(false);
         u.set_detail_note("".into());
@@ -3255,7 +3256,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 refresh_content_models(&s, &u);
                             }
                         }
-                        Ok(tide_provider::Response::Tracks { tracks, truncated, playlist: _ }) => {
+                        Ok(tide_provider::Response::Tracks { tracks, truncated, playlist }) => {
                             let tracks: Vec<Track> = tracks
                                 .into_iter()
                                 .take(2000)
@@ -3319,7 +3320,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 continue;
                             }
                             if matches!(s.library_action, LibraryAction::Preview { .. }) {
+                                let playlist_id = match s.library_request.as_ref() {
+                                    Some(tide_provider::Request::Playlist { id }) => Some(id.clone()),
+                                    _ => None,
+                                };
                                 s.detail_tracks = tracks;
+                                music_feedback::set_playlist(&mut s, &u, playlist, playlist_id.as_deref());
                                 u.set_detail_busy(false);
                                 refresh_content_models(&s, &u);
                                 u.set_account_status(

@@ -1,6 +1,6 @@
 //! Collection operations are independent of browsing and playback workers.
 use super::*;
-use tide_provider::{FeedbackOperation, FeedbackRequest, Rating, SavedConnection};
+use tide_provider::{FeedbackOperation, FeedbackRequest, PlaylistDetails, Rating, SavedConnection};
 
 struct Work {
     handle: std::thread::JoinHandle<()>,
@@ -17,6 +17,8 @@ pub struct Music {
     current_video: Option<String>,
     inspected: bool,
     notice_until: Option<Instant>,
+    playlist: Option<PlaylistDetails>,
+    detail_revision: u64,
 }
 impl Music {
     pub fn new(synthetic: bool) -> Self {
@@ -28,6 +30,8 @@ impl Music {
             current_video: None,
             inspected: false,
             notice_until: None,
+            playlist: None,
+            detail_revision: 0,
         }
     }
     pub fn shutdown(&mut self) {
@@ -147,6 +151,41 @@ fn notice(s: &mut State, u: &AppWindow, text: &str) {
     s.music_feedback.notice_until = Some(Instant::now() + Duration::from_secs(5));
 }
 
+pub fn set_playlist(
+    s: &mut State,
+    u: &AppWindow,
+    details: Option<PlaylistDetails>,
+    id: Option<&str>,
+) {
+    s.music_feedback.detail_revision = s.music_feedback.detail_revision.wrapping_add(1);
+    s.music_feedback.playlist =
+        details.filter(|d| id.is_some_and(|id| d.valid_for(id, s.detail_tracks.len())));
+    let editable = s
+        .music_feedback
+        .playlist
+        .as_ref()
+        .is_some_and(|p| p.editable);
+    u.set_detail_editable(editable);
+    let entries: Vec<bool> = s
+        .music_feedback
+        .playlist
+        .as_ref()
+        .map(|p| p.entries.iter().map(|e| editable && e.is_some()).collect())
+        .unwrap_or_default();
+    u.set_detail_editable_entries(ModelRc::new(VecModel::from(entries)));
+}
+
+pub fn take_playlist(s: &mut State, u: &AppWindow) -> Option<PlaylistDetails> {
+    let context = s.music_feedback.playlist.take();
+    set_playlist(s, u, None, None);
+    context
+}
+
+pub fn restore_playlist(s: &mut State, u: &AppWindow, context: Option<PlaylistDetails>) {
+    let id = context.as_ref().map(|p| p.id.clone());
+    set_playlist(s, u, context, id.as_deref());
+}
+
 pub fn tick(s: &mut State, u: &AppWindow) {
     if s.music_feedback.identity != s.saved_connection {
         if let Some(work) = &s.music_feedback.worker {
@@ -156,6 +195,7 @@ pub fn tick(s: &mut State, u: &AppWindow) {
         s.music_feedback.identity = s.saved_connection.clone();
         s.music_feedback.current_video = None;
         s.music_feedback.inspected = false;
+        set_playlist(s, u, None, None);
         u.set_current_rating(0);
         u.set_history_feedback_status(
             if s.settings.history_feedback {

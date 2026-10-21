@@ -116,6 +116,7 @@ pub struct PlaylistDetails {
 }
 impl PlaylistDetails {
     pub fn valid_for(&self, id: &str, tracks: usize) -> bool {
+        let mut seen = std::collections::HashSet::new();
         self.id == id
             && valid_identifier(id, 160)
             && tracks <= tide_core::MAX_QUEUE_TRACKS
@@ -124,7 +125,7 @@ impl PlaylistDetails {
                 .entries
                 .iter()
                 .flatten()
-                .all(|entry| valid_identifier(entry, 256))
+                .all(|entry| valid_identifier(entry, 256) && seen.insert(entry))
     }
 }
 
@@ -166,6 +167,11 @@ mod tests {
         assert!(!details.valid_for("PLfixture", 1));
         details.entries[1] = Some("../file".into());
         assert!(!details.valid_for("PLfixture", 2));
+        details.entries[1] = details.entries[0].clone();
+        assert!(
+            !details.valid_for("PLfixture", 2),
+            "Ambiguous entry IDs must not authorize removal"
+        );
         assert!(!FeedbackRequest::History {
             video_id: "https://example.test".into()
         }

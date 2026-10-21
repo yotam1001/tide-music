@@ -1212,6 +1212,8 @@ export component AppWindow inherits Window {
     in property <string> feedback-notice;
     callback rate-song(int);
     callback dismiss-feedback();
+    in property <bool> detail-editable: false;
+    in property <[bool]> detail-editable-entries;
     callback apply-shortcuts();
     in property <[TrackRow]> rows;
     in property <int> current-index;
