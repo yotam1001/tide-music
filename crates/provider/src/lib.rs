@@ -2144,7 +2144,7 @@ mod tests {
                 "action":"feedback", "request":{"kind":"rate", "video_id":"K4DyBUG242c", "rating":"LIKE"}
             })
         );
-        let reply = decode_helper_reply(br#"{"type":"error","code":"feedback_unconfirmed","refreshed_headers":{"cookie":"__Secure-3PAPISID=fresh","x-goog-authuser":"1"}}"#).unwrap();
+        let reply = decode_helper_reply(br#"{"type":"error","code":"feedback_unconfirmed","refreshed_headers":{"cookie":"__Secure-3PAPISID=fresh", "x-goog-authuser":"1"}}"#).unwrap();
         assert!(reply.refreshed.0.is_some());
     }
 
@@ -2161,7 +2161,7 @@ mod tests {
             directory: directory.clone(),
         };
         provider
-            .import_bytes(br#"{"cookie":"__Secure-3PAPISID=old","x-goog-authuser":"1"}"#)
+            .import_bytes(br#"{"cookie":"__Secure-3PAPISID=old", "x-goog-authuser":"1"}"#)
             .unwrap();
         let mut expected = provider.saved_connection().unwrap().unwrap();
         expected.account_index = 2;
