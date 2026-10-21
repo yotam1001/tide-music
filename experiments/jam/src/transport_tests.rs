@@ -455,8 +455,8 @@ fn shared_https_needs_no_operator_secret_and_keeps_host_guest_roles() {
     assert!(client.poll(&room.room, &room.host).is_err());
     client.create_shared().unwrap();
     assert!(
-        client.create_shared().is_err(),
-        "closing rooms must not bypass creation rate limits"
+        matches!(client.create_shared(), Err(Error::Limited)),
+        "capacity must be reported distinctly from account/network failure"
     );
 }
 #[test]

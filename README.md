@@ -13,10 +13,10 @@ Play YouTube Music, bring in your playlists and recommendations, and keep the
 player out of the way with a mini mode. Tide uses native audio playback rather
 than keeping an embedded browser running.
 
-**Windows release:** [Download TideSetup.exe](https://github.com/yotam1001/tide-music/releases/download/v0.1.3/TideSetup.exe)
-from [v0.1.3](https://github.com/yotam1001/tide-music/releases/tag/v0.1.3).
+**Windows release:** [Download TideSetup.exe](https://github.com/yotam1001/tide-music/releases/latest/download/TideSetup.exe)
+from [the latest stable release](https://github.com/yotam1001/tide-music/releases/latest).
 For YouTube Music, also download the matching
-[Chrome companion](https://github.com/yotam1001/tide-music/releases/download/v0.1.3/tide-browser-chromium.zip)
+[Chrome companion](https://github.com/yotam1001/tide-music/releases/latest/download/tide-browser-chromium.zip)
 and follow the connection guide below. The Windows installer is currently unsigned.
 
 ![Tide's dark interface](docs/screenshots/full.png)
@@ -49,6 +49,7 @@ companion without uninstalling Tide. [Installation help](docs/INSTALLATION.md)
 ## What you can do
 
 - Play songs, playlists and local audio with native playback.
+- Listen together in Jams: invite friends, share a queue and stay in sync.
 - Select an artist name to browse their top songs, then play, shuffle or queue.
 - See loading/retry feedback and the observed audio format in the player.
 - See your playlists, Liked Songs and personalized recommendations.
@@ -60,13 +61,24 @@ companion without uninstalling Tide. [Installation help](docs/INSTALLATION.md)
 Theme is the sun/moon button in the header. **Account** is beside **Settings**.
 **Queue** sits beside the player controls. [Learn the controls](docs/USING_TIDE.md)
 
-## Before you try the preview
+## Listen together
+
+Both people install the latest Tide and connect their own YouTube Music accounts.
+Play a song, choose **Jam → Start Jam → Copy invite**, and send the invite to your
+friend. They paste it into **Jam → Join Jam**. Guests can browse and press **+**
+to add songs; the host controls playback. Your volume stays local.
+
+No browser needs to remain open. The free shared server supports two rooms at
+once and may take about a minute to wake. **Advanced setup** supports your own
+server. Ending a hosted Jam keeps local music playing; leaving as a guest restores
+your original queue paused.
+
+## Connection and privacy
 
 **YouTube integration is unofficial.** Service changes can affect playback and
 sign-in. Chrome import has worked in a local test, but fresh-user onboarding and
 long-term session reliability still need validation. Zen's native connection is
-unresolved; Edge and Firefox are not recommended setup paths yet. Experimental
-Jams are not included in the main app.
+unresolved; Edge and Firefox are not recommended setup paths yet. Jams are included in Tide 0.2.0 and start only when you host or join.
 
 **Your existing account is used.** Tide reads your library; it does not move it
 to another service or download your whole collection. Premium availability
