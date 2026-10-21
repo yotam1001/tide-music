@@ -17,7 +17,6 @@ mod artwork;
 mod artwork_view;
 mod connection;
 mod discovery;
-#[cfg(test)]
 mod history_feedback;
 #[cfg(feature = "experimental-jams")]
 mod jam;
@@ -25,6 +24,7 @@ mod jam;
 mod jam_session;
 mod listening;
 mod metadata;
+mod music_feedback;
 #[cfg(any(windows, test))]
 mod output_recovery;
 mod performance;
@@ -47,6 +47,8 @@ struct Settings {
     #[serde(default = "enabled_by_default")]
     media_controls: bool,
     #[serde(default)]
+    history_feedback: bool,
+    #[serde(default)]
     shortcuts: [String; 3],
     volume: Option<f64>,
     repeat: bool,
@@ -62,6 +64,7 @@ impl Default for Settings {
             autoplay: true,
             check_updates: true,
             media_controls: true,
+            history_feedback: false,
             shortcuts: Default::default(),
             volume: None,
             repeat: false,
@@ -105,6 +108,7 @@ impl LibraryAction {
     }
 }
 struct State {
+    music_feedback: music_feedback::Music,
     #[cfg(feature = "experimental-jams")]
     jam: jam::Jam,
     settings: Settings,
@@ -1703,6 +1707,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(e) => (None, Some(e)),
     };
     let state = Rc::new(RefCell::new(State {
+        music_feedback: music_feedback::Music::new(
+            test_mode
+                || connection_smoke.is_some()
+                || smoke_autoplay
+                || smoke_early_skip
+                || listening_seconds.is_some(),
+        ),
         #[cfg(feature = "experimental-jams")]
         jam: jam::Jam::default(),
         settings,
@@ -1791,6 +1802,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let picker_busy = Rc::new(PickerState::default());
     #[cfg(feature = "experimental-jams")]
     jam::install(&state, &ui, &picker_busy);
+    music_feedback::install(&state, &ui);
     let (tx, rx) = mpsc::sync_channel(2);
     let (library_tx, library_rx) = mpsc::sync_channel::<LibraryResult>(2);
     {
@@ -3394,6 +3406,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 #[cfg(feature = "experimental-jams")]
                 jam::tick(&mut s, &u);
+                music_feedback::tick(&mut s, &u);
                 let artwork_changed = s.artwork.borrow_mut().poll();
                 if artwork_changed {
                     refresh(&u, &s);
@@ -4301,6 +4314,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // UI callbacks and async pickers can retain State after the event loop ends.
     // Join the playback worker now, rather than waiting for the last State owner
     // to disappear, so native helpers finish before the application returns.
+    s.music_feedback.shutdown();
     if let Some(engine) = s.engine.take() {
         drop(engine);
     }

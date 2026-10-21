@@ -1178,6 +1178,9 @@ export component AppWindow inherits Window {
     in-out property <string> shortcut-previous;
     in property <string> shortcut-status: "Optional. Leave blank to disable a shortcut.";
     callback toggle-media-controls();
+    in property <bool> history-feedback-enabled: false;
+    in property <string> history-feedback-status;
+    callback toggle-history-feedback();
     callback apply-shortcuts();
     in property <[TrackRow]> rows;
     in property <int> current-index;
@@ -1552,6 +1555,11 @@ export component AppWindow inherits Window {
                                 LineEdit { height: 36px; text <=> root.shortcut-previous; placeholder-text: "Disabled"; accessible-label: "Global previous song shortcut"; }
                                 LibraryButton { height: 36px; caption: "Apply shortcuts"; label: "Save and register global shortcuts"; light-mode: root.light-mode; clicked => { root.apply-shortcuts(); } }
                                 Text { text: root.shortcut-status; color: root.secondary; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
+                                Rectangle { height: 1px; background: root.outline; }
+                                Text { height: 20px; text: "Recommendations"; color: root.foreground; font-size: 15px; font-weight: 600; }
+                                LibraryButton { height: 40px; quiet: false; active: root.history-feedback-enabled; caption: root.history-feedback-enabled ? "Listening history: on" : "Listening history: off"; label: "Toggle sending actual listening to YouTube Music history"; light-mode: root.light-mode; clicked => { root.toggle-history-feedback(); } }
+                                Text { height: 48px; text: "Turn this on to send songs you actually hear to your selected YouTube Music account. History and your ratings can help its recommendations adapt."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
+                                Text { text: root.history-feedback-status; color: root.secondary; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
                                 Rectangle { height: 1px; background: root.outline; }
                                 Text { height: 20px; text: "Updates"; color: root.foreground; font-size: 15px; font-weight: 600; }
                                 Text { text: root.update-status; color: root.secondary; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
