@@ -9,6 +9,7 @@ pub enum Error {
     Unavailable,
     Invalid,
     Transport,
+    Limited,
 }
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -16,6 +17,7 @@ impl std::fmt::Display for Error {
             Self::Unavailable => "Jam room or membership is unavailable",
             Self::Invalid => "Jam protocol validation failed",
             Self::Transport => "Jam relay did not respond safely",
+            Self::Limited => "Jam server capacity or request limit reached",
         })
     }
 }
@@ -94,6 +96,7 @@ impl Client {
         }
         let mut response = self.agent.run(request).map_err(|error| match error {
             ureq::Error::StatusCode(404 | 401 | 403) => Error::Unavailable,
+            ureq::Error::StatusCode(429 | 409) => Error::Limited,
             _ => Error::Transport,
         })?;
         if !response.status().is_success() {

@@ -91,15 +91,19 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Private file probe build failed' }
           python experiments/jam/check-private-pipe.py --cargo-artifacts .local/jam-pipe-build.jsonl
           if ($LASTEXITCODE -ne 0) { throw 'Private file cancellation probe failed' }
-      - name: Verify default isolation and callback ownership without a desktop window
+      - name: Verify optional transport isolation and callback ownership without a desktop window
         shell: pwsh
         run: |
-          $taskDefaultTree = cargo tree -p tide-music --locked --edges normal --prefix none
+          $taskDefaultTree = cargo tree -p tide-music --no-default-features --locked --edges normal --prefix none
           if ($LASTEXITCODE -ne 0) { throw 'Default dependency tree failed' }
-          if ($taskDefaultTree | Select-String '^tide-jam-lab v') { throw 'Default build links the Jam transport' }
+          if ($taskDefaultTree | Select-String '^tide-jam-lab v') { throw 'Opt-out build links the Jam transport' }
           $taskJamTree = cargo tree -p tide-music --locked --features experimental-jams --edges normal --prefix none
           if ($LASTEXITCODE -ne 0) { throw 'Experimental dependency tree failed' }
-          if ($taskJamTree | Select-String '^axum v') { throw 'Experimental player links the relay server' }
+          if ($taskJamTree | Select-String '^axum v') { throw 'Player links the relay server' }
+          $taskStableTree = cargo tree -p tide-music --locked --edges normal --prefix none
+          if ($LASTEXITCODE -ne 0) { throw 'Stable dependency tree failed' }
+          if (!($taskStableTree | Select-String '^tide-jam-lab v')) { throw 'Stable player is missing Jams' }
+          if ($taskStableTree | Select-String '^axum v') { throw 'Stable player links the relay server' }
           ./experiments/jam/prepare-native.ps1
           $env:TIDE_RUNTIME_DIR = (Join-Path $PWD '.local/jam-native-runtime')
           cargo run -p tide-music --locked --features experimental-jams -- --smoke-jam-ownership

@@ -317,8 +317,10 @@ fn host(
         None if shared_mode && endpoint.is_remote() => client.create_shared(),
         None => client.create(),
     }
-    .map_err(|_| {
-        if shared_mode {
+    .map_err(|error| {
+        if shared_mode && error == Error::Limited {
+            "Free shared server full or rate-limited. Retry later, or use your own server under Advanced setup."
+        } else if shared_mode {
             "Cannot create Jam; the server may be busy or its free allowance exhausted"
         } else {
             "Cannot create Jam; check the relay and operator key"
@@ -492,6 +494,7 @@ fn follow(shared: &Shared, invite: Invite) -> Result<(), &'static str> {
         if let Some(video) = video {
             let message = match client.enqueue(&membership.room, &membership.token, video) {
                 Ok(()) => "Song sent to the shared queue",
+                Err(Error::Limited) => "Queue request limit reached. Wait before adding another song.",
                 Err(_) => "Song addition was not confirmed. Check the queue before retrying; the host may need a newer build or the room may be busy.",
             };
             if let Ok(mut notice) = shared.notice.lock() {

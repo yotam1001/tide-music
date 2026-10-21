@@ -1,5 +1,5 @@
-//! Native controls for an opt-in developer build. Normal releases do not link
-//! this module, the network worker or the Jam protocol dependency.
+//! Native listening-together controls. The coordination worker starts only
+//! when the user explicitly hosts or joins a room.
 use super::*;
 use crate::jam_session::{Admin, Event, Session, Start};
 use tide_jam_lab::{
@@ -307,7 +307,8 @@ pub fn account_changing(s: &mut State, u: &AppWindow) {
 }
 pub fn install(state: &Rc<RefCell<State>>, ui: &AppWindow, picker: &Rc<PickerState>) {
     ui.set_jam_available(true);
-    ui.set_jam_status("Choose a shared or self-hosted Jam server".into());
+    ui.set_jam_endpoint("https://tide-jam-trial.onrender.com".into());
+    ui.set_jam_status("Listen together with friends".into());
     {
         let state = state.clone();
         let weak = ui.as_weak();

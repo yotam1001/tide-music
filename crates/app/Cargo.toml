@@ -6,6 +6,8 @@ license.workspace = true
 build = "build.rs"
 
 [features]
+default = ["jams"]
+jams = ["experimental-jams"]
 experimental-jams = ["dep:tide-jam-lab", "dep:zeroize", "dep:arboard"]
 
 [dependencies]

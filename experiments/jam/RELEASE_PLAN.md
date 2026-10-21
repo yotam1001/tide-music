@@ -1,30 +1,39 @@
-# Jams release plan
+# Tide 0.2.0 Jams release checks
 
-Goal: friends on separate PCs listen to the same queue with synchronized playback, with a simple Start / Copy invite / Paste and Join flow.
+The owner confirmed synchronized listening with a friend and approved integration
+into the stable installer on 22 October 2026. Hosting/joining remains an explicit
+user action; normal playback starts no Jam networking worker.
 
-## Cost and distribution
+## Candidate behavior
 
-Tide and Jams stay free. No subscription, payment, third-party account key or paid-hosting commitment is introduced. A shared relay is the preferred default only if it can be operated sustainably without charging users. Self-hosting is a first-class fallback. No shared service has been provisioned or deployed. Do not put server operator keys in the app or invite codes.
+- Start Jam / Copy invite / Paste and Join using the preconfigured free relay.
+- Guests browse their own music and add video IDs to the shared queue using +.
+- Host keeps transport, queue ordering/removal and listener moderation controls.
+- Queue additions are limited to five/minute/member and 32 pending/room, with
+  host-only acknowledgements, replay protection and membership cleanup.
+- Up to 2,000 songs fit below the existing 32 KB message limit.
+- Ending the hosted Jam preserves playback and account state. Guest Leave
+  restores the original local queue paused. Browsing failures name their view.
+- Google credentials, stream URLs and audio never enter the relay protocol.
+- The relay remains free, with two simultaneous shared rooms, a bounded wake
+  flow and an Advanced self-hosted-server alternative. No paid scaling/card.
 
-## Current development batch
+## Checks before publishing the candidate
 
-- Integrate public 0.1.3 UI, artists, output recovery, updates and performance changes into the opt-in Jams branch.
-- Code-based hosting/joining and explicit Copy invite, with file/operator setup under Advanced.
-- Standalone Linux-capable shared relay with TLS-proxy configuration; bounded anonymous room creation, per-peer and global limits, no remote plaintext listener.
-- Guest-only invite codes, strict URL/field/size validation, account-independent coordination.
-- Host-only participant removal, room lock/unlock and invite replacement. Removing a listener revokes their membership and the old invite, preventing reuse of that code to rejoin. Participants use anonymous Listener IDs, not Google account names.
-- Up to eight-hour active rooms; abandoned rooms reclaimed after two minutes. Paused hosts continue heartbeats.
-- Hosted tests for real TLS protocol, independent native players, code flow, role isolation, quotas, fake-clock four-hour lifetime and UI ownership.
+1. Matching standard Windows and Jams CI, native ownership/input/rendering tests,
+   TLS/proxy/container tests and staged/fresh-remote privacy scans pass.
+2. Verify the normal installer actually includes Jams, performs clean install,
+   update and removal, preserves account/queue settings and packages licenses
+   for the production dependency graph.
+3. Verify current live HTTPS guest addition, role isolation, acknowledgement,
+   membership removal, queue/message bounds and free-server quota behavior.
+4. Inspect the candidate native UI at full, compact and mini sizes and preserve
+   existing Tide branding. No blank/dim Jam backdrop.
+5. Merge only the verified candidate, publish its installer and checksums as a
+   stable GitHub release, verify anonymous downloads and stable update discovery.
+6. Publish the authorized release tweet with its generated graphic after the
+   public download is available.
 
-## Gates before a public release
-
-1. All matching hosted tests and normal-installer isolation checks pass.
-2. Validate the new host moderation/admission controls end to end in the native UI. Invite reuse can still occupy slots until the host removes the listener/locks the room; consider explicit host approval before a broad untrusted public launch.
-3. Shared queue UX: decide and implement which guest additions are permitted while retaining host authority over playback and timing.
-4. Measure transitions, late joins, seek/pause, unavailable tracks and reconnect behavior with two independent authenticated players on distinct PCs/networks. Include long sessions and sleep/wake recovery.
-5. Select free shared hosting (verify current limits and terms) or document a usable self-host path. Validate the actual deployed TLS/proxy, resource limits and disabled sensitive logs. Set a default endpoint only after this.
-6. Inspect native layouts at full/compact/mini sizes, keyboard access and pending/error states. Verify failed joins and Leave preserve local queue/account/volume.
-7. Check account/stream isolation and invite privacy in source, captured protocol, logs, package contents and installer setup. No Google authentication data or signed media URLs can pass through the relay.
-8. Package a new private trial for owner review. Jams PR remains draft/unmerged and stable installer excludes it until approved.
-
-A fake-clock multi-hour test proves expiry logic, not a real multi-hour listening session. Local/synthetic fixtures do not establish two-PC authenticated playback.
+The next feature release is separate: likes/dislikes, owned-playlist editing and
+real listening-history feedback. Spotify support requires its own API/playback
+and account validation before implementation or marketing.

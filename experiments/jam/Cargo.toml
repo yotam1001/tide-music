@@ -5,7 +5,7 @@ edition = "2021"
 license = "MIT"
 publish = false
 
-# Deliberately isolated: normal Tide builds do not compile or run the lab.
+# Player builds link only the protocol/client; relay and CLI features stay isolated.
 [workspace]
 
 [features]
