@@ -158,6 +158,51 @@ impl Client {
         view.validate().map_err(|_| Error::Invalid)?;
         Ok(view)
     }
+    pub fn host_view(&self, room: &str, host: &Secret) -> Result<HostView, Error> {
+        let view: HostView = self.json("GET", &Self::path(room, "/members")?, Some(host), b"")?;
+        view.validate().map_err(|_| Error::Invalid)?;
+        Ok(view)
+    }
+    pub fn listener_id(&self, room: &str, member: &Secret) -> Result<u32, Error> {
+        let value: ListenerId = self.json(
+            "GET",
+            &Self::path(room, "/members/self")?,
+            Some(member),
+            b"",
+        )?;
+        if value.id == 0 || value.id > i32::MAX as u32 {
+            return Err(Error::Invalid);
+        }
+        Ok(value.id)
+    }
+    pub fn set_admission(&self, room: &str, host: &Secret, open: bool) -> Result<(), Error> {
+        let body = serde_json::to_vec(&Admission { open }).map_err(|_| Error::Invalid)?;
+        self.request("PUT", &Self::path(room, "/admission")?, Some(host), &body)
+            .map(|_| ())
+    }
+    pub fn rotate_invite(&self, room: &str, host: &Secret) -> Result<Secret, Error> {
+        let value: RotatedInvite =
+            self.json("POST", &Self::path(room, "/invite")?, Some(host), b"{}")?;
+        if value.invite.matches(host) {
+            return Err(Error::Invalid);
+        }
+        Ok(value.invite)
+    }
+    pub fn remove_member(&self, room: &str, host: &Secret, member: u32) -> Result<Secret, Error> {
+        if member == 0 || member > i32::MAX as u32 {
+            return Err(Error::Invalid);
+        }
+        let value: RotatedInvite = self.json(
+            "DELETE",
+            &Self::path(room, &format!("/members/{member}"))?,
+            Some(host),
+            b"",
+        )?;
+        if value.invite.matches(host) {
+            return Err(Error::Invalid);
+        }
+        Ok(value.invite)
+    }
     pub fn close(&self, room: &str, host: &Secret) -> Result<(), Error> {
         self.request("DELETE", &Self::path(room, "")?, Some(host), b"")
             .map(|_| ())

@@ -30,10 +30,13 @@ type Failure = (StatusCode, &'static str);
 const MISSING: Failure = (StatusCode::NOT_FOUND, "Room or membership unavailable");
 
 struct Member {
+    id: u32,
     token: Secret,
     seen: u64,
 }
 struct Room {
+    open: bool,
+    next_member: u32,
     peer: Option<u64>,
     host: Secret,
     invite: Secret,
@@ -110,6 +113,8 @@ impl Store {
         self.rooms.insert(
             result.room.clone(),
             Room {
+                open: true,
+                next_member: 1,
                 peer,
                 host: result.host.clone(),
                 invite: result.invite.clone(),
@@ -131,15 +136,96 @@ impl Store {
         if !room.invite.matches(invite) {
             return Err(MISSING);
         }
+        if !room.open {
+            return Err((StatusCode::CONFLICT, "Room is locked"));
+        }
         if room.members.len() >= 8 {
             return Err((StatusCode::CONFLICT, "Room is full"));
         }
         let token = Secret::random().map_err(internal)?;
+        let id = room.next_member;
+        room.next_member = id
+            .checked_add(1)
+            .filter(|id| *id <= i32::MAX as u32)
+            .ok_or(internal(""))?;
         room.members.push(Member {
+            id,
             token: token.clone(),
             seen: now,
         });
         Ok(Joined { member: token })
+    }
+    fn hosted(&mut self, id: &str, host: &Secret, now: u64) -> Result<&mut Room, Failure> {
+        self.clean(now);
+        let room = self.rooms.get_mut(id).ok_or(MISSING)?;
+        if !room.host.matches(host) {
+            return Err(MISSING);
+        }
+        Ok(room)
+    }
+    pub fn host_view(&mut self, id: &str, host: &Secret, now: u64) -> Result<HostView, Failure> {
+        let room = self.hosted(id, host, now)?;
+        Ok(HostView {
+            members: room.members.iter().map(|m| m.id).collect(),
+            open: room.open,
+        })
+    }
+    pub fn set_admission(
+        &mut self,
+        id: &str,
+        host: &Secret,
+        open: bool,
+        now: u64,
+    ) -> Result<(), Failure> {
+        self.hosted(id, host, now)?.open = open;
+        Ok(())
+    }
+    pub fn rotate_invite(
+        &mut self,
+        id: &str,
+        host: &Secret,
+        now: u64,
+    ) -> Result<RotatedInvite, Failure> {
+        let room = self.hosted(id, host, now)?;
+        room.invite = Secret::random().map_err(internal)?;
+        Ok(RotatedInvite {
+            invite: room.invite.clone(),
+        })
+    }
+    pub fn remove_member(
+        &mut self,
+        id: &str,
+        host: &Secret,
+        member_id: u32,
+        now: u64,
+    ) -> Result<RotatedInvite, Failure> {
+        let room = self.hosted(id, host, now)?;
+        let index = room
+            .members
+            .iter()
+            .position(|member| member.id == member_id)
+            .ok_or(MISSING)?;
+        let replacement = Secret::random().map_err(internal)?;
+        room.members.remove(index);
+        room.invite = replacement;
+        Ok(RotatedInvite {
+            invite: room.invite.clone(),
+        })
+    }
+    pub fn listener_id(
+        &mut self,
+        id: &str,
+        member: &Secret,
+        now: u64,
+    ) -> Result<ListenerId, Failure> {
+        self.clean(now);
+        let room = self.rooms.get_mut(id).ok_or(MISSING)?;
+        let member = room
+            .members
+            .iter()
+            .find(|m| m.token.matches(member))
+            .ok_or(MISSING)?;
+        Ok(ListenerId { id: member.id })
     }
     pub fn publish(
         &mut self,
@@ -416,6 +502,59 @@ async fn leave(
     Ok(StatusCode::NO_CONTENT)
 }
 
+async fn host_view(
+    State(s): State<Shared>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<HostView>, Failure> {
+    checked_id(&id)?;
+    let auth = token(&headers)?;
+    s.with(|store, now| store.host_view(&id, &auth, now))
+        .map(Json)
+}
+async fn admission(
+    State(s): State<Shared>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(value): Json<Admission>,
+) -> Result<StatusCode, Failure> {
+    checked_id(&id)?;
+    let auth = token(&headers)?;
+    s.with(|store, now| store.set_admission(&id, &auth, value.open, now))?;
+    Ok(StatusCode::NO_CONTENT)
+}
+async fn rotate_invite(
+    State(s): State<Shared>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(_): Json<Empty>,
+) -> Result<Json<RotatedInvite>, Failure> {
+    checked_id(&id)?;
+    let auth = token(&headers)?;
+    s.with(|store, now| store.rotate_invite(&id, &auth, now))
+        .map(Json)
+}
+async fn remove_member(
+    State(s): State<Shared>,
+    Path((id, member)): Path<(String, u32)>,
+    headers: HeaderMap,
+) -> Result<Json<RotatedInvite>, Failure> {
+    checked_id(&id)?;
+    let auth = token(&headers)?;
+    s.with(|store, now| store.remove_member(&id, &auth, member, now))
+        .map(Json)
+}
+async fn listener_id(
+    State(s): State<Shared>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<ListenerId>, Failure> {
+    checked_id(&id)?;
+    let auth = token(&headers)?;
+    s.with(|store, now| store.listener_id(&id, &auth, now))
+        .map(Json)
+}
+
 /// Explicit, inseparable configuration for a private TLS reverse proxy on the
 /// same machine. No forwarded header can select this authority or supply a key.
 #[derive(Debug)]
@@ -510,7 +649,14 @@ async fn serve_inner(
         .route("/v1/rooms/{id}/join", post(join))
         .route("/v1/rooms/{id}/state", get(view).put(publish))
         .route("/v1/rooms/{id}", delete(close))
-        .route("/v1/rooms/{id}/members/self", delete(leave))
+        .route(
+            "/v1/rooms/{id}/members/self",
+            get(listener_id).delete(leave),
+        )
+        .route("/v1/rooms/{id}/members", get(host_view))
+        .route("/v1/rooms/{id}/members/{member}", delete(remove_member))
+        .route("/v1/rooms/{id}/admission", axum::routing::put(admission))
+        .route("/v1/rooms/{id}/invite", post(rotate_invite))
         .layer(DefaultBodyLimit::max(MAX_BODY))
         .layer(middleware::from_fn_with_state(shared.clone(), guard))
         .with_state(shared.clone());

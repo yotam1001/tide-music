@@ -12,13 +12,14 @@ Tide and Jams stay free. No subscription, payment, third-party account key or pa
 - Code-based hosting/joining and explicit Copy invite, with file/operator setup under Advanced.
 - Standalone Linux-capable shared relay with TLS-proxy configuration; bounded anonymous room creation, per-peer and global limits, no remote plaintext listener.
 - Guest-only invite codes, strict URL/field/size validation, account-independent coordination.
+- Host-only participant removal, room lock/unlock and invite replacement. Removing a listener revokes their membership and the old invite, preventing reuse of that code to rejoin. Participants use anonymous Listener IDs, not Google account names.
 - Up to eight-hour active rooms; abandoned rooms reclaimed after two minutes. Paused hosts continue heartbeats.
 - Hosted tests for real TLS protocol, independent native players, code flow, role isolation, quotas, fake-clock four-hour lifetime and UI ownership.
 
 ## Gates before a public release
 
 1. All matching hosted tests and normal-installer isolation checks pass.
-2. Host moderation/admission: prevent invite reuse from letting one invite holder occupy all guest slots; show participants and support removing them.
+2. Validate the new host moderation/admission controls end to end in the native UI. Invite reuse can still occupy slots until the host removes the listener/locks the room; consider explicit host approval before a broad untrusted public launch.
 3. Shared queue UX: decide and implement which guest additions are permitted while retaining host authority over playback and timing.
 4. Measure transitions, late joins, seek/pause, unavailable tracks and reconnect behavior with two independent authenticated players on distinct PCs/networks. Include long sessions and sleep/wake recovery.
 5. Select free shared hosting (verify current limits and terms) or document a usable self-host path. Validate the actual deployed TLS/proxy, resource limits and disabled sensitive logs. Set a default endpoint only after this.

@@ -473,3 +473,53 @@ fn shared_backend_requires_one_canonical_proxy_peer_and_rejects_browser_origins(
         "shared client path must not bypass private operator authentication"
     );
 }
+
+#[test]
+fn only_host_can_lock_rotate_or_remove_and_removal_revokes_the_previous_invite() {
+    let proxy = Proxy::start_shared();
+    let client = proxy.client();
+    let room = client.create_shared().unwrap();
+    let invite = Invite {
+        endpoint: proxy.endpoint.clone(),
+        room: room.room.clone(),
+        invite: room.invite.clone(),
+    };
+    let a = client.join(&invite).unwrap();
+    let b = client.join(&invite).unwrap();
+    let aid = client.listener_id(&room.room, &a.member).unwrap();
+    let bid = client.listener_id(&room.room, &b.member).unwrap();
+    assert_ne!(aid, bid);
+    assert!(client.host_view(&room.room, &a.member).is_err());
+    assert!(client.set_admission(&room.room, &a.member, false).is_err());
+    assert!(client.rotate_invite(&room.room, &a.member).is_err());
+    assert!(client.remove_member(&room.room, &a.member, bid).is_err());
+    client.set_admission(&room.room, &room.host, false).unwrap();
+    assert!(!client.host_view(&room.room, &room.host).unwrap().open);
+    assert!(client.join(&invite).is_err());
+    assert!(
+        client.poll(&room.room, &a.member).is_ok(),
+        "locking cannot evict current listeners"
+    );
+    client.set_admission(&room.room, &room.host, true).unwrap();
+    let replacement = client.remove_member(&room.room, &room.host, aid).unwrap();
+    assert!(!replacement.matches(&room.invite));
+    assert!(client.poll(&room.room, &a.member).is_err());
+    assert!(
+        client.join(&invite).is_err(),
+        "removed listener cannot rejoin with the old invite"
+    );
+    assert!(client.poll(&room.room, &b.member).is_ok());
+    let members = client.host_view(&room.room, &room.host).unwrap();
+    assert_eq!(members.members, vec![bid]);
+    let replacement = Invite {
+        endpoint: proxy.endpoint.clone(),
+        room: room.room.clone(),
+        invite: replacement,
+    };
+    let c = client.join(&replacement).unwrap();
+    assert_ne!(client.listener_id(&room.room, &c.member).unwrap(), aid);
+    let new = client.rotate_invite(&room.room, &room.host).unwrap();
+    assert!(!new.matches(&replacement.invite));
+    assert!(client.join(&replacement).is_err());
+    assert!(client.poll(&room.room, &c.member).is_ok());
+}

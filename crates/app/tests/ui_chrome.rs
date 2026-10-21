@@ -148,9 +148,8 @@ fn settings_theme_account_and_song_menu_remain_independent() {
     ui.show().unwrap();
     let without_status = draw(&window, 1140, 800);
     ui.set_status_text("Playing".into());
-    assert_eq!(
-        draw(&window, 1140, 800),
-        without_status,
+    assert!(
+        draw(&window, 1140, 800) == without_status,
         "routine playback status must not add a strip or shift the layout"
     );
 

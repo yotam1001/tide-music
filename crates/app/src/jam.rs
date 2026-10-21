@@ -1,7 +1,7 @@
 //! Native controls for an opt-in developer build. Normal releases do not link
 //! this module, the network worker or the Jam protocol dependency.
 use super::*;
-use crate::jam_session::{Event, Session, Start};
+use crate::jam_session::{Admin, Event, Session, Start};
 use tide_jam_lab::{
     endpoint::Endpoint,
     protocol::*,
@@ -207,6 +207,9 @@ pub fn leave(s: &mut State, u: &AppWindow, message: &str) {
     s.jam.terminal = false;
     s.jam.connected = false;
     u.set_jam_invite_code("".into());
+    u.set_jam_members(slint::ModelRc::default());
+    u.set_jam_locked(false);
+    u.set_jam_listener_id(0);
     u.set_jam_active(false);
     u.set_jam_guest(false);
     u.set_jam_status(message.into());
@@ -450,6 +453,41 @@ fn install_code_controls(state: &Rc<RefCell<State>>, ui: &AppWindow, picker: &Rc
             ui.on_jam_join_code(callback);
         }
     }
+    for kind in 0..3 {
+        let state = state.clone();
+        let weak = ui.as_weak();
+        let callback = move |id: i32| {
+            let Some(u) = weak.upgrade() else {
+                return;
+            };
+            let s = state.borrow();
+            if s.jam.guest || !s.jam.connected {
+                return;
+            }
+            let Some(session) = s.jam.session.as_ref() else {
+                return;
+            };
+            let command = match kind {
+                0 => Admin::Admission(u.get_jam_locked()),
+                1 => Admin::RotateInvite,
+                _ if id > 0 => Admin::Remove(id as u32),
+                _ => return,
+            };
+            if session.admin(command) {
+                if kind != 0 {
+                    u.set_jam_invite_code("".into());
+                }
+                u.set_jam_status("Updating room…".into());
+            } else {
+                u.set_jam_status("Wait for the previous room change, then try again".into());
+            }
+        };
+        match kind {
+            0 => ui.on_jam_toggle_lock(move || callback(0)),
+            1 => ui.on_jam_rotate_invite(move || callback(0)),
+            _ => ui.on_jam_remove_member(callback),
+        }
+    }
     let weak = ui.as_weak();
     ui.on_jam_copy_invite(move || {
         let Some(u) = weak.upgrade() else {
@@ -518,17 +556,36 @@ pub fn tick(s: &mut State, u: &AppWindow) {
         Some(Event::Hosting {
             guests,
             invite_code,
+            members,
+            open,
         }) => {
             s.jam.connected = true;
             u.set_jam_invite_code(invite_code.as_str().into());
-            u.set_jam_status(format!("Hosting · {guests} guest(s)").into())
+            u.set_jam_locked(!open);
+            let rows: Vec<_> = members
+                .into_iter()
+                .map(|id| JamMemberRow {
+                    id: id as i32,
+                    name: format!("Listener {id}").into(),
+                })
+                .collect();
+            u.set_jam_members(slint::ModelRc::new(slint::VecModel::from(rows)));
+            u.set_jam_status(
+                format!(
+                    "Hosting · {guests} guest(s){}",
+                    if open { "" } else { " · room locked" }
+                )
+                .into(),
+            )
         }
         Some(Event::View {
             view,
             rtt_ms,
             received,
+            listener,
         }) => {
             s.jam.connected = true;
+            u.set_jam_listener_id(listener.unwrap_or(0) as i32);
             s.jam.view = Some((view, rtt_ms, received));
         }
         Some(Event::Problem { message, terminal }) => {
@@ -723,6 +780,11 @@ pub fn ownership_smoke(state: &Rc<RefCell<State>>, u: &AppWindow, pickers: &Rc<P
         };
     }
     let before = serde_json::to_string(&state.borrow().settings).unwrap();
+    u.invoke_jam_host_code();
+    u.invoke_jam_join_code();
+    u.invoke_jam_toggle_lock();
+    u.invoke_jam_rotate_invite();
+    u.invoke_jam_remove_member(1);
     u.invoke_toggle_pause();
     u.invoke_next_track();
     u.invoke_previous_track();

@@ -196,3 +196,40 @@ impl Invite {
         Ok(invite)
     }
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Admission {
+    pub open: bool,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HostView {
+    pub members: Vec<u32>,
+    pub open: bool,
+}
+impl HostView {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        let ids: std::collections::HashSet<_> = self.members.iter().copied().collect();
+        if self.members.len() > 8
+            || ids.len() != self.members.len()
+            || self
+                .members
+                .iter()
+                .any(|id| *id == 0 || *id > i32::MAX as u32)
+        {
+            return Err("Invalid Jam participants");
+        }
+        Ok(())
+    }
+}
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RotatedInvite {
+    pub invite: Secret,
+}
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ListenerId {
+    pub id: u32,
+}

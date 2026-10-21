@@ -21,7 +21,7 @@ Disable request/access/body logging and temporary body buffering as in the templ
 
 ## In Tide
 
-Use an `experimental-jams` build. Play a YouTube song, open Jam, enter the trusted shared server endpoint, choose Start Jam, then Copy invite. Friends paste the `tide-jam:v1.` code into Join a Jam. The code contains the server, room ID and a guest capability only. Never send a private server operator key. Legacy private operator-key/file setup remains under Advanced.
+Use an `experimental-jams` build. Play a YouTube song, open Jam, enter the trusted shared server endpoint, choose Start Jam, then Copy invite. Friends paste the `tide-jam:v1.` code into Join a Jam. The code contains the server, room ID and a guest capability only. Never send a private server operator key. Hosts can lock a room, replace an invite or remove a Listener. Removal revokes that membership and replaces the invite so the removed listener cannot rejoin using the old code. Existing listeners keep playing. Guests see their anonymous Listener number so friends can identify each other without sharing account names. Legacy private operator-key/file setup remains under Advanced.
 
 For two players on one PC, the existing literal-loopback lab relay also accepts code hosting. An invite pointing to 127.0.0.1 cannot connect a different PC.
 

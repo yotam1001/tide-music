@@ -1,6 +1,7 @@
 //! Optional Jam networking worker. It owns capabilities, never the local account
 //! or player. One latest snapshot/event each bounds memory and avoids blocking UI.
 use std::{
+    collections::VecDeque,
     fs,
     io::Write,
     path::{Path, PathBuf},
@@ -36,15 +37,23 @@ pub enum Start {
         code: Zeroizing<String>,
     },
 }
+pub enum Admin {
+    Admission(bool),
+    RotateInvite,
+    Remove(u32),
+}
 pub enum Event {
     Hosting {
         guests: usize,
         invite_code: Zeroizing<String>,
+        members: Vec<u32>,
+        open: bool,
     },
     View {
         view: View,
         rtt_ms: u64,
         received: Instant,
+        listener: Option<u32>,
     },
     Problem {
         message: &'static str,
@@ -59,6 +68,7 @@ struct Shared {
     stop: AtomicBool,
     frame: Mutex<Option<Frame>>,
     event: Mutex<Option<Event>>,
+    admin: Mutex<VecDeque<Admin>>,
     wake: Condvar,
 }
 impl Shared {
@@ -88,6 +98,7 @@ impl Session {
             stop: AtomicBool::new(false),
             frame: Mutex::new(None),
             event: Mutex::new(None),
+            admin: Mutex::new(VecDeque::new()),
             wake: Condvar::new(),
         });
         let worker_state = shared.clone();
@@ -139,6 +150,20 @@ impl Session {
     }
     pub fn take_event(&self) -> Option<Event> {
         self.shared.event.lock().ok()?.take()
+    }
+    pub fn admin(&self, command: Admin) -> bool {
+        if self.shared.stopped() || self.finished() {
+            return false;
+        }
+        let Ok(mut commands) = self.shared.admin.lock() else {
+            return false;
+        };
+        if commands.len() >= 8 {
+            return false;
+        }
+        commands.push_back(command);
+        self.shared.wake.notify_all();
+        true
     }
     pub fn cancel(&self) {
         self.shared.stop.store(true, Ordering::Release);
@@ -251,7 +276,7 @@ fn host(
     if shared.stopped() {
         return Ok(());
     }
-    let invitation = Invite {
+    let mut invitation = Invite {
         endpoint: endpoint.as_str().into(),
         room: room.room.room.clone(),
         invite: room.room.invite.clone(),
@@ -259,11 +284,40 @@ fn host(
     if let Some(path) = path {
         write_invite(path, &invitation)?;
     }
-    let invite_code = invitation.to_code()?;
+    let mut invite_code = invitation.to_code()?;
     let mut sampled = Instant::now();
     let mut revision = 0u64;
     let mut failures = 0;
     while !shared.stopped() {
+        let command = shared
+            .admin
+            .lock()
+            .map_err(|_| "Jam controls unavailable")?
+            .pop_front();
+        if let Some(command) = command {
+            let result = match command {
+                Admin::Admission(open) => client
+                    .set_admission(&room.room.room, &room.room.host, open)
+                    .map(|_| None),
+                Admin::RotateInvite => client
+                    .rotate_invite(&room.room.room, &room.room.host)
+                    .map(Some),
+                Admin::Remove(id) => client
+                    .remove_member(&room.room.room, &room.room.host, id)
+                    .map(Some),
+            };
+            match result {
+                Ok(Some(token)) => {
+                    invitation.invite = token;
+                    invite_code = invitation.to_code()?;
+                }
+                Ok(None) => {}
+                Err(_) => shared.event(Event::Problem {
+                    message: "Could not update room controls; try again",
+                    terminal: false,
+                }),
+            }
+        }
         if let Some(frame) = shared
             .frame
             .lock()
@@ -293,10 +347,12 @@ fn host(
                 failures = 0;
                 // The host poll updates guest count only; no authority comes from it.
                 if !shared.stopped() {
-                    match client.poll(&room.room.room, &room.room.host) {
+                    match client.host_view(&room.room.room, &room.room.host) {
                         Ok(view) => shared.event(Event::Hosting {
-                            guests: view.members,
+                            guests: view.members.len(),
                             invite_code: invite_code.clone(),
+                            members: view.members,
+                            open: view.open,
                         }),
                         Err(_) => shared.event(Event::Problem {
                             message: "Jam hosted; guest count temporarily unavailable",
@@ -344,6 +400,7 @@ fn follow(shared: &Shared, invite: Invite) -> Result<(), &'static str> {
         room: invite.room,
         token: joined.member,
     };
+    let listener = client.listener_id(&membership.room, &membership.token).ok();
     let mut failures = 0;
     while !shared.stopped() {
         let began = Instant::now();
@@ -354,6 +411,7 @@ fn follow(shared: &Shared, invite: Invite) -> Result<(), &'static str> {
                     view,
                     rtt_ms: began.elapsed().as_millis() as u64,
                     received: Instant::now(),
+                    listener,
                 });
             }
             Err(Error::Unavailable | Error::Invalid) => {
@@ -442,6 +500,15 @@ mod tests {
                         timeline.validate().unwrap();
                         state = Some(timeline);
                         ("204 No Content", vec![])
+                    } else if head.starts_with("GET ") && head.contains("/members HTTP") {
+                        (
+                            "200 OK",
+                            serde_json::to_vec(&HostView {
+                                members: vec![1],
+                                open: true,
+                            })
+                            .unwrap(),
+                        )
                     } else if head.starts_with("GET ") {
                         (
                             "200 OK",

@@ -67,3 +67,24 @@ fn invitations_cannot_smuggle_plaintext_remote_or_credential_urls() {
     local.endpoint = "http://127.0.0.1:8765".into();
     assert!(Invite::from_code(&local.to_code().unwrap()).is_ok());
 }
+
+#[test]
+fn host_rosters_are_bounded_unique_and_contain_no_member_capabilities() {
+    let good = HostView {
+        members: vec![1, 2],
+        open: true,
+    };
+    good.validate().unwrap();
+    for members in [vec![0], vec![1, 1], vec![u32::MAX], (1..=9).collect()] {
+        assert!(HostView {
+            members,
+            open: true
+        }
+        .validate()
+        .is_err());
+    }
+    assert!(serde_json::from_str::<HostView>(
+        r#"{"members":[1],"open":true,"member":"not-allowed"}"#
+    )
+    .is_err());
+}

@@ -127,6 +127,31 @@ fn guest_mini_keeps_leave_and_volume_reachable_and_blocks_transport() {
             }
             .into(),
         );
+        ui.set_jam_listener_id(if guest { 2 } else { 0 });
+        ui.set_jam_locked(!guest && active);
+        ui.set_jam_invite_code(
+            if active && !guest {
+                "tide-jam:v1.synthetic-preview"
+            } else {
+                ""
+            }
+            .into(),
+        );
+        let members: Vec<_> = if active && !guest {
+            vec![
+                JamMemberRow {
+                    id: 1,
+                    name: "Listener 1".into(),
+                },
+                JamMemberRow {
+                    id: 2,
+                    name: "Listener 2".into(),
+                },
+            ]
+        } else {
+            vec![]
+        };
+        ui.set_jam_members(slint::ModelRc::new(slint::VecModel::from(members)));
         ui.set_jam_open(!mini);
         let pixels = draw(&window, width, height);
         assert!(pixels.iter().any(|pixel| pixel != &Rgb8Pixel::default()));

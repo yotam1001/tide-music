@@ -93,5 +93,9 @@ uses the system clipboard; OS clipboard history/sync is outside Tide's control.
 The host capability is absent from invitations and guest views. Tests exercise
 these boundaries with generated fixture credentials, including a real TLS proxy.
 This follow-up is a source/test-design record, not an independent audit or a
-successful production deployment. Existing invite-reuse and real-host release
-gates above remain open; see RELEASE_PLAN.md.
+successful production deployment. Host-only removal now revokes the member and replaces the invite atomically;
+lock/unlock and explicit invite rotation are implemented. Existing listeners keep
+their capabilities. A bearer holder can still occupy slots before the host acts,
+so explicit approval remains a possible stronger public-launch gate. No Google
+names are exposed: the roster uses room-local anonymous listener IDs.
+Real-host release gates remain open; see RELEASE_PLAN.md.

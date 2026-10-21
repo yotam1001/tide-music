@@ -14,7 +14,7 @@ fn run() -> Result<(), &'static str> {
     if args.len() != 4 {
         return Err("Provide --endpoint and --port; see --help");
     }
-    for pair in args.chunks_exact(2) {
+    for pair in args.as_chunks::<2>().0 {
         match pair[0].as_str() {
             "--endpoint" if endpoint.is_none() => endpoint = Some(pair[1].as_str()),
             "--port" if port.is_none() => {

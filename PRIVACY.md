@@ -51,6 +51,10 @@ and other local applications may retain it. Tide does not clear unrelated
 clipboard contents when a room ends. Share the code only with intended guests.
 The explicit shared-server mode uses temporary per-process keyed network-address
 fingerprints to limit room creation; the server's TLS proxy still sees raw IPs.
+Hosts can see anonymous room-local Listener IDs and remove listeners, lock the
+room or replace its invite. Removing a listener also replaces the invite; no
+Google account names, session headers or network addresses are exposed in that
+participant list.
 
 ## What the browser companion processes
 
