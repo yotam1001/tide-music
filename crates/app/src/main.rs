@@ -242,6 +242,11 @@ fn request_library(
     tx: &mpsc::SyncSender<LibraryResult>,
     request: tide_provider::Request,
 ) {
+    // Writes use the separate account-bound collection worker. Never put them
+    // through browsing's automatic/manual retry machinery.
+    if matches!(&request, tide_provider::Request::Feedback { .. }) {
+        return;
+    }
     if !local_controls_allowed(s)
         && !matches!(
             &request,
@@ -3236,7 +3241,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 refresh_content_models(&s, &u);
                             }
                         }
-                        Ok(tide_provider::Response::Tracks { tracks, truncated }) => {
+                        Ok(tide_provider::Response::Tracks { tracks, truncated, playlist: _ }) => {
                             let tracks: Vec<Track> = tracks
                                 .into_iter()
                                 .take(2000)
@@ -3377,7 +3382,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             );
                             u.set_account_status(error.into());
                         }
-                        Ok(tide_provider::Response::Session { .. }) | Err(_) => {
+                        Ok(tide_provider::Response::Session { .. } | tide_provider::Response::Feedback { .. }) | Err(_) => {
                             library_failure(&mut s, &u, false);
                         }
                     }
@@ -3632,12 +3637,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut s = state.borrow_mut();
             s.library_playlists = vec![
                 tide_provider::Playlist {
+                    owned: true,
                     artwork_url: None,
                     id: "PLfixture".into(),
                     title: "Late night focus".into(),
                     subtitle: "24 tracks".into(),
                 },
                 tide_provider::Playlist {
+                    owned: true,
                     artwork_url: None,
                     id: "PLfixture2".into(),
                     title: "Weekend favourites".into(),
