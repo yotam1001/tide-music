@@ -14,6 +14,8 @@
 !experiments/jam/src/
 !experiments/jam/src/**/
 !experiments/jam/src/**/*.rs
+!experiments/jam/tests/
+!experiments/jam/tests/**/*.rs
 !experiments/jam/render/
 !experiments/jam/render/Dockerfile
 !experiments/jam/render/start.sh

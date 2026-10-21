@@ -4,6 +4,7 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates crates
 COPY experiments/jam/Cargo.toml experiments/jam/Cargo.lock experiments/jam/
 COPY experiments/jam/src experiments/jam/src
+COPY experiments/jam/tests experiments/jam/tests
 RUN cargo build --manifest-path experiments/jam/Cargo.toml --locked --no-default-features --features relay --release --bin tide-jam-relay
 
 FROM debian:bookworm-slim
