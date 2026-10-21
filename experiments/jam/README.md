@@ -12,6 +12,13 @@ do not link its transport or run background Jam threads. The optional native
 client links protocol/client/controller code only, without the relay server.
 Existing beta assets are unchanged.
 
+## Free shared-service and self-hosting work
+
+The current development adds Start / Copy invite / Paste and Join controls and a
+standalone shared relay. See [shared relay setup](SHARED_RELAY.md) and the
+[release plan](RELEASE_PLAN.md). Tide and Jams remain free; no paid hosting or
+public service is provisioned by these changes.
+
 ## Implemented
 
 - Private in-memory rooms, separate host/invite/member capabilities, at most eight
@@ -51,7 +58,7 @@ room, bodies to 32 KiB, active connections to 16 and retained connection tasks t
 32. Header/body/connection deadlines are 2/2/4 seconds. Create/publish rates are
 bounded. Private mode authenticates creation before allocating room state; the
 operator key is never placed in a guest invite or retained as a client-wide header.
-Rooms expire after two hours; idle memberships after 30 seconds. Ten-second
+Active rooms expire after eight hours; abandoned rooms after two minutes; idle memberships after 30 seconds. Ten-second
 maintenance removes expired state. Restarting the relay forgets every room.
 
 Clients reject redirects, proxies, oversized responses and invalid incoming

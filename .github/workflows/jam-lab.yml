@@ -23,9 +23,29 @@ on:
 permissions:
   contents: read
 jobs:
+  shared-relay-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: experiments/jam -> target
+      - run: cargo test --manifest-path experiments/jam/Cargo.toml --locked --no-default-features --features relay
+      - run: cargo clippy --manifest-path experiments/jam/Cargo.toml --locked --no-default-features --features relay --all-targets -- -D warnings
+      - run: cargo build --manifest-path experiments/jam/Cargo.toml --locked --no-default-features --features relay --release --bin tide-jam-relay
+      - run: experiments/jam/target/release/tide-jam-relay --help
+      - uses: actions/upload-artifact@v4
+        with:
+          name: experimental-jam-relay-linux-${{ github.sha }}
+          path: experiments/jam/target/release/tide-jam-relay
+          retention-days: 7
   jam-native-controls:
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -87,14 +107,16 @@ jobs:
           import os
           from pathlib import Path
           fixture = Path(os.environ['RUNNER_TEMP']) / 'jam-nginx'
-          source = Path('experiments/jam/nginx-private.example.conf').read_text()
-          source = source.replace('/etc/tide-jam/', str(fixture) + '/')
-          (fixture / 'nginx.conf').write_text(source)
+          for mode in ('private', 'shared'):
+              source = Path(f'experiments/jam/nginx-{mode}.example.conf').read_text()
+              source = source.replace('/etc/tide-jam/', str(fixture) + '/')
+              (fixture / f'nginx-{mode}.conf').write_text(source)
           PY
-          sudo nginx -t -c "$RUNNER_TEMP/jam-nginx/nginx.conf"
+          sudo nginx -t -c "$RUNNER_TEMP/jam-nginx/nginx-private.conf"
+          sudo nginx -t -c "$RUNNER_TEMP/jam-nginx/nginx-shared.conf"
   jam-lab:
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

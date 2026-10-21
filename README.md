@@ -1,130 +1,113 @@
 # Tide Music
 
-A Windows-first native Rust music player designed to leave resources available for games.
+A native Windows music player built to keep RAM use low while gaming.
 
-## Promo video
+[![Watch the Tide Music demo](docs/media/tide-promo-preview.gif)](docs/media/tide-promo.mp4)
 
-[![Animated preview of the Tide Music promo video](docs/media/tide-promo-preview.gif)](docs/media/tide-promo.mp4)
+[Watch the 48-second demo](docs/media/tide-promo.mp4)
 
-[Watch the 48-second video](docs/media/tide-promo.mp4) · [Edit the HyperFrames project](video/README.md)
+The demo shows an earlier prototype; its memory comparison is one measured
+example, not a fixed RAM guarantee.
 
-The video shows the current prototype: real screen recordings of Tide with a connected account. Its memory figure comes from one matched test on one PC; see [how it was measured](docs/media/memory-test.md). Music: Lensko – Let's Go! [NCS Release].
+Play YouTube Music, bring in your playlists and recommendations, and keep the
+player out of the way with a mini mode. Tide uses native audio playback rather
+than keeping an embedded browser running.
 
-**Working early prototype:** native interface, local/YouTube music playback, search, queue controls and Windows media controls. Optional account integration reads playlists, Liked Songs and recommendations and supplies your signed-in session to playback. Local signed-in library, Premium extraction and muted native playback have been verified; each installation still needs its own session. YouTube features use unofficial tooling and can fail when YouTube changes. This is not an official YouTube product.
+**Windows release:** [Download TideSetup.exe](https://github.com/yotam1001/tide-music/releases/download/v0.1.3/TideSetup.exe)
+from [v0.1.3](https://github.com/yotam1001/tide-music/releases/tag/v0.1.3).
+For YouTube Music, also download the matching
+[Chrome companion](https://github.com/yotam1001/tide-music/releases/download/v0.1.3/tide-browser-chromium.zip)
+and follow the connection guide below. The Windows installer is currently unsigned.
 
-## Design
+![Tide's dark interface](docs/screenshots/full.png)
 
-- Home and Library as the two main destinations, with search in the header and an optional Queue drawer.
-- Independent dark/light themes and full/compact sizing; the light palette uses warm grey, terracotta and muted purple.
-- A mini player with an expand icon using the same queue and playback engine.
-- Playlist previews with Play/Shuffle, song menus, upcoming-track reordering/removal, song radio and recommendation autoplay.
-- Home Refresh rotates a 24-card selection from up to 240 personalized candidates. Recent IDs are kept only in memory; small upstream pools can still repeat.
-- Small real thumbnails with a bounded memory cache and no generic artwork banner.
-- Refresh on Home selects a varied batch of 24 playable recommendations from a
-  wider personalized pool, favouring suggestions not recently shown. A bounded
-  in-memory history avoids repeating the same screen; small upstream pools must
-  eventually repeat. No listening history is fabricated or written to YouTube.
-- Native Slint interface; no embedded browser or Electron runtime.
+[Light theme](docs/screenshots/light.png) · [Queue](docs/screenshots/queue.png)
 
-Home Refresh varies the displayed selection from your real YouTube recommendations;
-it cannot force YouTube to generate an entirely new pool. Recent display history is
-memory-only, clears on account changes, and never causes artwork to be preloaded
-for the whole candidate pool.
+Screenshots use sample music metadata.
 
-![Full native interface](docs/screenshots/full.png)
-![Light native interface](docs/screenshots/light.png)
-![Queue beside Home](docs/screenshots/queue.png)
-![Playlist details](docs/screenshots/playlist-detail.png)
-![Native account library](docs/screenshots/library.png)
+## Get started
 
-These are native screenshots with explicitly selected visual-test metadata; playback is inactive in the screenshots. The screenshot fixtures omit artwork URLs; the live app fetches small provider thumbnails when available. Earlier design references are in `docs/concepts/`.
+You need **Windows x64** and internet access. Chrome is the supported
+connection path for YouTube Music. The installer requires no Rust, Python or
+API keys.
 
-## Install the Windows preview
+1. **Get the downloads.** On the Releases page, choose **TideSetup.exe** under
+   **Assets**. For YouTube Music, also get **tide-browser-chromium.zip** from the
+   same release. GitHub's **Source code** downloads are for developers.
+2. **Install and connect.** Follow the [Chrome connection guide](docs/BROWSER_COMPANION_BETA.md):
+   load the companion first, enter its ID in Tide setup, then import your selected
+   Music tab. Sign in to your existing Google account in Chrome; Tide does not
+   ask for your password. The companion is loaded manually, not from the Chrome
+   Web Store. For local files only, just open the EXE and choose **Install Tide**.
+3. **Play something.** Open Tide from Start. After connecting, search in the top
+   bar, choose a playlist in **Library**, or pick a **Home** recommendation.
+   To play a file without an account, use **Settings → Open audio file**.
 
-Run **TideSetup.exe** from the Windows preview build and choose **Install Tide**.
-Setup shows progress, installs private playback tools, and adds Tide to the Start
-menu and Windows Settings. At completion choose **Open Tide** or **Connect YouTube
-Music**. No separate Rust/Python installation or terminal commands are needed.
-See [installation and removal](docs/INSTALLATION.md). Builds are still unsigned
-previews; browser extension distribution and stable-release checks remain open.
-See [beta release preparation](docs/BETA_RELEASE.md) for verified candidate assets
-and the remaining clean-Windows checks, and [Chrome beta setup](docs/BROWSER_COMPANION_BETA.md)
-for the current unpacked extension connection flow.
-Read [privacy and local data handling](PRIVACY.md) before connecting an account.
+Setup adds Tide to Start. Already installed? Rerunning setup can enable the
+companion without uninstalling Tide. [Installation help](docs/INSTALLATION.md)
 
-## Build and run
+## What you can do
 
-Install stable Rust from [rustup](https://rustup.rs/). On Windows the normal MSVC toolchain requires Visual Studio C++ Build Tools. The repository also supports a development-local GNU setup through `scripts/cargo-local.ps1` when those tools are already present under the ignored `.tools` directory.
+- Play songs, playlists and local audio with native playback.
+- Select an artist name to browse their top songs, then play, shuffle or queue.
+- See loading/retry feedback and the observed audio format in the player.
+- See your playlists, Liked Songs and personalized recommendations.
+- Shuffle playlists, queue songs next, and drag upcoming tracks into order.
+- Start song radio or enable Autoplay for related recommendations.
+- Switch between dark/light themes, compact sizing and a mini player.
+- Use Windows media controls and check for stable updates in Settings.
 
-```powershell
-pwsh -File scripts/setup-runtime.ps1
-cargo run -p tide-music
-```
+Theme is the sun/moon button in the header. **Account** is beside **Settings**.
+**Queue** sits beside the player controls. [Learn the controls](docs/USING_TIDE.md)
 
-The setup script downloads mpv, yt-dlp and Deno into `.tools/runtime`; it does not alter system PATH, register startup tasks or read browser credentials. Alternatively place trusted binaries in `tools/` beside the application, set `TIDE_RUNTIME_DIR` to their directory, or use PATH. mpv is the native audio engine; yt-dlp/Deno handle the current YouTube extraction requirements. Ordinary local playback only needs mpv.
+## Before you try the preview
 
-Paste a supported http/https media link, enter a YouTube search query, or open an audio file. Search currently shows up to eight results; select a song to play it or use its menu to queue it. Open Account for theme, window size and connection settings; its Advanced section holds manual import and help. Mini/Restore changes the player layout; theme changes preserve window size. Library playlists open a track preview with Play and Shuffle. Search results remain separate from the queue until selected. Playing a song or playlist preserves the browsing screen. Song menus expose Play next, Add to queue and Replace upcoming with song radio. Queue opens beside content at wide widths and overlays it at narrow widths; it separates manual tracks from autoplay suggestions and exposes reordering, removal, shuffle, repeat and Autoplay. Disabling autoplay removes upcoming automatic suggestions while preserving the current song and your choices. Autoplay requests recommendations from the current song when the queue is nearly finished; it requires a connected account and an available provider. The prototype saves queue metadata and preferences under the current user's application-data directory. For account features, follow the [Chrome beta connection guide](docs/BROWSER_COMPANION_BETA.md): load the companion, enable its connection in the graphical installer with its exact extension ID, then import your selected YouTube Music tab. Manual session import remains a fallback. See [local account setup](docs/ACCOUNT_SETUP.md). Sessions are encrypted with Windows DPAPI; the browser is used for connection while native playback streams audio rather than downloading a library.
+**YouTube integration is unofficial.** Service changes can affect playback and
+sign-in. Chrome import has worked in a local test, but fresh-user onboarding and
+long-term session reliability still need validation. Zen's native connection is
+unresolved; Edge and Firefox are not recommended setup paths yet. Experimental
+Jams are not included in the main app.
 
-## Audio quality and transitions
+**Your existing account is used.** Tide reads your library; it does not move it
+to another service or download your whole collection. Premium availability
+depends on your account and the accessible streams. Tide does not provide
+Premium, implement ad blocking, or guarantee every track or format.
 
-Tide requests `bestaudio/best` and plays the selected stream without re-encoding it. YouTube Music documents High quality as up to 256 kbps AAC or Opus. Availability depends on the song, session and formats the extractor can access; requesting the best stream does not guarantee that every song reaches that bitrate. See [YouTube Music's audio quality guide](https://support.google.com/youtubemusic/answer/9076559).
+**Your session stays local.** Saved sign-in data is encrypted for your Windows
+user. There is no Tide account server, analytics or automatic crash uploader.
+Never share cookies or session files. [Privacy details](PRIVACY.md)
 
-Once the current track has loaded, Tide prepares the next queued song's stream address so early skips can use it too. A short scheduler checks for a candidate every 250 ms, including while paused. Preparation is limited to one upcoming song and keeps only metadata in memory, rather than downloading full songs. A ready address lasts at most ten minutes, or until thirty seconds before its signed expiry, whichever comes first. Queue changes replace that preparation. Failed preparation can retry after twenty seconds; a skip without a ready result uses normal extraction. Network connection and audio-device startup can still leave a short gap; this is not guaranteed gapless playback.
+**Memory use varies.** Include Tide and its temporary playback helpers when
+comparing resource use. The [measurement notes](docs/media/memory-test.md) explain
+the demo's figures. Installed Tide does not create Rust build caches.
 
-Drag an upcoming queue row by its handle to reorder it within its manual or autoplay section. The current song stays fixed. Removal and song radio remain separate actions.
+## Updates and help
 
-## Resource use
+**Settings → Check for updates** finds published stable releases and offers
+**Install and restart**. Startup checks can be disabled. The updater skips beta
+and draft releases. Installed previews can update to stable 0.1.3; future
+preview-only updates still need their installer. Accounts and
+preferences are kept during app updates. Update the unpacked companion separately
+through its guide.
 
-The default software renderer avoids GPU-driver startup overhead for this mostly static interface. Include mpv and any transient extractor/runtime processes in measurements. Mode switching releases the inactive interface; the audio engine stays shared. See [validation and measurements](docs/VALIDATION.md). A small executable or a native language alone does not prove lower RAM use.
+[Troubleshooting](docs/TROUBLESHOOTING.md) ·
+[Report a bug](https://github.com/yotam1001/tide-music/issues/new) ·
+[Remove Tide](docs/INSTALLATION.md#remove-tide)
 
-## Checks
+Report security issues through [SECURITY.md](SECURITY.md), without publishing
+private information.
 
-```powershell
-cargo fmt --all -- --check
-cargo test --workspace --locked
-cargo clippy --workspace --all-targets --locked -- -D warnings
-python scripts/check_public_files.py
-python -m unittest discover -s helpers -p "test_*.py"
-```
+## Contribute
 
-Native screenshots: `cargo run -p tide-music -- --smoke-ui .local/screens --smoke-populated`. Add `--smoke-library` for synthetic account/library metadata, and optionally `--fixture-audio path/to/silent.wav` to run native interaction assertions with a silent local file. This shows and captures Home, Library, playlist detail, search, account settings, Queue drawer, light/dark, compact and mini/restore views, then exits. UI smoke/benchmark modes never load your saved account session. The opt-in `--smoke-autoplay` check uses the existing encrypted session, mutes audio, tests native EOF advancing into song recommendations, then exits without saving its temporary queue or volume.
+See [Contributing](CONTRIBUTING.md) and the [developer guide](docs/DEVELOPMENT.md).
+Release maintainers can use the [launch checklist](docs/BETA_RELEASE.md).
 
-For a muted five-minute local continuity check, use
-`cargo run -p tide-music -- --smoke-local-listening 300 path/to/short-audio.wav`.
-Choose a file about 18 seconds long: the check requires ten natural transitions
-and exercises pause/resume, skip and seek. It uses temporary settings, bypasses
-saved accounts and does not register a Windows media session. The separate
-`--smoke-listening-session 1200` check uses the saved verified account and tests
-live recommendation playback; the local check cannot prove YouTube reliability.
+Tide's original source is [MIT licensed](LICENSE). Dependencies keep their own
+licenses; see [third-party notices](THIRD_PARTY_NOTICES.md). Tide is not affiliated
+with Google or YouTube.
 
-## Build a preview ZIP
+## Experimental Jams development
 
-After building the release executable, generate dependency notices for the same
-Windows target. For a normal MSVC build:
-
-```powershell
-powershell -File scripts/build-preview.ps1
-cargo metadata --locked --filter-platform x86_64-pc-windows-msvc --format-version 1 > .local/cargo-metadata.json
-python scripts/generate-dependency-notices.py .local/cargo-metadata.json .local/DEPENDENCIES.md
-powershell -File scripts/package-preview.ps1 -DependenciesNotice .local/DEPENDENCIES.md -StartHere docs/START_HERE.md
-python scripts/check-preview-package.py dist/path-to-generated-preview.zip
-```
-
-Create `.local` first if it does not exist. For a GNU build, use
-`x86_64-pc-windows-gnu` for the metadata target. The script packages only its
-explicit file list, generates SHA-256 checksums and refuses existing outputs.
-The ZIP includes the app, setup scripts, helper source and notices. It does not
-include downloaded tools, Python environments, credentials or browser profiles.
-Extracted previews use the included START_HERE.md instructions to install their
-tools and optional account helper locally. A preview ZIP is not a stable-release
-claim; see [release readiness](docs/RELEASE_READINESS.md).
-
-## Privacy and credentials
-
-No application API key is required. Never commit keys, tokens, cookies, `.env` files or local credential files. The ignore rules and tracked-file scan provide defense in depth; they do not replace reviewing every commit. Search and link playback contact external providers; local file playback stays local. There is no analytics or automatic browser-cookie access.
-
-Provider terms and access restrictions still apply. The app does not implement account bypass, ad suppression or DRM circumvention. Unofficial playback compatibility is not guaranteed.
-
-## License
-
-Tide's original source is MIT licensed. Slint and playback tools retain their own licenses; see [third-party notices](THIRD_PARTY_NOTICES.md). Binaries/toolchains are excluded from Git. See [implementation plan](docs/IMPLEMENTATION_PLAN.md) and [contributing guide](CONTRIBUTING.md).
+Synchronized listening is developed behind the `experimental-jams` feature and
+is excluded from the stable installer. See the [Jam guide](experiments/jam/README.md)
+for the current developer setup and validation status.

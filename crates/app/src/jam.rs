@@ -146,7 +146,7 @@ fn pause_guest(s: &mut State, u: &AppWindow) {
     {
         stop_confirmed(s);
         s.jam.terminal = true;
-        u.set_jam_status("Playback stopped safely Â· leave Jam to restore the local player".into());
+        u.set_jam_status("Playback stopped safely · leave Jam to restore the local player".into());
     }
 }
 fn begin_guest(s: &mut State, u: &AppWindow) -> Result<(), &'static str> {
@@ -168,6 +168,7 @@ fn begin_guest(s: &mut State, u: &AppWindow) -> Result<(), &'static str> {
     s.shuffle_request = false;
     s.active_playback = false;
     u.set_settings_open(false);
+    u.set_account_open(false);
     u.set_queue_open(false);
     u.set_jam_guest(true);
     u.set_position(0.0);
@@ -205,6 +206,7 @@ pub fn leave(s: &mut State, u: &AppWindow, message: &str) {
     s.jam.began = None;
     s.jam.terminal = false;
     s.jam.connected = false;
+    u.set_jam_invite_code("".into());
     u.set_jam_active(false);
     u.set_jam_guest(false);
     u.set_jam_status(message.into());
@@ -219,7 +221,7 @@ pub fn account_changing(s: &mut State, u: &AppWindow) {
 }
 pub fn install(state: &Rc<RefCell<State>>, ui: &AppWindow, picker: &Rc<PickerState>) {
     ui.set_jam_available(true);
-    ui.set_jam_status("Private relay experiment Â· not a public Tide service".into());
+    ui.set_jam_status("Choose a shared or self-hosted Jam server".into());
     {
         let state = state.clone();
         let weak = ui.as_weak();
@@ -228,11 +230,12 @@ pub fn install(state: &Rc<RefCell<State>>, ui: &AppWindow, picker: &Rc<PickerSta
                 leave(
                     &mut state.borrow_mut(),
                     &u,
-                    "Left Jam Â· your queue is restored and paused",
+                    "Left Jam · your queue is restored and paused",
                 );
             }
         });
     }
+    install_code_controls(state, ui, picker);
     for host in [true, false] {
         let state = state.clone();
         let weak = ui.as_weak();
@@ -348,9 +351,9 @@ pub fn install(state: &Rc<RefCell<State>>, ui: &AppWindow, picker: &Rc<PickerSta
                         u.set_jam_active(true);
                         u.set_jam_status(
                             if host {
-                                "Creating room and saving private inviteâ€¦"
+                                "Creating room and saving private invite…"
                             } else {
-                                "Joining Â· original queue preserved"
+                                "Joining · original queue preserved"
                             }
                             .into(),
                         );
@@ -369,6 +372,103 @@ pub fn install(state: &Rc<RefCell<State>>, ui: &AppWindow, picker: &Rc<PickerSta
         }
     }
 }
+fn install_code_controls(state: &Rc<RefCell<State>>, ui: &AppWindow, picker: &Rc<PickerState>) {
+    for host in [true, false] {
+        let state = state.clone();
+        let weak = ui.as_weak();
+        let picker = picker.clone();
+        let callback = move || {
+            let Some(u) = weak.upgrade() else {
+                return;
+            };
+            let mut s = state.borrow_mut();
+            if let Err(error) = ready(&s) {
+                u.set_jam_status(error.into());
+                return;
+            }
+            let request = if host {
+                let endpoint = u.get_jam_endpoint().to_string();
+                let endpoint = match Endpoint::parse(&endpoint) {
+                    Ok(endpoint) => endpoint,
+                    Err(_) => {
+                        u.set_jam_status("Enter a trusted HTTPS Jam server".into());
+                        return;
+                    }
+                };
+                let timeline = match host_timeline(&s) {
+                    Ok(timeline) => timeline,
+                    Err(error) => {
+                        u.set_jam_status(error.into());
+                        return;
+                    }
+                };
+                Start::HostCode {
+                    endpoint: endpoint.as_str().into(),
+                    timeline,
+                }
+            } else {
+                let text = zeroize::Zeroizing::new(u.get_jam_code_input().to_string());
+                if let Err(error) = Invite::from_code(&text) {
+                    u.set_jam_status(error.into());
+                    return;
+                }
+                Start::GuestCode { code: text }
+            };
+            match Session::start(request) {
+                Ok(session) => {
+                    picker.cancel_account();
+                    if !host {
+                        if let Err(error) = begin_guest(&mut s, &u) {
+                            session.cancel();
+                            s.jam.retiring = Some(session);
+                            u.set_jam_status(error.into());
+                            return;
+                        }
+                        u.set_jam_code_input("".into());
+                    }
+                    s.jam.session = Some(session);
+                    s.jam.began = Some(Instant::now());
+                    s.jam.terminal = false;
+                    s.jam.connected = false;
+                    u.set_jam_invite_code("".into());
+                    u.set_jam_active(true);
+                    u.set_jam_status(
+                        if host {
+                            "Starting Jam…"
+                        } else {
+                            "Joining Jam…"
+                        }
+                        .into(),
+                    );
+                }
+                Err(error) => u.set_jam_status(error.into()),
+            }
+        };
+        if host {
+            ui.on_jam_host_code(callback);
+        } else {
+            ui.on_jam_join_code(callback);
+        }
+    }
+    let weak = ui.as_weak();
+    ui.on_jam_copy_invite(move || {
+        let Some(u) = weak.upgrade() else {
+            return;
+        };
+        let code = zeroize::Zeroizing::new(u.get_jam_invite_code().to_string());
+        if code.is_empty() {
+            return;
+        }
+        match arboard::Clipboard::new().and_then(|mut clipboard| clipboard.set_text(code.as_str()))
+        {
+            Ok(()) => u.set_jam_status("Invite copied — send it to your friends".into()),
+            Err(_) => u.set_jam_status(
+                "Could not copy. Select the invite code and copy it manually.".into(),
+            ),
+        }
+    });
+}
+
 struct GuestUpdate {
     actions: Vec<Action>,
     adopt_queue: bool,
@@ -396,12 +496,12 @@ fn guest_update(
     }
     let status = match view.timeline.as_ref().filter(|_| adopt_queue) {
         Some(_) if waiting_for_track => {
-            "This song is unavailable locally. Waiting for the host's next songâ€¦"
+            "This song is unavailable locally. Waiting for the host's next song…"
         }
-        Some(timeline) if timeline.loading => "Host is buffering Â· waiting together",
-        Some(_) if !local.ready || loading_new_track => "Loading host's song locallyâ€¦",
-        Some(_) => "Following host Â· volume stays local",
-        None => "Waiting for a fresh host state Â· playback stays paused if unavailable",
+        Some(timeline) if timeline.loading => "Host is buffering · waiting together",
+        Some(_) if !local.ready || loading_new_track => "Loading host's song locally…",
+        Some(_) => "Following host · volume stays local",
+        None => "Waiting for a fresh host state · playback stays paused if unavailable",
     };
     Ok(GuestUpdate {
         actions,
@@ -415,9 +515,13 @@ pub fn tick(s: &mut State, u: &AppWindow) {
     }
     let event = s.jam.session.as_ref().and_then(Session::take_event);
     match event {
-        Some(Event::Hosting { guests }) => {
+        Some(Event::Hosting {
+            guests,
+            invite_code,
+        }) => {
             s.jam.connected = true;
-            u.set_jam_status(format!("Hosting Â· {guests} guest(s) Â· private invite saved").into())
+            u.set_jam_invite_code(invite_code.as_str().into());
+            u.set_jam_status(format!("Hosting · {guests} guest(s)").into())
         }
         Some(Event::View {
             view,
@@ -449,7 +553,7 @@ pub fn tick(s: &mut State, u: &AppWindow) {
             Err(_) => leave(
                 s,
                 u,
-                "Jam ended Â· the host queue must contain YouTube tracks",
+                "Jam ended · the host queue must contain YouTube tracks",
             ),
         }
         return;
@@ -475,7 +579,7 @@ pub fn tick(s: &mut State, u: &AppWindow) {
         if !p.paused {
             pause_guest(s, u);
         }
-        u.set_jam_status("Jam connection interrupted Â· paused while reconnecting".into());
+        u.set_jam_status("Jam connection interrupted · paused while reconnecting".into());
         return;
     }
     view.age_ms = view
@@ -497,7 +601,7 @@ pub fn tick(s: &mut State, u: &AppWindow) {
         Err(_) => {
             s.jam.terminal = true;
             pause_guest(s, u);
-            u.set_jam_status("Invalid Jam state Â· playback paused".into());
+            u.set_jam_status("Invalid Jam state · playback paused".into());
             return;
         }
     };
@@ -529,7 +633,8 @@ pub fn tick(s: &mut State, u: &AppWindow) {
                         .find(|track| track.source == source)
                         .cloned()
                         .unwrap_or(Track {
-                            title: format!("YouTube track Â· {}", id.as_str()),
+                            artists: Vec::new(),
+                            title: format!("YouTube track · {}", id.as_str()),
                             artist: "Jam".into(),
                             album: String::new(),
                             source,
@@ -563,7 +668,7 @@ pub fn tick(s: &mut State, u: &AppWindow) {
         if s.engine.as_ref().unwrap().send(command).is_err() {
             s.jam.terminal = true;
             pause_guest(s, u);
-            u.set_jam_status("Jam playback command failed Â· leave to retry".into());
+            u.set_jam_status("Jam playback command failed · leave to retry".into());
             break;
         }
     }
@@ -577,7 +682,7 @@ pub fn tick(s: &mut State, u: &AppWindow) {
             .current
             .and_then(|index| s.settings.queue.tracks.get_mut(index))
         {
-            if track.title.starts_with("YouTube track Â· ") {
+            if track.title.starts_with("YouTube track · ") {
                 track.title = title;
                 refresh(u, s);
             }
@@ -591,6 +696,7 @@ pub fn tick(s: &mut State, u: &AppWindow) {
 pub fn ownership_smoke(state: &Rc<RefCell<State>>, u: &AppWindow, pickers: &Rc<PickerState>) {
     fn track(id: &str) -> Track {
         Track {
+            artists: Vec::new(),
             title: "Synthetic ownership fixture".into(),
             artist: String::new(),
             album: String::new(),
@@ -731,7 +837,7 @@ mod tests {
             next.actions[0],
             Action::Load { generation: 2, .. }
         ));
-        assert_eq!(next.status, "Loading host's song locallyâ€¦");
+        assert_eq!(next.status, "Loading host's song locally…");
         let ready = Local {
             generation: 2,
             duration_ms: 60_000,

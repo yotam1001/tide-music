@@ -13,14 +13,18 @@ use hyper_util::{
     service::TowerToHyperService,
 };
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{hash_map::RandomState, HashMap, VecDeque},
+    hash::BuildHasher,
+    net::{IpAddr, Ipv6Addr},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 use tokio::{net::TcpListener, sync::Semaphore};
 
 const MAX_ROOMS: usize = 32;
-const ROOM_LIFETIME_MS: u64 = 2 * 60 * 60 * 1000;
+const ROOM_LIFETIME_MS: u64 = 8 * 60 * 60 * 1000;
+const ROOM_IDLE_MS: u64 = 120_000;
+const PEER_HEADER: &str = "x-tide-jam-peer";
 const MEMBER_IDLE_MS: u64 = 30_000;
 type Failure = (StatusCode, &'static str);
 const MISSING: Failure = (StatusCode::NOT_FOUND, "Room or membership unavailable");
@@ -30,6 +34,7 @@ struct Member {
     seen: u64,
 }
 struct Room {
+    peer: Option<u64>,
     host: Secret,
     invite: Secret,
     born: u64,
@@ -41,11 +46,14 @@ struct Room {
 pub struct Store {
     rooms: HashMap<String, Room>,
     creates: VecDeque<u64>,
+    peer_creates: HashMap<u64, VecDeque<u64>>,
 }
 impl Store {
     fn clean(&mut self, now: u64) {
-        self.rooms
-            .retain(|_, room| now.saturating_sub(room.born) < ROOM_LIFETIME_MS);
+        self.rooms.retain(|_, room| {
+            now.saturating_sub(room.born) < ROOM_LIFETIME_MS
+                && now.saturating_sub(room.updated) < ROOM_IDLE_MS
+        });
         for room in self.rooms.values_mut() {
             room.members
                 .retain(|member| now.saturating_sub(member.seen) < MEMBER_IDLE_MS);
@@ -59,7 +67,38 @@ impl Store {
         }
     }
     pub fn create(&mut self, now: u64) -> Result<Created, Failure> {
+        self.create_inner(None, now)
+    }
+    pub fn create_shared(&mut self, peer: u64, now: u64) -> Result<Created, Failure> {
+        self.create_inner(Some(peer), now)
+    }
+    fn create_inner(&mut self, peer: Option<u64>, now: u64) -> Result<Created, Failure> {
         self.clean(now);
+        self.peer_creates.retain(|_, times| {
+            while times
+                .front()
+                .is_some_and(|t| now.saturating_sub(*t) >= 60_000)
+            {
+                times.pop_front();
+            }
+            !times.is_empty()
+        });
+        if let Some(peer) = peer {
+            let active = self
+                .rooms
+                .values()
+                .filter(|room| room.peer == Some(peer))
+                .count();
+            if active >= 2
+                || self
+                    .peer_creates
+                    .get(&peer)
+                    .is_some_and(|times| times.len() >= 2)
+                || (!self.peer_creates.contains_key(&peer) && self.peer_creates.len() >= 1024)
+            {
+                return Err((StatusCode::TOO_MANY_REQUESTS, "Room creation limit reached"));
+            }
+        }
         if self.rooms.len() >= MAX_ROOMS || self.creates.len() >= 16 {
             return Err((StatusCode::TOO_MANY_REQUESTS, "Room capacity reached"));
         }
@@ -71,6 +110,7 @@ impl Store {
         self.rooms.insert(
             result.room.clone(),
             Room {
+                peer,
                 host: result.host.clone(),
                 invite: result.invite.clone(),
                 born: now,
@@ -80,6 +120,9 @@ impl Store {
             },
         );
         self.creates.push_back(now);
+        if let Some(peer) = peer {
+            self.peer_creates.entry(peer).or_default().push_back(now);
+        }
         Ok(result)
     }
     pub fn join(&mut self, id: &str, invite: &Secret, now: u64) -> Result<Joined, Failure> {
@@ -187,6 +230,8 @@ struct Shared {
     epoch: Instant,
     host: String,
     operator: Option<Secret>,
+    shared_relay: bool,
+    peer_hash: RandomState,
     requests: Arc<Mutex<VecDeque<u64>>>,
 }
 impl Shared {
@@ -204,6 +249,14 @@ impl Shared {
 
 async fn guard(State(shared): State<Shared>, request: Request, next: Next) -> Response {
     let headers = request.headers();
+    // Only the explicit shared reverse-proxy mode trusts a peer header. The
+    // proxy must overwrite it from the socket address; direct client values
+    // cannot select authority or bypass the loopback-only backend listener.
+    if (shared.shared_relay && checked_peer(headers).is_err())
+        || (!shared.shared_relay && headers.contains_key(PEER_HEADER))
+    {
+        return StatusCode::FORBIDDEN.into_response();
+    }
     if headers.contains_key(header::ORIGIN)
         || headers.contains_key("forwarded")
         || headers.contains_key("x-forwarded-host")
@@ -274,8 +327,43 @@ async fn guard(State(shared): State<Shared>, request: Request, next: Next) -> Re
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Empty {}
-async fn create(State(s): State<Shared>, Json(_): Json<Empty>) -> Result<Json<Created>, Failure> {
-    s.with(|store, now| store.create(now)).map(Json)
+fn checked_peer(headers: &HeaderMap) -> Result<IpAddr, Failure> {
+    if headers.get_all(PEER_HEADER).iter().count() != 1 {
+        return Err(MISSING);
+    }
+    let value = headers
+        .get(PEER_HEADER)
+        .and_then(|h| h.to_str().ok())
+        .ok_or(MISSING)?;
+    let ip: IpAddr = value.parse().map_err(|_| MISSING)?;
+    if ip.to_string() != value {
+        return Err(MISSING);
+    }
+    // Bucket IPv6 addresses by /64 so changing the interface identifier does
+    // not grant more rooms. No raw IP is retained in the in-memory store.
+    Ok(match ip {
+        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+            Some(v4) => IpAddr::V4(v4),
+            None => IpAddr::V6(Ipv6Addr::from(u128::from(v6) & (u128::MAX << 64))),
+        },
+        other => other,
+    })
+}
+async fn create(
+    State(s): State<Shared>,
+    headers: HeaderMap,
+    Json(_): Json<Empty>,
+) -> Result<Json<Created>, Failure> {
+    if s.shared_relay {
+        if headers.contains_key(header::AUTHORIZATION) {
+            return Err(MISSING);
+        }
+        let peer = s.peer_hash.hash_one(checked_peer(&headers)?);
+        s.with(|store, now| store.create_shared(peer, now))
+            .map(Json)
+    } else {
+        s.with(|store, now| store.create(now)).map(Json)
+    }
 }
 async fn join(
     State(s): State<Shared>,
@@ -350,7 +438,7 @@ pub async fn serve(
     listener: TcpListener,
     stop: tokio::sync::watch::Receiver<bool>,
 ) -> std::io::Result<()> {
-    serve_inner(listener, stop, None).await
+    serve_inner(listener, stop, None, None).await
 }
 
 /// Backend remains loopback-only. The operator must provide a trusted, correctly
@@ -360,13 +448,38 @@ pub async fn serve_private(
     stop: tokio::sync::watch::Receiver<bool>,
     config: PrivateRelay,
 ) -> std::io::Result<()> {
-    serve_inner(listener, stop, Some(config)).await
+    serve_inner(listener, stop, Some(config), None).await
+}
+
+/// Shared room creation behind a same-machine TLS proxy. Unlike private mode,
+/// no operator secret is distributed to player installations. The proxy must
+/// overwrite x-tide-jam-peer with its remote socket IP on every request.
+#[derive(Debug)]
+pub struct SharedRelay {
+    endpoint: Endpoint,
+}
+impl SharedRelay {
+    pub fn new(endpoint: &str) -> Result<Self, &'static str> {
+        let endpoint = Endpoint::parse(endpoint).map_err(|_| "Invalid shared relay endpoint")?;
+        if !endpoint.is_remote() {
+            return Err("Shared relays require an HTTPS endpoint");
+        }
+        Ok(Self { endpoint })
+    }
+}
+pub async fn serve_shared(
+    listener: TcpListener,
+    stop: tokio::sync::watch::Receiver<bool>,
+    config: SharedRelay,
+) -> std::io::Result<()> {
+    serve_inner(listener, stop, None, Some(config)).await
 }
 
 async fn serve_inner(
     listener: TcpListener,
     mut stop: tokio::sync::watch::Receiver<bool>,
     config: Option<PrivateRelay>,
+    shared_config: Option<SharedRelay>,
 ) -> std::io::Result<()> {
     let address = listener.local_addr()?;
     if address.ip() != std::net::Ipv4Addr::LOCALHOST {
@@ -374,18 +487,22 @@ async fn serve_inner(
             "The Jam lab can only listen on 127.0.0.1",
         ));
     }
+    let shared_relay = shared_config.is_some();
+    let shared_host = shared_config.map(|config| config.endpoint.authority().to_owned());
     let (host, operator) = match config {
         Some(config) => (
             config.endpoint.authority().to_owned(),
             Some(config.operator),
         ),
-        None => (address.to_string(), None),
+        None => (shared_host.unwrap_or_else(|| address.to_string()), None),
     };
     let shared = Shared {
         store: Arc::new(Mutex::new(Store::default())),
         epoch: Instant::now(),
         host,
         operator,
+        shared_relay,
+        peer_hash: RandomState::new(),
         requests: Arc::new(Mutex::new(VecDeque::new())),
     };
     let router = Router::new()
@@ -425,4 +542,72 @@ async fn serve_inner(
     tasks.abort_all();
     while tasks.join_next().await.is_some() {}
     Ok(())
+}
+
+#[cfg(test)]
+mod shared_admission_tests {
+    use super::*;
+    fn timeline(revision: u64) -> Timeline {
+        Timeline {
+            revision,
+            play_id: 1,
+            queue: vec![VideoId::parse("abcdefghijk").unwrap()],
+            index: 0,
+            position_ms: 0,
+            paused: true,
+            loading: false,
+        }
+    }
+    #[test]
+    fn one_peer_cannot_fill_the_relay_and_closing_does_not_reset_its_rate() {
+        let mut store = Store::default();
+        let a = store.create_shared(1, 0).unwrap();
+        let b = store.create_shared(1, 1).unwrap();
+        assert!(store.create_shared(1, 2).is_err());
+        assert!(store.create_shared(2, 2).is_ok());
+        store.close(&a.room, &a.host, 3).unwrap();
+        store.close(&b.room, &b.host, 4).unwrap();
+        assert!(store.create_shared(1, 5).is_err());
+        assert!(store.create_shared(1, 60_001).is_ok());
+    }
+    #[test]
+    fn active_rooms_survive_long_listening_and_idle_rooms_release_capacity() {
+        let mut store = Store::default();
+        let room = store.create_shared(1, 0).unwrap();
+        for minute in 0..240u64 {
+            store
+                .publish(
+                    &room.room,
+                    &room.host,
+                    timeline(minute + 1),
+                    minute * 60_000,
+                )
+                .unwrap();
+        }
+        assert!(store
+            .view(&room.room, &room.host, 239 * 60_000 + 100)
+            .is_ok());
+        assert!(store.view(&room.room, &room.host, 241 * 60_000).is_err());
+        assert!(store.create_shared(1, 241 * 60_000).is_ok());
+    }
+    #[test]
+    fn proxy_peer_validation_groups_ipv6_and_rejects_ambiguous_addresses() {
+        let make = |ip: &'static str| {
+            let mut h = HeaderMap::new();
+            h.insert(PEER_HEADER, ip.parse().unwrap());
+            h
+        };
+        let first = checked_peer(&make("2001:db8:1:2::1")).unwrap();
+        let second = checked_peer(&make("2001:db8:1:2::abcd")).unwrap();
+        assert_eq!(first, second);
+        assert_ne!(first, checked_peer(&make("2001:db8:1:3::1")).unwrap());
+        for ip in [
+            "203.0.113.7, 203.0.113.8",
+            "example.test",
+            "0203.0.113.7",
+            "2001:0DB8::1",
+        ] {
+            assert!(checked_peer(&make(ip)).is_err());
+        }
+    }
 }

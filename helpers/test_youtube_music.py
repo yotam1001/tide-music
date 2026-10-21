@@ -9,7 +9,7 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import MagicMock, patch
-from youtube_music import (LOGIN_SECONDS, MAX_RADIO_TRACKS, MAX_HOME_CARDS, MAX_HOME_ITEMS_PER_SHELF,
+from youtube_music import (LOGIN_SECONDS, MAX_RADIO_TRACKS, MAX_SUPERMIX_SHELVES, MAX_HOME_CARDS, MAX_HOME_ITEMS_PER_SHELF,
                           MAX_HOME_SHELVES, MUSIC_URL, artwork_url, connect, connect_existing, create_client, main,
                           music_cookies, cookie_matches_music, read_cookie_database, CookieReadError, CookieSelectionError,
                           read_music_cookies, remove_login_profile, run,
@@ -36,6 +36,57 @@ class FakeClient:
             {"type": "album", "browseId": "MPREfixture", "title": "Album"},
             {"playlistId": "PLfixture", "title": "Mix"},
         ] * 20}] * 4
+
+
+class ArtistTests(unittest.TestCase):
+    artist = "UC1234567890123456789012"
+    other = "UCabcdefghijklmnopqrstuv"
+
+    def test_resolution_matches_seed_and_never_guesses_from_uploader(self):
+        client = SimpleNamespace(get_watch_playlist=MagicMock(return_value={"tracks": [
+            {"videoId": "00000000001", "artists": [{"id": self.other, "name": "Other"}]},
+            {"videoId": "K4DyBUG242c", "artists": [None, {"id": "https://evil.invalid", "name": "Bad"},
+                {"id": self.artist, "name": "Band"}, {"id": self.artist, "name": "Duplicate"},
+                {"id": self.other, "name": "Guest"}]}]}))
+        result = run(client, {"action": "artists", "video_id": "K4DyBUG242c"})
+        self.assertEqual(result, {"type": "artists", "artists": [
+            {"id": self.artist, "name": "Band"}, {"id": self.other, "name": "Guest"}]})
+        client.get_watch_playlist.assert_called_once_with(videoId="K4DyBUG242c", limit=1)
+        client.get_watch_playlist.return_value = {"tracks": [{"videoId": "00000000001"}]}
+        self.assertEqual(run(client, {"action": "artists", "video_id": "K4DyBUG242c"})["artists"], [])
+
+    def test_invalid_id_cannot_reach_api(self):
+        client = MagicMock()
+        for value in (None, True, "https://evil.invalid", "bad", "UC" + "a" * 23):
+            self.assertEqual(run(client, {"action": "artist", "id": value}),
+                             {"type": "error", "code": "artist_unavailable"})
+        self.assertEqual(run(client, {"action": "artists", "video_id": "bad/url"})["code"], "artist_unavailable")
+        self.assertEqual(client.mock_calls, [])
+
+    def test_top_songs_preserve_upstream_order_bound_and_canonical_identity(self):
+        songs = [{"videoId": f"{i:011}", "title": f"Song {i}"} for i in range(60)]
+        client = SimpleNamespace(get_artist=MagicMock(return_value={"name": "Band", "channelId": self.other,
+                    "songs": {"browseId": "PLfixture", "results": songs[:5]}}),
+                    get_playlist=MagicMock(return_value={"tracks": songs}))
+        result = run(client, {"action": "artist", "id": self.artist})
+        self.assertEqual(result["type"], "artist")
+        self.assertEqual(len(result["tracks"]), 50)
+        self.assertEqual([t["title"] for t in result["tracks"]], [f"Song {i}" for i in range(50)])
+        self.assertEqual(result["tracks"][0]["artists"], [{"id": self.artist, "name": "Band"}])
+        self.assertTrue(result["truncated"])
+        client.get_playlist.assert_called_once_with("PLfixture", limit=51)
+
+    def test_optional_expansion_failure_retains_playable_top_songs(self):
+        song = {"videoId": "K4DyBUG242c", "title": "First"}
+        client = SimpleNamespace(get_artist=MagicMock(return_value={"name": "Band", "songs": {
+            "browseId": "PLfixture", "results": [song, song, {"videoId": "00000000001", "isAvailable": False}]}}),
+            get_playlist=MagicMock(side_effect=TimeoutError("private source")))
+        result = run(client, {"action": "artist", "id": self.artist})
+        self.assertEqual([t["title"] for t in result["tracks"]], ["First"])
+        self.assertNotIn("private source", json.dumps(result))
+        self.assertFalse(result["truncated"])
+        client.get_artist.return_value = {}
+        self.assertEqual(run(client, {"action": "artist", "id": self.artist})["code"], "artist_unavailable")
 
 
 class ProviderTests(unittest.TestCase):
@@ -182,6 +233,71 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(len(result["playlists"]), 200)
         self.assertTrue(result["truncated"])
 
+    def test_supermix_resolves_fresh_account_mix_outside_the_home_display_rows(self):
+        shelf = lambda playlist: {"contents": [{"title": "My Supermix", "playlistId": playlist}]}
+        client = SimpleNamespace(
+            get_home=MagicMock(side_effect=[
+                [{"contents": []}] * 7 + [shelf("RDTMAKfixtureOne")],
+                [shelf("RDTMAKfixtureTwo")]]),
+            get_watch_playlist=MagicMock(return_value={"tracks": [
+                {"videoId": "K4DyBUG242c", "title": "Personal song"}]}))
+        for playlist in ("RDTMAKfixtureOne", "RDTMAKfixtureTwo"):
+            result = run(client, {"action": "supermix"})
+            client.get_home.assert_called_with(limit=MAX_SUPERMIX_SHELVES)
+            client.get_watch_playlist.assert_called_with(playlistId=playlist, limit=50)
+            self.assertEqual([track["title"] for track in result["tracks"]], ["Personal song"])
+            self.assertFalse(result["truncated"])
+        self.assertEqual(client.get_home.call_count, 2)
+
+    def test_supermix_does_not_substitute_other_mixes_or_public_playlists(self):
+        client = SimpleNamespace(get_home=MagicMock(), get_watch_playlist=MagicMock())
+        unavailable = {"type": "error", "code": "supermix_unavailable"}
+        for shelves in [None, {}, [None, {"contents": "unsupported"}],
+                        [{"contents": [None, "unsupported",
+                            {"title": "My Supermix", "playlistId": "PLpublic"},
+                            {"title": "Discover Mix", "playlistId": "RDTMAKother"},
+                            {"title": "My Supermix 2", "playlistId": "RDTMAKotherVersion"},
+                            {"title": "My Supermix", "playlistId": "https://other.test"},
+                            {"title": "My Supermix", "playlistId": "RDTMAKunavailable", "isAvailable": False}]}]]:
+            client.get_home.return_value = shelves
+            self.assertEqual(run(client, {"action": "supermix"}), unavailable)
+        entry = {"title": "My Supermix", "playlistId": "RDTMAKfixture"}
+        for shelves in [
+            [{"contents": [None] * MAX_HOME_ITEMS_PER_SHELF + [entry]}],
+            [{"contents": []}] * MAX_SUPERMIX_SHELVES + [{"contents": [entry]}],
+        ]:
+            client.get_home.return_value = shelves
+            self.assertEqual(run(client, {"action": "supermix"}), unavailable)
+        client.get_watch_playlist.assert_not_called()
+
+    def test_supermix_filters_tracks_and_handles_unavailable_without_reconnect(self):
+        client = SimpleNamespace(
+            get_home=lambda limit: [{"contents": [{"title": "My Supermix", "playlistId": "RDTMAKfixture"}]}],
+            get_watch_playlist=MagicMock())
+        for data in [None, {}, {"tracks": None}, {"tracks": []}, {"tracks": [{"videoId": "bad"}]}]:
+            client.get_watch_playlist.return_value = data
+            self.assertEqual(run(client, {"action": "supermix"}),
+                             {"type": "error", "code": "supermix_unavailable"})
+        client.get_watch_playlist.return_value = {"tracks": [
+            None, {"videoId": "00000000001", "title": "Unavailable", "isAvailable": False},
+            {"videoId": "00000000002", "title": "Personal song"},
+            {"videoId": "00000000002", "title": "Duplicate"}]}
+        self.assertEqual([track["title"] for track in run(client, {"action": "supermix"})["tracks"]], ["Personal song"])
+        client.get_watch_playlist.return_value = {"tracks": [
+            {"videoId": f"{index:011d}", "title": f"Song {index}"} for index in range(2001)]}
+        result = run(client, {"action": "supermix"})
+        self.assertEqual(len(result["tracks"]), 2000)
+        self.assertTrue(result["truncated"])
+
+    def test_supermix_transport_and_content_failures_do_not_disclose_or_invalidate_session(self):
+        client = SimpleNamespace(get_home=MagicMock(side_effect=TimeoutError("private fixture")))
+        self.assertEqual(run(client, {"action": "supermix"}), {"type": "error", "code": "request"})
+        client.get_home.side_effect = RuntimeError("Server returned HTTP 403: private fixture")
+        client.get_account_info = MagicMock(return_value={"accountName": "Fixture"})
+        self.assertEqual(run(client, {"action": "supermix"}), {"type": "error", "code": "request"})
+        client.get_account_info.side_effect = RuntimeError("Server returned HTTP 401: private fixture")
+        self.assertEqual(run(client, {"action": "supermix"}), {"type": "error", "code": "session"})
+
     def test_tracks_limit_and_safe_source(self):
         result = run(FakeClient(), {"action": "liked"})
         self.assertEqual(len(result["tracks"]), 2000)
@@ -194,19 +310,19 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(len(result["cards"]), 3)
         self.assertEqual([c["kind"] for c in result["cards"][:3]], ["song", "album", "playlist"])
 
-    def test_home_requests_more_shelves_and_keeps_later_personalized_candidates(self):
+    def test_home_preserves_the_leading_rows_and_does_not_fetch_distant_shelves(self):
         shelves = [None, {"contents": "Description"}, {"contents": None}]
         shelves += [{"title": "Personal shelf " + str(index), "contents": [
             {"videoId": f"{index:011d}", "title": "Personal song " + str(index)}
         ]} for index in range(MAX_HOME_SHELVES + 1)]
         client = SimpleNamespace(get_home=MagicMock(return_value=shelves))
         cards = run(client, {"action": "home"})["cards"]
-        client.get_home.assert_called_once_with(limit=8)
+        client.get_home.assert_called_once_with(limit=3)
         self.assertEqual(len(cards), MAX_HOME_SHELVES)
-        self.assertEqual(cards[-1]["id"], "00000000007")
-        self.assertEqual(cards[-1]["title"], "Personal song 7")
-        self.assertEqual(cards[-1]["shelf"], "Personal shelf 7")
-        self.assertNotIn("00000000008", [card["id"] for card in cards])
+        self.assertEqual(cards[-1]["id"], "00000000002")
+        self.assertEqual(cards[-1]["title"], "Personal song 2")
+        self.assertEqual(cards[-1]["shelf"], "Personal shelf 2")
+        self.assertNotIn("00000000003", [card["id"] for card in cards])
 
     def test_home_caps_distinct_cards_and_items_per_shelf_even_if_api_overshoots(self):
         shelves = [{"title": str(shelf), "contents": [

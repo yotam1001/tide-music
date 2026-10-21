@@ -6,9 +6,10 @@ license.workspace = true
 build = "build.rs"
 
 [features]
-experimental-jams = ["dep:tide-jam-lab", "dep:zeroize"]
+experimental-jams = ["dep:tide-jam-lab", "dep:zeroize", "dep:arboard"]
 
 [dependencies]
+arboard = { version = "3", default-features = false, optional = true }
 tide-core = { path = "../core" }
 tide-playback = { path = "../playback" }
 tide-windows = { path = "../windows" }
@@ -23,7 +24,13 @@ ureq = { version = "3", default-features = false, features = ["rustls"] }
 url = "2"
 tide-jam-lab = { path = "../../experiments/jam", default-features = false, optional = true }
 zeroize = { version = "1", optional = true }
+semver = "1"
+sha2 = "0.10"
+
 
 [build-dependencies]
 slint-build = "=1.18.1"
 winresource = "0.1.31"
+
+[dev-dependencies]
+tempfile = "3"

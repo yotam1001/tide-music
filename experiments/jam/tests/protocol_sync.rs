@@ -203,9 +203,9 @@ fn room_and_member_allocations_are_bounded() {
     }
     assert!(store.join(&room.room, &room.invite, 0).is_err());
     for index in 1..32 {
-        store.create(index * 60_000).unwrap();
+        store.create((index / 16) * 60_000).unwrap();
     }
-    assert!(store.create(32 * 60_000).is_err());
+    assert!(store.create(60_001).is_err());
 }
 #[test]
 fn follower_waits_for_ready_generation_then_catches_up_and_preserves_pause() {

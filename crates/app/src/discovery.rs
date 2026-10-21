@@ -1,11 +1,15 @@
 //! Session-only selection from actual personalized home recommendations.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashSet, VecDeque};
 use tide_provider::Card;
 
 const MAX_CANDIDATES: usize = 240;
 const VISIBLE_CARDS: usize = 24;
-const RECENT_CARDS: usize = 240;
+// Vary within the leading two screens, never mine the full pool for novelty.
+const RELEVANCE_WINDOW: usize = 48;
+const RECENT_CARDS: usize = RELEVANCE_WINDOW;
+const LAST_DISPLAY_PENALTY: usize = 16;
+const RECENT_PENALTY: usize = 8;
 type Identity = (String, String);
 
 #[derive(Default)]
@@ -18,9 +22,7 @@ pub(crate) struct Discovery {
 struct Candidate {
     card: Card,
     identity: Identity,
-    recent_index: Option<usize>,
-    was_last_display: bool,
-    tie_break: u64,
+    rank: usize,
 }
 
 impl Discovery {
@@ -29,7 +31,7 @@ impl Discovery {
         self.last_display.clear();
     }
 
-    pub(crate) fn select(&mut self, cards: Vec<Card>, mut seed: u64) -> Vec<Card> {
+    pub(crate) fn select(&mut self, cards: Vec<Card>) -> Vec<Card> {
         let mut seen = HashSet::new();
         let mut candidates: Vec<_> = cards
             .into_iter()
@@ -48,55 +50,37 @@ impl Discovery {
                     return None;
                 }
                 Some(Candidate {
-                    recent_index: self.recent.iter().position(|key| key == &identity),
-                    was_last_display: self.last_display.contains(&identity),
-                    tie_break: random(&mut seed),
+                    rank: seen.len() - 1,
                     card,
                     identity,
                 })
             })
+            .take(RELEVANCE_WINDOW)
             .collect();
-        let mut selected = Vec::with_capacity(VISIBLE_CARDS.min(candidates.len()));
-        let mut shelves: HashMap<String, usize> = HashMap::new();
-        let mut kinds: HashMap<String, usize> = HashMap::new();
-
-        while selected.len() < VISIBLE_CARDS && !candidates.is_empty() {
-            let index = candidates
-                .iter()
-                .enumerate()
-                .min_by_key(|(_, candidate)| {
-                    (
-                        candidate.recent_index.is_some(),
-                        candidate.was_last_display,
-                        // Balance shelves and kinds within the oldest batch,
-                        // while ensuring newer batches cannot starve older ones.
-                        candidate.recent_index.map_or(0, |age| age / VISIBLE_CARDS),
-                        shelves.get(&candidate.card.shelf).copied().unwrap_or(0),
-                        kinds.get(&candidate.card.kind).copied().unwrap_or(0),
-                        candidate.tie_break,
-                    )
-                })
-                .map(|(index, _)| index)
-                .expect("nonempty candidate pool");
-            let candidate = candidates.swap_remove(index);
-            *shelves.entry(candidate.card.shelf.clone()).or_default() += 1;
-            *kinds.entry(candidate.card.kind.clone()).or_default() += 1;
-            selected.push(candidate);
+        if candidates.is_empty() {
+            // The caller keeps the current Home screen on an empty response.
+            // Keep its recency state too, rather than treating it as a reset.
+            return Vec::new();
         }
-
-        // Even a small, unchanged upstream pool remains useful. Avoid returning
-        // the identical order twice when there is more than one available card.
-        if selected.len() > 1
-            && selected
-                .iter()
-                .map(|candidate| &candidate.identity)
-                .eq(self.last_display.iter())
-        {
-            selected.rotate_left(1);
-        }
+        // Provider order is the only relevance signal we actually have. Give
+        // repeat cards a bounded penalty, instead of letting every unseen card
+        // outrank all familiar songs or enforcing a song/playlist split.
+        candidates.sort_by_key(|candidate| {
+            let penalty = if self.last_display.contains(&candidate.identity) {
+                LAST_DISPLAY_PENALTY
+            } else if self.recent.contains(&candidate.identity) {
+                RECENT_PENALTY
+            } else {
+                0
+            };
+            (candidate.rank + penalty, candidate.rank)
+        });
+        candidates.truncate(VISIBLE_CARDS);
+        // Display the chosen cards in their original order and shelf context.
+        candidates.sort_by_key(|candidate| candidate.rank);
         self.last_display.clear();
-        let mut result = Vec::with_capacity(selected.len());
-        for candidate in selected {
+        let mut result = Vec::with_capacity(candidates.len());
+        for candidate in candidates {
             self.recent.retain(|key| key != &candidate.identity);
             self.recent.push_back(candidate.identity.clone());
             self.last_display.push(candidate.identity);
@@ -109,21 +93,13 @@ impl Discovery {
     }
 }
 
-// SplitMix64: deterministic selection without an additional runtime dependency.
-fn random(seed: &mut u64) -> u64 {
-    *seed = seed.wrapping_add(0x9e3779b97f4a7c15);
-    let mut value = *seed;
-    value = (value ^ (value >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
-    value = (value ^ (value >> 27)).wrapping_mul(0x94d049bb133111eb);
-    value ^ (value >> 31)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn card(index: usize) -> Card {
         Card {
+            artists: Vec::new(),
             id: format!("candidate-{index}"),
             title: format!("Personalized title {index}"),
             subtitle: format!("Artist {index}"),
@@ -150,42 +126,82 @@ mod tests {
     }
 
     #[test]
-    fn unchanged_large_pool_exhausts_unseen_before_reusing_any_candidates() {
-        let mut discovery = Discovery::default();
-        let mut shown = HashSet::new();
-        for refresh in 0..10 {
-            let cards = discovery.select(pool(MAX_CANDIDATES), refresh);
-            assert_eq!(cards.len(), VISIBLE_CARDS);
-            for identity in identities(&cards) {
-                assert!(shown.insert(identity), "repeated before pool was exhausted");
-            }
-        }
-        assert_eq!(shown.len(), MAX_CANDIDATES);
-        let reused = identities(&discovery.select(pool(MAX_CANDIDATES), 10));
-        assert_eq!(reused.len(), VISIBLE_CARDS);
-        assert!(reused.is_subset(&shown));
+    fn first_page_preserves_upstream_order_without_random_shelf_balancing() {
+        let selected = Discovery::default().select(pool(MAX_CANDIDATES));
+        assert_eq!(order(&selected), order(&pool(VISIBLE_CARDS)));
     }
 
     #[test]
-    fn successive_refreshes_are_disjoint_and_reuse_does_not_starve_old_cards() {
+    fn unseen_playlists_do_not_force_out_the_leading_recommended_songs() {
+        let mut cards = pool(MAX_CANDIDATES);
+        for (index, card) in cards.iter_mut().enumerate() {
+            card.kind = if index < 32 { "song" } else { "playlist" }.into();
+            card.shelf = if index < 32 { "For you" } else { "Explore" }.into();
+        }
         let mut discovery = Discovery::default();
-        let first = identities(&discovery.select(pool(48), 7));
-        let second = identities(&discovery.select(pool(48), 7));
-        assert!(first.is_disjoint(&second));
-        for _ in 0..5 {
-            assert_eq!(identities(&discovery.select(pool(48), 7)), first);
-            assert_eq!(identities(&discovery.select(pool(48), 7)), second);
+        let leading_songs = identities(&cards[..16]);
+        let first = discovery.select(cards.clone());
+        assert!(first.iter().all(|card| card.kind == "song"));
+        for _ in 0..12 {
+            let selected = discovery.select(cards.clone());
+            assert_eq!(selected.len(), VISIBLE_CARDS);
+            assert!(leading_songs.is_subset(&identities(&selected)));
+            assert!(
+                selected
+                    .iter()
+                    .filter(|card| card.kind == "playlist")
+                    .count()
+                    <= 8
+            );
         }
     }
 
     #[test]
-    fn selection_balances_shelves_and_kinds_and_preserves_metadata() {
-        let selected = Discovery::default().select(pool(MAX_CANDIDATES), 42);
-        let mut shelves = HashMap::<&str, usize>::new();
-        let mut kinds = HashMap::<&str, usize>::new();
+    fn refresh_changes_the_selection_without_promoting_distant_unseen_cards() {
+        let mut discovery = Discovery::default();
+        let mut previous = identities(&discovery.select(pool(MAX_CANDIDATES)));
+        let anchors = identities(&pool(8));
+        for _ in 0..32 {
+            let selected = discovery.select(pool(MAX_CANDIDATES));
+            let current = identities(&selected);
+            assert_eq!(current.len(), VISIBLE_CARDS);
+            assert_ne!(current, previous);
+            assert!(anchors.is_subset(&current));
+            let ranks: Vec<usize> = selected
+                .iter()
+                .map(|card| card.id.strip_prefix("candidate-").unwrap().parse().unwrap())
+                .collect();
+            assert!(ranks.iter().all(|&rank| rank < RELEVANCE_WINDOW));
+            assert!(ranks.windows(2).all(|pair| pair[0] < pair[1]));
+            previous = current;
+        }
+    }
+
+    #[test]
+    fn newly_ranked_top_cards_outrank_the_previous_selection() {
+        let mut discovery = Discovery::default();
+        discovery.select(pool(MAX_CANDIDATES));
+        let fresh: Vec<_> = (1000..1000 + VISIBLE_CARDS).map(card).collect();
+        let mut updated = fresh.clone();
+        updated.extend(pool(MAX_CANDIDATES));
+        assert_eq!(order(&discovery.select(updated)), order(&fresh));
+    }
+
+    #[test]
+    fn empty_responses_preserve_recency_for_the_screen_the_caller_keeps() {
+        let mut discovery = Discovery::default();
+        discovery.select(pool(MAX_CANDIDATES));
+        let recent = discovery.recent.clone();
+        let last_display = discovery.last_display.clone();
+        assert!(discovery.select(Vec::new()).is_empty());
+        assert_eq!(discovery.recent, recent);
+        assert_eq!(discovery.last_display, last_display);
+    }
+
+    #[test]
+    fn upstream_metadata_and_shelf_context_are_preserved() {
+        let selected = Discovery::default().select(pool(MAX_CANDIDATES));
         for actual in &selected {
-            *shelves.entry(&actual.shelf).or_default() += 1;
-            *kinds.entry(&actual.kind).or_default() += 1;
             let index: usize = actual
                 .id
                 .strip_prefix("candidate-")
@@ -200,28 +216,22 @@ mod tests {
             assert_eq!(actual.shelf, expected.shelf);
             assert_eq!(actual.kind, expected.kind);
         }
-        assert_eq!(shelves.len(), 8);
-        assert!(shelves.values().all(|&count| count == 3));
-        assert_eq!(kinds.len(), 2);
-        assert!(kinds.values().all(|&count| count == 12));
     }
 
     #[test]
-    fn small_pools_stay_nonempty_deduplicate_and_change_order() {
+    fn small_pools_stay_nonempty_deduplicate_and_keep_upstream_order() {
         let mut discovery = Discovery::default();
         for count in [1, 2, 7, VISIBLE_CARDS] {
             discovery.clear();
-            let first = discovery.select(pool(count), 1);
-            let second = discovery.select(pool(count), 1);
+            let first = discovery.select(pool(count));
+            let second = discovery.select(pool(count));
             assert_eq!(first.len(), count);
             assert_eq!(second.len(), count);
-            if count > 1 {
-                assert_ne!(order(&first), order(&second));
-            }
+            assert_eq!(order(&first), order(&second));
         }
         let mut repeated = vec![card(0), card(0), card(1), card(1)];
         repeated[1].title = "Duplicate metadata must not replace first".into();
-        let selected = discovery.select(repeated, 1);
+        let selected = discovery.select(repeated);
         assert_eq!(selected.len(), 2);
         assert_eq!(identities(&selected).len(), 2);
         assert_eq!(
@@ -232,7 +242,7 @@ mod tests {
                 .title,
             "Personalized title 0"
         );
-        assert!(discovery.select(Vec::new(), 1).is_empty());
+        assert!(discovery.select(Vec::new()).is_empty());
     }
 
     #[test]
@@ -241,7 +251,7 @@ mod tests {
         let mut second = card(0);
         second.kind = "playlist".into();
         second.title = "Actual upstream playlist".into();
-        let selected = Discovery::default().select(vec![first, second], 2);
+        let selected = Discovery::default().select(vec![first, second]);
         assert_eq!(selected.len(), 2);
         assert_eq!(identities(&selected).len(), 2);
         assert!(selected
@@ -271,20 +281,20 @@ mod tests {
         cards.push(card(200));
         cards.push(card(201));
         let mut discovery = Discovery::default();
-        let selected = discovery.select(cards, 9);
+        let selected = discovery.select(cards);
         assert_eq!(identities(&selected), identities(&[card(200), card(201)]));
         assert_eq!(discovery.recent.len(), 2);
         assert_eq!(discovery.last_display.len(), 2);
         let mut unsupported = card(202);
         unsupported.kind = "album".into();
-        assert!(discovery.select(vec![unsupported], 9).is_empty());
+        assert!(discovery.select(vec![unsupported]).is_empty());
         assert_eq!(discovery.recent.len(), 2);
     }
 
     #[test]
-    fn seed_and_reset_are_reproducible_and_memory_and_inputs_are_bounded() {
+    fn reset_restores_upstream_order_and_memory_and_inputs_are_bounded() {
         let mut discovery = Discovery::default();
-        let first = discovery.select(pool(MAX_CANDIDATES + 50), 99);
+        let first = discovery.select(pool(MAX_CANDIDATES + 50));
         assert!(first.iter().all(|card| card
             .id
             .strip_prefix("candidate-")
@@ -294,18 +304,18 @@ mod tests {
             < MAX_CANDIDATES));
         assert_eq!(
             order(&first),
-            order(&Discovery::default().select(pool(MAX_CANDIDATES), 99))
+            order(&Discovery::default().select(pool(MAX_CANDIDATES)))
         );
         discovery.clear();
         assert_eq!(
             order(&first),
-            order(&discovery.select(pool(MAX_CANDIDATES), 99))
+            order(&discovery.select(pool(MAX_CANDIDATES)))
         );
         for offset in 0..25 {
             let cards = (0..MAX_CANDIDATES)
                 .map(|index| card(index + offset * MAX_CANDIDATES))
                 .collect();
-            discovery.select(cards, offset as u64);
+            discovery.select(cards);
             assert!(discovery.recent.len() <= RECENT_CARDS);
             assert!(discovery.last_display.len() <= VISIBLE_CARDS);
         }

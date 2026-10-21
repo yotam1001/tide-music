@@ -19,6 +19,11 @@ name = "tide-jam-lab"
 path = "src/main.rs"
 required-features = ["cli"]
 
+[[bin]]
+name = "tide-jam-relay"
+path = "src/bin/tide-jam-relay.rs"
+required-features = ["relay"]
+
 [[test]]
 name = "protocol_sync"
 required-features = ["relay"]
@@ -33,6 +38,7 @@ name = "cli"
 required-features = ["cli"]
 
 [dependencies]
+base64 = "0.22"
 axum = { version = "=0.8.9", optional = true, default-features = false, features = ["json", "http1", "tokio"] }
 getrandom = "=0.3.4"
 hyper = { version = "1", optional = true, features = ["http1", "server"] }

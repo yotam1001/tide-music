@@ -155,3 +155,44 @@ pub struct Invite {
     pub room: String,
     pub invite: Secret,
 }
+
+/// Text-only invitation. Contains only the guest capability, never host/operator
+/// authority or account credentials. Bounded before decoding or allocating JSON.
+impl Invite {
+    pub fn to_code(&self) -> Result<Zeroizing<String>, &'static str> {
+        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+        let endpoint =
+            crate::endpoint::Endpoint::parse(&self.endpoint).map_err(|_| "Invalid invite relay")?;
+        if !valid_hex(&self.room, 32)
+            || endpoint.as_str() != self.endpoint
+            || self.endpoint.len() > 512
+        {
+            return Err("Invalid Jam invite");
+        }
+        let bytes = Zeroizing::new(serde_json::to_vec(self).map_err(|_| "Invalid Jam invite")?);
+        let result = Zeroizing::new(format!("tide-jam:v1.{}", URL_SAFE_NO_PAD.encode(&*bytes)));
+        if result.len() > 2048 {
+            return Err("Jam invite is too long");
+        }
+        Ok(result)
+    }
+    pub fn from_code(code: &str) -> Result<Self, &'static str> {
+        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+        if code.len() > 2048 {
+            return Err("Jam invite is too long");
+        }
+        let encoded = code
+            .trim()
+            .strip_prefix("tide-jam:v1.")
+            .ok_or("Paste a Tide Jam invite code")?;
+        let bytes = Zeroizing::new(
+            URL_SAFE_NO_PAD
+                .decode(encoded)
+                .map_err(|_| "Invalid Jam invite code")?,
+        );
+        let invite: Self = serde_json::from_slice(&bytes).map_err(|_| "Invalid Jam invite code")?;
+        // Reuse validation on both paths and require a canonical transport URL.
+        invite.to_code()?;
+        Ok(invite)
+    }
+}

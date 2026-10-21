@@ -8,14 +8,15 @@ body:
   - type: input
     id: version
     attributes:
-      label: Tide version or commit
-      description: Include whether you used a downloaded preview or built from source.
+      label: Tide version
+      description: Open Settings and scroll to About Tide. If Tide cannot open, give the installer release. Include a commit only for a source build.
     validations:
       required: true
   - type: input
     id: windows
     attributes:
       label: Windows version
+      description: Find it in Windows Settings → System → About.
   - type: textarea
     id: reproduction
     attributes:
@@ -33,4 +34,4 @@ body:
     id: context
     attributes:
       label: Additional context
-      description: Relevant window mode, display scale, audio device, network changes, or redacted error text. Do not attach account imports or raw browser/network logs.
+      description: Include browser/version for connection problems, or relevant window mode, display scale, audio device and redacted error text. Never attach account imports or raw browser/network logs.

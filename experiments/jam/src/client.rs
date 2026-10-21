@@ -109,6 +109,13 @@ impl Client {
         }
         Ok(format!("/v1/rooms/{room}{suffix}"))
     }
+    /// Shared HTTPS service: no embedded or user-distributed operator key.
+    pub fn create_shared(&self) -> Result<Created, Error> {
+        if !self.endpoint.is_remote() {
+            return Err(Error::Invalid);
+        }
+        self.create_inner(None)
+    }
     pub fn create(&self) -> Result<Created, Error> {
         if self.endpoint.is_remote() {
             return Err(Error::Invalid);

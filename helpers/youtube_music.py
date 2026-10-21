@@ -16,9 +16,10 @@ from urllib.parse import urlsplit
 MAX_INPUT = 65536
 MAX_TRACKS = 2000
 MAX_RADIO_TRACKS = 25
-MAX_HOME_SHELVES = 8
+MAX_HOME_SHELVES = 3
 MAX_HOME_ITEMS_PER_SHELF = 40
-MAX_HOME_CARDS = 240
+MAX_HOME_CARDS = MAX_HOME_SHELVES * MAX_HOME_ITEMS_PER_SHELF
+MAX_SUPERMIX_SHELVES = 20
 ARTWORK_HOSTS = ("ytimg.com", "ggpht.com", "googleusercontent.com")
 LOGIN_SECONDS = 8 * 60
 LOGIN_RETRY_SECONDS = 15
@@ -509,6 +510,24 @@ def artist_names(item):
     return clean(", ".join(name for name in names if name))
 
 
+def artist_links(item):
+    """Retain at most five canonical artist references; never guess from a name."""
+    values = item.get("artists") or item.get("author") or []
+    result = []
+    seen = set()
+    for item in values[:30] if isinstance(values, list) else []:
+        if not isinstance(item, dict):
+            continue
+        artist = item.get("id")
+        name = clean(item.get("name"))
+        if isinstance(artist, str) and re.fullmatch(r"UC[A-Za-z0-9_-]{22}", artist) and name and artist not in seen:
+            result.append({"id": artist, "name": name})
+            seen.add(artist)
+            if len(result) == 5:
+                break
+    return result
+
+
 def duration_seconds(item):
     value = item.get("duration_seconds")
     if isinstance(value, int) and not isinstance(value, bool) and 0 < value < 2**32:
@@ -540,6 +559,7 @@ def tracks(items, limit=MAX_TRACKS, exclude=(), deduplicate=False):
         result.append({
             "title": clean(item.get("title")),
             "artist": artist_names(item),
+            "artists": artist_links(item),
             "album": clean(album.get("name") if isinstance(album, dict) else ""),
             "source": "https://www.youtube.com/watch?v=" + video,
             "artwork_url": artwork_url(item),
@@ -552,6 +572,47 @@ def tracks(items, limit=MAX_TRACKS, exclude=(), deduplicate=False):
 
 def run(client, request):
     action = request["action"]
+    if action == "artists":
+        video = identifier(request.get("video_id"), True)
+        if not video:
+            return {"type": "error", "code": "artist_unavailable"}
+        data = client.get_watch_playlist(videoId=video, limit=1)
+        items = data.get("tracks") if isinstance(data, dict) else None
+        for item in items[:50] if isinstance(items, list) else []:
+            if isinstance(item, dict) and item.get("videoId") == video:
+                return {"type": "artists", "artists": artist_links(item)}
+        return {"type": "artists", "artists": []}
+    if action == "artist":
+        artist = request.get("id")
+        if not isinstance(artist, str) or not re.fullmatch(r"UC[A-Za-z0-9_-]{22}", artist):
+            return {"type": "error", "code": "artist_unavailable"}
+        data = client.get_artist(artist)
+        if not isinstance(data, dict) or not clean(data.get("name")):
+            return {"type": "error", "code": "artist_unavailable"}
+        name = clean(data["name"])
+        songs = data.get("songs")
+        songs = songs if isinstance(songs, dict) else {}
+        items = songs.get("results")
+        items = items if isinstance(items, list) else []
+        playlist = identifier(songs.get("browseId"))
+        if playlist:
+            # Top-song lists may initially contain only five results. Expansion
+            # is bounded and optional: retain the returned top songs on failure.
+            try:
+                expanded = client.get_playlist(playlist, limit=51)
+                if isinstance(expanded, dict) and isinstance(expanded.get("tracks"), list):
+                    items = expanded["tracks"]
+            except Exception:
+                pass
+        bounded = []
+        for item in items[:51]:
+            if isinstance(item, dict):
+                item = dict(item)
+                if not artist_links(item):
+                    item["artists"] = [{"id": artist, "name": name}]
+                bounded.append(item)
+        return {"type": "artist", "name": name, "tracks": tracks(bounded, 50, (), True),
+                "truncated": len(items) > 50}
     if action == "library":
         info = client.get_account_info()
         playlists = client.get_library_playlists(limit=201)
@@ -561,6 +622,31 @@ def run(client, request):
                                "artwork_url": artwork_url(p)}
                               for p in playlists[:200] if isinstance(p, dict) and identifier(p.get("playlistId"))],
                 "truncated": len(playlists) > 200}
+    if action == "supermix":
+        # Resolve this account's dynamic mix on demand, independently of Home's
+        # small display pool. Never substitute another mix or a public playlist.
+        try:
+            shelves = client.get_home(limit=MAX_SUPERMIX_SHELVES)
+            for shelf in shelves[:MAX_SUPERMIX_SHELVES] if isinstance(shelves, list) else []:
+                items = shelf.get("contents") if isinstance(shelf, dict) else None
+                for item in items[:MAX_HOME_ITEMS_PER_SHELF] if isinstance(items, list) else []:
+                    if not isinstance(item, dict) or item.get("isAvailable") is False:
+                        continue
+                    playlist = identifier(item.get("playlistId"))
+                    title = "".join(clean(item.get("title")).casefold().split())
+                    if not playlist.startswith("RDTMAK") or title not in ("mysupermix", "yoursupermix", "supermix"):
+                        continue
+                    data = client.get_watch_playlist(playlistId=playlist, limit=50)
+                    songs = data.get("tracks") if isinstance(data, dict) else None
+                    if not isinstance(songs, list):
+                        return {"type": "error", "code": "supermix_unavailable"}
+                    selected = tracks(songs, MAX_TRACKS, (), True)
+                    if not selected:
+                        return {"type": "error", "code": "supermix_unavailable"}
+                    return {"type": "tracks", "tracks": selected, "truncated": len(songs) > MAX_TRACKS}
+            return {"type": "error", "code": "supermix_unavailable"}
+        except Exception as error:
+            return verified_request_failure(error, client)
     if action == "radio":
         video = identifier(request.get("video_id"), True)
         empty = {"type": "tracks", "tracks": [], "truncated": False}
@@ -588,8 +674,9 @@ def run(client, request):
         items = data.get("tracks", [])
         return {"type": "tracks", "tracks": tracks(items), "truncated": len(items) > MAX_TRACKS}
     if action == "home":
-        # Fetch a wider personalized candidate pool for the app's refresh
-        # selection. The API may overshoot its row limit; cap our output too.
+        # Keep the leading Home rows in provider order. Fetching distant shelves
+        # for novelty diluted the earlier, more relevant selection.
+        # The API may overshoot its row limit; cap our output too.
         shelves = client.get_home(limit=MAX_HOME_SHELVES)
         cards = []
         seen = set()
@@ -621,7 +708,7 @@ def run(client, request):
                     continue
                 seen.add(key)
                 cards.append({"id": item_id, "title": clean(item.get("title")),
-                              "subtitle": artist_names(item),
+                              "subtitle": artist_names(item), "artists": artist_links(item),
                               "kind": kind, "shelf": clean(shelf.get("title")),
                               "artwork_url": artwork_url(item),
                               "duration_seconds": duration_seconds(item)})

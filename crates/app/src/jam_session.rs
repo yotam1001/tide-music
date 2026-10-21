@@ -28,10 +28,18 @@ pub enum Start {
     Guest {
         invite: PathBuf,
     },
+    HostCode {
+        endpoint: String,
+        timeline: Timeline,
+    },
+    GuestCode {
+        code: Zeroizing<String>,
+    },
 }
 pub enum Event {
     Hosting {
         guests: usize,
+        invite_code: Zeroizing<String>,
     },
     View {
         view: View,
@@ -96,10 +104,17 @@ impl Session {
                         &worker_state,
                         &endpoint,
                         operator.as_deref(),
-                        &invite,
+                        Some(&invite),
                         timeline,
+                        false,
                     ),
                     Start::Guest { invite } => guest(&worker_state, &invite),
+                    Start::HostCode { endpoint, timeline } => {
+                        host(&worker_state, &endpoint, None, None, timeline, true)
+                    }
+                    Start::GuestCode { code } => {
+                        Invite::from_code(&code).and_then(|invite| follow(&worker_state, invite))
+                    }
                 };
                 if let Err(message) = result {
                     worker_state.event(Event::Problem {
@@ -207,15 +222,16 @@ fn host(
     shared: &Shared,
     endpoint: &str,
     key: Option<&Path>,
-    path: &Path,
+    path: Option<&Path>,
     mut timeline: Timeline,
+    shared_mode: bool,
 ) -> Result<(), &'static str> {
     timeline.validate()?;
     let endpoint = Endpoint::parse(endpoint)
         .map_err(|_| "Enter a canonical HTTPS relay or literal loopback address")?;
     let client = Client::new(endpoint.as_str()).map_err(|_| "Invalid Jam relay")?;
     let key = key.map(operator).transpose()?;
-    if endpoint.is_remote() && key.is_none() {
+    if endpoint.is_remote() && key.is_none() && !shared_mode {
         return Err("HTTPS hosting requires the relay operator's key file");
     }
     if shared.stopped() {
@@ -223,6 +239,7 @@ fn host(
     }
     let created = match &key {
         Some(key) => client.create_with_key(key),
+        None if shared_mode && endpoint.is_remote() => client.create_shared(),
         None => client.create(),
     }
     .map_err(|_| "Cannot create Jam; check the relay and operator key")?;
@@ -234,14 +251,15 @@ fn host(
     if shared.stopped() {
         return Ok(());
     }
-    write_invite(
-        path,
-        &Invite {
-            endpoint: endpoint.as_str().into(),
-            room: room.room.room.clone(),
-            invite: room.room.invite.clone(),
-        },
-    )?;
+    let invitation = Invite {
+        endpoint: endpoint.as_str().into(),
+        room: room.room.room.clone(),
+        invite: room.room.invite.clone(),
+    };
+    if let Some(path) = path {
+        write_invite(path, &invitation)?;
+    }
+    let invite_code = invitation.to_code()?;
     let mut sampled = Instant::now();
     let mut revision = 0u64;
     let mut failures = 0;
@@ -278,6 +296,7 @@ fn host(
                     match client.poll(&room.room.room, &room.room.host) {
                         Ok(view) => shared.event(Event::Hosting {
                             guests: view.members,
+                            invite_code: invite_code.clone(),
                         }),
                         Err(_) => shared.event(Event::Problem {
                             message: "Jam hosted; guest count temporarily unavailable",
@@ -309,6 +328,9 @@ fn guest(shared: &Shared, path: &Path) -> Result<(), &'static str> {
     let bytes = read_private(path, MAX_BODY)?;
     let invite: Invite = serde_json::from_slice(&bytes).map_err(|_| "Invalid Jam invite file")?;
     drop(bytes);
+    follow(shared, invite)
+}
+fn follow(shared: &Shared, invite: Invite) -> Result<(), &'static str> {
     let client = Client::new(&invite.endpoint)
         .map_err(|_| "Invite requires a canonical HTTPS relay or literal loopback address")?;
     if shared.stopped() {
@@ -506,6 +528,42 @@ mod tests {
         wait(|| session.finished().then_some(()));
     }
     #[test]
+    fn code_host_and_guest_exchange_state_without_reading_or_writing_invite_files() {
+        let fixture = Fixture::start();
+        let host = Session::start(Start::HostCode {
+            endpoint: fixture.endpoint.clone(),
+            timeline: Timeline {
+                revision: 1,
+                play_id: 42,
+                queue: vec![VideoId::parse("fixture0001").unwrap()],
+                index: 0,
+                position_ms: 0,
+                paused: true,
+                loading: false,
+            },
+        })
+        .unwrap();
+        let code = wait(|| match host.take_event() {
+            Some(Event::Hosting { invite_code, .. }) => Some(invite_code),
+            Some(Event::Problem { message, .. }) => panic!("{message}"),
+            _ => None,
+        });
+        assert!(
+            !fixture.invite.exists(),
+            "code hosting must not create an invite file"
+        );
+        let guest = Session::start(Start::GuestCode { code }).unwrap();
+        wait(|| match guest.take_event() {
+            Some(Event::View { view, .. }) if view.timeline.is_some() => Some(()),
+            Some(Event::Problem { message, .. }) => panic!("{message}"),
+            _ => None,
+        });
+        end(&guest);
+        end(&host);
+        assert!(!fixture.invite.exists());
+        assert!(fixture.removed.load(Ordering::Acquire));
+    }
+    #[test]
     fn hosted_worker_saves_only_guest_invite_and_closes_without_blocking_cancellation() {
         let fixture = Fixture::start();
         let timeline = Timeline {
@@ -525,7 +583,7 @@ mod tests {
         })
         .unwrap();
         wait(|| match session.take_event() {
-            Some(Event::Hosting { guests: 1 }) => Some(()),
+            Some(Event::Hosting { guests: 1, .. }) => Some(()),
             Some(Event::Problem { message, .. }) => panic!("{message}"),
             _ => None,
         });

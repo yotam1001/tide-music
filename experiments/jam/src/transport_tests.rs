@@ -2,7 +2,7 @@
 //! The proxy fixture forwards real TLS/HTTP traffic to the real relay; it is
 //! not a validation of a particular production reverse-proxy installation.
 use super::*;
-use crate::relay::{self, PrivateRelay};
+use crate::relay::{self, PrivateRelay, SharedRelay};
 use std::{
     io::{Read, Write},
     net::{SocketAddr, TcpListener, TcpStream},
@@ -20,6 +20,12 @@ struct Backend {
 }
 impl Backend {
     fn start(config: PrivateRelay) -> Self {
+        Self::spawn(Some(config), None)
+    }
+    fn start_shared(config: SharedRelay) -> Self {
+        Self::spawn(None, Some(config))
+    }
+    fn spawn(private: Option<PrivateRelay>, shared: Option<SharedRelay>) -> Self {
         let (tx, rx) = mpsc::sync_channel(1);
         let (stop, receiver) = tokio::sync::watch::channel(false);
         let worker = thread::spawn(move || {
@@ -30,9 +36,15 @@ impl Backend {
                 .block_on(async {
                     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
                     tx.send(listener.local_addr().unwrap()).unwrap();
-                    relay::serve_private(listener, receiver, config)
-                        .await
-                        .unwrap();
+                    if let Some(config) = private {
+                        relay::serve_private(listener, receiver, config)
+                            .await
+                            .unwrap();
+                    } else {
+                        relay::serve_shared(listener, receiver, shared.unwrap())
+                            .await
+                            .unwrap();
+                    }
                 });
         });
         Self {
@@ -75,10 +87,25 @@ struct Proxy {
 }
 impl Proxy {
     fn start(operator: Secret, san: &str, expired: bool, redirect: Option<String>) -> Self {
+        Self::start_inner(Some(operator), san, expired, redirect)
+    }
+    fn start_shared() -> Self {
+        Self::start_inner(None, "127.0.0.1", false, None)
+    }
+    fn start_inner(
+        operator: Option<Secret>,
+        san: &str,
+        expired: bool,
+        redirect: Option<String>,
+    ) -> Self {
+        let shared_mode = operator.is_none();
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
         let endpoint = format!("https://{}", listener.local_addr().unwrap());
-        let backend = Backend::start(PrivateRelay::new(&endpoint, operator).unwrap());
+        let backend = match operator {
+            Some(operator) => Backend::start(PrivateRelay::new(&endpoint, operator).unwrap()),
+            None => Backend::start_shared(SharedRelay::new(&endpoint).unwrap()),
+        };
         let key = rcgen::KeyPair::generate().unwrap();
         let mut params = rcgen::CertificateParams::new(vec![san.to_owned()]).unwrap();
         if expired {
@@ -142,6 +169,12 @@ impl Proxy {
                         request.resize(start + length, 0);
                         if tls.read_exact(&mut request[start..]).is_err() {
                             continue;
+                        }
+                        if shared_mode {
+                            request.splice(
+                                start - 2..start - 2,
+                                b"x-tide-jam-peer: 203.0.113.7\r\n".iter().copied(),
+                            );
                         }
                         if let Some(location) = &redirect {
                             let response = format!("HTTP/1.1 307 Temporary Redirect\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
@@ -361,4 +394,82 @@ fn neither_relay_mode_accepts_a_non_loopback_listener() {
         .await
         .is_err());
     });
+}
+
+#[test]
+fn shared_https_needs_no_operator_secret_and_keeps_host_guest_roles() {
+    let proxy = Proxy::start_shared();
+    let client = proxy.client();
+    let room = client.create_shared().unwrap();
+    let invite = Invite {
+        endpoint: proxy.endpoint.clone(),
+        room: room.room.clone(),
+        invite: room.invite.clone(),
+    };
+    let code = invite.to_code().unwrap();
+    assert!(!code.contains(room.host.expose()));
+    let decoded = Invite::from_code(&code).unwrap();
+    let guest = client.join(&decoded).unwrap();
+    let timeline = Timeline {
+        revision: 1,
+        play_id: 1,
+        queue: vec![VideoId::parse("abcdefghijk").unwrap()],
+        index: 0,
+        position_ms: 10,
+        paused: true,
+        loading: false,
+    };
+    assert!(client
+        .publish(&room.room, &guest.member, &timeline)
+        .is_err());
+    client.publish(&room.room, &room.host, &timeline).unwrap();
+    let view = client.poll(&room.room, &guest.member).unwrap();
+    assert_eq!(view.timeline.unwrap(), timeline);
+    let serialized =
+        serde_json::to_string(&client.poll(&room.room, &guest.member).unwrap()).unwrap();
+    assert!(!serialized.contains(room.host.expose()));
+    client.leave(&room.room, &guest.member).unwrap();
+    assert!(client.poll(&room.room, &guest.member).is_err());
+    client.close(&room.room, &room.host).unwrap();
+    assert!(client.poll(&room.room, &room.host).is_err());
+    client.create_shared().unwrap();
+    assert!(
+        client.create_shared().is_err(),
+        "closing rooms must not bypass creation rate limits"
+    );
+}
+#[test]
+fn shared_backend_requires_one_canonical_proxy_peer_and_rejects_browser_origins() {
+    let proxy = Proxy::start_shared();
+    let host = proxy.endpoint.strip_prefix("https://").unwrap();
+    for extra in [
+        "",
+        "x-tide-jam-peer: spoofed\r\n",
+        "x-tide-jam-peer: 203.0.113.8\r\nx-tide-jam-peer: 203.0.113.9\r\n",
+        "x-tide-jam-peer: 203.0.113.8\r\nOrigin: https://evil.example\r\n",
+    ] {
+        assert!(proxy
+            .backend
+            .raw(host, "/v1/rooms", extra, None)
+            .starts_with(b"HTTP/1.1 403"));
+    }
+    assert!(proxy
+        .backend
+        .raw(host, "/v1/rooms", "x-tide-jam-peer: 203.0.113.8\r\n", None)
+        .starts_with(b"HTTP/1.1 200"));
+    let secret = Secret::random().unwrap();
+    assert!(proxy
+        .backend
+        .raw(
+            host,
+            "/v1/rooms",
+            "x-tide-jam-peer: 203.0.113.8\r\n",
+            Some(&secret)
+        )
+        .starts_with(b"HTTP/1.1 404"));
+    let private = Proxy::start(secret, "127.0.0.1", false, None);
+    assert!(
+        private.client().create_shared().is_err(),
+        "shared client path must not bypass private operator authentication"
+    );
 }

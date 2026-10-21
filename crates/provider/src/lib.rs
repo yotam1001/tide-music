@@ -130,6 +130,8 @@ pub struct Card {
     pub kind: String,
     pub shelf: String,
     #[serde(default)]
+    pub artists: Vec<tide_core::Artist>,
+    #[serde(default)]
     pub artwork_url: Option<String>,
 }
 #[derive(Clone, Serialize)]
@@ -141,12 +143,23 @@ pub enum Request {
     Playlist { id: String },
     Radio { video_id: String },
     Liked,
+    Supermix,
     Home,
+    Artist { id: String },
+    Artists { video_id: String },
 }
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Response {
     Connected,
+    Artist {
+        name: String,
+        tracks: Vec<Track>,
+        truncated: bool,
+    },
+    Artists {
+        artists: Vec<tide_core::Artist>,
+    },
     Session {
         headers: BTreeMap<String, String>,
     },
@@ -184,6 +197,22 @@ impl Drop for RefreshedHeaders {
     }
 }
 
+// Deserialize only the optional credentials a second time. Serde skips the
+// already-decoded track/card metadata without allocating another JSON tree.
+#[derive(Default, Deserialize)]
+#[serde(transparent)]
+struct RefreshedJson(serde_json::Value);
+impl Drop for RefreshedJson {
+    fn drop(&mut self) {
+        zeroize_json(&mut self.0);
+    }
+}
+#[derive(Deserialize)]
+struct RefreshEnvelope {
+    #[serde(default)]
+    refreshed_headers: RefreshedJson,
+}
+
 fn decode_helper_reply(bytes: &[u8]) -> Result<HelperReply, &'static str> {
     // Parse data independently so an invalid optional update cannot hide valid
     // library results or turn a transient error into a rejected session.
@@ -192,19 +221,19 @@ fn decode_helper_reply(bytes: &[u8]) -> Result<HelperReply, &'static str> {
     let mut refreshed = RefreshedHeaders::default();
     if matches!(
         response,
-        Response::Library { .. } | Response::Tracks { .. } | Response::Home { .. }
+        Response::Library { .. }
+            | Response::Tracks { .. }
+            | Response::Home { .. }
+            | Response::Artist { .. }
+            | Response::Artists { .. }
     ) {
-        let mut document: serde_json::Value = serde_json::from_slice(bytes)
-            .map_err(|_| "Account helper returned an unsupported response")?;
-        if let Some(value) = document.get_mut("refreshed_headers") {
-            let mut encoded = serde_json::to_vec(value).unwrap_or_default();
-            zeroize_json(value);
+        if let Ok(document) = serde_json::from_slice::<RefreshEnvelope>(bytes) {
+            let mut encoded = serde_json::to_vec(&document.refreshed_headers.0).unwrap_or_default();
             if encoded.len() <= MAX_SESSION {
                 refreshed.0 = parse_headers(&encoded).ok();
             }
             encoded.zeroize();
         }
-        zeroize_json(&mut document);
     }
     Ok(HelperReply {
         response,
@@ -1301,7 +1330,9 @@ fn execute_helper(
         Response::Error { code } if code == "container" => {
             Err("Sign-in was found in a Zen container. Tide currently needs YouTube Music signed in on a tab outside that container.".into())
         }
-        Response::Error { code } if code == "session" || code == "request" => {
+        Response::Error { code }
+            if code == "session" || code == "request" || code == "supermix_unavailable" || code == "artist_unavailable" =>
+        {
             Ok(Response::Error { code })
         }
         Response::Error { code } if code == "login_browser" => Err(
@@ -1759,7 +1790,54 @@ mod tests {
             assert!(matches!(reply.response, Response::Tracks { .. }));
             assert!(reply.refreshed.0.is_none());
         }
+        for response in [
+            serde_json::json!({"type":"artist", "name":"Band", "tracks":[], "truncated":false}),
+            serde_json::json!({"type":"artists", "artists":[]}),
+        ] {
+            let mut response = response;
+            response["refreshed_headers"] =
+                serde_json::json!({"cookie":"__Secure-3PAPISID=fresh", "x-goog-authuser":"1"});
+            let reply = decode_helper_reply(&serde_json::to_vec(&response).unwrap()).unwrap();
+            assert!(
+                reply.refreshed.0.is_some(),
+                "artist navigation must retain refreshed session cookies"
+            );
+        }
         let reply = decode_helper_reply(br#"{"type":"home","cards":[]}"#).unwrap();
+        assert!(reply.refreshed.0.is_none());
+    }
+
+    #[test]
+    fn large_playlist_keeps_metadata_and_optional_credentials_separate() {
+        let tracks: Vec<_> = (0..tide_core::MAX_QUEUE_TRACKS)
+            .map(|index| {
+                serde_json::json!({
+                    "title":format!("Track {index}"), "artist":"Fixture artist",
+                    "album":"Fixture album", "source":format!("fixture-{index}"),
+                    "artwork_url":"https://i.ytimg.com/fixture.jpg"
+                })
+            })
+            .collect();
+        let bytes = serde_json::to_vec(&serde_json::json!({
+            "type":"tracks", "tracks":tracks, "truncated":true,
+            "refreshed_headers":{"cookie":"__Secure-3PAPISID=fresh", "x-goog-authuser":"1"}
+        }))
+        .unwrap();
+        let reply = decode_helper_reply(&bytes).unwrap();
+        let Response::Tracks { tracks, truncated } = reply.response else {
+            panic!("Playlist response was lost");
+        };
+        assert!(truncated);
+        assert_eq!(tracks.len(), tide_core::MAX_QUEUE_TRACKS);
+        assert_eq!(tracks.last().unwrap().title, "Track 1999");
+        assert_eq!(reply.refreshed.0.as_ref().unwrap()["x-goog-authuser"], "1");
+
+        // An ambiguous optional update must not discard playable results.
+        let reply = decode_helper_reply(
+            br#"{"type":"tracks","tracks":[],"truncated":false,"refreshed_headers":{"cookie":"__Secure-3PAPISID=fresh" },"refreshed_headers":null}"#,
+        )
+        .unwrap();
+        assert!(matches!(reply.response, Response::Tracks { .. }));
         assert!(reply.refreshed.0.is_none());
     }
 
@@ -2011,6 +2089,13 @@ mod tests {
             serde_json::json!({
                 "action": "radio", "video_id": "K4DyBUG242c"
             })
+        );
+    }
+    #[test]
+    fn supermix_request_matches_helper_contract() {
+        assert_eq!(
+            serde_json::to_value(Request::Supermix).unwrap(),
+            serde_json::json!({"action": "supermix"})
         );
     }
     #[test]
