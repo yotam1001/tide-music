@@ -1,6 +1,7 @@
 # Tide privacy notice
 
-Last updated: 2026-10-17
+Last updated: 2026-10-21
+
 
 This notice covers the Tide Windows player, its optional session companion
 extension, and its local native helper in this repository. Tide is an unofficial
@@ -24,6 +25,36 @@ downloads start only after choosing **Install and restart** and can contact
 GitHub's release-asset hosts. One installer and one partial download are kept
 in the local `TideMusic/updates` cache, each capped at 96 MiB. No telemetry or
 crash reporting is included in the updater.
+
+## Optional experimental listening rooms
+
+Jams are disabled in normal builds and the beta installer. A developer who
+explicitly enables `experimental-jams` can choose a private relay and host/join
+a room. The relay and its TLS proxy can see video IDs, queue order, position,
+pause/loading state and room capabilities. They receive no Google cookies,
+account headers or audio from Tide. HTTPS protects transport to that operator;
+room metadata is not end-to-end encrypted against the operator.
+
+Invites contact their specified server, so use only trusted invites/operators.
+Operator keys allow room creation and must not be sent to guests. Invite/key files
+remain in the private folders chosen by the user; Tide does not automatically
+erase them. Capabilities remain in memory during a session. The original guest
+queue is restored paused on leave, and the temporary Jam queue is not saved to
+preferences. See the [experimental Jam guide](experiments/jam/README.md).
+
+
+Code-based Jam invitations contain a relay endpoint, room identifier and guest
+capability. They never include a host/operator key or Google account data. Codes
+are kept in memory rather than saved automatically. Choosing **Copy invite**
+puts that guest capability on the system clipboard; OS clipboard history/sync
+and other local applications may retain it. Tide does not clear unrelated
+clipboard contents when a room ends. Share the code only with intended guests.
+The explicit shared-server mode uses temporary per-process keyed network-address
+fingerprints to limit room creation; the server's TLS proxy still sees raw IPs.
+Hosts can see anonymous room-local Listener IDs and remove listeners, lock the
+room or replace its invite. Removing a listener also replaces the invite; no
+Google account names, session headers or network addresses are exposed in that
+participant list.
 
 ## What the browser companion processes
 

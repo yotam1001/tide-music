@@ -14,7 +14,7 @@ Open **TideSetup.exe**, choose **Install Tide**, and wait for setup to finish.
 Choose **Open Tide**, or find **Tide** in the Windows Start menu.
 
 Reading this inside the advanced ZIP and cannot find the EXE? Get the installer
-from the [Windows release](https://github.com/yotam1001/tide-music/releases/tag/v0.1.3).
+from the [Windows release](https://github.com/yotam1001/tide-music/releases/latest).
 Advanced users can instead run the ZIP's **Install Tide.cmd**.
 
 ## 2. Connect YouTube Music
@@ -42,7 +42,7 @@ To try Tide without an account, skip this step and play a local audio file.
 
 **Settings → Check for updates** finds published stable releases. **Install and
 restart** verifies the download and keeps your account and preferences. Preview
-releases can update to stable 0.1.3 here too. Future preview-only updates need
+releases can update to the latest stable version here too. Future preview-only updates need
 their installer.
 
 [Installation and removal](https://github.com/yotam1001/tide-music/blob/main/docs/INSTALLATION.md) ·
@@ -51,3 +51,17 @@ their installer.
 
 Never share cookies, request headers, session files or screenshots containing
 them. Report the app version and exact error message instead.
+
+## Listen together with Jams
+
+Both people install the latest Tide and connect their own YouTube Music accounts.
+Host: play a song, open **Jam**, press **Start Jam**, then **Copy invite**.
+Friend: open **Jam**, paste the invite and press **Join Jam**. Close the panel to
+browse and press **+** beside a song to add it to the shared queue.
+
+The host controls playback; each person controls their own volume. No browser
+needs to stay open. **End Jam** keeps the host's music playing. A listener's
+**Leave Jam** restores their original queue paused.
+
+The free shared server can take about a minute to wake and currently supports
+two rooms at once. **Advanced setup** lets you use a self-hosted server instead.

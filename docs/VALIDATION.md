@@ -966,3 +966,81 @@ CPython/helper imports and all three playback-tool checksums and executable
 versions in a disposable temporary fixture, which is removed afterward. It does
 not install Tide, register a browser host, access an account or show an app window.
 GitHub's download hosting and other upstream services still need to be reachable.
+
+### Experimental native Jams (2026-10-16)
+
+At `cb36f50`, the opt-in experimental app passed 41 unit tests and four
+rendered integration tests, strict workspace Clippy with experimental
+controls, and the offline native ownership probe. The Jam protocol/HTTP/
+TLS/CLI suite passed 27 tests; its native probe is explicitly opt-in.
+These results precede integration of the subsequent main-branch queue
+and installer fixes and do not verify that integration.
+
+Native Jams provide host/join/leave controls, private invite-file handoff,
+bounded background networking and guest control ownership. Worker lifecycle
+tests use synthetic local HTTP fixtures. Rendered input tests cover minimum,
+full, compact and mini layouts, disabled guest transport, reachable local
+volume/Leave and Escape. These do not establish real two-computer
+authenticated YouTube playback, Internet synchronization, long-session
+behavior or deployed proxy safety. The immutable f026915 beta assets do
+not contain Jams, and this branch remains separate for user review.
+
+After integrating main at `d0ed644`, the experimental workspace passes 121 tests
+with four explicitly opt-in probes ignored. Strict workspace Clippy and formatting
+pass. The 27-test Jam suite also passes, with its native probe still opt-in.
+The offline native ownership probe passes without showing a window or loading
+audio. Synthetic host/guest/minimum/mini renders were regenerated; the compact
+light guest view was inspected. This integration retains the current queue-text,
+indicator and setup fixes; it does not close the real-network validation gates.
+
+### Experimental Jam recovery and network faults (2026-10-16)
+
+A native guest's per-track playback error previously marked the entire Jam
+terminal, preventing the host's next song from recovering. A production guest
+update reducer now pauses and waits on that song without repeated loads, while a
+new host play can load and synchronize normally. Its regression failed under the
+previous terminal-error behavior and passes after the change. Stale, slow,
+invalid and explicitly disconnected state cannot revive playback. The updated
+experimental workspace passes 123 tests with four opt-in probes ignored; strict
+workspace and lab Clippy pass.
+
+Two real muted native players passed the original synchronization probe and a
+new delayed/dropped-HTTP probe together in 38.59 seconds. A separate sampled run
+of the new probe passed seven plays, 32 dropped guest requests, outage pause,
+same-membership recovery and eight bounded correction seeks in 22.45 seconds.
+Its debug fixture process tree (two players plus local relay/proxy, without the
+Tide UI or extraction) had 15 samples after discarding five startup samples:
+working-set median/p95 128.01/129.59 MiB, private-bytes median/p95 96.43/97.92 MiB.
+The process exited zero, all observed helpers ended and sampling races were zero.
+These are short synthetic-lab measurements, not release-app overhead or gaming
+performance evidence.
+Both native probes also pass serially with the explicit null-audio CI feature
+in 38.56 seconds; this is separate from the normal muted system-audio evidence.
+See the [Jam lab](../experiments/jam/README.md) for scope and the
+[security review](../experiments/jam/SECURITY_REVIEW.md) for remaining risks.
+No real account or browser session was used; no relay was deployed. The normal
+installer still excludes Jams, and the draft remains unmerged for user review.
+
+### Experimental Jam private-file inputs (2026-10-16)
+
+A controlled Windows named pipe reproduced the production guest file reader
+connecting and remaining blocked after cancellation. A supervisor stopped only
+that isolated test after its deadline. After applying a shared native/CLI private
+file guard, the probe exits zero and the pipe is never connected. Inputs must be
+ordinary, size-bounded files; Windows rejects direct device/UNC namespaces,
+reserved device names and alternate data streams before filesystem access, and
+checks the opened handle without following a final reparse point. Exclusive
+private-file creation remains intact.
+
+The supervised CI gate requires exactly one named ignored test to exist. A fixture
+pointing at a real unrelated Rust test binary reproduced a zero-test false pass;
+the corrected gate rejects that fixture before creating the pipe. A separate
+review agent checked the changed native/CLI guards and identified that gate issue;
+it did not access private data. General filesystem stalls, mapped drives, parent
+reparse traversal and Unix precheck/open races remain outside this narrow fix.
+The lab's 29 HTTP/TLS/protocol/CLI/file tests pass. A parallel local workspace
+build hit Windows' paging-file limit before tests ran; that failure is retained
+and a single-job retry passes all 123 workspace tests with five explicit probes
+ignored, followed by strict workspace Clippy. Strict lab Clippy also passes.
+The named-pipe gate runs its ignored probe separately and passes. The missing-test
+negative fixture fails as required. None of these checks read real private files.

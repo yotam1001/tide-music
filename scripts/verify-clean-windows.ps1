@@ -226,6 +226,13 @@ try {
     }
     Assert-CleanSentinel
     Write-Host 'PASS actual graphical setup waited, installed, retained Chrome and restarted Tide'
+    # Exercise the exact installed production binary, not a separate feature
+    # build, before claiming that the stable installer actually includes Jams.
+    $taskJamOutput = Invoke-CleanChild (Join-Path $taskUpdatedRelease 'tide-music.exe') @('--smoke-jam-ownership') 'installed-jam-ownership' 60
+    if ($taskJamOutput -notmatch 'PASS offline Jam ownership:') {
+        throw 'Installed player did not include the verified Jam controls.'
+    }
+    Assert-CleanSentinel
 
     # Ninety seconds of mono 16-bit PCM zeros; no internet audio or credentials.
     $taskWave = Join-Path $taskEvidence 'silence.wav'
