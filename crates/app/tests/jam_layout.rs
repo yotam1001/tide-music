@@ -167,6 +167,29 @@ fn guest_mini_keeps_leave_and_volume_reachable_and_blocks_transport() {
         }
     }
     ui.set_collapsed(false);
+    ui.set_jam_guest(true);
+    ui.set_jam_open(false);
+    let closed = draw(&window, 1140, 800);
+    ui.set_jam_open(true);
+    let opened = draw(&window, 1140, 800);
+    assert_eq!(
+        closed[250 * 1140 + 500],
+        opened[250 * 1140 + 500],
+        "Jam controls darkened the player background"
+    );
+    ui.set_jam_open(false);
+    ui.set_source_input("".into());
+    draw(&window, 1140, 800);
+    click(&ui, 300.0, 32.0);
+    ui.window()
+        .dispatch_event(WindowEvent::KeyPressed { text: "a".into() });
+    ui.window()
+        .dispatch_event(WindowEvent::KeyReleased { text: "a".into() });
+    assert_eq!(
+        ui.get_source_input().as_str(),
+        "a",
+        "guest cannot use Search"
+    );
     ui.set_jam_open(true);
     draw(&window, 780, 720);
     ui.window().dispatch_event(WindowEvent::KeyPressed {

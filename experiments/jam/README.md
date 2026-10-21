@@ -138,7 +138,8 @@ trusted invite file, without reading the operator key. Setup of the private rela
 and its TLS proxy remains a separate operator task.
 
 Guests use their existing **local** playback runtime/account. No account data or
-audio enters the coordination worker. Local transport, queue edits, autoplay,
+audio enters the coordination worker. Guests can browse and submit bounded video-ID
+additions to the shared queue. Local transport, reordering/removal, autoplay,
 media keys and account controls are guarded while following; volume stays local.
 Leave remains available in mini mode. If one song is unavailable locally, the
 guest pauses and waits without repeatedly retrying it; the host's next play can

@@ -1101,6 +1101,7 @@ export component AppWindow inherits Window {
     in property <bool> jam-available: false;
     in property <bool> jam-active: false;
     in property <bool> jam-guest: false;
+    in property <string> jam-queue-notice;
     in property <string> jam-status;
     in-out property <bool> jam-open: false;
     in-out property <string> jam-endpoint;
@@ -1655,6 +1656,7 @@ export component AppWindow inherits Window {
                                 padding: 20px; spacing: 12px; alignment: start;
                                 HorizontalLayout { height: 34px; Text { horizontal-stretch: 1; text: "Listen together"; color: root.foreground; font-size: 20px; font-weight: 650; vertical-alignment: center; } LibraryButton { width: 30px; height: 30px; light-mode: root.light-mode; caption: "×"; label: "Close Jam controls"; clicked => { root.jam-open = false; } } }
                                 Text { height: 48px; text: root.jam-status; color: root.foreground; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
+                                if root.jam-active && root.jam-queue-notice != "" : Text { height: 48px; text: root.jam-queue-notice; color: root.foreground; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
                                 if root.jam-active && !root.jam-guest : Text { text: "Invite your friends"; color: root.foreground; font-weight: 600; }
                                 if root.jam-active && !root.jam-guest && root.jam-invite-code != "" : LineEdit { text: root.jam-invite-code; read-only: true; accessible-label: "Private guest invite code"; }
                                 if root.jam-active && !root.jam-guest : LibraryButton { height: 36px; light-mode: root.light-mode; quiet: false; leading-icon: "M 9 9 L 20 9 L 20 21 L 9 21 Z M 6 16 L 3 16 L 3 3 L 14 3 L 14 6"; caption: "Copy invite"; enabled: root.jam-invite-code != ""; label: "Copy the guest invite code"; clicked => { root.jam-copy-invite(); } }
@@ -1674,7 +1676,7 @@ export component AppWindow inherits Window {
                                 }
                                 if root.jam-active && root.jam-guest && root.jam-listener-id > 0 : Text { text: "You are Listener " + root.jam-listener-id; color: root.foreground; font-weight: 600; }
                                 if root.jam-active : Text { height: 68px; text: root.jam-guest ? "Browse your music and select a song to add it to the shared queue. The host controls playback. Your volume stays local." : "Send the invite code to friends. They paste it into Join a Jam. Each person plays using their own account."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
-                                if root.jam-active : LibraryButton { height: 36px; light-mode: root.light-mode; caption: root.jam-guest ? "Leave Jam" : "End Jam"; label: root.jam-guest ? "Leave Jam and restore your paused local queue" : "Close the hosted room for all guests"; active: true; clicked => { root.jam-leave(); } }
+                                if root.jam-active : LibraryButton { height: 36px; quiet: false; light-mode: root.light-mode; caption: root.jam-guest ? "Leave Jam" : "End Jam"; label: root.jam-guest ? "Leave Jam and restore your paused local queue" : "Close the hosted room for all guests"; clicked => { root.jam-leave(); } }
                                 if !root.jam-active : Text { text: "Start a Jam"; color: root.foreground; font-weight: 600; }
                                 if !root.jam-active : Text { height: 44px; text: "Play a YouTube song, then start a room. Use a shared Tide server or your own self-hosted server."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
                                 if !root.jam-active : LineEdit { text <=> root.jam-endpoint; placeholder-text: "https://your-jam-server.example"; accessible-label: "Trusted Jam relay endpoint"; }
@@ -1697,7 +1699,7 @@ export component AppWindow inherits Window {
             if root.jam-active : Rectangle {
                 height: 34px; background: root.surface;
                 HorizontalLayout { padding-left: 18px; padding-right: 18px; spacing: 10px; cross-axis-alignment: center;
-                    Text { horizontal-stretch: 1; text: root.jam-status; color: root.foreground; font-size: 11px; overflow: elide; }
+                    Text { horizontal-stretch: 1; text: root.jam-queue-notice != "" ? root.jam-queue-notice : root.jam-status; color: root.foreground; font-size: 11px; overflow: elide; }
                     LibraryButton { width: 90px; height: 28px; light-mode: root.light-mode; caption: root.jam-guest ? "Leave Jam" : "End Jam"; label: "Stop participating in this Jam"; clicked => { root.jam-leave(); } }
                 }
             }

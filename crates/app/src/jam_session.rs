@@ -560,6 +560,8 @@ mod tests {
                 };
                 let member = Secret::random().unwrap();
                 let mut state = None;
+                let mut pending: Vec<QueueRequest> = Vec::new();
+                let mut request_id = 0;
                 let deadline = Instant::now() + Duration::from_secs(8);
                 while !cancel.load(Ordering::Acquire) && Instant::now() < deadline {
                     let mut socket = match listener.accept() {
@@ -590,6 +592,28 @@ mod tests {
                             })
                             .unwrap(),
                         )
+                    } else if head.starts_with("POST ") && head.contains("/requests HTTP") {
+                        let value: Enqueue = serde_json::from_slice(&body).unwrap();
+                        request_id += 1;
+                        pending.push(QueueRequest {
+                            id: request_id,
+                            video: value.video,
+                        });
+                        ("204 No Content", vec![])
+                    } else if head.starts_with("GET ") && head.contains("/requests HTTP") {
+                        ("200 OK", serde_json::to_vec(&pending).unwrap())
+                    } else if head.starts_with("DELETE ") && head.contains("/requests/") {
+                        let id = head
+                            .split("/requests/")
+                            .nth(1)
+                            .unwrap()
+                            .split_whitespace()
+                            .next()
+                            .unwrap()
+                            .parse::<u64>()
+                            .unwrap();
+                        pending.retain(|r| r.id != id);
+                        ("204 No Content", vec![])
                     } else if head.starts_with("PUT ") {
                         let timeline: Timeline = serde_json::from_slice(&body).unwrap();
                         timeline.validate().unwrap();
@@ -688,6 +712,48 @@ mod tests {
             "cancellation blocked the UI caller"
         );
         wait(|| session.finished().then_some(()));
+    }
+    #[test]
+    fn guest_queue_worker_delivers_once_and_host_acknowledges_without_changing_timeline() {
+        let fixture = Fixture::start();
+        let host = Session::start(Start::HostCode {
+            endpoint: fixture.endpoint.clone(),
+            timeline: Timeline {
+                revision: 1,
+                play_id: 1,
+                queue: vec![VideoId::parse("fixture0001").unwrap()],
+                index: 0,
+                position_ms: 0,
+                paused: true,
+                loading: false,
+            },
+        })
+        .unwrap();
+        let code = wait(|| match host.take_event() {
+            Some(Event::Hosting { invite_code, .. }) => Some(invite_code),
+            _ => None,
+        });
+        let guest = Session::start(Start::GuestCode { code }).unwrap();
+        wait(|| match guest.take_event() {
+            Some(Event::View { .. }) => Some(()),
+            _ => None,
+        });
+        assert!(guest.enqueue(VideoId::parse("fixture0002").unwrap()));
+        let id = wait(|| match host.take_event() {
+            Some(Event::Hosting { requests, .. }) if !requests.is_empty() => {
+                assert_eq!(requests.len(), 1);
+                assert_eq!(requests[0].video.as_str(), "fixture0002");
+                Some(requests[0].id)
+            }
+            _ => None,
+        });
+        assert!(host.admin(Admin::Acknowledge(id)));
+        wait(|| match host.take_event() {
+            Some(Event::Hosting { requests, .. }) if requests.is_empty() => Some(()),
+            _ => None,
+        });
+        end(&guest);
+        end(&host);
     }
     #[test]
     fn code_host_and_guest_exchange_state_without_reading_or_writing_invite_files() {

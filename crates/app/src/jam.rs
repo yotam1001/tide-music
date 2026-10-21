@@ -40,7 +40,7 @@ pub fn request_source(s: &State, u: &AppWindow, source: &str) {
                 recommended: false,
             },
         ),
-        Err(message) => u.set_status_text(message.into()),
+        Err(message) => u.set_jam_queue_notice(message.into()),
     }
 }
 pub fn request_enqueue(s: &State, u: &AppWindow, track: &Track) {
@@ -53,7 +53,7 @@ pub fn request_enqueue(s: &State, u: &AppWindow, track: &Track) {
             .map(|_| ())
             .ok_or("Wait for the Jam connection or the previous queue requests")
     });
-    u.set_status_text(
+    u.set_jam_queue_notice(
         match result {
             Ok(()) => "Sending song to the shared queue…",
             Err(message) => message,
@@ -288,6 +288,7 @@ pub fn leave(s: &mut State, u: &AppWindow, message: &str) {
     s.jam.terminal = false;
     s.jam.connected = false;
     s.jam.accepted_request = 0;
+    u.set_jam_queue_notice("".into());
     u.set_jam_invite_code("".into());
     u.set_jam_members(slint::ModelRc::default());
     u.set_jam_locked(false);
@@ -631,7 +632,7 @@ fn guest_update(
 }
 pub fn tick(s: &mut State, u: &AppWindow) {
     if let Some(notice) = s.jam.session.as_ref().and_then(Session::take_notice) {
-        u.set_status_text(notice.into());
+        u.set_jam_queue_notice(notice.into());
     }
     if s.jam.retiring.as_ref().is_some_and(Session::finished) {
         s.jam.retiring.take();
