@@ -43,6 +43,9 @@ http {
     reset_timedout_connection on;
     client_body_temp_path /tmp/tide-client-body;
     proxy_temp_path /tmp/tide-proxy;
+    fastcgi_temp_path /tmp/tide-fastcgi;
+    uwsgi_temp_path /tmp/tide-uwsgi;
+    scgi_temp_path /tmp/tide-scgi;
     map \$server_name \$jam_global { default jam; }
     limit_req_zone \$jam_global zone=jam_rate:1m rate=30r/s;
     limit_conn_zone \$jam_global zone=jam_total:1m;
@@ -51,6 +54,7 @@ http {
         server_name $host;
         location = /healthz {
             default_type text/plain;
+            add_header Cache-Control no-store always;
             return 200 'tide-jam-ready-v1';
         }
         location / {
