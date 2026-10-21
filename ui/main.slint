@@ -842,12 +842,11 @@ component QueueDrawer inherits Rectangle {
     changed rows => { root.cancel-drag(); }
     changed current-index => { root.cancel-drag(); root.artwork-scroll-y = 0px; }
     changed visible => { if !root.visible { root.cancel-drag(); } }
-    changed enabled => { if !root.enabled { root.cancel-drag(); root.overflow-open = false; } }
     background: root.light-mode ? #eee5db : #15181d;
     border-width: 1px;
     border-color: root.light-mode ? #ded0c4 : #292e37;
     TouchArea { }
-    changed enabled => { if !root.enabled { queue-menu.close(); } }
+    changed enabled => { if !root.enabled { root.cancel-drag(); queue-menu.close(); } }
     queue-menu := ActionMenu {
         x: max(0px, root.width - self.width - 14px); y: 48px;
         light-mode: root.light-mode; separator-after: 0;

@@ -12,7 +12,7 @@ fn text_invites_roundtrip_only_guest_fields_and_accept_paste_whitespace() {
     let original = invite();
     let code = original.to_code().unwrap();
     assert!(code.starts_with("tide-jam:v1."));
-    let decoded = Invite::from_code(&format!("  {code}\n")).unwrap();
+    let decoded = Invite::from_code(&format!("  {}\n", code.as_str())).unwrap();
     assert_eq!(decoded.endpoint, original.endpoint);
     assert_eq!(decoded.room, original.room);
     assert!(decoded.invite.matches(&original.invite));

@@ -26,3 +26,11 @@ Use an `experimental-jams` build. Play a YouTube song, open Jam, enter the trust
 For two players on one PC, the existing literal-loopback lab relay also accepts code hosting. An invite pointing to 127.0.0.1 cannot connect a different PC.
 
 See RELEASE_PLAN.md for the public-release gates. Do not advertise an experimental artifact as the stable Tide installer.
+
+## Hosting research (21 October 2026)
+
+Render documents 750 free instance-hours per workspace/month and sleeps after 15 idle minutes; cold starts can take about a minute. Its included bandwidth/build limits also matter, and some overages are billed. Source: https://render.com/docs/free
+
+Koyeb documents one Free instance with 512 MB RAM and 0.1 vCPU, sleeping after an hour without traffic. Check current eligibility, terms and traffic limits before any deployment. Sources: https://www.koyeb.com/docs/reference/instances and https://www.koyeb.com/docs/run-and-scale/scale-to-zero
+
+Neither option is selected or provisioned. A free tier is not a guarantee that operating a public service at arbitrary scale will remain free. No payment method, paid plan, auto-scaling purchase or provider account has been created. Self-hosting remains the fallback. Cold-start tolerant room startup and cost/traffic hard limits are release gates before choosing a sleeping free service.

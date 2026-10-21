@@ -43,6 +43,15 @@ queue is restored paused on leave, and the temporary Jam queue is not saved to
 preferences. See the [experimental Jam guide](experiments/jam/README.md).
 
 
+Code-based Jam invitations contain a relay endpoint, room identifier and guest
+capability. They never include a host/operator key or Google account data. Codes
+are kept in memory rather than saved automatically. Choosing **Copy invite**
+puts that guest capability on the system clipboard; OS clipboard history/sync
+and other local applications may retain it. Tide does not clear unrelated
+clipboard contents when a room ends. Share the code only with intended guests.
+The explicit shared-server mode uses temporary per-process keyed network-address
+fingerprints to limit room creation; the server's TLS proxy still sees raw IPs.
+
 ## What the browser companion processes
 
 Opening its popup does not authorize import. **Import selected tab** arms a

@@ -74,3 +74,24 @@ The independent follow-up identified that missing-test weakness; a real unrelate
 Rust test binary reproduced the old false pass and is rejected by the corrected
 gate. The remaining filesystem limitations above are deliberately not represented
 as fixed.
+
+## Shared relay development follow-up (21 October 2026)
+
+The new shared relay is not deployed. It retains literal-loopback binding behind
+an explicit HTTPS proxy, certificate validation, no CORS/redirects/proxy inheritance,
+strict video IDs, body/connection limits and role-separated capabilities. Shared
+room creation distributes no operator key to clients. Its mandatory peer header
+must be overwritten by the same-machine TLS proxy from the socket address; it is
+not a trust contract for arbitrary CDN/forwarding chains. Local/private modes
+reject the peer header. Global and per-peer quotas bound room allocation; IPv6
+addresses are grouped by /64 and only keyed process-lifetime fingerprints remain
+in the store. Distributed abuse can still exhaust the finite room pool.
+
+Invite codes have a 2048-byte input bound, strict schema and canonical endpoint
+validation. New code paths avoid invite file reads/writes. Explicit Copy invite
+uses the system clipboard; OS clipboard history/sync is outside Tide's control.
+The host capability is absent from invitations and guest views. Tests exercise
+these boundaries with generated fixture credentials, including a real TLS proxy.
+This follow-up is a source/test-design record, not an independent audit or a
+successful production deployment. Existing invite-reuse and real-host release
+gates above remain open; see RELEASE_PLAN.md.

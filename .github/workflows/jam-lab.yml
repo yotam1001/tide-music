@@ -33,6 +33,7 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
         with:
+          cache-on-failure: true
           workspaces: experiments/jam -> target
       - run: cargo test --manifest-path experiments/jam/Cargo.toml --locked --no-default-features --features relay
       - run: cargo clippy --manifest-path experiments/jam/Cargo.toml --locked --no-default-features --features relay --all-targets -- -D warnings
@@ -52,6 +53,8 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       - name: Check opt-in native controls and in-memory rendering
         shell: pwsh
         run: |
@@ -124,6 +127,7 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
         with:
+          cache-on-failure: true
           workspaces: experiments/jam -> target
       - run: cargo fmt --manifest-path experiments/jam/Cargo.toml --all -- --check
       - run: cargo test --manifest-path experiments/jam/Cargo.toml --locked
