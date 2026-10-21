@@ -19,9 +19,90 @@ pub struct Jam {
     follower: Option<Follower>,
     view: Option<(View, u64, Instant)>,
     began: Option<Instant>,
+    accepted_request: u64,
 }
 pub fn following(s: &State) -> bool {
     s.jam.guest
+}
+pub fn request_source(s: &State, u: &AppWindow, source: &str) {
+    match video(source) {
+        Ok(video) => request_enqueue(
+            s,
+            u,
+            &Track {
+                artists: Vec::new(),
+                title: String::new(),
+                artist: String::new(),
+                album: String::new(),
+                source: video.playback_url(),
+                duration_seconds: None,
+                artwork_url: None,
+                recommended: false,
+            },
+        ),
+        Err(message) => u.set_status_text(message.into()),
+    }
+}
+pub fn request_enqueue(s: &State, u: &AppWindow, track: &Track) {
+    let result = video(&track.source).and_then(|video| {
+        s.jam
+            .session
+            .as_ref()
+            .filter(|_| s.jam.connected && !s.jam.terminal)
+            .filter(|session| session.enqueue(video.clone()))
+            .map(|_| ())
+            .ok_or("Wait for the Jam connection or the previous queue requests")
+    });
+    u.set_status_text(
+        match result {
+            Ok(()) => "Sending song to the shared queue…",
+            Err(message) => message,
+        }
+        .into(),
+    );
+}
+fn accept_requests(s: &mut State, u: &AppWindow, requests: Vec<QueueRequest>) {
+    let mut changed = false;
+    for request in requests {
+        if request.id > s.jam.accepted_request {
+            // Count the shared window, not old local playback history.
+            let current = s.settings.queue.current.unwrap_or(0);
+            if s.settings.queue.tracks.len().saturating_sub(current) >= MAX_QUEUE {
+                // Leave the request pending until there is room; never drop it silently.
+                break;
+            }
+            let source = request.video.playback_url();
+            let track = s
+                .search_tracks
+                .iter()
+                .chain(s.detail_tracks.iter())
+                .chain(s.settings.queue.tracks.iter())
+                .find(|t| t.source == source)
+                .cloned()
+                .unwrap_or(Track {
+                    artists: Vec::new(),
+                    title: format!("YouTube track · {}", request.video.as_str()),
+                    artist: "Jam request".into(),
+                    album: String::new(),
+                    source,
+                    duration_seconds: None,
+                    artwork_url: None,
+                    recommended: false,
+                });
+            // A guest addition belongs after manually queued songs and before autoplay.
+            if !s.settings.queue.insert_manual(track, false) {
+                break;
+            }
+            s.jam.accepted_request = request.id;
+            changed = true;
+        }
+        if let Some(session) = &s.jam.session {
+            session.admin(Admin::Acknowledge(request.id));
+        }
+    }
+    if changed {
+        refresh(u, s);
+    }
 }
 fn ready(s: &State) -> Result<(), &'static str> {
     if s.jam.session.is_some() || s.jam.guest {
@@ -206,6 +287,7 @@ pub fn leave(s: &mut State, u: &AppWindow, message: &str) {
     s.jam.began = None;
     s.jam.terminal = false;
     s.jam.connected = false;
+    s.jam.accepted_request = 0;
     u.set_jam_invite_code("".into());
     u.set_jam_members(slint::ModelRc::default());
     u.set_jam_locked(false);
@@ -548,6 +630,9 @@ fn guest_update(
     })
 }
 pub fn tick(s: &mut State, u: &AppWindow) {
+    if let Some(notice) = s.jam.session.as_ref().and_then(Session::take_notice) {
+        u.set_status_text(notice.into());
+    }
     if s.jam.retiring.as_ref().is_some_and(Session::finished) {
         s.jam.retiring.take();
     }
@@ -558,7 +643,9 @@ pub fn tick(s: &mut State, u: &AppWindow) {
             invite_code,
             members,
             open,
+            requests,
         }) => {
+            accept_requests(s, u, requests);
             s.jam.connected = true;
             u.set_jam_invite_code(invite_code.as_str().into());
             u.set_jam_locked(!open);
@@ -767,6 +854,28 @@ pub fn ownership_smoke(state: &Rc<RefCell<State>>, u: &AppWindow, pickers: &Rc<P
         tracks: vec![track("original001"), track("original002")],
         current: Some(1),
     };
+    {
+        let mut s = state.borrow_mut();
+        s.settings.queue = original.clone();
+        let generation = s.generation;
+        let request = QueueRequest {
+            id: 1,
+            video: VideoId::parse("fixture0003").unwrap(),
+        };
+        accept_requests(&mut s, u, vec![request.clone()]);
+        accept_requests(&mut s, u, vec![request]);
+        assert_eq!(
+            s.settings.queue.tracks.len(),
+            3,
+            "a repeated delivery duplicated the song"
+        );
+        assert_eq!(s.settings.queue.current, Some(1));
+        assert_eq!(
+            s.generation, generation,
+            "a queue request changed playback generation"
+        );
+        s.jam.accepted_request = 0;
+    }
     {
         let mut s = state.borrow_mut();
         assert!(s.provider.is_none() && s.settings.transient);

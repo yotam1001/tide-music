@@ -242,7 +242,18 @@ fn request_library(
     tx: &mpsc::SyncSender<LibraryResult>,
     request: tide_provider::Request,
 ) {
-    if !local_controls_allowed(s) {
+    if !local_controls_allowed(s)
+        && !matches!(
+            &request,
+            tide_provider::Request::Library
+                | tide_provider::Request::Home
+                | tide_provider::Request::Playlist { .. }
+                | tide_provider::Request::Liked
+                | tide_provider::Request::Supermix
+                | tide_provider::Request::Artist { .. }
+                | tide_provider::Request::Artists { .. }
+        )
+    {
         return;
     }
     if s.library_worker.is_some() || s.pending_saved_connection.is_some() {
@@ -994,7 +1005,11 @@ fn start_tracks(
     index: usize,
     shuffle: bool,
 ) -> bool {
-    if !local_controls_allowed(s) {
+    #[cfg(feature = "experimental-jams")]
+    if jam::following(s) {
+        if let Some(track) = tracks.get(index) {
+            jam::request_enqueue(s, u, track);
+        }
         return false;
     }
     tracks.truncate(tide_core::MAX_QUEUE_TRACKS);
@@ -1028,6 +1043,11 @@ fn start_tracks(
     }
 }
 fn queue_choice(s: &mut State, u: &AppWindow, track: Track, play_next: bool) {
+    #[cfg(feature = "experimental-jams")]
+    if jam::following(s) {
+        jam::request_enqueue(s, u, &track);
+        return;
+    }
     if !local_controls_allowed(s) {
         return;
     }
@@ -1934,14 +1954,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let weak = ui.as_weak();
         let tx = library_tx.clone();
         ui.on_refresh_library(move || {
-            if !local_controls_allowed(&state.borrow()) {
-                return;
-            }
             if let Some(u) = weak.upgrade() {
                 let mut s = state.borrow_mut();
-                if let Some(saved) = s.rejected_saved_connection.take() {
-                    stage_saved_connection(&mut s, &u, saved);
-                    return;
+                if local_controls_allowed(&s) {
+                    if let Some(saved) = s.rejected_saved_connection.take() {
+                        stage_saved_connection(&mut s, &u, saved);
+                        return;
+                    }
                 }
                 request_library(&mut s, &u, &tx, tide_provider::Request::Library);
             }
@@ -1952,9 +1971,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let weak = ui.as_weak();
         let tx = library_tx.clone();
         ui.on_refresh_recommendations(move || {
-            if !local_controls_allowed(&state.borrow()) {
-                return;
-            }
             if let Some(u) = weak.upgrade() {
                 request_library(
                     &mut state.borrow_mut(),
@@ -1985,9 +2001,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let weak = ui.as_weak();
         let tx = library_tx.clone();
         ui.on_play_liked(move || {
-            if !local_controls_allowed(&state.borrow()) {
-                return;
-            }
             if let Some(u) = weak.upgrade() {
                 request_library(
                     &mut state.borrow_mut(),
@@ -2003,9 +2016,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let weak = ui.as_weak();
         let tx = library_tx.clone();
         ui.on_select_library_playlist(move |index| {
-            if !local_controls_allowed(&state.borrow()) {
-                return;
-            }
             if let Some(u) = weak.upgrade() {
                 let mut s = state.borrow_mut();
                 if let Some(p) = usize::try_from(index)
@@ -2028,9 +2038,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let weak = ui.as_weak();
         let tx = library_tx.clone();
         ui.on_select_recommendation(move |index| {
-            if !local_controls_allowed(&state.borrow()) {
-                return;
-            }
             if let Some(u) = weak.upgrade() {
                 let mut s = state.borrow_mut();
                 if let Some(card) = usize::try_from(index)
@@ -2125,9 +2132,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let state = state.clone();
         let weak = ui.as_weak();
         ui.on_select_detail_track(move |index| {
-            if !local_controls_allowed(&state.borrow()) {
-                return;
-            }
             if let Some(u) = weak.upgrade() {
                 let mut s = state.borrow_mut();
                 let tracks = s.detail_tracks.clone();
@@ -2141,9 +2145,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let state = state.clone();
         let weak = ui.as_weak();
         ui.on_select_search_track(move |index| {
-            if !local_controls_allowed(&state.borrow()) {
-                return;
-            }
             if let Some(u) = weak.upgrade() {
                 let mut s = state.borrow_mut();
                 if let Some(track) = usize::try_from(index)
@@ -2160,9 +2161,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let state = state.clone();
         let weak = ui.as_weak();
         ui.on_queue_search_track(move |index, next| {
-            if !local_controls_allowed(&state.borrow()) {
-                return;
-            }
             if let Some(u) = weak.upgrade() {
                 let mut s = state.borrow_mut();
                 if let Some(t) = usize::try_from(index)
@@ -2179,9 +2177,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let state = state.clone();
         let weak = ui.as_weak();
         ui.on_queue_detail_track(move |index, next| {
-            if !local_controls_allowed(&state.borrow()) {
-                return;
-            }
             if let Some(u) = weak.upgrade() {
                 let mut s = state.borrow_mut();
                 if let Some(t) = usize::try_from(index)
@@ -2223,9 +2218,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let state = state.clone();
         let weak = ui.as_weak();
         ui.on_queue_recommendation(move |index, next| {
-            if !local_controls_allowed(&state.borrow()) {
-                return;
-            }
             if let Some(u) = weak.upgrade() {
                 let mut s = state.borrow_mut();
                 if let Some(c) = usize::try_from(index)
@@ -2453,9 +2445,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let state = state.clone();
         let weak = ui.as_weak();
         ui.on_add_source(move |input| {
-            if !local_controls_allowed(&state.borrow()) {
-                return;
-            }
             let Some(ui) = weak.upgrade() else {
                 return;
             };
@@ -2472,6 +2461,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 || input.starts_with("https://")
                 || Path::new(input).is_file()
             {
+                #[cfg(feature = "experimental-jams")]
+                if jam::following(&state) {
+                    jam::request_source(&state, &ui, input);
+                    return;
+                }
                 if add(&mut state, &ui, input.into()) {
                     ui.set_source_input("".into());
                 }
@@ -3116,7 +3110,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if let Some(worker) = s.library_worker.take() {
                         let _ = worker.join();
                     }
-                    if !local_controls_allowed(&s) { continue; }
+                    if !local_controls_allowed(&s) && !matches!(s.library_action, LibraryAction::Replace | LibraryAction::Preview { .. } | LibraryAction::Artist) { continue; }
                     if s.pending_saved_connection.is_some() { continue; }
                     if !matches!(&result, Ok(tide_provider::Response::Connected)) {
                         match s.provider.as_ref().map(|p| p.saved_connection()).transpose() {

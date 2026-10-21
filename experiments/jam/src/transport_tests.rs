@@ -428,6 +428,27 @@ fn shared_https_needs_no_operator_secret_and_keeps_host_guest_roles() {
     let serialized =
         serde_json::to_string(&client.poll(&room.room, &guest.member).unwrap()).unwrap();
     assert!(!serialized.contains(room.host.expose()));
+    client
+        .enqueue(
+            &room.room,
+            &guest.member,
+            VideoId::parse("zyxwvutsrqp").unwrap(),
+        )
+        .unwrap();
+    assert!(client.requests(&room.room, &guest.member).is_err());
+    let requests = client.requests(&room.room, &room.host).unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].video.as_str(), "zyxwvutsrqp");
+    assert!(client
+        .acknowledge(&room.room, &guest.member, requests[0].id)
+        .is_err());
+    client
+        .acknowledge(&room.room, &room.host, requests[0].id)
+        .unwrap();
+    client
+        .acknowledge(&room.room, &room.host, requests[0].id)
+        .unwrap();
+    assert!(client.requests(&room.room, &room.host).unwrap().is_empty());
     client.leave(&room.room, &guest.member).unwrap();
     assert!(client.poll(&room.room, &guest.member).is_err());
     client.close(&room.room, &room.host).unwrap();

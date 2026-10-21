@@ -37,11 +37,12 @@ pub enum Start {
         code: Zeroizing<String>,
     },
 }
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Admin {
     Admission(bool),
     RotateInvite,
     Remove(u32),
+    Acknowledge(u64),
 }
 pub enum Event {
     Hosting {
@@ -49,6 +50,7 @@ pub enum Event {
         invite_code: Zeroizing<String>,
         members: Vec<u32>,
         open: bool,
+        requests: Vec<QueueRequest>,
     },
     View {
         view: View,
@@ -70,6 +72,8 @@ struct Shared {
     frame: Mutex<Option<Frame>>,
     event: Mutex<Option<Event>>,
     admin: Mutex<VecDeque<Admin>>,
+    enqueue: Mutex<VecDeque<VideoId>>,
+    notice: Mutex<Option<&'static str>>,
     wake: Condvar,
 }
 impl Shared {
@@ -100,6 +104,8 @@ impl Session {
             frame: Mutex::new(None),
             event: Mutex::new(None),
             admin: Mutex::new(VecDeque::new()),
+            enqueue: Mutex::new(VecDeque::new()),
+            notice: Mutex::new(None),
             wake: Condvar::new(),
         });
         let worker_state = shared.clone();
@@ -159,12 +165,31 @@ impl Session {
         let Ok(mut commands) = self.shared.admin.lock() else {
             return false;
         };
-        if commands.len() >= 8 {
+        if commands.contains(&command) {
+            return true;
+        }
+        if commands.len() >= 40 {
             return false;
         }
         commands.push_back(command);
         self.shared.wake.notify_all();
         true
+    }
+    pub fn enqueue(&self, video: VideoId) -> bool {
+        if self.shared.stopped() || self.finished() {
+            return false;
+        }
+        let Ok(mut queue) = self.shared.enqueue.lock() else {
+            return false;
+        };
+        if queue.len() >= 5 {
+            return false;
+        }
+        queue.push_back(video);
+        true
+    }
+    pub fn take_notice(&self) -> Option<&'static str> {
+        self.shared.notice.lock().ok()?.take()
     }
     pub fn cancel(&self) {
         self.shared.stop.store(true, Ordering::Release);
@@ -341,6 +366,9 @@ fn host(
                 Admin::Remove(id) => client
                     .remove_member(&room.room.room, &room.room.host, id)
                     .map(Some),
+                Admin::Acknowledge(id) => client
+                    .acknowledge(&room.room.room, &room.room.host, id)
+                    .map(|_| None),
             };
             match result {
                 Ok(Some(token)) => {
@@ -349,7 +377,7 @@ fn host(
                 }
                 Ok(None) => {}
                 Err(_) => {
-                    if !matches!(command, Admin::Admission(_)) {
+                    if matches!(command, Admin::RotateInvite | Admin::Remove(_)) {
                         // Never restore a possibly revoked code to the clipboard UI.
                         invite_code = Zeroizing::new(String::new());
                     }
@@ -398,6 +426,11 @@ fn host(
                             invite_code: invite_code.clone(),
                             members: view.members,
                             open: view.open,
+                            // Older relays do not implement collaborative queues.
+                            // That must not interrupt synchronized playback.
+                            requests: client
+                                .requests(&room.room.room, &room.room.host)
+                                .unwrap_or_default(),
                         }),
                         Err(_) => shared.event(Event::Problem {
                             message: "Jam hosted; guest count temporarily unavailable",
@@ -451,6 +484,20 @@ fn follow(shared: &Shared, invite: Invite) -> Result<(), &'static str> {
     let listener = client.listener_id(&membership.room, &membership.token).ok();
     let mut failures = 0;
     while !shared.stopped() {
+        let video = shared
+            .enqueue
+            .lock()
+            .map_err(|_| "Jam queue unavailable")?
+            .pop_front();
+        if let Some(video) = video {
+            let message = match client.enqueue(&membership.room, &membership.token, video) {
+                Ok(()) => "Song sent to the shared queue",
+                Err(_) => "Song addition was not confirmed. Check the queue before retrying; the host may need a newer build or the room may be busy.",
+            };
+            if let Ok(mut notice) = shared.notice.lock() {
+                *notice = Some(message);
+            }
+        }
         let began = Instant::now();
         match client.poll(&membership.room, &membership.token) {
             Ok(view) => {

@@ -5,6 +5,20 @@ use zeroize::Zeroizing;
 
 pub const MAX_QUEUE: usize = 100;
 pub const MAX_BODY: usize = 32 * 1024;
+pub const MAX_REQUESTS: usize = 32;
+
+/// Guests may propose a video, never a URL, account token or playback command.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Enqueue {
+    pub video: VideoId,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QueueRequest {
+    pub id: u64,
+    pub video: VideoId,
+}
 pub const MAX_POSITION_MS: u64 = 24 * 60 * 60 * 1000;
 pub const STALE_MS: u64 = 6_000;
 

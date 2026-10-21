@@ -1,6 +1,6 @@
 # Free / self-hosted Jam relay
 
-The same small relay can support a shared Tide service or a server run by friends. No service has been deployed and no default public endpoint is promised. The software is free; use an existing machine or evaluate a hosting provider's free limits before choosing infrastructure. No account credentials, audio runtime or operator secret is needed by this shared-relay binary.
+The same small relay can support a shared Tide service or a server run by friends. A limited Render Free trial is deployed at https://tide-jam-trial.onrender.com for the separate Jams preview. It is not part of the stable Tide installer. The software is free; use an existing machine or evaluate a hosting provider's free limits before choosing infrastructure. No account credentials, audio runtime or operator secret is needed by this shared-relay binary.
 
 ## Operator setup
 
@@ -33,4 +33,12 @@ Render documents 750 free instance-hours per workspace/month and sleeps after 15
 
 Koyeb documents one Free instance with 512 MB RAM and 0.1 vCPU, sleeping after an hour without traffic. Check current eligibility, terms and traffic limits before any deployment. Sources: https://www.koyeb.com/docs/reference/instances and https://www.koyeb.com/docs/run-and-scale/scale-to-zero
 
-Render is selected for the initial no-card trial. See `render/README.md` for the isolated container and conservative shared quota. No service is deployed until the container check and dashboard configuration are verified. A free tier is not a guarantee that operating a public service at arbitrary scale will remain free. Do not add a payment method, paid plan or automatic paid scaling. Self-hosting remains the fallback. Cold-start recovery and actual deployed proxy behavior must be validated before publishing an endpoint.
+Render is selected for the initial no-card trial. See `render/README.md` for the isolated container and conservative shared quota. The trial passed the container and live HTTPS checks. A free tier is not a guarantee that operating a public service at arbitrary scale will remain free. Do not add a payment method, paid plan or automatic paid scaling. Self-hosting remains the fallback. Cold-start recovery and actual deployed proxy behavior must be validated before publishing an endpoint.
+
+## Collaborative queue (new preview builds)
+
+Guests can browse Home, Library, playlists and search while following the host. Selecting a song or choosing Add to shared queue submits its strict YouTube video ID. Pause, seeking, skipping, queue reordering, removal and account switching remain host-controlled. Volume is local.
+
+The relay accepts proposals from active members only: at most five per minute per member and 32 pending per room. Only the host can read or acknowledge proposals. A monotonically increasing request ID prevents repeated delivery from adding the same request twice. A full shared queue leaves requests pending until space becomes available. Removing/leaving/expiring membership removes its unprocessed requests. Audio, stream URLs and Google credentials never enter this channel.
+
+Enqueue POSTs are sent once; a lost reply produces an unconfirmed-addition notice rather than an automatic duplicate. This feature needs an updated host, guest and relay. The existing timeline and HostView schemas are unchanged for older preview clients.

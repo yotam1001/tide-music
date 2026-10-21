@@ -176,6 +176,37 @@ impl Client {
         view.validate().map_err(|_| Error::Invalid)?;
         Ok(view)
     }
+    /// Sent once: retrying a POST after a lost reply could duplicate the song.
+    pub fn enqueue(&self, room: &str, member: &Secret, video: VideoId) -> Result<(), Error> {
+        let body = serde_json::to_vec(&Enqueue { video }).map_err(|_| Error::Invalid)?;
+        self.request("POST", &Self::path(room, "/requests")?, Some(member), &body)
+            .map(|_| ())
+    }
+    pub fn requests(&self, room: &str, host: &Secret) -> Result<Vec<QueueRequest>, Error> {
+        let requests: Vec<QueueRequest> =
+            self.json("GET", &Self::path(room, "/requests")?, Some(host), b"")?;
+        let mut ids = std::collections::HashSet::new();
+        if requests.len() > MAX_REQUESTS || requests.iter().any(|r| r.id == 0 || !ids.insert(r.id))
+        {
+            return Err(Error::Invalid);
+        }
+        if requests.windows(2).any(|pair| pair[0].id >= pair[1].id) {
+            return Err(Error::Invalid);
+        }
+        Ok(requests)
+    }
+    pub fn acknowledge(&self, room: &str, host: &Secret, id: u64) -> Result<(), Error> {
+        if id == 0 {
+            return Err(Error::Invalid);
+        }
+        self.request(
+            "DELETE",
+            &Self::path(room, &format!("/requests/{id}"))?,
+            Some(host),
+            b"",
+        )
+        .map(|_| ())
+    }
     pub fn listener_id(&self, room: &str, member: &Secret) -> Result<u32, Error> {
         let value: ListenerId = self.json(
             "GET",

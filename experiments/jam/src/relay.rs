@@ -33,6 +33,11 @@ struct Member {
     id: u32,
     token: Secret,
     seen: u64,
+    requests: VecDeque<u64>,
+}
+struct PendingRequest {
+    member: u32,
+    request: QueueRequest,
 }
 struct Room {
     open: bool,
@@ -44,6 +49,8 @@ struct Room {
     updated: u64,
     timeline: Option<Timeline>,
     members: Vec<Member>,
+    pending: Vec<PendingRequest>,
+    next_request: u64,
 }
 #[derive(Default)]
 pub struct Store {
@@ -60,6 +67,8 @@ impl Store {
         for room in self.rooms.values_mut() {
             room.members
                 .retain(|member| now.saturating_sub(member.seen) < MEMBER_IDLE_MS);
+            room.pending
+                .retain(|p| room.members.iter().any(|m| m.id == p.member));
         }
         while self
             .creates
@@ -122,6 +131,8 @@ impl Store {
                 updated: now,
                 timeline: None,
                 members: Vec::new(),
+                pending: Vec::new(),
+                next_request: 1,
             },
         );
         self.creates.push_back(now);
@@ -152,6 +163,7 @@ impl Store {
             id,
             token: token.clone(),
             seen: now,
+            requests: VecDeque::new(),
         });
         Ok(Joined { member: token })
     }
@@ -207,6 +219,7 @@ impl Store {
             .ok_or(MISSING)?;
         let replacement = Secret::random().map_err(internal)?;
         room.members.remove(index);
+        room.pending.retain(|p| p.member != member_id);
         room.invite = replacement;
         Ok(RotatedInvite {
             invite: room.invite.clone(),
@@ -226,6 +239,68 @@ impl Store {
             .find(|m| m.token.matches(member))
             .ok_or(MISSING)?;
         Ok(ListenerId { id: member.id })
+    }
+    pub fn enqueue(
+        &mut self,
+        id: &str,
+        token: &Secret,
+        video: VideoId,
+        now: u64,
+    ) -> Result<(), Failure> {
+        self.clean(now);
+        let room = self.rooms.get_mut(id).ok_or(MISSING)?;
+        let member = room
+            .members
+            .iter_mut()
+            .find(|m| m.token.matches(token))
+            .ok_or(MISSING)?;
+        while member
+            .requests
+            .front()
+            .is_some_and(|t| now.saturating_sub(*t) >= 60_000)
+        {
+            member.requests.pop_front();
+        }
+        if member.requests.len() >= 5 || room.pending.len() >= MAX_REQUESTS {
+            return Err((StatusCode::TOO_MANY_REQUESTS, "Queue request limit reached"));
+        }
+        let request_id = room.next_request;
+        room.next_request = request_id.checked_add(1).ok_or(internal(""))?;
+        member.requests.push_back(now);
+        member.seen = now;
+        room.pending.push(PendingRequest {
+            member: member.id,
+            request: QueueRequest {
+                id: request_id,
+                video,
+            },
+        });
+        Ok(())
+    }
+    pub fn requests(
+        &mut self,
+        id: &str,
+        host: &Secret,
+        now: u64,
+    ) -> Result<Vec<QueueRequest>, Failure> {
+        Ok(self
+            .hosted(id, host, now)?
+            .pending
+            .iter()
+            .map(|p| p.request.clone())
+            .collect())
+    }
+    pub fn acknowledge(
+        &mut self,
+        id: &str,
+        host: &Secret,
+        request: u64,
+        now: u64,
+    ) -> Result<(), Failure> {
+        self.hosted(id, host, now)?
+            .pending
+            .retain(|p| p.request.id != request);
+        Ok(())
     }
     pub fn publish(
         &mut self,
@@ -287,7 +362,8 @@ impl Store {
             .iter()
             .position(|m| m.token.matches(member))
             .ok_or(MISSING)?;
-        room.members.remove(index);
+        let member = room.members.remove(index);
+        room.pending.retain(|p| p.member != member.id);
         Ok(())
     }
 }
@@ -460,6 +536,37 @@ async fn join(
     checked_id(&id)?;
     let auth = token(&headers)?;
     s.with(|store, now| store.join(&id, &auth, now)).map(Json)
+}
+async fn enqueue(
+    State(s): State<Shared>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(value): Json<Enqueue>,
+) -> Result<StatusCode, Failure> {
+    checked_id(&id)?;
+    let auth = token(&headers)?;
+    s.with(|store, now| store.enqueue(&id, &auth, value.video, now))?;
+    Ok(StatusCode::NO_CONTENT)
+}
+async fn requests(
+    State(s): State<Shared>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<QueueRequest>>, Failure> {
+    checked_id(&id)?;
+    let auth = token(&headers)?;
+    s.with(|store, now| store.requests(&id, &auth, now))
+        .map(Json)
+}
+async fn acknowledge(
+    State(s): State<Shared>,
+    Path((id, request)): Path<(String, u64)>,
+    headers: HeaderMap,
+) -> Result<StatusCode, Failure> {
+    checked_id(&id)?;
+    let auth = token(&headers)?;
+    s.with(|store, now| store.acknowledge(&id, &auth, request, now))?;
+    Ok(StatusCode::NO_CONTENT)
 }
 async fn publish(
     State(s): State<Shared>,
@@ -647,6 +754,8 @@ async fn serve_inner(
     let router = Router::new()
         .route("/v1/rooms", post(create))
         .route("/v1/rooms/{id}/join", post(join))
+        .route("/v1/rooms/{id}/requests", get(requests).post(enqueue))
+        .route("/v1/rooms/{id}/requests/{request}", delete(acknowledge))
         .route("/v1/rooms/{id}/state", get(view).put(publish))
         .route("/v1/rooms/{id}", delete(close))
         .route(
@@ -693,6 +802,95 @@ async fn serve_inner(
 #[cfg(test)]
 mod shared_admission_tests {
     use super::*;
+    #[test]
+    fn queue_requests_are_member_only_bounded_and_host_acknowledged() {
+        let mut store = Store::default();
+        let room = store.create(0).unwrap();
+        let guest = store.join(&room.room, &room.invite, 1).unwrap();
+        let video = VideoId::parse("abcdefghijk").unwrap();
+        assert!(store
+            .enqueue(&room.room, &room.invite, video.clone(), 2)
+            .is_err());
+        assert!(store
+            .enqueue(&room.room, &room.host, video.clone(), 2)
+            .is_err());
+        for now in 2..7 {
+            store
+                .enqueue(&room.room, &guest.member, video.clone(), now)
+                .unwrap();
+        }
+        assert!(store.enqueue(&room.room, &guest.member, video, 7).is_err());
+        assert!(store.requests(&room.room, &guest.member, 8).is_err());
+        let requests = store.requests(&room.room, &room.host, 8).unwrap();
+        assert_eq!(requests.len(), 5);
+        assert!(store
+            .acknowledge(&room.room, &guest.member, requests[0].id, 9)
+            .is_err());
+        store
+            .acknowledge(&room.room, &room.host, requests[0].id, 9)
+            .unwrap();
+        store
+            .acknowledge(&room.room, &room.host, requests[0].id, 10)
+            .unwrap();
+        assert_eq!(store.requests(&room.room, &room.host, 11).unwrap().len(), 4);
+        // Guest submissions never mutate the authoritative playback timeline.
+        assert!(store
+            .view(&room.room, &guest.member, 12)
+            .unwrap()
+            .timeline
+            .is_none());
+        store.leave(&room.room, &guest.member, 13).unwrap();
+        assert!(store
+            .requests(&room.room, &room.host, 14)
+            .unwrap()
+            .is_empty());
+    }
+    #[test]
+    fn disconnected_and_removed_members_lose_pending_requests() {
+        let mut store = Store::default();
+        let room = store.create(0).unwrap();
+        let guest = store.join(&room.room, &room.invite, 1).unwrap();
+        store
+            .enqueue(
+                &room.room,
+                &guest.member,
+                VideoId::parse("abcdefghijk").unwrap(),
+                2,
+            )
+            .unwrap();
+        assert!(store
+            .requests(&room.room, &room.host, 30_003)
+            .unwrap()
+            .is_empty());
+        let guest = store.join(&room.room, &room.invite, 30_004).unwrap();
+        let id = store
+            .listener_id(&room.room, &guest.member, 30_005)
+            .unwrap()
+            .id;
+        store
+            .enqueue(
+                &room.room,
+                &guest.member,
+                VideoId::parse("abcdefghijk").unwrap(),
+                30_006,
+            )
+            .unwrap();
+        store
+            .remove_member(&room.room, &room.host, id, 30_007)
+            .unwrap();
+        assert!(store
+            .requests(&room.room, &room.host, 30_008)
+            .unwrap()
+            .is_empty());
+        assert!(store
+            .enqueue(
+                &room.room,
+                &guest.member,
+                VideoId::parse("abcdefghijk").unwrap(),
+                30_009
+            )
+            .is_err());
+    }
     fn timeline(revision: u64) -> Timeline {
         Timeline {
             revision,
