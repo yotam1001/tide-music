@@ -467,11 +467,31 @@ fn library_failure(s: &mut State, u: &AppWindow, authentication: bool) {
         s.account_error = false;
         u.set_error_is_account(false);
         u.set_error_retryable(s.library_retry.is_some());
-        u.set_error_message(
-            "YouTube Music unavailable temporarily. Check your connection and retry.".into(),
-        );
+        u.set_error_message(content_failure_message(s.library_request.as_ref()).into());
     }
     u.set_account_status("Request failed; check your connection and retry".into());
+}
+
+// A browsing failure must name its own operation, rather than suggesting that
+// the whole music service, current playback or Jam membership failed.
+fn content_failure_message(request: Option<&tide_provider::Request>) -> &'static str {
+    match request {
+        Some(tide_provider::Request::Home) => {
+            "Couldn't refresh Home recommendations. Retry to refresh them."
+        }
+        Some(tide_provider::Request::Library) => {
+            "Couldn't refresh your Library. Retry to refresh it."
+        }
+        Some(
+            tide_provider::Request::Playlist { .. }
+            | tide_provider::Request::Liked
+            | tide_provider::Request::Supermix,
+        ) => "Couldn't load this playlist. Retry to load its songs.",
+        Some(tide_provider::Request::Artist { .. } | tide_provider::Request::Artists { .. }) => {
+            "Couldn't load this artist page. Retry to load it."
+        }
+        _ => "Couldn't refresh this music view. Check your connection and retry.",
+    }
 }
 
 fn content_retry_request(request: &tide_provider::Request) -> Option<tide_provider::Request> {

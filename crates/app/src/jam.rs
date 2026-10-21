@@ -313,11 +313,14 @@ pub fn install(state: &Rc<RefCell<State>>, ui: &AppWindow, picker: &Rc<PickerSta
         let weak = ui.as_weak();
         ui.on_jam_leave(move || {
             if let Some(u) = weak.upgrade() {
-                leave(
-                    &mut state.borrow_mut(),
-                    &u,
-                    "Left Jam · your queue is restored and paused",
-                );
+                let mut s = state.borrow_mut();
+                let message = if s.jam.guest {
+                    "Left Jam · your queue is restored and paused"
+                } else {
+                    "Jam ended · local playback continues"
+                };
+                leave(&mut s, &u, message);
+                u.set_jam_open(false);
             }
         });
     }
@@ -952,7 +955,40 @@ pub fn ownership_smoke(state: &Rc<RefCell<State>>, u: &AppWindow, pickers: &Rc<P
         assert!(s.settings.transient && !s.active_playback && local_controls_allowed(&s));
         assert!(u.get_paused() && u.get_position() == 0.0 && !u.get_jam_guest());
     }
-    println!("PASS offline Jam ownership: native callbacks/media keys blocked, volume local, original queue restored paused; window never shown");
+    {
+        let mut s = state.borrow_mut();
+        s.active_playback = true;
+        s.account_verified = true;
+        s.library_request = Some(tide_provider::Request::Home);
+        s.library_action = LibraryAction::Replace;
+        library_failure(&mut s, u, false);
+        assert!(u.get_error_message().contains("Home recommendations"));
+        assert!(s.account_verified && !s.account_error);
+    }
+    let before = serde_json::to_string(&state.borrow().settings).unwrap();
+    let generation = state.borrow().generation;
+    u.set_jam_active(true);
+    u.invoke_jam_leave();
+    {
+        let s = state.borrow();
+        assert!(
+            s.active_playback && s.account_verified,
+            "ending a hosted Jam interrupted playback or invalidated the account"
+        );
+        assert_eq!(generation, s.generation);
+        assert_eq!(before, serde_json::to_string(&s.settings).unwrap());
+        assert!(
+            s.library_worker.is_none(),
+            "ending a hosted Jam started a YouTube request"
+        );
+        assert!(u.get_jam_status().contains("local playback continues"));
+        assert!(
+            u.get_error_message().contains("Home recommendations"),
+            "ending a Jam hid an unrelated refresh failure"
+        );
+        assert!(!u.get_jam_open());
+    }
+    println!("PASS offline Jam ownership: guest transport blocked, volume local, guest queue restored paused; host End preserves playback/account and starts no YouTube request; window never shown");
 }
 
 #[cfg(test)]
