@@ -17,8 +17,7 @@ pub fn layout_key_name(character: char) -> Option<String> {
             return None;
         }
         let key = (mapped as u16 & 0xff) as u8;
-        ((b'0'..=b'9').contains(&key) || (b'A'..=b'Z').contains(&key))
-            .then(|| (key as char).to_string())
+        (key.is_ascii_digit() || key.is_ascii_uppercase()).then(|| (key as char).to_string())
     }
     #[cfg(not(windows))]
     {
