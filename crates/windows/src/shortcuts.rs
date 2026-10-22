@@ -6,6 +6,28 @@ pub struct Chord {
     key: u32,
 }
 
+/// Resolve shifted symbols and non-Latin letters using the focused thread's layout.
+/// Only alphanumeric virtual keys accepted by the existing global parser are returned.
+pub fn layout_key_name(character: char) -> Option<String> {
+    #[cfg(windows)]
+    {
+        let unit = u16::try_from(character as u32).ok()?;
+        let mapped = unsafe { windows::Win32::UI::Input::KeyboardAndMouse::VkKeyScanW(unit) };
+        if mapped == -1 {
+            return None;
+        }
+        let key = (mapped as u16 & 0xff) as u8;
+        return key
+            .is_ascii_alphanumeric()
+            .then(|| (key as char).to_string());
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = character;
+        None
+    }
+}
+
 pub fn parse_bindings(values: &[String; 3]) -> Result<[Option<Chord>; 3], String> {
     let mut result = [None; 3];
     for (index, text) in values.iter().enumerate() {

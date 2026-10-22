@@ -35,6 +35,8 @@ fn encode(
         "Space".into()
     } else if ('\u{f704}'..='\u{f71b}').contains(&key) {
         format!("F{}", key as u32 - 0xf704 + 1)
+    } else if let Some(name) = tide_windows::shortcuts::layout_key_name(key) {
+        name
     } else {
         return Err("Choose a letter, number, Space or function key with Ctrl or Alt.");
     };
