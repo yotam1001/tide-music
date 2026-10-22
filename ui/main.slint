@@ -1319,6 +1319,8 @@ export component AppWindow inherits Window {
     in-out property <int> shortcut-recording-index: -1;
     in-out property <bool> settings-shortcuts-open: false;
     in-out property <bool> settings-more-open: false;
+    in-out property <length> settings-scroll-y: 0px;
+    changed settings-shortcuts-open => { root.settings-scroll-y = 0px; }
     callback begin-shortcut(int);
     callback cancel-shortcut();
     callback clear-shortcut(int);
@@ -1695,6 +1697,7 @@ export component AppWindow inherits Window {
                         background: root.surface; border-width: 1px; border-color: root.outline;
                         TouchArea { }
                         ScrollView {
+                            content-y <=> root.settings-scroll-y;
                             width: parent.width; height: parent.height; horizontal-scrollbar-policy: always-off;
                             VerticalLayout {
                                 padding: 24px; spacing: 14px; alignment: start;

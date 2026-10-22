@@ -81,6 +81,8 @@ fn shortcuts_capture_keys_cancel_and_clear_without_transport() {
         weak.upgrade().unwrap().set_shortcut_toggle("".into());
     });
     ui.show().unwrap();
+    ui.window()
+        .dispatch_event(WindowEvent::WindowActiveChanged { active: true });
     for light in [false, true] {
         ui.set_light_mode(light);
         ui.set_settings_shortcuts_open(false);
@@ -143,4 +145,12 @@ fn shortcuts_capture_keys_cancel_and_clear_without_transport() {
     }
     ui.set_settings_shortcuts_open(false);
     draw(&window, 650, 420, "settings-small-window");
+    ui.set_settings_scroll_y(-180.0);
+    ui.set_settings_shortcuts_open(true);
+    draw(&window, 650, 420, "settings-shortcuts-small-window");
+    assert_eq!(
+        ui.get_settings_scroll_y(),
+        0.0,
+        "Shortcut page inherited the previous scroll position"
+    );
 }
