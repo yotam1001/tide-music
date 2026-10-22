@@ -17,6 +17,8 @@ impl slint::platform::Platform for Platform {
 fn draw(window: &MinimalSoftwareWindow, width: u32, height: u32, name: &str) {
     window.set_size(PhysicalSize::new(width, height));
     let mut pixels = vec![Rgb8Pixel::default(); width as usize * height as usize];
+    // Settle the capsule/progress transitions before hit-testing and snapshots.
+    std::thread::sleep(std::time::Duration::from_millis(180));
     for _ in 0..3 {
         slint::platform::update_timers_and_animations();
         window.request_redraw();
