@@ -13,6 +13,8 @@ use std::{
 };
 use tide_core::Track;
 use zeroize::Zeroize;
+mod feedback;
+pub use feedback::{FeedbackOperation, FeedbackRequest, FeedbackResult, PlaylistDetails, Rating};
 
 const MAX_SESSION: usize = 65536;
 // Local encrypted metadata, removed before any headers reach a helper or HTTP.
@@ -119,6 +121,8 @@ pub struct Playlist {
     pub subtitle: String,
     #[serde(default)]
     pub artwork_url: Option<String>,
+    #[serde(default)]
+    pub owned: bool,
 }
 #[derive(Clone, Deserialize, Serialize)]
 pub struct Card {
@@ -137,16 +141,34 @@ pub struct Card {
 #[derive(Clone, Serialize)]
 #[serde(tag = "action", rename_all = "lowercase")]
 pub enum Request {
-    Connect { database: PathBuf, index: u32 },
-    SwitchAccount { index: u32 },
+    Connect {
+        database: PathBuf,
+        index: u32,
+    },
+    SwitchAccount {
+        index: u32,
+    },
     Library,
-    Playlist { id: String },
-    Radio { video_id: String },
+    Playlist {
+        id: String,
+    },
+    Radio {
+        video_id: String,
+    },
     Liked,
     Supermix,
     Home,
-    Artist { id: String },
-    Artists { video_id: String },
+    Artist {
+        id: String,
+    },
+    Artists {
+        video_id: String,
+    },
+    Feedback {
+        request: FeedbackRequest,
+        #[serde(skip)]
+        expected: SavedConnection,
+    },
 }
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
@@ -171,6 +193,11 @@ pub enum Response {
     Tracks {
         tracks: Vec<Track>,
         truncated: bool,
+        #[serde(default)]
+        playlist: Option<PlaylistDetails>,
+    },
+    Feedback {
+        result: FeedbackResult,
     },
     Home {
         cards: Vec<Card>,
@@ -226,7 +253,9 @@ fn decode_helper_reply(bytes: &[u8]) -> Result<HelperReply, &'static str> {
             | Response::Home { .. }
             | Response::Artist { .. }
             | Response::Artists { .. }
-    ) {
+            | Response::Feedback { .. }
+    ) || matches!(&response, Response::Error { code } if code.starts_with("feedback_"))
+    {
         if let Ok(document) = serde_json::from_slice::<RefreshEnvelope>(bytes) {
             let mut encoded = serde_json::to_vec(&document.refreshed_headers.0).unwrap_or_default();
             if encoded.len() <= MAX_SESSION {
@@ -904,6 +933,20 @@ impl Provider {
         }
         let (mut headers, revision) = self.read_session()?;
         let expected_connection = SavedConnection::from_headers(&headers, revision);
+        if let Request::Feedback { expected, request } = &request {
+            if expected != &expected_connection
+                || !request.valid()
+                || cancel.load(Ordering::Acquire)
+            {
+                for value in headers.values_mut() {
+                    value.zeroize();
+                }
+                return Err(
+                    "Account changed or collection action is invalid; choose the action again"
+                        .into(),
+                );
+            }
+        }
         let expected_authuser = headers.get("x-goog-authuser").cloned();
         let expected_pageid = headers.get("x-goog-pageid").cloned();
         let expected_cookie =
@@ -1824,7 +1867,10 @@ mod tests {
         }))
         .unwrap();
         let reply = decode_helper_reply(&bytes).unwrap();
-        let Response::Tracks { tracks, truncated } = reply.response else {
+        let Response::Tracks {
+            tracks, truncated, ..
+        } = reply.response
+        else {
             panic!("Playlist response was lost");
         };
         assert!(truncated);
@@ -2079,6 +2125,61 @@ mod tests {
         drop(lease);
         fs::remove_dir_all(directory).unwrap();
     }
+    #[test]
+    fn feedback_envelope_does_not_send_local_account_revision_to_the_helper() {
+        let request = Request::Feedback {
+            request: FeedbackRequest::Rate {
+                video_id: "K4DyBUG242c".into(),
+                rating: Rating::Like,
+            },
+            expected: SavedConnection {
+                revision: Some("local-generation".into()),
+                account_index: 1,
+                page_id: None,
+            },
+        };
+        assert_eq!(
+            serde_json::to_value(request).unwrap(),
+            serde_json::json!({
+                "action":"feedback", "request":{"kind":"rate", "video_id":"K4DyBUG242c", "rating":"LIKE"}
+            })
+        );
+        let reply = decode_helper_reply(br#"{"type":"error","code":"feedback_unconfirmed","refreshed_headers":{"cookie":"__Secure-3PAPISID=fresh", "x-goog-authuser":"1"}}"#).unwrap();
+        assert!(reply.refreshed.0.is_some());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn changed_account_rejects_collection_write_before_starting_any_helper() {
+        let directory = std::env::temp_dir().join(format!(
+            "tide-feedback-binding-{}-{}",
+            std::process::id(),
+            LEASE_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        private_directory(&directory).unwrap();
+        let provider = Provider {
+            directory: directory.clone(),
+        };
+        provider
+            .import_bytes(br#"{"cookie":"__Secure-3PAPISID=old", "x-goog-authuser":"1"}"#)
+            .unwrap();
+        let mut expected = provider.saved_connection().unwrap().unwrap();
+        expected.account_index = 2;
+        let result = provider.execute(
+            Request::Feedback {
+                request: FeedbackRequest::History {
+                    video_id: "K4DyBUG242c".into(),
+                },
+                expected,
+            },
+            Arc::new(AtomicBool::new(false)),
+        );
+        assert!(
+            matches!(result, Err(message) if message == "Account changed or collection action is invalid; choose the action again")
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
     #[test]
     fn radio_request_matches_helper_contract() {
         let request = Request::Radio {

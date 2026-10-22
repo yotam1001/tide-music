@@ -52,9 +52,25 @@ switching checks before claiming compatibility with every device.
   does not mean your account needs reconnecting.
 - **Search:** stays separate from the queue until you select or queue a song.
 
-Tide reads your existing library. It does not copy it to another service, edit
-your playlists or download your whole collection. Listening does not currently
-send playback-history updates to train YouTube recommendations.
+Tide reads your existing library without downloading your whole collection.
+The thumbs beside the player like or dislike the current song on YouTube Music;
+select the active thumb again to clear its rating.
+
+Use a song's **… → Add to playlist…** menu to choose one of your own playlists.
+In an editable playlist, **… → Remove from playlist** removes that exact entry,
+including when a song appears twice. Removing a playlist entry leaves your
+playback queue alone. Use **Refresh** to reload the playlist from YouTube Music.
+If an update cannot be confirmed, refresh before trying again.
+
+**Settings → Recommendations → Listening history** is off by default. Enable it
+to send new, actual listening to your selected YouTube Music account after enough
+playback. Seeking, waiting, paused time and automated tests do not count. YouTube
+decides how that history affects recommendations; changes may take time. Turning
+it off stops new submissions and does not remove history already sent.
+
+**Jams**, below **Library**, opens hosting and joining controls. In a Jam, likes,
+playlist edits, history consent and volume apply to your own account/player;
+the host controls shared playback.
 
 ## Queue and recommendations
 

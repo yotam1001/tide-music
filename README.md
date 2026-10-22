@@ -53,6 +53,8 @@ companion without uninstalling Tide. [Installation help](docs/INSTALLATION.md)
 - Select an artist name to browse their top songs, then play, shuffle or queue.
 - See loading/retry feedback and the observed audio format in the player.
 - See your playlists, Liked Songs and personalized recommendations.
+- Like or dislike the playing song, and save or remove entries in your own playlists.
+- Optionally send actual listening to YouTube Music history from Settings.
 - Shuffle playlists, queue songs next, and drag upcoming tracks into order.
 - Start song radio or enable Autoplay for related recommendations.
 - Switch between dark/light themes, compact sizing and a mini player.
@@ -64,8 +66,8 @@ Theme is the sun/moon button in the header. **Account** is beside **Settings**.
 ## Listen together
 
 Both people install the latest Tide and connect their own YouTube Music accounts.
-Play a song, choose **Jam → Start Jam → Copy invite**, and send the invite to your
-friend. They paste it into **Jam → Join Jam**. Guests can browse and press **+**
+Play a song, choose **Jams** below **Library**, then **Start Jam → Copy invite**, and send the invite to your
+friend. They paste it into **Jams → Join Jam**. Guests can browse and press **+**
 to add songs; the host controls playback. Your volume stays local.
 
 No browser needs to remain open. The free shared server supports two rooms at

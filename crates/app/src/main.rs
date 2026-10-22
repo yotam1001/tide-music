@@ -17,12 +17,14 @@ mod artwork;
 mod artwork_view;
 mod connection;
 mod discovery;
+mod history_feedback;
 #[cfg(feature = "experimental-jams")]
 mod jam;
 #[cfg(feature = "experimental-jams")]
 mod jam_session;
 mod listening;
 mod metadata;
+mod music_feedback;
 #[cfg(any(windows, test))]
 mod output_recovery;
 mod performance;
@@ -45,6 +47,8 @@ struct Settings {
     #[serde(default = "enabled_by_default")]
     media_controls: bool,
     #[serde(default)]
+    history_feedback: bool,
+    #[serde(default)]
     shortcuts: [String; 3],
     volume: Option<f64>,
     repeat: bool,
@@ -60,6 +64,7 @@ impl Default for Settings {
             autoplay: true,
             check_updates: true,
             media_controls: true,
+            history_feedback: false,
             shortcuts: Default::default(),
             volume: None,
             repeat: false,
@@ -103,6 +108,7 @@ impl LibraryAction {
     }
 }
 struct State {
+    music_feedback: music_feedback::Music,
     #[cfg(feature = "experimental-jams")]
     jam: jam::Jam,
     settings: Settings,
@@ -242,6 +248,11 @@ fn request_library(
     tx: &mpsc::SyncSender<LibraryResult>,
     request: tide_provider::Request,
 ) {
+    // Writes use the separate account-bound collection worker. Never put them
+    // through browsing's automatic/manual retry machinery.
+    if matches!(&request, tide_provider::Request::Feedback { .. }) {
+        return;
+    }
     if !local_controls_allowed(s)
         && !matches!(
             &request,
@@ -308,6 +319,7 @@ fn request_library(
     };
     s.library_cancel.store(false, Ordering::Release);
     if let LibraryAction::Preview { title } = &action {
+        music_feedback::set_playlist(s, u, None, None);
         s.artist_origin = None;
         u.set_detail_is_artist(false);
         u.set_detail_note("".into());
@@ -1544,6 +1556,9 @@ fn search(query: String, cancel: Arc<AtomicBool>) -> Result<Vec<Track>, String> 
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if std::env::args().any(|arg| arg == "--smoke-collection-read") {
+        return music_feedback::read_probe().map_err(Into::into);
+    }
     let jam_ownership_smoke = std::env::args().any(|arg| arg == "--smoke-jam-ownership");
     if jam_ownership_smoke && !cfg!(feature = "experimental-jams") {
         return Err("Jam ownership verification requires an experimental-jams build".into());
@@ -1696,6 +1711,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(e) => (None, Some(e)),
     };
     let state = Rc::new(RefCell::new(State {
+        music_feedback: music_feedback::Music::new(
+            test_mode
+                || connection_smoke.is_some()
+                || smoke_autoplay
+                || smoke_early_skip
+                || listening_seconds.is_some(),
+        ),
         #[cfg(feature = "experimental-jams")]
         jam: jam::Jam::default(),
         settings,
@@ -1786,6 +1808,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     jam::install(&state, &ui, &picker_busy);
     let (tx, rx) = mpsc::sync_channel(2);
     let (library_tx, library_rx) = mpsc::sync_channel::<LibraryResult>(2);
+    music_feedback::install(&state, &ui, &library_tx);
     {
         let state = state.clone();
         let weak = ui.as_weak();
@@ -3107,12 +3130,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     u.get_detail_open(),
                     u.get_search_open(),
                     u.get_queue_open(),
+                    u.get_playlist_picker_open(),
                     [
                         (u.get_library_artwork_y(), u.get_library_artwork_height()),
                         (u.get_home_artwork_y(), u.get_home_artwork_height()),
                         (u.get_queue_artwork_y(), u.get_queue_artwork_height()),
                         (u.get_detail_artwork_y(), u.get_detail_artwork_height()),
                         (u.get_search_artwork_y(), u.get_search_artwork_height()),
+                        (u.get_playlist_picker_artwork_y(), u.get_playlist_picker_artwork_height()),
                     ],
                 );
                 if s.volume_save_pending && last_volume_save.elapsed() >= Duration::from_secs(1) {
@@ -3124,6 +3149,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     refresh(&u, &s);
                     refresh_library_models(&s, &u);
                     refresh_content_models(&s, &u);
+                    music_feedback::update_choices(&s, &u);
                     last_content_view = Some(content_view);
                 }
                 while let Ok(result) = library_rx.try_recv() {
@@ -3236,7 +3262,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 refresh_content_models(&s, &u);
                             }
                         }
-                        Ok(tide_provider::Response::Tracks { tracks, truncated }) => {
+                        Ok(tide_provider::Response::Tracks { tracks, truncated, playlist }) => {
                             let tracks: Vec<Track> = tracks
                                 .into_iter()
                                 .take(2000)
@@ -3300,7 +3326,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 continue;
                             }
                             if matches!(s.library_action, LibraryAction::Preview { .. }) {
+                                let playlist_id = match s.library_request.as_ref() {
+                                    Some(tide_provider::Request::Playlist { id }) => Some(id.clone()),
+                                    _ => None,
+                                };
                                 s.detail_tracks = tracks;
+                                music_feedback::set_playlist(&mut s, &u, playlist, playlist_id.as_deref());
                                 u.set_detail_busy(false);
                                 refresh_content_models(&s, &u);
                                 u.set_account_status(
@@ -3377,7 +3408,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             );
                             u.set_account_status(error.into());
                         }
-                        Ok(tide_provider::Response::Session { .. }) | Err(_) => {
+                        Ok(tide_provider::Response::Session { .. } | tide_provider::Response::Feedback { .. }) | Err(_) => {
                             library_failure(&mut s, &u, false);
                         }
                     }
@@ -3387,11 +3418,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 #[cfg(feature = "experimental-jams")]
                 jam::tick(&mut s, &u);
+                music_feedback::tick(&mut s, &u);
                 let artwork_changed = s.artwork.borrow_mut().poll();
                 if artwork_changed {
                     refresh(&u, &s);
                     refresh_library_models(&s, &u);
                     refresh_content_models(&s, &u);
+                    music_feedback::update_choices(&s, &u);
                 }
                 if s.active_playback || s.radio_resume_when_ready {
                     request_radio(&mut s, &u, &library_tx, false);
@@ -3632,12 +3665,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut s = state.borrow_mut();
             s.library_playlists = vec![
                 tide_provider::Playlist {
+                    owned: true,
                     artwork_url: None,
                     id: "PLfixture".into(),
                     title: "Late night focus".into(),
                     subtitle: "24 tracks".into(),
                 },
                 tide_provider::Playlist {
+                    owned: true,
                     artwork_url: None,
                     id: "PLfixture2".into(),
                     title: "Weekend favourites".into(),
@@ -4292,6 +4327,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // UI callbacks and async pickers can retain State after the event loop ends.
     // Join the playback worker now, rather than waiting for the last State owner
     // to disappear, so native helpers finish before the application returns.
+    s.music_feedback.shutdown();
     if let Some(engine) = s.engine.take() {
         drop(engine);
     }
