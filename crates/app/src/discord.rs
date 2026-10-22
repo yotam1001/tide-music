@@ -232,6 +232,17 @@ fn run(id: String, shared: Arc<(Mutex<Latest>, Condvar)>, status: Arc<AtomicU8>)
             retry = Instant::now() + Duration::from_secs(15);
         }
         if let Some(connection) = &pipe {
+            let valid = match connection.poll() {
+                Ok(Some((3, data))) => connection.send(4, &data, DiscordPipe::deadline()).is_ok(),
+                Ok(Some((1 | 4, _))) | Ok(None) => true,
+                _ => false,
+            };
+            if !valid {
+                pipe = None;
+                status.store(0, Ordering::Relaxed);
+            }
+        }
+        if let Some(connection) = &pipe {
             if (revision != sent_revision && last_send.elapsed() >= Duration::from_secs(2))
                 || last_send.elapsed() >= Duration::from_secs(30)
             {

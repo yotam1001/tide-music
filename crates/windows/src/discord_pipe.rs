@@ -36,6 +36,14 @@ unsafe extern "system" {
         wait: i32,
     ) -> i32;
     fn CancelIoEx(file: HANDLE, overlapped: *mut OVERLAPPED) -> i32;
+    fn PeekNamedPipe(
+        file: HANDLE,
+        buffer: *mut u8,
+        size: u32,
+        read: *mut u32,
+        available: *mut u32,
+        remaining: *mut u32,
+    ) -> i32;
 }
 
 pub struct DiscordPipe(File);
@@ -148,6 +156,27 @@ impl DiscordPipe {
             let _ = CloseHandle(event);
         }
         result
+    }
+    /// Nonblocking idle poll: service Discord pings and detect closed clients.
+    pub fn poll(&self) -> io::Result<Option<(u32, Vec<u8>)>> {
+        let mut available = 0;
+        if unsafe {
+            PeekNamedPipe(
+                HANDLE(self.0.as_raw_handle()),
+                std::ptr::null_mut(),
+                0,
+                std::ptr::null_mut(),
+                &mut available,
+                std::ptr::null_mut(),
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        if available == 0 {
+            return Ok(None);
+        }
+        self.receive(Self::deadline()).map(Some)
     }
     pub fn deadline() -> Instant {
         Instant::now() + Duration::from_millis(500)
