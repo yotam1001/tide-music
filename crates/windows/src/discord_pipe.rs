@@ -247,10 +247,18 @@ mod tests {
             file.write_all(b"ok").unwrap();
         });
         pipe.send(0, b"abc", DiscordPipe::deadline()).unwrap();
-        assert_eq!(
-            pipe.receive(DiscordPipe::deadline()).unwrap(),
-            (1, b"ok".to_vec())
-        );
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let reply = loop {
+            if let Some(reply) = pipe.poll().unwrap() {
+                break reply;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "Idle poll never received the fragmented reply"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        assert_eq!(reply, (1, b"ok".to_vec()));
         server.join().unwrap();
     }
     #[test]
