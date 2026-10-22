@@ -1,6 +1,6 @@
 # Tide privacy notice
 
-Last updated: 2026-10-21
+Last updated: 2026-10-22
 
 
 This notice covers the Tide Windows player, its optional session companion
@@ -26,11 +26,11 @@ GitHub's release-asset hosts. One installer and one partial download are kept
 in the local `TideMusic/updates` cache, each capped at 96 MiB. No telemetry or
 crash reporting is included in the updater.
 
-## Optional experimental listening rooms
+## Optional listening rooms
 
-Jams are disabled in normal builds and the beta installer. A developer who
-explicitly enables `experimental-jams` can choose a private relay and host/join
-a room. The relay and its TLS proxy can see video IDs, queue order, position,
+Jams are available in the normal installer. No room is contacted until you host
+or join. The default shared relay is hosted on Render; Advanced setup supports
+your own relay. The relay and its TLS proxy can see video IDs, queue order, position,
 pause/loading state and room capabilities. They receive no Google cookies,
 account headers or audio from Tide. HTTPS protects transport to that operator;
 room metadata is not end-to-end encrypted against the operator.
@@ -109,9 +109,23 @@ metadata. Decoded artwork is cached in bounded application memory.
 
 The app stores local preferences and queue metadata, including track titles,
 artists, albums, durations, artwork/source URLs and any selected local audio
-paths. This metadata is not encrypted by Tide. The current implementation does
-not send playlist edits, likes or a dedicated playback-history update to your
-YouTube library; upstream services may still observe requests made to them.
+paths. This metadata is not encrypted by Tide.
+
+Explicit Like/Dislike and playlist menu actions send the selected rating, video
+ID and, for playlist edits, playlist/entry IDs to your selected YouTube Music
+account. Tide verifies playlist ownership and does not automatically retry an
+uncertain write. These operations do not alter the shared Jam queue or another
+listener's account. The relay receives no rating or playlist-edit requests.
+
+Listening-history feedback is off by default. Enabling it in Settings permits
+new qualified listening to be submitted to YouTube using that account's playback
+tracking data. Only observed actual playback counts, once per playback run;
+seeking, paused/buffering time and automated probes do not count. Tracking URLs
+stay within the local helper and are restricted to YouTube's HTTPS playback
+endpoint; redirects are disabled. They are not sent to the relay or maintainers.
+Turning the setting off stops new submissions but does not delete history
+already sent. Ordinary upstream playback requests remain visible to YouTube
+regardless of this optional history setting.
 
 Manual connection alternatives process the local authentication file or scoped
 YouTube cookies from the Zen cookie database you explicitly select. Original

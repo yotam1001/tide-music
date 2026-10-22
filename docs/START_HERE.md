@@ -55,8 +55,8 @@ them. Report the app version and exact error message instead.
 ## Listen together with Jams
 
 Both people install the latest Tide and connect their own YouTube Music accounts.
-Host: play a song, open **Jam**, press **Start Jam**, then **Copy invite**.
-Friend: open **Jam**, paste the invite and press **Join Jam**. Close the panel to
+Host: play a song, open **Jams** below **Library**, press **Start Jam**, then **Copy invite**.
+Friend: open **Jams**, paste the invite and press **Join Jam**. Close the panel to
 browse and press **+** beside a song to add it to the shared queue.
 
 The host controls playback; each person controls their own volume. No browser

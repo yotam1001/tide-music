@@ -180,4 +180,84 @@ fn native_ratings_remain_reachable_and_do_not_take_over_transport() {
             "Escape did not close chooser"
         );
     }
+    ui.set_light_mode(false);
+    ui.set_account_connected(true);
+    ui.set_browsing_enabled(true);
+    ui.set_search_open(true);
+    ui.set_search_rows(slint::ModelRc::new(slint::VecModel::from(vec![TrackRow {
+        title: "Synthetic collection song".into(),
+        artist: "Fixture artist".into(),
+        ..Default::default()
+    }])));
+    let saved = Rc::new(RefCell::new(Vec::new()));
+    let captured = saved.clone();
+    ui.on_add_to_playlist(move |origin, index| captured.borrow_mut().push((origin, index)));
+    for (guest, down_count) in [(false, 4), (true, 2)] {
+        ui.set_jam_guest(guest);
+        draw(&window, 1140, 800, "playlist-menu-before");
+        click(&ui, 1087.0, 185.0);
+        draw(
+            &window,
+            1140,
+            800,
+            if guest {
+                "playlist-menu-guest"
+            } else {
+                "playlist-menu-search"
+            },
+        );
+        for _ in 0..down_count {
+            ui.window().dispatch_event(WindowEvent::KeyPressed {
+                text: slint::platform::Key::DownArrow.into(),
+            });
+            ui.window().dispatch_event(WindowEvent::KeyReleased {
+                text: slint::platform::Key::DownArrow.into(),
+            });
+        }
+        ui.window().dispatch_event(WindowEvent::KeyPressed {
+            text: slint::platform::Key::Return.into(),
+        });
+        ui.window().dispatch_event(WindowEvent::KeyReleased {
+            text: slint::platform::Key::Return.into(),
+        });
+        assert_eq!(
+            saved.borrow().last(),
+            Some(&(2, 0)),
+            "Song menu did not preserve source/entry selection"
+        );
+        assert_eq!(
+            saved.borrow().len(),
+            if guest { 2 } else { 1 },
+            "Guest cannot manage their own playlists"
+        );
+    }
+    ui.set_jam_guest(false);
+    ui.set_search_open(false);
+    ui.set_detail_open(true);
+    ui.set_detail_title("Editable fixture playlist".into());
+    ui.set_detail_rows(ui.get_search_rows());
+    ui.set_detail_editable(true);
+    ui.set_detail_editable_entries(slint::ModelRc::new(slint::VecModel::from(vec![true])));
+    let removed = Rc::new(RefCell::new(Vec::new()));
+    let captured = removed.clone();
+    ui.on_remove_playlist_song(move |index| captured.borrow_mut().push(index));
+    draw(&window, 1140, 800, "playlist-editable");
+    click(&ui, 1087.0, 235.0);
+    draw(&window, 1140, 800, "playlist-menu-owned");
+    for _ in 0..5 {
+        ui.window().dispatch_event(WindowEvent::KeyPressed {
+            text: slint::platform::Key::DownArrow.into(),
+        });
+        ui.window().dispatch_event(WindowEvent::KeyReleased {
+            text: slint::platform::Key::DownArrow.into(),
+        });
+    }
+    ui.window().dispatch_event(WindowEvent::KeyPressed {
+        text: slint::platform::Key::Return.into(),
+    });
+    assert_eq!(
+        &*removed.borrow(),
+        &[0],
+        "Owned playlist removal is inaccessible"
+    );
 }

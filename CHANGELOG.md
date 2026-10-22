@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Add Like/Dislike controls, including clearing a rating, for the selected account.
+- Save songs to owned playlists and remove exact entries without changing the queue.
+- Add optional listening-history feedback based on actual playback, off by default.
+- Move Jams below Library in the left navigation.
+- Keep feedback requests bounded and account-bound; uncertain writes are not retried.
+
+## 0.2.0 — 2026-10-22
+
+- Include synchronized Jams in the normal Windows installer with guest queue requests.
+- Add a shared free relay and Advanced setup for self-hosted relays.
+- Clarify Jam controls and preserve local playback when the host ends a room.
+- Validate the installed player, clean Windows install/update/removal, native UI
+  and queue continuation before publishing the stable installer.
+
 ## 0.1.3 — 2026-10-19
 
 - Match the setup executable's Windows file/product versions to the app release.

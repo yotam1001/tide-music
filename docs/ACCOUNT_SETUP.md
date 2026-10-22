@@ -37,9 +37,10 @@ prompts instead of repeatedly exporting credentials.
 
 ## Your data and Premium
 
-Your library is read, not moved to another service. Tide does not download your
-whole collection or edit your YouTube playlists. It does not currently send
-likes, playlist edits or playback-history updates to train recommendations.
+Your library stays on YouTube Music. Tide does not download your whole collection.
+Likes and playlist edits happen only through their explicit controls. Optional
+listening-history feedback is off by default; enable it in Settings to send new
+qualified playback to your selected account. See [the controls](USING_TIDE.md).
 
 Saved sign-in data is encrypted for your Windows user. Temporary scoped cookie
 files used for playback are plaintext while they exist; see
