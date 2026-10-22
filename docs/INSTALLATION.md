@@ -35,8 +35,10 @@ Rerun setup if you want to enable the companion later.
 ## Update Tide
 
 For a new **stable** version, open **Settings → Check for updates**. Choose
-**Install and restart** when offered. This stops playback, verifies the download,
-installs the update and reopens Tide. Your account and preferences are kept.
+**Update Tide** when offered. Downloading and verification happen while music
+continues, with progress and a Cancel action inside Tide. Then choose **Restart
+to update** when convenient. The update applies in the background and reopens
+Tide; your account and preferences are kept. See [in-app updates](IN_APP_UPDATES.md).
 You can turn startup checks off in Settings.
 
 Preview 1 and preview 2 can discover stable **0.1.3** through this updater.

@@ -209,6 +209,11 @@ try {
         $taskSetupProcess = Start-Process -FilePath $taskSetup -ArgumentList @('--update-from', $taskParent.Id) `
             -WorkingDirectory $env:RUNNER_TEMP -PassThru
     } finally { $env:APPDATA = $taskPreviousAppdata }
+    if (!$taskSetupProcess.HasExited) {
+        try { $null = $taskSetupProcess.WaitForInputIdle(15000) } catch { if (!$taskSetupProcess.HasExited) { throw } }
+        $taskSetupProcess.Refresh()
+        if (!$taskSetupProcess.HasExited -and $taskSetupProcess.MainWindowHandle -ne 0) { throw 'Automatic update opened a separate setup window.' }
+    }
     if (!$taskSetupProcess.WaitForExit(600000) -or $taskSetupProcess.ExitCode -ne 0) { throw 'Automatic setup handoff did not finish.' }
     if (!$taskParent.HasExited -or $taskParent.ExitCode -ne 0) { throw 'The previous player did not close normally.' }
     $taskUpdatedRelease = Assert-CleanInstallation $taskUpdatedVersion
@@ -294,7 +299,7 @@ try {
         }
     }
     Assert-CleanSentinel
-    [IO.File]::WriteAllText((Join-Path $taskEvidence 'result.txt'), 'PASS real clean Windows installation, graphical automatic update/restart, runtimes, synthetic Chrome registration, installed local-audio UI and removal. No browser or authenticated import tested.')
+    [IO.File]::WriteAllText((Join-Path $taskEvidence 'result.txt'), 'PASS real clean Windows installation, background automatic update/restart, runtimes, synthetic Chrome registration, installed local-audio UI and removal. No browser or authenticated import tested.')
     Write-Host 'PASS clean Windows integration; this does not validate GUI clicks or authenticated Chrome import.'
 } catch {
     [IO.File]::WriteAllText((Join-Path $taskEvidence 'result.txt'), 'FAIL clean Windows integration. Owned failure evidence retained; no automatic cleanup was attempted.')

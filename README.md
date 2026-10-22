@@ -98,7 +98,9 @@ the demo's figures. Installed Tide does not create Rust build caches.
 ## Updates and help
 
 **Settings → Check for updates** finds published stable releases and offers
-**Install and restart**. Startup checks can be disabled. The updater skips beta
+**Update Tide** with in-app progress and cancellation. Music continues until you
+choose **Restart to update**; setup runs in the background. Startup checks can be
+disabled. The updater skips beta
 and draft releases. Installed previews can update to stable 0.1.3; future
 preview-only updates still need their installer. Accounts and
 preferences are kept during app updates. Update the unpacked companion separately

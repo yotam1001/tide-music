@@ -1052,6 +1052,32 @@ component RatingButton inherits Rectangle {
     }
 }
 
+// Actual byte progress in a compact native control; no separate update window.
+component UpdateAction inherits Rectangle {
+    in property <bool> light-mode;
+    in property <bool> busy;
+    in property <int> phase: 0;
+    in property <float> progress: 0;
+    callback activate();
+    callback cancel();
+    private property <bool> downloading: root.phase == 1 || root.phase == 3;
+    private property <color> ink: root.light-mode ? #593641 : #f0eeef;
+    Rectangle {
+        width: root.width - (root.downloading ? root.height + 6px : 0px);
+        height: root.height; border-radius: self.height / 2; clip: true;
+        animate width { duration: 160ms; easing: ease-in-out; }
+        LibraryButton { width: parent.width; height: parent.height; caption: ""; quiet: false; light-mode: root.light-mode; enabled: !root.busy && (root.phase == 0 || root.phase == 2); label: root.phase == 2 ? "Restart Tide to install the verified update" : "Download Tide update"; clicked => { root.activate(); } }
+        Rectangle { height: parent.height; width: parent.width * (root.phase == 2 ? 1 : (root.downloading ? clamp(root.progress / 100, 0, 1) : 0)); background: root.light-mode ? #b13e622c : #b13e6240; animate width { duration: 160ms; } }
+        Rectangle { x: 5px; y: 5px; width: parent.height - 10px; height: self.width; border-radius: self.height / 2; background: root.light-mode ? #b45249 : #b13e62;
+            Path { x: 6px; y: 6px; width: parent.width - 12px; height: parent.height - 12px; viewbox-width: 24; viewbox-height: 24; fill: Colors.transparent; stroke: #fff5ee; stroke-width: 2px; commands: root.phase == 2 ? "M5 12 L10 17 L19 7" : "M12 3 V15 M7 10 L12 15 L17 10 M5 17 V21 H19 V17"; }
+        }
+        Text { x: parent.height + 4px; width: max(0px, parent.width - self.x - 8px); height: parent.height; vertical-alignment: center; text: root.phase == 2 ? "Restart to update" : (root.phase == 3 ? "Canceling…" : (root.phase == 1 ? "Updating " + root.progress.to-fixed(0) + "%" : "Update Tide")); color: root.ink; font-size: 12px; font-weight: 600; overflow: elide; }
+    }
+    if root.downloading : Rectangle { x: parent.width - self.width; width: parent.height; height: parent.height; border-radius: self.height / 2; clip: true;
+        LibraryButton { width: parent.width; height: parent.height; caption: "×"; label: "Cancel update download and keep listening"; light-mode: root.light-mode; quiet: false; enabled: root.phase == 1; clicked => { root.cancel(); } }
+    }
+}
+
 component PlayerBar inherits Rectangle {
     in property <bool> transport-enabled: true;
     in property <bool> window-minimized: false;
@@ -1230,6 +1256,9 @@ export component AppWindow inherits Window {
     in property <bool> auto-update-checks: true;
     callback check-updates();
     callback install-update();
+    callback cancel-update();
+    in property <int> update-phase: 0;
+    in property <float> update-progress: 0;
     callback toggle-update-checks();
     in property <bool> media-controls-enabled: true;
     in-out property <string> shortcut-toggle;
@@ -1420,6 +1449,7 @@ export component AppWindow inherits Window {
                     LineEdit { horizontal-stretch: 1; height: 36px; font-size: 13px; enabled: root.browsing-enabled; text <=> root.source-input; placeholder-text: "Search music or paste a link"; accessible-label: "Search music or paste a YouTube link"; accepted(value) => { if value != "" { root.add-source(value); } } }
                     LibraryButton { width: 74px; light-mode: root.light-mode; enabled: root.browsing-enabled; caption: "Search"; label: "Search for music or open the pasted link"; clicked => { if root.source-input != "" { root.add-source(root.source-input); } } }
                     LibraryButton { width: 36px; height: 36px; enabled: !root.artist-picker-open; light-mode: root.light-mode; caption: root.light-mode ? "☾" : "☼"; label: root.light-mode ? "Switch to dark theme" : "Switch to light theme"; clicked => { root.switch-mode(); } }
+                    if root.header-branding && !root.settings-open && root.update-installable && (root.update-available || root.update-phase > 0) : UpdateAction { width: 198px; height: 36px; light-mode: root.light-mode; busy: root.update-busy; phase: root.update-phase; progress: root.update-progress; activate => { root.install-update(); } cancel => { root.cancel-update(); } }
                     LibraryButton { width: 84px; quiet: false; enabled: !root.artist-picker-open; light-mode: root.light-mode; caption: root.update-available ? "Settings •" : "Settings"; label: root.update-available ? "Open settings, update available" : "Open settings"; active: root.settings-open; clicked => { root.settings-open = !root.settings-open; } }
                     LibraryButton { width: 78px; quiet: false; enabled: !root.artist-picker-open && !root.jam-guest; light-mode: root.light-mode; caption: "Account"; label: "Open YouTube Music account"; active: root.account-open; clicked => { root.account-open = !root.account-open; } }
 
@@ -1663,8 +1693,8 @@ export component AppWindow inherits Window {
                                 LibraryButton { height: 40px; quiet: false; caption: root.update-busy ? "Please wait…" : "Check for updates"; label: "Check GitHub for a newer stable Tide release"; light-mode: root.light-mode; enabled: !root.update-busy; clicked => { root.check-updates(); } }
                                 if root.update-available : VerticalLayout {
                                     spacing: 8px;
-                                    Text { text: root.update-installable ? "Installing stops playback and restarts Tide. Your account and preferences are kept." : "Automatic installation is available in an installed Windows copy of Tide."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
-                                    LibraryButton { height: 40px; quiet: false; active: true; caption: "Install and restart"; label: "Download the verified update, stop playback and restart Tide"; light-mode: root.light-mode; enabled: root.update-installable && !root.update-busy; clicked => { root.install-update(); } }
+                                    Text { text: root.update-installable ? "Download while you listen. Restart when ready to apply the update; your account and preferences are kept." : "Automatic installation is available in an installed Windows copy of Tide."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
+                                    if root.update-installable : UpdateAction { width: 280px; height: 44px; max-width: 280px; horizontal-stretch: 0; light-mode: root.light-mode; busy: root.update-busy; phase: root.update-phase; progress: root.update-progress; activate => { root.install-update(); } cancel => { root.cancel-update(); } }
                                 }
                                 LibraryButton { height: 36px; caption: root.auto-update-checks ? "Startup checks: on" : "Startup checks: off"; label: "Toggle automatic update checks on startup"; light-mode: root.light-mode; clicked => { root.toggle-update-checks(); } }
                                 Rectangle { height: 1px; background: root.outline; }
