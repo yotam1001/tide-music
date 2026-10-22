@@ -145,6 +145,16 @@ fn shortcuts_capture_keys_cancel_and_clear_without_transport() {
     }
     ui.set_settings_shortcuts_open(false);
     draw(&window, 650, 420, "settings-small-window");
+    ui.set_settings_more_open(true);
+    ui.set_settings_scroll_y(-180.0);
+    ui.set_settings_open(false);
+    ui.set_settings_open(true);
+    draw(&window, 650, 420, "settings-reopened");
+    assert_eq!(
+        ui.get_settings_scroll_y(),
+        0.0,
+        "Reopened Settings must start at the top"
+    );
     ui.set_settings_scroll_y(-180.0);
     ui.set_settings_shortcuts_open(true);
     draw(&window, 650, 420, "settings-shortcuts-small-window");

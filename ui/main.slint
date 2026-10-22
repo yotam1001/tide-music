@@ -1414,6 +1414,7 @@ export component AppWindow inherits Window {
     init => { Palette.color-scheme = root.light-mode ? light : dark; root.wide = root.width >= 1050px; root.narrow-navigation = root.width < 900px; root.header-branding = root.width >= 780px; }
     changed width => { root.wide = root.width >= 1050px; root.narrow-navigation = root.width < 900px; root.header-branding = root.width >= 780px; }
     changed settings-open => {
+        root.settings-scroll-y = 0px;
         if root.settings-open { root.playlist-picker-open = false; root.account-open = false; root.jam-open = false; app-focus.focus(); }
         else { root.cancel-shortcut(); root.settings-shortcuts-open = false; root.settings-more-open = false; }
     }
@@ -1732,7 +1733,7 @@ export component AppWindow inherits Window {
                                     LibraryButton { height: 38px; quiet: false; caption: "Keyboard shortcuts   ›"; label: "Configure keyboard shortcuts"; light-mode: root.light-mode; clicked => { root.settings-shortcuts-open = true; app-focus.focus(); } }
                                     Rectangle { height: 1px; background: root.outline; }
                                     Text { text: root.update-status; color: root.secondary; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
-                                    LibraryButton { height: 38px; quiet: false; caption: root.update-busy ? "Checking…" : "Check for updates"; label: "Check GitHub for a newer stable Tide release"; light-mode: root.light-mode; enabled: !root.update-busy; clicked => { root.check-updates(); } }
+                                    LibraryButton { height: 38px; quiet: false; caption: root.update-busy ? "Please wait…" : "Check for updates"; label: "Check GitHub for a newer stable Tide release"; light-mode: root.light-mode; enabled: !root.update-busy; clicked => { root.check-updates(); } }
                                     if root.update-available && root.update-installable : UpdateAction { width: 280px; height: 44px; horizontal-stretch: 0; light-mode: root.light-mode; busy: root.update-busy; phase: root.update-phase; progress: root.update-progress; activate => { root.install-update(); } cancel => { root.cancel-update(); } }
                                     Text { height: 18px; text: "Tide " + root.app-version; color: root.secondary; font-size: 12px; }
                                     LibraryButton { height: 34px; caption: root.settings-more-open ? "More options  −" : "More options  +"; label: "Show additional settings"; light-mode: root.light-mode; clicked => { root.settings-more-open = !root.settings-more-open; } }
