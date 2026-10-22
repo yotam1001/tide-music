@@ -41,7 +41,8 @@ fn click(ui: &AppWindow, x: f32, y: f32) {
 }
 #[test]
 fn guest_mini_keeps_leave_and_volume_reachable_and_blocks_transport() {
-    let window = MinimalSoftwareWindow::new(RepaintBufferType::ReusedBuffer);
+    // draw() allocates fresh pixels; partial repaint requires a retained buffer.
+    let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
     slint::platform::set_platform(Box::new(TestPlatform(window.clone()))).unwrap();
     let ui = AppWindow::new().unwrap();
     ui.set_jam_available(true);

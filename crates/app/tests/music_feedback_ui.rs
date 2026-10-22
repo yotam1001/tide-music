@@ -49,7 +49,8 @@ fn click(ui: &AppWindow, x: f32, y: f32) {
 }
 #[test]
 fn native_ratings_remain_reachable_and_do_not_take_over_transport() {
-    let window = MinimalSoftwareWindow::new(RepaintBufferType::ReusedBuffer);
+    // draw() allocates a fresh image on every call, so request full frames.
+    let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
     slint::platform::set_platform(Box::new(Platform(window.clone()))).unwrap();
     let ui = AppWindow::new().unwrap();
     ui.set_track_title("Synthetic feedback song".into());
