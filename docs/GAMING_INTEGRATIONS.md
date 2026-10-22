@@ -21,7 +21,7 @@ The public ID and opt-in preference are saved in existing Tide settings.
 
 ## Pinned Mini
 
-Use Mini, then Pin; or set Pin Mini in Settings → Gaming controls. This uses the
+Use Mini, then Pin; or set Pin Mini in Settings → Mini player. This uses the
 existing native window, without a second process, browser, injected game hook or
 new graphics engine. Opacity is adjustable between 60% and 100% in Settings.
 Expanding restores normal opacity and removes the always-on-top state. The

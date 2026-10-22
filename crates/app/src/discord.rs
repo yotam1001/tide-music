@@ -48,7 +48,14 @@ pub fn valid_id(id: &str) -> bool {
 }
 #[cfg(any(windows, test))]
 fn payload(activity: Option<&Activity>, nonce: u64) -> Value {
-    json!({"cmd":"SET_ACTIVITY", "args":{"pid":std::process::id(), "activity":activity.map(|a| json!({"type":2,"details":a.title,"state":a.artist}))}, "nonce":nonce.to_string()})
+    let activity = activity.map(|a| {
+        let mut value = json!({"type":2,"details":a.title});
+        if !a.artist.trim().is_empty() {
+            value["state"] = json!(a.artist);
+        }
+        value
+    });
+    json!({"cmd":"SET_ACTIVITY", "args":{"pid":std::process::id(), "activity":activity}, "nonce":nonce.to_string()})
 }
 #[derive(Default)]
 struct Latest {
@@ -274,6 +281,11 @@ mod tests {
         assert_eq!(object.len(), 3); // no URLs, artwork, session, account, invite or buttons
         assert!(Activity::new(" ", "artist").is_none());
         assert!(payload(None, 2)["args"]["activity"].is_null());
+        let local_song = Activity::new("Local song", "").unwrap();
+        assert!(payload(Some(&local_song), 3)["args"]["activity"]
+            .get("state")
+            .is_none());
+        assert!(Activity::new("\0", "artist").is_none());
     }
     #[test]
     fn ids_and_disabled_state() {
