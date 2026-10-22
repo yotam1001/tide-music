@@ -218,6 +218,7 @@ pub fn install(
             choices,
             refreshing: false,
         });
+        u.set_playlist_picker_artwork_y(0.0);
         update_choices(&s, &u);
         u.set_playlist_picker_song(track.title.into());
         u.set_playlist_choices_busy(false);
@@ -345,14 +346,37 @@ pub fn install(
     });
 }
 
-fn update_choices(s: &State, u: &AppWindow) {
-    let names: Vec<slint::SharedString> = s
+pub fn update_choices(s: &State, u: &AppWindow) {
+    let mut artwork = s.artwork.borrow_mut();
+    let choices = s
         .music_feedback
         .picker
         .as_ref()
-        .map(|p| p.choices.iter().map(|p| p.title.clone().into()).collect())
+        .map(|p| p.choices.as_slice())
         .unwrap_or_default();
-    u.set_playlist_choices(ModelRc::new(VecModel::from(names)));
+    let visible = artwork_view::visible_range(
+        u.get_playlist_picker_artwork_y(),
+        u.get_playlist_picker_artwork_height(),
+        choices
+            .iter()
+            .map(|_| u.global::<LayoutMetrics>().get_browse_row_height()),
+    );
+    let rows: Vec<PlaylistRow> = choices
+        .iter()
+        .enumerate()
+        .map(|(index, p)| PlaylistRow {
+            id: p.id.clone().into(),
+            title: p.title.clone().into(),
+            subtitle: p.subtitle.clone().into(),
+            artwork: p
+                .artwork_url
+                .as_deref()
+                .filter(|_| visible.contains(&index))
+                .map(|url| artwork.get_or_request(url))
+                .unwrap_or_default(),
+        })
+        .collect();
+    u.set_playlist_choices(update_model(u.get_playlist_choices(), rows));
     u.set_playlist_choices_busy(
         s.music_feedback
             .picker
@@ -544,7 +568,9 @@ pub fn tick(s: &mut State, u: &AppWindow) {
         u.set_playlist_picker_open(false);
     }
     if !u.get_playlist_picker_open() {
-        s.music_feedback.picker = None;
+        if s.music_feedback.picker.take().is_some() || u.get_playlist_choices().row_count() > 0 {
+            update_choices(s, u);
+        }
         u.set_playlist_choices_busy(false);
     }
     if s.library_worker.is_none() {

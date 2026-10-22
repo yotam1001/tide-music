@@ -6,6 +6,8 @@
 
 - Add Like/Dislike controls, including clearing a rating, for the selected account.
 - Save songs to owned playlists and remove exact entries without changing the queue.
+- Match the playlist chooser to Library rows, with viewport-loaded covers using
+  the existing bounded memory cache.
 - Add optional listening-history feedback based on actual playback, off by default.
 - Move Jams below Library in the left navigation.
 - Keep feedback requests bounded and account-bound; uncertain writes are not retried.

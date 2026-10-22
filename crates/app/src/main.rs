@@ -3130,12 +3130,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     u.get_detail_open(),
                     u.get_search_open(),
                     u.get_queue_open(),
+                    u.get_playlist_picker_open(),
                     [
                         (u.get_library_artwork_y(), u.get_library_artwork_height()),
                         (u.get_home_artwork_y(), u.get_home_artwork_height()),
                         (u.get_queue_artwork_y(), u.get_queue_artwork_height()),
                         (u.get_detail_artwork_y(), u.get_detail_artwork_height()),
                         (u.get_search_artwork_y(), u.get_search_artwork_height()),
+                        (u.get_playlist_picker_artwork_y(), u.get_playlist_picker_artwork_height()),
                     ],
                 );
                 if s.volume_save_pending && last_volume_save.elapsed() >= Duration::from_secs(1) {
@@ -3147,6 +3149,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     refresh(&u, &s);
                     refresh_library_models(&s, &u);
                     refresh_content_models(&s, &u);
+                    music_feedback::update_choices(&s, &u);
                     last_content_view = Some(content_view);
                 }
                 while let Ok(result) = library_rx.try_recv() {
@@ -3421,6 +3424,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     refresh(&u, &s);
                     refresh_library_models(&s, &u);
                     refresh_content_models(&s, &u);
+                    music_feedback::update_choices(&s, &u);
                 }
                 if s.active_playback || s.radio_resume_when_ready {
                     request_radio(&mut s, &u, &library_tx, false);

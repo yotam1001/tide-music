@@ -134,8 +134,18 @@ fn native_ratings_remain_reachable_and_do_not_take_over_transport() {
         "A long selected song title that must stay inside the chooser".into(),
     );
     ui.set_playlist_choices(slint::ModelRc::new(slint::VecModel::from(vec![
-        "First editable playlist".into(),
-        "Second editable playlist".into(),
+        PlaylistRow {
+            id: "PLfirst".into(),
+            title: "First editable playlist".into(),
+            subtitle: "24 songs".into(),
+            ..Default::default()
+        },
+        PlaylistRow {
+            id: "PLsecond".into(),
+            title: "Second editable playlist".into(),
+            subtitle: "12 songs".into(),
+            ..Default::default()
+        },
     ])));
     let chosen = Rc::new(RefCell::new(Vec::new()));
     let captured = chosen.clone();
@@ -181,6 +191,16 @@ fn native_ratings_remain_reachable_and_do_not_take_over_transport() {
             "Escape did not close chooser"
         );
     }
+    ui.set_playlist_picker_open(true);
+    ui.set_playlist_picker_artwork_y(-72.0);
+    draw(&window, 650, 420, "playlist-picker-scrolled");
+    click(&ui, 450.0, 168.0);
+    assert_eq!(
+        chosen.borrow().last(),
+        Some(&1),
+        "Scrolled playlist row chose the wrong destination"
+    );
+    ui.set_playlist_picker_open(false);
     ui.set_light_mode(false);
     ui.set_account_connected(true);
     ui.set_search_open(true);
