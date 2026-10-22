@@ -15,6 +15,10 @@ jobs:
         with:
           node-version: '22'
       - run: cargo fmt --all -- --check
+      - name: Check Settings keyboard recording before the full suite
+        run: cargo test -p tide-music --test settings_ui --locked
+        env:
+          TIDE_UI_REVIEW_DIR: .local/ui-review
       - run: cargo test --workspace --locked
         env:
           TIDE_UI_REVIEW_DIR: .local/ui-review

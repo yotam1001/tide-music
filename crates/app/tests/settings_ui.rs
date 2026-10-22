@@ -82,7 +82,7 @@ fn shortcuts_capture_keys_cancel_and_clear_without_transport() {
     });
     ui.show().unwrap();
     ui.window()
-        .dispatch_event(WindowEvent::WindowActiveChanged { active: true });
+        .dispatch_event(WindowEvent::WindowActiveChanged(true));
     for light in [false, true] {
         ui.set_light_mode(light);
         ui.set_settings_shortcuts_open(false);
@@ -129,14 +129,14 @@ fn shortcuts_capture_keys_cancel_and_clear_without_transport() {
         click(&ui, 1000.0, 408.0);
         assert_eq!(ui.get_shortcut_recording_index(), 2);
         ui.window()
-            .dispatch_event(WindowEvent::WindowActiveChanged { active: false });
+            .dispatch_event(WindowEvent::WindowActiveChanged(false));
         assert_eq!(
             ui.get_shortcut_recording_index(),
             -1,
             "Losing focus left shortcuts suspended"
         );
         ui.window()
-            .dispatch_event(WindowEvent::WindowActiveChanged { active: true });
+            .dispatch_event(WindowEvent::WindowActiveChanged(true));
         click(&ui, 1000.0, 408.0);
         ui.set_settings_open(false);
         draw(&window, 1140, 800, "settings-closed");

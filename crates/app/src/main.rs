@@ -1682,7 +1682,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ..Settings::default()
         };
     }
-    if settings.discord_application_id.trim().is_empty() {
+    if !discord::valid_id(settings.discord_application_id.trim()) {
         settings.discord_application_id = default_discord_application_id();
     }
     settings.queue.tracks.truncate(2000);
@@ -2727,15 +2727,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
     bind!(on_toggle_discord_presence, |s, u| {
-        let id = u.get_discord_application_id().to_string();
-        if !s.settings.discord_presence && !discord::valid_id(id.trim()) {
-            u.set_discord_status("Enter a valid public Discord application ID first".into());
-        } else {
-            s.settings.discord_application_id = id.trim().to_owned();
-            s.settings.discord_presence = !s.settings.discord_presence;
-            u.set_discord_presence_enabled(s.settings.discord_presence);
-            save(&s.settings);
-        }
+        // Normal users connect to Tide's registered app, without developer setup.
+        s.settings.discord_application_id = default_discord_application_id();
+        u.set_discord_application_id(s.settings.discord_application_id.clone().into());
+        s.settings.discord_presence = !s.settings.discord_presence;
+        u.set_discord_presence_enabled(s.settings.discord_presence);
+        save(&s.settings);
     });
     bind!(on_toggle_update_checks, |s, u| {
         s.settings.check_updates = !s.settings.check_updates;
