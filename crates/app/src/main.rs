@@ -51,7 +51,7 @@ struct Settings {
     history_feedback: bool,
     #[serde(default)]
     discord_presence: bool,
-    #[serde(default)]
+    #[serde(default = "default_discord_application_id")]
     discord_application_id: String,
     #[serde(default)]
     mini_pinned: bool,
@@ -75,7 +75,7 @@ impl Default for Settings {
             media_controls: true,
             history_feedback: false,
             discord_presence: false,
-            discord_application_id: String::new(),
+            discord_application_id: default_discord_application_id(),
             mini_pinned: false,
             mini_opacity: 100,
             shortcuts: Default::default(),
@@ -84,6 +84,9 @@ impl Default for Settings {
             transient: false,
         }
     }
+}
+fn default_discord_application_id() -> String {
+    discord::APPLICATION_ID.to_owned()
 }
 fn opaque_mini() -> u8 {
     100
@@ -1677,6 +1680,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .then_some(0.0),
             ..Settings::default()
         };
+    }
+    if settings.discord_application_id.trim().is_empty() {
+        settings.discord_application_id = default_discord_application_id();
     }
     settings.queue.tracks.truncate(2000);
     if settings
@@ -4518,7 +4524,7 @@ mod tests {
         }
         let restored: Settings = serde_json::from_value(value).unwrap();
         assert!(!restored.discord_presence);
-        assert!(restored.discord_application_id.is_empty());
+        assert_eq!(restored.discord_application_id, discord::APPLICATION_ID);
         assert!(!restored.mini_pinned);
         assert_eq!(restored.mini_opacity, 100);
     }

@@ -11,6 +11,9 @@ use std::{
     thread::JoinHandle,
 };
 
+/// Public Discord application ID; this is not a token or credential.
+pub const APPLICATION_ID: &str = "1562782377111982222";
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Activity {
     pub title: String,

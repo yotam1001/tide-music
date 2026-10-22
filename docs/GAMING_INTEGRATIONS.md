@@ -7,9 +7,9 @@ current title and artist while playing. Pause, stop, disable and exit clear the
 activity. No YouTube credentials, source URLs, account details, artwork downloads,
 Jam invitations or Discord bot tokens are included.
 
-This initial implementation requires a **public Discord application ID** from the
-Discord Developer Portal. It is not a secret. Do not enter a bot token. A Tide-owned
-application has not yet been registered, so a single-switch public setup is pending.
+Tide defaults to its registered **public Discord application ID**,
+`1562782377111982222`. Turn sharing on to connect. The ID field remains available
+for custom development applications. This ID is not a secret; never enter a bot token.
 The desktop Discord client must be running. There is no browser requirement.
 
 One native worker starts only when sharing is enabled with a valid ID. A single
@@ -43,3 +43,6 @@ interactive so there is always a visible route to unpin and expand it.
 
 The synthetic pipe/window tests do not prove live Discord acceptance or a game's
 fullscreen behavior. No zero-RAM claim is made; real measurements remain required.
+
+Grove has a separate registered application reserved for future integration:
+`1562783299452141711`. Registration alone does not implement Grove presence.
