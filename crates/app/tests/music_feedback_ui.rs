@@ -129,6 +129,35 @@ fn native_ratings_remain_reachable_and_do_not_take_over_transport() {
     );
     draw(&window, 1140, 1400, "history-settings-on");
     ui.set_settings_open(false);
+    // Mini pin/expand controls must stay separate from ratings and transport.
+    let pins = Rc::new(RefCell::new(0));
+    let captured = pins.clone();
+    let weak = ui.as_weak();
+    ui.on_toggle_mini_pin(move || {
+        *captured.borrow_mut() += 1;
+        let u = weak.upgrade().unwrap();
+        u.set_mini_pinned(!u.get_mini_pinned());
+    });
+    let weak = ui.as_weak();
+    ui.on_collapse_player(move || {
+        let u = weak.upgrade().unwrap();
+        u.set_collapsed(!u.get_collapsed());
+    });
+    ui.set_collapsed(true);
+    draw(&window, 700, 132, "mini-pin-off");
+    let before_ratings = ratings.borrow().len();
+    click(&ui, 622.0, 36.0);
+    assert_eq!(*pins.borrow(), 1, "Mini pin is not reachable");
+    assert!(ui.get_mini_pinned());
+    assert_eq!(
+        ratings.borrow().len(),
+        before_ratings,
+        "Pin also changed a rating"
+    );
+    assert_eq!(*transport.borrow(), 0, "Pin also changed playback");
+    draw(&window, 700, 132, "mini-pin-on");
+    click(&ui, 660.0, 36.0);
+    assert!(!ui.get_collapsed(), "Expand became unreachable next to Pin");
     ui.set_collection_enabled(true);
     ui.set_playlist_picker_song(
         "A long selected song title that must stay inside the chooser".into(),

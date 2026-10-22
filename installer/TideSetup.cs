@@ -186,14 +186,33 @@ namespace TideSetup {
         readonly BackgroundWorker worker = new BackgroundWorker();
         readonly bool preview;
         readonly UpdateOptions update;
-        bool busy, completed;
+        bool busy, completed, updateStarted, revealUpdateError;
         string installed;
         InstallOptions options;
         // Layout previews must not take keyboard focus from a running game.
-        protected override bool ShowWithoutActivation { get { return preview; } }
+        protected override bool ShowWithoutActivation { get { return preview || update != null; } }
+        protected override void SetVisibleCore(bool value) {
+            if (update != null && !revealUpdateError) {
+                if (value && !updateStarted) {
+                    updateStarted = true;
+                    if (!IsHandleCreated) CreateHandle();
+                    BeginInvoke(new Action(Install));
+                }
+                base.SetVisibleCore(false);
+                return;
+            }
+            base.SetVisibleCore(value);
+        }
+        void RevealUpdateError() {
+            if (update == null) return;
+            revealUpdateError = true;
+            ShowInTaskbar = true;
+            Show();
+        }
         readonly string installRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Tide");
         internal SetupWindow(bool demo, UpdateOptions handoff = null) {
             update = handoff;
+            if (update != null) ShowInTaskbar = false;
             preview = demo; Text = "Tide Setup"; ClientSize = new Size(580, 510); MinimumSize = Size; MaximumSize = Size;
             StartPosition = FormStartPosition.CenterScreen; MaximizeBox = false; AutoScaleMode = AutoScaleMode.Dpi;
             BackColor = Color.FromArgb(247, 242, 236); ForeColor = Color.FromArgb(51, 43, 47); Font = new Font("Segoe UI", 10);
@@ -239,6 +258,7 @@ namespace TideSetup {
             worker.RunWorkerCompleted += delegate(object sender, RunWorkerCompletedEventArgs args) {
                 busy = false; action.Enabled = true; close.Enabled = true; guide.Enabled = true;
                 if (args.Error != null) {
+                    RevealUpdateError();
                     heading.Text = "Setup couldn't finish"; status.Text = "Your saved account and preferences were not removed.";
                     description.Text = "Close Tide if it is running, check your connection, then try again.";
                     description.Height = 28; chrome.Visible = true; chrome.Enabled = true;
@@ -257,7 +277,6 @@ namespace TideSetup {
                     if (update != null) OpenTide(false);
                 }
             };
-            if (update != null) Shown += delegate { Install(); };
         }
         void Install() {
             try { options = new InstallOptions(chrome.Checked, extensionId.Text); }
@@ -297,7 +316,7 @@ namespace TideSetup {
         void OpenTide(bool account) {
             if (preview) { MessageBox.Show(this, "This is a visual preview. No application was installed.", "Tide Setup"); return; }
             try { Process.Start(new ProcessStartInfo { FileName = installed, Arguments = account ? "--connect-account" : "", WorkingDirectory = Path.GetDirectoryName(installed), UseShellExecute = true }); Close(); }
-            catch (Exception) { MessageBox.Show(this, "Tide could not open. Try launching it from the Start menu.", "Tide Setup"); }
+            catch (Exception) { RevealUpdateError(); MessageBox.Show(this, "Tide could not open. Try launching it from the Start menu.", "Tide Setup"); }
         }
     }
     internal static class Program {

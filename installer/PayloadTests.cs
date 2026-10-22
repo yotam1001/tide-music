@@ -59,6 +59,9 @@ internal static class PayloadTests {
             throw new Exception("Normal setup unexpectedly enabled automatic installation.");
         var deadParent = UpdateOptions.Parse(new[] { "--update-from", Int32.MaxValue.ToString() });
         deadParent.WaitForPlayer();
+        using (var updateForm = new SetupWindow(true, deadParent)) {
+            if (updateForm.ShowInTaskbar) throw new Exception("Automatic updates must not show a setup taskbar window.");
+        }
         var handoffRoot = Path.Combine(Path.GetTempPath(), "tide-handoff-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(handoffRoot);
         var childPath = Path.Combine(handoffRoot, "tide-music.exe");

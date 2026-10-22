@@ -169,3 +169,7 @@ impl MediaSession {
         Err("System media controls are currently supported on Windows only.".into())
     }
 }
+
+#[cfg(windows)]
+pub mod discord_pipe;
+pub mod mini;

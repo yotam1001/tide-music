@@ -9,7 +9,10 @@ use std::{
     io::{Read, Write},
     path::{Path, PathBuf},
     rc::Rc,
-    sync::mpsc,
+    sync::{
+        atomic::{AtomicBool, AtomicU32, Ordering},
+        mpsc, Arc,
+    },
     time::{Duration, Instant},
 };
 
@@ -198,15 +201,41 @@ fn cache_directory(base: &Path) -> Result<PathBuf, String> {
     Ok(directory)
 }
 
+const CANCELED: &str = "Update download canceled";
+#[derive(Default)]
+struct Transfer {
+    canceled: AtomicBool,
+    percent: AtomicU32,
+}
+impl Transfer {
+    fn check(&self) -> Result<(), String> {
+        if self.canceled.load(Ordering::Relaxed) {
+            Err(CANCELED.into())
+        } else {
+            Ok(())
+        }
+    }
+}
 fn copy_verified(
     input: &mut impl Read,
     output: &mut impl Write,
     release: &Release,
 ) -> Result<(), String> {
+    copy_verified_controlled(input, output, release, None)
+}
+fn copy_verified_controlled(
+    input: &mut impl Read,
+    output: &mut impl Write,
+    release: &Release,
+    transfer: Option<&Transfer>,
+) -> Result<(), String> {
     let mut sha = Sha256::new();
     let mut size = 0u64;
     let mut buffer = [0; 64 * 1024];
     loop {
+        if let Some(transfer) = transfer {
+            transfer.check()?;
+        }
         let count = input
             .read(&mut buffer)
             .map_err(|_| "The installer download was interrupted")?;
@@ -221,6 +250,15 @@ fn copy_verified(
         output
             .write_all(&buffer[..count])
             .map_err(|_| "Could not save the installer. Check free disk space.")?;
+        if let Some(transfer) = transfer {
+            transfer.percent.store(
+                (size.saturating_mul(100) / release.size.max(1)).min(99) as u32,
+                Ordering::Relaxed,
+            );
+        }
+    }
+    if let Some(transfer) = transfer {
+        transfer.check()?;
     }
     if size != release.size || format!("{:x}", sha.finalize()) != release.digest {
         return Err("Installer verification failed. Nothing was installed; try again.".into());
@@ -235,11 +273,12 @@ impl Drop for PartialDownload {
     }
 }
 
-fn download(release: &Release, base: &Path) -> Result<PathBuf, String> {
+fn download(release: &Release, base: &Path, transfer: &Transfer) -> Result<PathBuf, String> {
     let agent = agent(180);
     let mut url = release.url.clone();
     let mut response = None;
     for _ in 0..4 {
+        transfer.check()?;
         if !allowed_download(&url) {
             return Err("Unexpected installer download destination".into());
         }
@@ -263,14 +302,29 @@ fn download(release: &Release, base: &Path) -> Result<PathBuf, String> {
             .to_owned();
     }
     let mut response = response.ok_or("Too many installer download redirects")?;
-    stage_installer(release, base, &mut response.body_mut().as_reader())
+    stage_installer_controlled(
+        release,
+        base,
+        &mut response.body_mut().as_reader(),
+        transfer,
+    )
 }
 
+#[cfg(test)]
 fn stage_installer(
     release: &Release,
     base: &Path,
     reader: &mut impl Read,
 ) -> Result<PathBuf, String> {
+    stage_installer_controlled(release, base, reader, &Transfer::default())
+}
+fn stage_installer_controlled(
+    release: &Release,
+    base: &Path,
+    reader: &mut impl Read,
+    transfer: &Transfer,
+) -> Result<PathBuf, String> {
+    transfer.check()?;
     let directory = cache_directory(base)?;
     let partial = directory.join("TideSetup.part");
     let destination = directory.join("TideSetup.exe");
@@ -292,11 +346,12 @@ fn stage_installer(
     let mut output =
         File::create(&partial).map_err(|_| "Could not create the installer download")?;
     let cleanup = PartialDownload(partial.clone());
-    copy_verified(reader, &mut output, release)?;
+    copy_verified_controlled(reader, &mut output, release, Some(transfer))?;
     output
         .sync_all()
         .map_err(|_| "Could not finish saving the installer")?;
     drop(output);
+    transfer.check()?;
     fs::rename(&partial, &destination)
         .map_err(|_| "Close the previous Tide installer and retry")?;
     drop(cleanup);
@@ -361,6 +416,8 @@ pub(super) struct Updater {
     available: Option<Release>,
     last_check: Option<Instant>,
     base: Option<PathBuf>,
+    transfer: Option<Arc<Transfer>>,
+    ready: Option<PathBuf>,
 }
 impl Updater {
     fn start(owner: &Rc<RefCell<Self>>, ui: &super::AppWindow, install: bool) {
@@ -378,6 +435,8 @@ impl Updater {
         let (sender, receiver) = mpsc::channel();
         let candidate = state.available.clone();
         let base = state.base.clone();
+        let transfer = Arc::new(Transfer::default());
+        let task_transfer = transfer.clone();
         if install && (candidate.is_none() || base.is_none()) {
             return;
         }
@@ -385,7 +444,11 @@ impl Updater {
             .name("tide-update".into())
             .spawn(move || {
                 let completion = if install {
-                    Completion::Downloaded(download(&candidate.unwrap(), &base.unwrap()))
+                    Completion::Downloaded(download(
+                        &candidate.unwrap(),
+                        &base.unwrap(),
+                        &task_transfer,
+                    ))
                 } else {
                     Completion::Checked(check())
                 };
@@ -399,6 +462,12 @@ impl Updater {
             state.last_check = Some(Instant::now());
         }
         state.receiver = Some(receiver);
+        state.transfer = install.then_some(transfer);
+        if install {
+            state.ready = None;
+            ui.set_update_phase(1);
+            ui.set_update_progress(0.0);
+        }
         ui.set_update_busy(true);
         ui.set_update_status(
             if install {
@@ -421,16 +490,45 @@ impl Updater {
         );
     }
     fn poll(&mut self, ui: &super::AppWindow) {
+        if let Some(transfer) = &self.transfer {
+            ui.set_update_progress(transfer.percent.load(Ordering::Relaxed) as f32);
+        }
         let result = match self.receiver.as_ref().unwrap().try_recv() {
             Ok(result) => result,
             Err(mpsc::TryRecvError::Empty) => return,
-            Err(_) => Completion::Checked(Err("The update check stopped. Try again later.".into())),
+            Err(_) => Completion::Checked(Err("The update task stopped. Try again later.".into())),
         };
         self.receiver = None;
         self.timer.stop();
         ui.set_update_busy(false);
+        let canceled = self
+            .transfer
+            .take()
+            .is_some_and(|t| t.canceled.load(Ordering::Relaxed));
+        if canceled {
+            self.ready = None;
+            ui.set_update_phase(0);
+            ui.set_update_progress(0.0);
+            ui.set_update_status("Download canceled. Music keeps playing.".into());
+            return;
+        }
         match result {
             Completion::Checked(Ok(candidate)) => {
+                let unchanged =
+                    candidate
+                        .as_ref()
+                        .zip(self.available.as_ref())
+                        .is_some_and(|(a, b)| {
+                            a.version == b.version
+                                && a.digest == b.digest
+                                && a.size == b.size
+                                && a.url == b.url
+                        });
+                if !unchanged {
+                    self.ready = None;
+                    ui.set_update_phase(0);
+                    ui.set_update_progress(0.0);
+                }
                 let status = candidate
                     .as_ref()
                     .map(|r| format!("Tide {} is available", r.version))
@@ -440,15 +538,14 @@ impl Updater {
                 ui.set_update_status(status.into());
             }
             Completion::Checked(Err(error)) | Completion::Downloaded(Err(error)) => {
+                ui.set_update_phase(if self.ready.is_some() { 2 } else { 0 });
                 ui.set_update_status(error.into())
             }
             Completion::Downloaded(Ok(path)) => {
-                match launch(&path, self.available.as_ref().unwrap()) {
-                    Ok(()) => {
-                        let _ = slint::quit_event_loop();
-                    }
-                    Err(error) => ui.set_update_status(error.into()),
-                }
+                self.ready = Some(path);
+                ui.set_update_phase(2);
+                ui.set_update_progress(100.0);
+                ui.set_update_status("Update verified and ready. Restart when convenient.".into());
             }
         }
     }
@@ -470,6 +567,8 @@ pub(super) fn wire(ui: &super::AppWindow, enabled: bool) -> Rc<RefCell<Updater>>
         available: None,
         last_check: None,
         base,
+        transfer: None,
+        ready: None,
     }));
     let state = owner.clone();
     let weak = ui.as_weak();
@@ -482,8 +581,41 @@ pub(super) fn wire(ui: &super::AppWindow, enabled: bool) -> Rc<RefCell<Updater>>
     let weak = ui.as_weak();
     ui.on_install_update(move || {
         if let Some(ui) = weak.upgrade() {
-            if ui.get_update_installable() {
-                Updater::start(&state, &ui, true);
+            if !ui.get_update_installable() {
+                return;
+            }
+            let mut updater = state.borrow_mut();
+            if updater.receiver.is_some() {
+                return;
+            }
+            if let Some(path) = updater.ready.clone() {
+                let Some(release) = updater.available.as_ref() else {
+                    return;
+                };
+                match launch(&path, release) {
+                    Ok(()) => {
+                        let _ = slint::quit_event_loop();
+                    }
+                    Err(error) => {
+                        updater.ready = None;
+                        ui.set_update_phase(0);
+                        ui.set_update_status(error.into());
+                    }
+                }
+                return;
+            }
+            drop(updater);
+            Updater::start(&state, &ui, true);
+        }
+    });
+    let state = owner.clone();
+    let weak = ui.as_weak();
+    ui.on_cancel_update(move || {
+        if let Some(ui) = weak.upgrade() {
+            if let Some(transfer) = &state.borrow().transfer {
+                transfer.canceled.store(true, Ordering::Relaxed);
+                ui.set_update_phase(3);
+                ui.set_update_status("Canceling download…".into());
             }
         }
     });
@@ -637,6 +769,90 @@ mod tests {
         assert!(!setup.with_file_name("TideSetup.part").exists());
         stage_installer(&release, base.path(), &mut &b"Tide"[..]).unwrap();
         assert_eq!(fs::read_dir(setup.parent().unwrap()).unwrap().count(), 3);
+    }
+    #[test]
+    fn cancel_during_read_preserves_previous_installer_and_never_reports_ready() {
+        struct CancelReader<'a> {
+            bytes: &'a [u8],
+            transfer: Arc<Transfer>,
+        }
+        impl Read for CancelReader<'_> {
+            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+                let n = self.bytes.read(buffer)?;
+                self.transfer.canceled.store(true, Ordering::Relaxed);
+                Ok(n)
+            }
+        }
+        let base = tempfile::tempdir().unwrap();
+        let release = parse(&metadata("v0.2.0")).unwrap().unwrap();
+        let previous = stage_installer(&release, base.path(), &mut &b"Tide"[..]).unwrap();
+        let transfer = Arc::new(Transfer::default());
+        let mut reader = CancelReader {
+            bytes: b"Tide",
+            transfer: transfer.clone(),
+        };
+        assert_eq!(
+            stage_installer_controlled(&release, base.path(), &mut reader, &transfer).unwrap_err(),
+            CANCELED
+        );
+        assert_eq!(fs::read(&previous).unwrap(), b"Tide");
+        assert!(!previous.with_file_name("TideSetup.part").exists());
+        assert!(transfer.percent.load(Ordering::Relaxed) < 100);
+        let transfer = Transfer::default();
+        assert!(
+            stage_installer_controlled(&release, base.path(), &mut &b"Fake"[..], &transfer)
+                .is_err()
+        );
+        assert!(transfer.percent.load(Ordering::Relaxed) < 100);
+        assert_eq!(fs::read(previous).unwrap(), b"Tide");
+    }
+    #[test]
+    fn completed_download_waits_for_explicit_restart_and_late_cancel_wins() {
+        use slint::platform::software_renderer::{MinimalSoftwareWindow, RepaintBufferType};
+        struct TestPlatform(Rc<MinimalSoftwareWindow>);
+        impl slint::platform::Platform for TestPlatform {
+            fn create_window_adapter(
+                &self,
+            ) -> Result<Rc<dyn slint::platform::WindowAdapter>, slint::PlatformError> {
+                Ok(self.0.clone())
+            }
+        }
+        slint::platform::set_platform(Box::new(TestPlatform(MinimalSoftwareWindow::new(
+            RepaintBufferType::NewBuffer,
+        ))))
+        .unwrap();
+        let ui = super::super::AppWindow::new().unwrap();
+        let base = tempfile::tempdir().unwrap();
+        let release = parse(&metadata("v0.2.0")).unwrap().unwrap();
+        let path = stage_installer(&release, base.path(), &mut &b"Tide"[..]).unwrap();
+        let (sender, receiver) = mpsc::channel();
+        let mut updater = Updater {
+            timer: slint::Timer::default(),
+            receiver: Some(receiver),
+            available: Some(release),
+            last_check: None,
+            base: Some(base.path().to_owned()),
+            transfer: Some(Arc::new(Transfer::default())),
+            ready: None,
+        };
+        sender
+            .send(Completion::Downloaded(Ok(path.clone())))
+            .unwrap();
+        updater.poll(&ui);
+        assert_eq!(updater.ready.as_ref(), Some(&path));
+        assert_eq!(ui.get_update_phase(), 2);
+        assert_eq!(ui.get_update_progress(), 100.0);
+        assert!(!ui.get_update_busy());
+        // No executable was launched: this fixture is deliberately not an EXE.
+        let (sender, receiver) = mpsc::channel();
+        updater.receiver = Some(receiver);
+        let transfer = Arc::new(Transfer::default());
+        transfer.canceled.store(true, Ordering::Relaxed);
+        updater.transfer = Some(transfer);
+        sender.send(Completion::Downloaded(Ok(path))).unwrap();
+        updater.poll(&ui);
+        assert!(updater.ready.is_none());
+        assert_eq!(ui.get_update_phase(), 0);
     }
     #[test]
     fn automatic_installation_is_confined_to_the_active_owned_install() {

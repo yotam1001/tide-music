@@ -58,7 +58,9 @@ companion without uninstalling Tide. [Installation help](docs/INSTALLATION.md)
 - Shuffle playlists, queue songs next, and drag upcoming tracks into order.
 - Start song radio or enable Autoplay for related recommendations.
 - Switch between dark/light themes, compact sizing and a mini player.
-- Use Windows media controls and check for stable updates in Settings.
+- Use Windows media controls and download updates inside Tide; restart when ready.
+- Optionally share the playing song with Discord.
+- Pin the Mini player above other windows and adjust its opacity.
 
 Theme is the sun/moon button in the header. **Account** is beside **Settings**.
 **Queue** sits beside the player controls. [Learn the controls](docs/USING_TIDE.md)
@@ -98,7 +100,9 @@ the demo's figures. Installed Tide does not create Rust build caches.
 ## Updates and help
 
 **Settings → Check for updates** finds published stable releases and offers
-**Install and restart**. Startup checks can be disabled. The updater skips beta
+**Update Tide** with in-app progress and cancellation. Music continues until you
+choose **Restart to update**; setup runs in the background. Startup checks can be
+disabled. The updater skips beta
 and draft releases. Installed previews can update to stable 0.1.3; future
 preview-only updates still need their installer. Accounts and
 preferences are kept during app updates. Update the unpacked companion separately

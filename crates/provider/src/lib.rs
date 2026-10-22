@@ -1538,11 +1538,16 @@ fn unprotect(_: &[u8]) -> Result<Vec<u8>, &'static str> {
 
 #[cfg(test)]
 mod tests {
+    // These fixtures intentionally use the production machine-wide Windows mutex.
+    // Serialize fixture owners while keeping each test's real cross-thread locking.
+    #[cfg(windows)]
+    static SESSION_FIXTURES: std::sync::Mutex<()> = std::sync::Mutex::new(());
     use super::*;
 
     #[cfg(windows)]
     #[test]
     fn native_rotation_merges_without_rollback_deletion_or_account_switch() {
+        let _fixture = SESSION_FIXTURES.lock().unwrap_or_else(|e| e.into_inner());
         let directory = std::env::temp_dir().join(format!(
             "tide-native-merge-{}-{}",
             std::process::id(),
@@ -1604,6 +1609,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn api_auth_rotation_preserves_concurrent_non_auth_cookies_and_metadata() {
+        let _fixture = SESSION_FIXTURES.lock().unwrap_or_else(|e| e.into_inner());
         for concurrent_update in [false, true] {
             let directory = std::env::temp_dir().join(format!(
                 "tide-api-merge-{}-{}",
@@ -1703,6 +1709,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn api_refresh_rejects_newer_auth_cohort_even_if_signing_cookie_is_unchanged() {
+        let _fixture = SESSION_FIXTURES.lock().unwrap_or_else(|e| e.into_inner());
         let directory = std::env::temp_dir().join(format!(
             "tide-api-auth-conflict-{}-{}",
             std::process::id(),
@@ -1890,6 +1897,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn successful_refresh_is_encrypted_and_updates_existing_playback_lease() {
+        let _fixture = SESSION_FIXTURES.lock().unwrap_or_else(|e| e.into_inner());
         let directory = std::env::temp_dir().join(format!(
             "tide-refresh-test-{}-{}",
             std::process::id(),
@@ -1936,6 +1944,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn rejected_refresh_preserves_session_and_selected_identity() {
+        let _fixture = SESSION_FIXTURES.lock().unwrap_or_else(|e| e.into_inner());
         let directory = std::env::temp_dir().join(format!(
             "tide-refresh-reject-test-{}-{}",
             std::process::id(),
@@ -1988,6 +1997,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn disconnect_waits_for_in_flight_session_commit() {
+        let _fixture = SESSION_FIXTURES.lock().unwrap_or_else(|e| e.into_inner());
         let directory = std::env::temp_dir().join(format!(
             "tide-disconnect-lock-test-{}-{}",
             std::process::id(),
@@ -2028,6 +2038,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn login_generation_preserves_legacy_refreshes_and_tracks_explicit_imports() {
+        let _fixture = SESSION_FIXTURES.lock().unwrap_or_else(|e| e.into_inner());
         let directory = std::env::temp_dir().join(format!(
             "tide-connection-revision-test-{}-{}",
             std::process::id(),
@@ -2081,6 +2092,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn reconnect_rejects_stale_playback_lease_and_verified_candidate() {
+        let _fixture = SESSION_FIXTURES.lock().unwrap_or_else(|e| e.into_inner());
         // Isolate this multi-step race scenario from other storage fixtures.
         let _guard = SessionWriteLock::acquire().unwrap();
         let directory = std::env::temp_dir().join(format!(
@@ -2151,6 +2163,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn changed_account_rejects_collection_write_before_starting_any_helper() {
+        let _fixture = SESSION_FIXTURES.lock().unwrap_or_else(|e| e.into_inner());
         let directory = std::env::temp_dir().join(format!(
             "tide-feedback-binding-{}-{}",
             std::process::id(),
@@ -2261,6 +2274,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn imported_session_is_encrypted_and_lease_is_removed() {
+        let _fixture = SESSION_FIXTURES.lock().unwrap_or_else(|e| e.into_inner());
         let directory = std::env::temp_dir().join(format!(
             "tide-account-test-{}-{}",
             std::process::id(),
