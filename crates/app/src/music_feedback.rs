@@ -646,6 +646,7 @@ pub fn read_probe() -> Result<(), String> {
     };
     let mut checked = 0;
     let mut inspected = false;
+    let mut editable_entry = false;
     for playlist in playlists.iter().filter(|p| p.owned).take(3) {
         let Response::Tracks {
             tracks,
@@ -666,6 +667,7 @@ pub fn read_probe() -> Result<(), String> {
             return Err(fail());
         }
         checked += 1;
+        editable_entry |= details.entries.iter().any(Option::is_some);
         if !inspected {
             if let Some(video_id) = tracks.iter().find_map(|t| artists::video_id(&t.source)) {
                 let request = FeedbackRequest::Rating { video_id };
@@ -681,7 +683,7 @@ pub fn read_probe() -> Result<(), String> {
                 else {
                     return Err(fail());
                 };
-                if !request.accepts(&result) {
+                if !request.accepts(&result) || result.rating.is_none() {
                     return Err(fail());
                 }
                 inspected = true;
@@ -690,6 +692,7 @@ pub fn read_probe() -> Result<(), String> {
     }
     if checked == 0
         || !inspected
+        || !editable_entry
         || provider.saved_connection().map_err(|_| fail())?.as_ref() != Some(&expected)
     {
         return Err(fail());
