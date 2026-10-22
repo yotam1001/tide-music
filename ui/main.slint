@@ -675,14 +675,14 @@ component SongRow inherits Rectangle {
             { title: "Add to playlist…", code: 6, enabled: root.collection-enabled },
         ] : root.removable && !root.current ? [
             { title: "Start song radio", code: 2, enabled: root.enabled },
-            { title: "Remove from queue", code: 3, enabled: root.enabled },
             { title: "Add to playlist…", code: 6, enabled: root.collection-enabled },
+            { title: "Remove from queue", code: 3, enabled: root.enabled },
         ] : root.removable ? [
             { title: "Repeat next", code: 0, enabled: root.enabled },
             { title: "Repeat later", code: 1, enabled: root.enabled },
             { title: "Start song radio", code: 2, enabled: root.enabled },
-            { title: "Remove from queue", code: 3, enabled: root.enabled },
             { title: "Add to playlist…", code: 6, enabled: root.collection-enabled },
+            { title: "Remove from queue", code: 3, enabled: root.enabled },
         ] : root.playlist-removable ? [
             { title: "Play next", code: 0, enabled: root.enabled },
             { title: "Add to queue", code: 1, enabled: root.enabled },
@@ -1397,6 +1397,9 @@ export component AppWindow inherits Window {
             spacing: 0px;
             if !root.collapsed : Rectangle {
                 height: 64px;
+                // The window owns its minimum width. Header breakpoints must
+                // not feed the current window width back into layout hints.
+                min-width: 0px; preferred-width: 0px; max-width: 10000px;
                 background: root.light-mode ? #eee5db : #15181d;
                 HorizontalLayout {
                     padding-left: 18px;
@@ -1835,6 +1838,8 @@ export component AppWindow inherits Window {
             }
         }
         if !root.collapsed && root.playlist-picker-open : Rectangle {
+            min-width: 0px; preferred-width: 0px; max-width: 10000px;
+            min-height: 0px; preferred-height: 0px; max-height: 10000px;
             background: Colors.transparent;
             y: 64px; width: root.width; height: max(0px, root.height - (root.jam-active ? 208px : 174px));
             Rectangle { width: max(0px, parent.width - 420px); height: parent.height; background: Colors.transparent; TouchArea { clicked => { root.cancel-playlist-picker(); } } }

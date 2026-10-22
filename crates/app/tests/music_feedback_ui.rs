@@ -182,7 +182,6 @@ fn native_ratings_remain_reachable_and_do_not_take_over_transport() {
     }
     ui.set_light_mode(false);
     ui.set_account_connected(true);
-    ui.set_browsing_enabled(true);
     ui.set_search_open(true);
     ui.set_search_rows(slint::ModelRc::new(slint::VecModel::from(vec![TrackRow {
         title: "Synthetic collection song".into(),
