@@ -65,22 +65,39 @@ struct Worker {
 pub struct Presence {
     id: String,
     worker: Option<Worker>,
+    retiring: Option<Worker>,
 }
 impl Presence {
+    fn retire(&mut self) {
+        if let Some(worker) = self.worker.take() {
+            worker.stop();
+            self.retiring = Some(worker);
+        }
+    }
     pub fn update(&mut self, enabled: bool, id: &str, activity: Option<Activity>) -> &'static str {
+        if self
+            .retiring
+            .as_ref()
+            .is_some_and(|w| w.thread.as_ref().is_none_or(|t| t.is_finished()))
+        {
+            self.retiring.take();
+        }
         if !enabled {
-            self.worker.take();
+            self.retire();
             self.id.clear();
             return "Off — listening activity stays private";
         }
         if !valid_id(id) {
-            self.worker.take();
+            self.retire();
             self.id.clear();
             return "Enter a Discord application ID to connect";
         }
         if self.id != id {
-            self.worker.take();
+            self.retire();
             self.id = id.to_owned();
+        }
+        if self.retiring.is_some() {
+            return "Updating Discord connection";
         }
         if self.worker.is_none() {
             self.worker = Worker::start(id.to_owned());
@@ -103,6 +120,13 @@ impl Presence {
     }
 }
 impl Worker {
+    fn stop(&self) {
+        let (lock, wake) = &*self.shared;
+        if let Ok(mut state) = lock.lock() {
+            state.stop = true;
+            wake.notify_one();
+        }
+    }
     fn start(id: String) -> Option<Self> {
         let shared = Arc::new((Mutex::new(Latest::default()), Condvar::new()));
         let status = Arc::new(AtomicU8::new(0));
@@ -121,12 +145,10 @@ impl Worker {
 }
 impl Drop for Worker {
     fn drop(&mut self) {
-        let (lock, wake) = &*self.shared;
-        if let Ok(mut state) = lock.lock() {
-            state.stop = true;
-            wake.notify_one();
-        }
-        if let Some(thread) = self.thread.take() {
+        self.stop();
+        // Never wait for Discord I/O on the UI thread. Retired workers finish
+        // bounded I/O and clear activity; no replacement starts until then.
+        if let Some(thread) = self.thread.take().filter(|t| t.is_finished()) {
             let _ = thread.join();
         }
     }
@@ -306,6 +328,50 @@ mod protocol_tests {
                 .ok_or(std::io::ErrorKind::UnexpectedEof.into())
         }
     }
+    #[test]
+    fn disabling_does_not_block_ui_or_start_overlapping_workers() {
+        let shared = Arc::new((Mutex::new(Latest::default()), Condvar::new()));
+        let task = shared.clone();
+        let handle = std::thread::spawn(move || {
+            let (lock, wake) = &*task;
+            let guard = lock.lock().unwrap();
+            drop(wake.wait_while(guard, |s| !s.stop).unwrap());
+            std::thread::sleep(Duration::from_millis(200));
+        });
+        let id = "123456789012345678";
+        let mut presence = Presence {
+            id: id.into(),
+            worker: Some(Worker {
+                shared,
+                status: Arc::new(AtomicU8::new(1)),
+                thread: Some(handle),
+            }),
+            retiring: None,
+        };
+        let started = Instant::now();
+        presence.update(false, id, None);
+        assert!(started.elapsed() < Duration::from_millis(100));
+        assert!(presence.worker.is_none());
+        assert!(presence.retiring.is_some());
+        assert_eq!(
+            presence.update(true, id, None),
+            "Updating Discord connection"
+        );
+        assert!(presence.worker.is_none());
+        // Finish our synthetic worker without starting or contacting Discord.
+        presence
+            .retiring
+            .as_mut()
+            .unwrap()
+            .thread
+            .take()
+            .unwrap()
+            .join()
+            .unwrap();
+        presence.update(false, id, None);
+        assert!(presence.retiring.is_none());
+    }
+
     #[test]
     fn requires_ready_and_matching_acknowledgement() {
         let pipe = Fake::new(vec![(1, json!({"evt":"READY"}))]);
