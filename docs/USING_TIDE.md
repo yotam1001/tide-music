@@ -8,7 +8,7 @@ open Tide from the Windows Start menu.
 Search for a song or paste a YouTube music link into the top bar. Select a song
 to play it. Or open **Library**, choose a playlist, then use **Play** or **Shuffle**.
 YouTube playback requires a verified account connection. Local audio works without
-one: choose **Settings → Open audio file**.
+one: choose **Settings → More options → Open audio file**.
 
 The centered player buttons handle previous, pause/play and next. The bottom
 sliders control position and volume. Windows media controls are supported;
@@ -16,17 +16,20 @@ physical keyboard/Fn behavior while a game has focus still needs user validation
 
 ## Gaming controls (0.1.1 and later)
 
-In **Settings → Gaming controls**, Windows media keys can be switched off if
+In **Settings → More options**, Windows media keys can be switched off if
 another app should receive them. Laptop Fn behavior depends on its hardware and
 Windows settings; Tide does not remap Fn itself.
 
 Optional global shortcuts control **Play / pause**, **Next song** and
-**Previous song** while Tide is in the background. Enter a Ctrl or Alt combination
-(for example `Ctrl+Alt+P`) and choose **Apply shortcuts**. Shift can also be used.
-Letters, digits, Space and F1–F24 are supported, except Windows-reserved F12.
-Blank fields disable individual shortcuts; clear all three and apply to disable
-all custom shortcuts. No global shortcuts are registered by default. If Windows
-or another app already owns a combination, Tide reports the conflict and keeps
+**Previous song** while Tide is in the background. Open **Settings → Keyboard shortcuts**,
+select an action and press the combination; it saves automatically. Use Ctrl or Alt
+with a letter, digit, Space or F1–F24 (except Windows-reserved F12). Shift is optional.
+Esc cancels; × clears an individual shortcut. Existing custom shortcuts are
+suspended only while the focused recorder is waiting, and restored on cancellation
+or focus loss. No global keyboard hook or typing log is used.
+
+No custom shortcuts are registered by default. If Windows or another app already
+owns a combination, Tide reports the conflict and keeps
 your previous shortcuts. Choose combinations unused by your games; exclusive
 keyboard handling in some games or elevated apps still needs hardware testing.
 
@@ -62,7 +65,7 @@ including when a song appears twice. Removing a playlist entry leaves your
 playback queue alone. Use **Refresh** to reload the playlist from YouTube Music.
 If an update cannot be confirmed, refresh before trying again.
 
-**Settings → Recommendations → Listening history** is off by default. Enable it
+**Settings → Listening history** is off by default. Enable it
 to send new, actual listening to your selected YouTube Music account after enough
 playback. Seeking, waiting, paused time and automated tests do not count. YouTube
 decides how that history affects recommendations; changes may take time. Turning
@@ -98,11 +101,11 @@ quality depends on the song, account and extractor.
 ## Appearance and account
 
 - **Sun/moon:** change light/dark theme without changing window size.
-- **Settings → Layout:** choose Normal or Compact sizing.
+- **Settings → Window size:** choose Normal or Compact sizing.
 - **Mini:** reduce the player; its expand control returns to the full window.
 - **Account:** check the connected identity, get connection help or disconnect.
   Manual imports are under Advanced connection options.
-- **Settings → Updates:** check for a stable release or change startup checks.
+- **Settings:** check for a stable release. Startup checks are under More options.
   Preview updates still need the newer installer.
 
 [Troubleshooting](TROUBLESHOOTING.md) · [Privacy](../PRIVACY.md)

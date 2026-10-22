@@ -32,6 +32,7 @@ mod performance;
 mod playback_feedback;
 mod radio;
 mod settings_location;
+mod shortcut_capture;
 mod updater;
 slint::include_modules!();
 
@@ -2864,6 +2865,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let Some(u) = weak.upgrade() else {
                 return;
             };
+            if u.get_shortcut_recording_index() >= 0 {
+                return;
+            }
             // Hardware transport controls follow exactly the same path as the
             // player buttons, including autoplay when Next reaches queue end.
             match action {
@@ -2973,37 +2977,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     #[cfg(windows)]
-    {
-        let state = state.clone();
-        let weak = ui.as_weak();
-        let shortcuts = shortcuts.clone();
-        ui.on_apply_shortcuts(move || {
-            let Some(u) = weak.upgrade() else {
-                return;
-            };
-            let values = [
-                u.get_shortcut_toggle().to_string().trim().to_owned(),
-                u.get_shortcut_next().to_string().trim().to_owned(),
-                u.get_shortcut_previous().to_string().trim().to_owned(),
-            ];
-            let result = tide_windows::shortcuts::parse_bindings(&values).and_then(|bindings| {
-                shortcuts
-                    .borrow_mut()
-                    .as_mut()
-                    .ok_or_else(|| "Global shortcuts are unavailable in this mode.".to_string())?
-                    .apply(bindings)
-            });
-            match result {
-                Ok(()) => {
-                    let mut s = state.borrow_mut();
-                    s.settings.shortcuts = values;
-                    save(&s.settings);
-                    u.set_shortcut_status("Shortcuts saved. Blank fields are disabled.".into());
-                }
-                Err(error) => u.set_shortcut_status(error.into()),
-            }
-        });
-    }
+    shortcut_capture::wire(&ui, state.clone(), shortcuts.clone());
     let output_timer = slint::Timer::default();
     #[cfg(windows)]
     if media_enabled && state.borrow().engine.is_some() {

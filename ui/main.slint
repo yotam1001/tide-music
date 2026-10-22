@@ -1053,6 +1053,19 @@ component RatingButton inherits Rectangle {
 }
 
 // Actual byte progress in a compact native control; no separate update window.
+component ShortcutRow inherits HorizontalLayout {
+    in property <string> action;
+    in property <string> binding;
+    in property <bool> recording;
+    in property <bool> light-mode;
+    callback record();
+    callback clear();
+    height: 44px; spacing: 8px; cross-axis-alignment: center;
+    Text { horizontal-stretch: 1; text: root.action; color: root.light-mode ? #392e33 : #f0eeef; font-size: 13px; }
+    LibraryButton { width: 156px; height: 36px; quiet: false; active: root.recording; light-mode: root.light-mode; caption: root.recording ? "Press keys…" : root.binding == "" ? "Set shortcut" : root.binding; label: "Record " + root.action + " shortcut"; clicked => { root.record(); } }
+    LibraryButton { width: 30px; height: 30px; enabled: root.binding != "" || root.recording; light-mode: root.light-mode; caption: "×"; label: "Clear " + root.action + " shortcut"; clicked => { root.clear(); } }
+}
+
 component UpdateAction inherits Rectangle {
     in property <bool> light-mode;
     in property <bool> busy;
@@ -1267,7 +1280,7 @@ export component AppWindow inherits Window {
     in-out property <string> shortcut-toggle;
     in-out property <string> shortcut-next;
     in-out property <string> shortcut-previous;
-    in property <string> shortcut-status: "Optional. Leave blank to disable a shortcut.";
+    in property <string> shortcut-status: "";
     callback toggle-media-controls();
     in property <bool> discord-presence-enabled: false;
     in-out property <string> discord-application-id;
@@ -1303,7 +1316,13 @@ export component AppWindow inherits Window {
     callback refresh-playlist-choices();
     callback remove-playlist-song(int);
     callback refresh-detail-playlist();
-    callback apply-shortcuts();
+    in-out property <int> shortcut-recording-index: -1;
+    in-out property <bool> settings-shortcuts-open: false;
+    in-out property <bool> settings-more-open: false;
+    callback begin-shortcut(int);
+    callback cancel-shortcut();
+    callback clear-shortcut(int);
+    callback record-shortcut(string, bool, bool, bool, bool);
     in property <[TrackRow]> rows;
     in property <int> current-index;
     in property <string> track-title;
@@ -1394,6 +1413,7 @@ export component AppWindow inherits Window {
     changed width => { root.wide = root.width >= 1050px; root.narrow-navigation = root.width < 900px; root.header-branding = root.width >= 780px; }
     changed settings-open => {
         if root.settings-open { root.playlist-picker-open = false; root.account-open = false; root.jam-open = false; app-focus.focus(); }
+        else { root.cancel-shortcut(); root.settings-shortcuts-open = false; root.settings-more-open = false; }
     }
     changed account-open => {
         if root.account-open { root.playlist-picker-open = false; root.settings-open = false; root.jam-open = false; app-focus.focus(); }
@@ -1425,6 +1445,15 @@ export component AppWindow inherits Window {
         // must not become a constraint on the window width they inspect.
         min-width: 0px; preferred-width: 0px; max-width: 10000px;
         min-height: 0px; preferred-height: 0px; max-height: 10000px;
+        focus-lost(reason) => { if root.shortcut-recording-index >= 0 { root.cancel-shortcut(); } }
+        capture-key-pressed(event) => {
+            if root.shortcut-recording-index >= 0 {
+                if event.text == Key.Escape { root.cancel-shortcut(); }
+                else { root.record-shortcut(event.text, event.modifiers.control, event.modifiers.alt, event.modifiers.shift, event.modifiers.meta); }
+                return accept;
+            }
+            return reject;
+        }
         key-pressed(event) => {
             if root.artist-picker-open {
                 if event.text == Key.Escape { root.back-detail(); return accept; }
@@ -1670,59 +1699,50 @@ export component AppWindow inherits Window {
                             VerticalLayout {
                                 padding: 24px; spacing: 14px; alignment: start;
                                 HorizontalLayout { height: 42px; cross-axis-alignment: center; Text { horizontal-stretch: 1; text: "Settings"; color: root.foreground; font-size: 25px; font-weight: 650; } LibraryButton { width: 32px; height: 32px; caption: "×"; label: "Close settings"; light-mode: root.light-mode; clicked => { root.settings-open = false; } } }
-                                Text { height: 20px; text: "Layout"; color: root.foreground; font-size: 15px; font-weight: 600; }
-                                HorizontalLayout {
-                                    height: 40px; spacing: 8px;
-                                    LibraryButton { horizontal-stretch: 1; height: 40px; quiet: false; caption: "Normal"; label: "Use normal window size"; light-mode: root.light-mode; active: !root.compact-mode; clicked => { if root.compact-mode { root.toggle-compact(); } } }
-                                    LibraryButton { horizontal-stretch: 1; height: 40px; quiet: false; caption: "Compact"; label: "Use compact window size"; light-mode: root.light-mode; active: root.compact-mode; clicked => { if !root.compact-mode { root.toggle-compact(); } } }
+                                if root.settings-shortcuts-open : VerticalLayout {
+                                    spacing: 12px; alignment: start;
+                                    LibraryButton { height: 34px; caption: "‹  Back"; label: "Back to general settings"; light-mode: root.light-mode; clicked => { root.cancel-shortcut(); root.settings-shortcuts-open = false; } }
+                                    Text { height: 24px; text: "Keyboard shortcuts"; font-size: 18px; font-weight: 600; color: root.foreground; }
+                                    Text { height: 36px; text: "Select an action, then press a Ctrl or Alt combination. Esc cancels."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
+                                    ShortcutRow { action: "Play / pause"; binding: root.shortcut-toggle; recording: root.shortcut-recording-index == 0; light-mode: root.light-mode; record => { root.begin-shortcut(0); app-focus.focus(); } clear => { root.clear-shortcut(0); } }
+                                    ShortcutRow { action: "Next song"; binding: root.shortcut-next; recording: root.shortcut-recording-index == 1; light-mode: root.light-mode; record => { root.begin-shortcut(1); app-focus.focus(); } clear => { root.clear-shortcut(1); } }
+                                    ShortcutRow { action: "Previous song"; binding: root.shortcut-previous; recording: root.shortcut-recording-index == 2; light-mode: root.light-mode; record => { root.begin-shortcut(2); app-focus.focus(); } clear => { root.clear-shortcut(2); } }
+                                    if root.shortcut-status != "" : Text { text: root.shortcut-status; color: root.secondary; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
+                                    Rectangle { height: 1px; background: root.outline; }
+                                    Text { height: 36px; text: "Your keyboard’s media keys work automatically. Custom shortcuts also work in the background."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
                                 }
-                                Rectangle { height: 10px; }
-                                Rectangle { height: 1px; background: root.outline; }
-                                Text { height: 20px; text: "Playback"; color: root.foreground; font-size: 15px; font-weight: 600; }
-                                LibraryButton { height: 40px; quiet: false; caption: "Open audio file"; label: "Open a local audio file"; light-mode: root.light-mode; clicked => { root.open-file(); root.settings-open = false; } }
-                                Rectangle { height: 10px; }
-                                Rectangle { height: 1px; background: root.outline; }
-                                Text { height: 20px; text: "Gaming controls"; color: root.foreground; font-size: 15px; font-weight: 600; }
-                                LibraryButton { height: 36px; caption: root.media-controls-enabled ? "Windows media keys: on" : "Windows media keys: off"; label: "Toggle Windows media keys"; light-mode: root.light-mode; clicked => { root.toggle-media-controls(); } }
-                                Text { height: 48px; text: "Global shortcuts work while Tide is in the background. Choose unused Ctrl or Alt combinations, such as Ctrl+Alt+P."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
-                                Text { height: 18px; text: "Play / pause"; color: root.foreground; font-size: 12px; }
-                                LineEdit { height: 36px; text <=> root.shortcut-toggle; placeholder-text: "Disabled"; accessible-label: "Global play pause shortcut"; }
-                                Text { height: 18px; text: "Next song"; color: root.foreground; font-size: 12px; }
-                                LineEdit { height: 36px; text <=> root.shortcut-next; placeholder-text: "Disabled"; accessible-label: "Global next song shortcut"; }
-                                Text { height: 18px; text: "Previous song"; color: root.foreground; font-size: 12px; }
-                                LineEdit { height: 36px; text <=> root.shortcut-previous; placeholder-text: "Disabled"; accessible-label: "Global previous song shortcut"; }
-                                LibraryButton { height: 36px; caption: "Apply shortcuts"; label: "Save and register global shortcuts"; light-mode: root.light-mode; clicked => { root.apply-shortcuts(); } }
-                                Text { text: root.shortcut-status; color: root.secondary; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
-                                Rectangle { height: 1px; background: root.outline; }
-                                Text { height: 20px; text: "Recommendations"; color: root.foreground; font-size: 15px; font-weight: 600; }
-                                LibraryButton { height: 40px; quiet: false; active: root.history-feedback-enabled; caption: root.history-feedback-enabled ? "Listening history: on" : "Listening history: off"; label: "Toggle sending actual listening to YouTube Music history"; light-mode: root.light-mode; clicked => { root.toggle-history-feedback(); } }
-                                Text { height: 48px; text: "Turn this on to send songs you actually hear to your selected YouTube Music account. History and your ratings can help its recommendations adapt."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
-                                Text { text: root.history-feedback-status; color: root.secondary; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
-                                Rectangle { height: 1px; background: root.outline; }
-                                Text { height: 20px; text: "Mini player"; color: root.foreground; font-size: 15px; font-weight: 600; }
-                                LibraryButton { height: 36px; active: root.mini-pinned; caption: root.mini-pinned ? "Pin Mini: on" : "Pin Mini: off"; label: "Keep mini player above other windows"; light-mode: root.light-mode; clicked => { root.toggle-mini-pin(); } }
-                                Text { height: 18px; text: "Mini opacity · " + root.mini-opacity.to-fixed(0) + "%"; color: root.secondary; font-size: 12px; }
-                                TideSlider { height: 28px; light-mode: root.light-mode; minimum: 60; maximum: 100; value: root.mini-opacity; label: "Mini player opacity"; value-text: root.mini-opacity.to-fixed(0) + "%"; released(value) => { root.change-mini-opacity(value); } }
-                                Text { height: 42px; text: "Pinning and opacity apply only to Mini. Expand restores the normal window. Exclusive fullscreen games may cover it."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
-                                Rectangle { height: 1px; background: root.outline; }
-                                Text { height: 20px; text: "Discord"; color: root.foreground; font-size: 15px; font-weight: 600; }
-                                Text { height: 42px; text: "Optionally share the song and artist with Discord desktop. Pausing clears the activity. No account or Jam invite is shared."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
-                                LineEdit { height: 36px; text <=> root.discord-application-id; enabled: !root.discord-presence-enabled; placeholder-text: "Discord application ID"; accessible-label: "Public Discord application ID"; }
-                                LibraryButton { height: 40px; quiet: false; active: root.discord-presence-enabled; caption: root.discord-presence-enabled ? "Share listening: on" : "Share listening: off"; label: "Toggle Discord listening activity"; light-mode: root.light-mode; clicked => { root.toggle-discord-presence(); } }
-                                Text { text: root.discord-status; color: root.secondary; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
-                                Rectangle { height: 1px; background: root.outline; }
-                                Text { height: 20px; text: "Updates"; color: root.foreground; font-size: 15px; font-weight: 600; }
-                                Text { text: root.update-status; color: root.secondary; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
-                                LibraryButton { height: 40px; quiet: false; caption: root.update-busy ? "Please wait…" : "Check for updates"; label: "Check GitHub for a newer stable Tide release"; light-mode: root.light-mode; enabled: !root.update-busy; clicked => { root.check-updates(); } }
-                                if root.update-available : VerticalLayout {
-                                    spacing: 8px;
-                                    Text { text: root.update-installable ? "Download while you listen. Restart when ready to apply the update; your account and preferences are kept." : "Automatic installation is available in an installed Windows copy of Tide."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
-                                    if root.update-installable : UpdateAction { width: 280px; height: 44px; horizontal-stretch: 0; light-mode: root.light-mode; busy: root.update-busy; phase: root.update-phase; progress: root.update-progress; activate => { root.install-update(); } cancel => { root.cancel-update(); } }
+                                if !root.settings-shortcuts-open : VerticalLayout {
+                                    spacing: 10px; alignment: start;
+                                    Text { height: 18px; text: "Window size"; color: root.secondary; font-size: 12px; }
+                                    HorizontalLayout {
+                                        height: 36px; spacing: 8px;
+                                        LibraryButton { horizontal-stretch: 1; height: 36px; quiet: false; caption: "Normal"; label: "Use normal window size"; light-mode: root.light-mode; active: !root.compact-mode; clicked => { if root.compact-mode { root.toggle-compact(); } } }
+                                        LibraryButton { horizontal-stretch: 1; height: 36px; quiet: false; caption: "Compact"; label: "Use compact window size"; light-mode: root.light-mode; active: root.compact-mode; clicked => { if !root.compact-mode { root.toggle-compact(); } } }
+                                    }
+                                    Rectangle { height: 1px; background: root.outline; }
+                                    LibraryButton { height: 38px; quiet: false; active: root.history-feedback-enabled; caption: root.history-feedback-enabled ? "Listening history: on" : "Listening history: off"; label: "Toggle sending actual listening to YouTube Music history"; light-mode: root.light-mode; clicked => { root.toggle-history-feedback(); } }
+                                    Text { height: 32px; text: "Send the songs you hear to YouTube Music to help personalize recommendations."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
+                                    if root.history-feedback-status != "" : Text { text: root.history-feedback-status; color: root.secondary; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
+                                    LibraryButton { height: 38px; quiet: false; active: root.discord-presence-enabled; caption: root.discord-presence-enabled ? "Discord activity: on" : "Discord activity: off"; label: "Toggle Discord listening activity"; light-mode: root.light-mode; clicked => { root.toggle-discord-presence(); } }
+                                    Text { height: 18px; text: "Show the playing song on Discord."; color: root.secondary; font-size: 12px; }
+                                    if root.discord-presence-enabled : Text { text: root.discord-status; color: root.secondary; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
+                                    LibraryButton { height: 38px; quiet: false; caption: "Keyboard shortcuts   ›"; label: "Configure keyboard shortcuts"; light-mode: root.light-mode; clicked => { root.settings-shortcuts-open = true; app-focus.focus(); } }
+                                    Rectangle { height: 1px; background: root.outline; }
+                                    Text { text: root.update-status; color: root.secondary; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
+                                    LibraryButton { height: 38px; quiet: false; caption: root.update-busy ? "Checking…" : "Check for updates"; label: "Check GitHub for a newer stable Tide release"; light-mode: root.light-mode; enabled: !root.update-busy; clicked => { root.check-updates(); } }
+                                    if root.update-available && root.update-installable : UpdateAction { width: 280px; height: 44px; horizontal-stretch: 0; light-mode: root.light-mode; busy: root.update-busy; phase: root.update-phase; progress: root.update-progress; activate => { root.install-update(); } cancel => { root.cancel-update(); } }
+                                    Text { height: 18px; text: "Tide " + root.app-version; color: root.secondary; font-size: 12px; }
+                                    LibraryButton { height: 34px; caption: root.settings-more-open ? "More options  −" : "More options  +"; label: "Show additional settings"; light-mode: root.light-mode; clicked => { root.settings-more-open = !root.settings-more-open; } }
+                                    if root.settings-more-open : VerticalLayout {
+                                        spacing: 10px; alignment: start;
+                                        LibraryButton { height: 36px; quiet: false; caption: "Open audio file"; label: "Open a local audio file"; light-mode: root.light-mode; clicked => { root.open-file(); root.settings-open = false; } }
+                                        LibraryButton { height: 36px; caption: root.media-controls-enabled ? "Windows media keys: on" : "Windows media keys: off"; label: "Toggle Windows media keys"; light-mode: root.light-mode; clicked => { root.toggle-media-controls(); } }
+                                        LibraryButton { height: 36px; caption: root.auto-update-checks ? "Startup update checks: on" : "Startup update checks: off"; label: "Toggle automatic update checks on startup"; light-mode: root.light-mode; clicked => { root.toggle-update-checks(); } }
+                                        Text { height: 18px; text: "Mini opacity · " + root.mini-opacity.to-fixed(0) + "%"; color: root.secondary; font-size: 12px; }
+                                        TideSlider { height: 28px; light-mode: root.light-mode; minimum: 60; maximum: 100; value: root.mini-opacity; label: "Mini player opacity"; value-text: root.mini-opacity.to-fixed(0) + "%"; released(value) => { root.change-mini-opacity(value); } }
+                                        AboutSlint { height: 112px; horizontal-stretch: 0; }
+                                    }
                                 }
-                                LibraryButton { height: 36px; caption: root.auto-update-checks ? "Startup checks: on" : "Startup checks: off"; label: "Toggle automatic update checks on startup"; light-mode: root.light-mode; clicked => { root.toggle-update-checks(); } }
-                                Rectangle { height: 1px; background: root.outline; }
-                                Text { height: 18px; text: "About Tide · " + root.app-version; color: root.secondary; font-size: 12px; }
-                                AboutSlint { height: 112px; horizontal-stretch: 0; }
                             }
                         }
                     }
