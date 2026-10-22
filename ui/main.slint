@@ -1694,7 +1694,7 @@ export component AppWindow inherits Window {
                                 if root.update-available : VerticalLayout {
                                     spacing: 8px;
                                     Text { text: root.update-installable ? "Download while you listen. Restart when ready to apply the update; your account and preferences are kept." : "Automatic installation is available in an installed Windows copy of Tide."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
-                                    if root.update-installable : UpdateAction { width: 280px; height: 44px; max-width: 280px; horizontal-stretch: 0; light-mode: root.light-mode; busy: root.update-busy; phase: root.update-phase; progress: root.update-progress; activate => { root.install-update(); } cancel => { root.cancel-update(); } }
+                                    if root.update-installable : UpdateAction { width: 280px; height: 44px; horizontal-stretch: 0; light-mode: root.light-mode; busy: root.update-busy; phase: root.update-phase; progress: root.update-progress; activate => { root.install-update(); } cancel => { root.cancel-update(); } }
                                 }
                                 LibraryButton { height: 36px; caption: root.auto-update-checks ? "Startup checks: on" : "Startup checks: off"; label: "Toggle automatic update checks on startup"; light-mode: root.light-mode; clicked => { root.toggle-update-checks(); } }
                                 Rectangle { height: 1px; background: root.outline; }
