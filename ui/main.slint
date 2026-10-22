@@ -1654,10 +1654,6 @@ export component AppWindow inherits Window {
                                 Rectangle { height: 1px; background: root.outline; }
                                 Text { height: 20px; text: "Gaming controls"; color: root.foreground; font-size: 15px; font-weight: 600; }
                                 LibraryButton { height: 36px; caption: root.media-controls-enabled ? "Windows media keys: on" : "Windows media keys: off"; label: "Toggle Windows media keys"; light-mode: root.light-mode; clicked => { root.toggle-media-controls(); } }
-                                LibraryButton { height: 36px; active: root.mini-pinned; caption: root.mini-pinned ? "Pin Mini: on" : "Pin Mini: off"; label: "Keep mini player above other windows"; light-mode: root.light-mode; clicked => { root.toggle-mini-pin(); } }
-                                Text { height: 18px; text: "Mini opacity · " + root.mini-opacity.to-fixed(0) + "%"; color: root.secondary; font-size: 12px; }
-                                TideSlider { height: 28px; light-mode: root.light-mode; minimum: 60; maximum: 100; value: root.mini-opacity; label: "Mini player opacity"; value-text: root.mini-opacity.to-fixed(0) + "%"; released(value) => { root.change-mini-opacity(value); } }
-                                Text { height: 42px; text: "Pinning and opacity apply only to Mini. Expand restores the normal window. Exclusive fullscreen games may cover it."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
                                 Text { height: 48px; text: "Global shortcuts work while Tide is in the background. Choose unused Ctrl or Alt combinations, such as Ctrl+Alt+P."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
                                 Text { height: 18px; text: "Play / pause"; color: root.foreground; font-size: 12px; }
                                 LineEdit { height: 36px; text <=> root.shortcut-toggle; placeholder-text: "Disabled"; accessible-label: "Global play pause shortcut"; }
@@ -1668,16 +1664,23 @@ export component AppWindow inherits Window {
                                 LibraryButton { height: 36px; caption: "Apply shortcuts"; label: "Save and register global shortcuts"; light-mode: root.light-mode; clicked => { root.apply-shortcuts(); } }
                                 Text { text: root.shortcut-status; color: root.secondary; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
                                 Rectangle { height: 1px; background: root.outline; }
+                                Text { height: 20px; text: "Recommendations"; color: root.foreground; font-size: 15px; font-weight: 600; }
+                                LibraryButton { height: 40px; quiet: false; active: root.history-feedback-enabled; caption: root.history-feedback-enabled ? "Listening history: on" : "Listening history: off"; label: "Toggle sending actual listening to YouTube Music history"; light-mode: root.light-mode; clicked => { root.toggle-history-feedback(); } }
+                                Text { height: 48px; text: "Turn this on to send songs you actually hear to your selected YouTube Music account. History and your ratings can help its recommendations adapt."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
+                                Text { text: root.history-feedback-status; color: root.secondary; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
+                                Rectangle { height: 1px; background: root.outline; }
+                                Text { height: 20px; text: "Mini player"; color: root.foreground; font-size: 15px; font-weight: 600; }
+                                LibraryButton { height: 36px; active: root.mini-pinned; caption: root.mini-pinned ? "Pin Mini: on" : "Pin Mini: off"; label: "Keep mini player above other windows"; light-mode: root.light-mode; clicked => { root.toggle-mini-pin(); } }
+                                Text { height: 18px; text: "Mini opacity · " + root.mini-opacity.to-fixed(0) + "%"; color: root.secondary; font-size: 12px; }
+                                TideSlider { height: 28px; light-mode: root.light-mode; minimum: 60; maximum: 100; value: root.mini-opacity; label: "Mini player opacity"; value-text: root.mini-opacity.to-fixed(0) + "%"; released(value) => { root.change-mini-opacity(value); } }
+                                Text { height: 42px; text: "Pinning and opacity apply only to Mini. Expand restores the normal window. Exclusive fullscreen games may cover it."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
+                                Rectangle { height: 1px; background: root.outline; }
                                 Text { height: 20px; text: "Discord"; color: root.foreground; font-size: 15px; font-weight: 600; }
                                 Text { height: 42px; text: "Optionally share the song and artist with Discord desktop. Pausing clears the activity. No account or Jam invite is shared."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
                                 LineEdit { height: 36px; text <=> root.discord-application-id; enabled: !root.discord-presence-enabled; placeholder-text: "Discord application ID"; accessible-label: "Public Discord application ID"; }
                                 LibraryButton { height: 40px; quiet: false; active: root.discord-presence-enabled; caption: root.discord-presence-enabled ? "Share listening: on" : "Share listening: off"; label: "Toggle Discord listening activity"; light-mode: root.light-mode; clicked => { root.toggle-discord-presence(); } }
                                 Text { text: root.discord-status; color: root.secondary; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
                                 Rectangle { height: 1px; background: root.outline; }
-                                Text { height: 20px; text: "Recommendations"; color: root.foreground; font-size: 15px; font-weight: 600; }
-                                LibraryButton { height: 40px; quiet: false; active: root.history-feedback-enabled; caption: root.history-feedback-enabled ? "Listening history: on" : "Listening history: off"; label: "Toggle sending actual listening to YouTube Music history"; light-mode: root.light-mode; clicked => { root.toggle-history-feedback(); } }
-                                Text { height: 48px; text: "Turn this on to send songs you actually hear to your selected YouTube Music account. History and your ratings can help its recommendations adapt."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
-                                Text { text: root.history-feedback-status; color: root.secondary; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
                                 Rectangle { height: 1px; background: root.outline; }
                                 Text { height: 20px; text: "Updates"; color: root.foreground; font-size: 15px; font-weight: 600; }
                                 Text { text: root.update-status; color: root.secondary; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
