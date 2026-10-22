@@ -1337,6 +1337,7 @@ export component AppWindow inherits Window {
     private property <image> current-artwork: root.track-artwork;
     private property <bool> wide: true;
     private property <bool> narrow-navigation: false;
+    private property <bool> header-branding: true;
     private property <bool> advanced-open: false;
     private property <bool> browsing-enabled: !root.settings-open && !root.account-open && !root.artist-picker-open && !root.jam-open && !(root.queue-open && !root.wide);
 
@@ -1349,8 +1350,8 @@ export component AppWindow inherits Window {
     min-width: 650px;
     min-height: root.collapsed ? (root.jam-active ? 146px : 112px) : 420px;
     background: root.light-mode ? #f4eee6 : #111318;
-    init => { Palette.color-scheme = root.light-mode ? light : dark; root.wide = root.width >= 1050px; root.narrow-navigation = root.width < 900px; }
-    changed width => { root.wide = root.width >= 1050px; root.narrow-navigation = root.width < 900px; }
+    init => { Palette.color-scheme = root.light-mode ? light : dark; root.wide = root.width >= 1050px; root.narrow-navigation = root.width < 900px; root.header-branding = root.width >= 780px; }
+    changed width => { root.wide = root.width >= 1050px; root.narrow-navigation = root.width < 900px; root.header-branding = root.width >= 780px; }
     changed settings-open => {
         if root.settings-open { root.playlist-picker-open = false; root.account-open = false; root.jam-open = false; app-focus.focus(); }
     }
@@ -1414,8 +1415,8 @@ export component AppWindow inherits Window {
                     spacing: 10px;
                     cross-axis-alignment: center;
                     Image { width: 28px; height: 28px; source: @image-url("assets/tide-icon.png"); image-fit: contain; }
-                    if root.width >= 780px : Text { width: 56px; text: "Tide"; color: root.foreground; font-size: 21px; font-weight: 700; }
-                    if root.width >= 780px : SearchMark { ink: root.secondary; }
+                    if root.header-branding : Text { width: 56px; text: "Tide"; color: root.foreground; font-size: 21px; font-weight: 700; }
+                    if root.header-branding : SearchMark { ink: root.secondary; }
                     LineEdit { horizontal-stretch: 1; height: 36px; font-size: 13px; enabled: root.browsing-enabled; text <=> root.source-input; placeholder-text: "Search music or paste a link"; accessible-label: "Search music or paste a YouTube link"; accepted(value) => { if value != "" { root.add-source(value); } } }
                     LibraryButton { width: 74px; light-mode: root.light-mode; enabled: root.browsing-enabled; caption: "Search"; label: "Search for music or open the pasted link"; clicked => { if root.source-input != "" { root.add-source(root.source-input); } } }
                     LibraryButton { width: 36px; height: 36px; enabled: !root.artist-picker-open; light-mode: root.light-mode; caption: root.light-mode ? "☾" : "☼"; label: root.light-mode ? "Switch to dark theme" : "Switch to light theme"; clicked => { root.switch-mode(); } }
