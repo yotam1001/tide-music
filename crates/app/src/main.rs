@@ -16,6 +16,7 @@ mod artists;
 mod artwork;
 mod artwork_view;
 mod connection;
+mod discord;
 mod discovery;
 mod history_feedback;
 #[cfg(feature = "experimental-jams")]
@@ -49,6 +50,14 @@ struct Settings {
     #[serde(default)]
     history_feedback: bool,
     #[serde(default)]
+    discord_presence: bool,
+    #[serde(default)]
+    discord_application_id: String,
+    #[serde(default)]
+    mini_pinned: bool,
+    #[serde(default = "opaque_mini")]
+    mini_opacity: u8,
+    #[serde(default)]
     shortcuts: [String; 3],
     volume: Option<f64>,
     repeat: bool,
@@ -65,12 +74,19 @@ impl Default for Settings {
             check_updates: true,
             media_controls: true,
             history_feedback: false,
+            discord_presence: false,
+            discord_application_id: String::new(),
+            mini_pinned: false,
+            mini_opacity: 100,
             shortcuts: Default::default(),
             volume: None,
             repeat: false,
             transient: false,
         }
     }
+}
+fn opaque_mini() -> u8 {
+    100
 }
 fn enabled_by_default() -> bool {
     true
@@ -1783,6 +1799,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ui.set_autoplay_enabled(state.borrow().settings.autoplay);
     ui.set_auto_update_checks(state.borrow().settings.check_updates);
     ui.set_media_controls_enabled(state.borrow().settings.media_controls);
+    ui.set_discord_presence_enabled(state.borrow().settings.discord_presence);
+    ui.set_discord_application_id(
+        state
+            .borrow()
+            .settings
+            .discord_application_id
+            .clone()
+            .into(),
+    );
+    ui.set_mini_pinned(state.borrow().settings.mini_pinned);
+    ui.set_mini_opacity(state.borrow().settings.mini_opacity.clamp(60, 100) as f32);
     {
         let s = state.borrow();
         ui.set_shortcut_toggle(s.settings.shortcuts[0].clone().into());
@@ -2671,6 +2698,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         u.set_media_controls_enabled(s.settings.media_controls);
         save(&s.settings);
     });
+    bind!(on_toggle_mini_pin, |s, u| {
+        s.settings.mini_pinned = !s.settings.mini_pinned;
+        u.set_mini_pinned(s.settings.mini_pinned);
+        save(&s.settings);
+    });
+    {
+        let state = state.clone();
+        let weak = ui.as_weak();
+        ui.on_change_mini_opacity(move |value| {
+            if let Some(u) = weak.upgrade() {
+                let mut s = state.borrow_mut();
+                s.settings.mini_opacity = if value.is_finite() {
+                    value.round().clamp(60.0, 100.0) as u8
+                } else {
+                    100
+                };
+                u.set_mini_opacity(s.settings.mini_opacity as f32);
+                save(&s.settings);
+            }
+        });
+    }
+    bind!(on_toggle_discord_presence, |s, u| {
+        let id = u.get_discord_application_id().to_string();
+        if !s.settings.discord_presence && !discord::valid_id(id.trim()) {
+            u.set_discord_status("Enter a valid public Discord application ID first".into());
+        } else {
+            s.settings.discord_application_id = id.trim().to_owned();
+            s.settings.discord_presence = !s.settings.discord_presence;
+            u.set_discord_presence_enabled(s.settings.discord_presence);
+            save(&s.settings);
+        }
+    });
     bind!(on_toggle_update_checks, |s, u| {
         s.settings.check_updates = !s.settings.check_updates;
         u.set_auto_update_checks(s.settings.check_updates);
@@ -3041,6 +3100,81 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 if tide_windows::fit_window_to_work_area(hwnd, work).is_ok() {
                     fitted = Some(mode);
+                }
+            },
+        );
+    }
+    let discord_timer = slint::Timer::default();
+    if media_enabled {
+        let weak = ui.as_weak();
+        let state = state.clone();
+        let mut presence = discord::Presence::default();
+        discord_timer.start(
+            slint::TimerMode::Repeated,
+            Duration::from_secs(1),
+            move || {
+                let Some(u) = weak.upgrade() else {
+                    return;
+                };
+                let s = state.borrow();
+                let active = s.engine.as_ref().map(|e| e.snapshot()).is_some_and(|p| {
+                    s.active_playback
+                        && p.generation == s.generation
+                        && !p.paused
+                        && !p.ended
+                        && p.error.is_none()
+                });
+                let activity = active
+                    .then(|| discord::Activity::new(&u.get_track_title(), &u.get_track_artist()))
+                    .flatten();
+                let status = presence.update(
+                    s.settings.discord_presence && !s.settings.transient,
+                    &s.settings.discord_application_id,
+                    activity,
+                );
+                if u.get_discord_status() != status {
+                    u.set_discord_status(status.into());
+                }
+            },
+        );
+    }
+    let mini_timer = slint::Timer::default();
+    #[cfg(windows)]
+    if !test_mode && listening_seconds.is_none() && !smoke_autoplay {
+        let weak = ui.as_weak();
+        let mut applied = None;
+        let mut native_mini = tide_windows::mini::MiniWindow::default();
+        mini_timer.start(
+            slint::TimerMode::Repeated,
+            Duration::from_millis(100),
+            move || {
+                use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+                let Some(u) = weak.upgrade() else {
+                    return;
+                };
+                let mini = u.get_collapsed();
+                let pinned = mini && u.get_mini_pinned();
+                let opacity = if mini {
+                    (u.get_mini_opacity().clamp(60.0, 100.0) * 2.55).round() as u8
+                } else {
+                    255
+                };
+                let desired = (pinned, opacity);
+                if applied == Some(desired) {
+                    return;
+                }
+                let window = u.window().window_handle();
+                let Ok(handle) = window.window_handle() else {
+                    return;
+                };
+                let RawWindowHandle::Win32(handle) = handle.as_raw() else {
+                    return;
+                };
+                if native_mini
+                    .apply(handle.hwnd.get() as *mut std::ffi::c_void, pinned, opacity)
+                    .is_ok()
+                {
+                    applied = Some(desired);
                 }
             },
         );
@@ -4368,6 +4502,24 @@ mod tests {
             restored.shortcuts,
             [String::new(), String::new(), String::new()]
         );
+    }
+
+    #[test]
+    fn older_settings_leave_sharing_and_pinning_off() {
+        let mut value = serde_json::to_value(Settings::default()).unwrap();
+        for key in [
+            "discord_presence",
+            "discord_application_id",
+            "mini_pinned",
+            "mini_opacity",
+        ] {
+            value.as_object_mut().unwrap().remove(key);
+        }
+        let restored: Settings = serde_json::from_value(value).unwrap();
+        assert!(!restored.discord_presence);
+        assert!(restored.discord_application_id.is_empty());
+        assert!(!restored.mini_pinned);
+        assert_eq!(restored.mini_opacity, 100);
     }
 
     #[test]

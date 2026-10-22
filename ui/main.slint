@@ -1093,6 +1093,8 @@ component PlayerBar inherits Rectangle {
     callback restore();
     callback toggle-queue();
     callback mini();
+    in property <bool> mini-pinned;
+    callback toggle-mini-pin();
     private property <color> foreground: root.light-mode ? #392e33 : #f0eeef;
     private property <color> secondary: root.light-mode ? #716773 : #a1a5ae;
     background: root.light-mode ? #eee5db : #15181d;
@@ -1133,13 +1135,14 @@ component PlayerBar inherits Rectangle {
             HorizontalLayout {
                 x: parent.width - self.width;
                 y: 8px;
-                width: root.collapsed ? 110px : 208px;
+                width: root.collapsed ? 150px : 208px;
                 height: 36px;
                 spacing: root.collapsed ? 4px : 8px;
                 RatingButton { width: 32px; height: 36px; enabled: root.rating-enabled && !root.rating-busy; light-mode: root.light-mode; active: root.rating == 1; label: root.rating == 1 ? "Remove like" : "Like this song on YouTube Music"; clicked => { root.rate(root.rating == 1 ? 0 : 1); } }
                 RatingButton { width: 32px; height: 36px; negative: true; enabled: root.rating-enabled && !root.rating-busy; light-mode: root.light-mode; active: root.rating == -1; label: root.rating == -1 ? "Remove dislike" : "Dislike this song on YouTube Music"; clicked => { root.rate(root.rating == -1 ? 0 : -1); } }
                 if !root.collapsed : LibraryButton { width: 72px; light-mode: root.light-mode; caption: "Queue"; label: root.queue-open ? "Close queue drawer" : "Open queue drawer"; active: root.queue-open; clicked => { root.toggle-queue(); } }
                 if !root.collapsed : LibraryButton { width: 48px; light-mode: root.light-mode; caption: "Mini"; label: "Collapse to mini player"; clicked => { root.mini(); } }
+                if root.collapsed : LibraryButton { width: 36px; light-mode: root.light-mode; caption: "Pin"; label: root.mini-pinned ? "Unpin mini player" : "Pin mini player above other windows"; active: root.mini-pinned; clicked => { root.toggle-mini-pin(); } }
                 if root.collapsed : LibraryButton { width: 38px; light-mode: root.light-mode; caption: "↗"; label: "Expand to full Tide window"; clicked => { root.restore(); } }
             }
         }
@@ -1237,6 +1240,14 @@ export component AppWindow inherits Window {
     in-out property <string> shortcut-previous;
     in property <string> shortcut-status: "Optional. Leave blank to disable a shortcut.";
     callback toggle-media-controls();
+    in property <bool> discord-presence-enabled: false;
+    in-out property <string> discord-application-id;
+    in property <string> discord-status: "Off — listening activity stays private";
+    callback toggle-discord-presence();
+    in property <bool> mini-pinned: false;
+    in property <float> mini-opacity: 100;
+    callback toggle-mini-pin();
+    callback change-mini-opacity(float);
     in property <bool> history-feedback-enabled: false;
     in property <string> history-feedback-status;
     callback toggle-history-feedback();
@@ -1643,6 +1654,10 @@ export component AppWindow inherits Window {
                                 Rectangle { height: 1px; background: root.outline; }
                                 Text { height: 20px; text: "Gaming controls"; color: root.foreground; font-size: 15px; font-weight: 600; }
                                 LibraryButton { height: 36px; caption: root.media-controls-enabled ? "Windows media keys: on" : "Windows media keys: off"; label: "Toggle Windows media keys"; light-mode: root.light-mode; clicked => { root.toggle-media-controls(); } }
+                                LibraryButton { height: 36px; active: root.mini-pinned; caption: root.mini-pinned ? "Pin Mini: on" : "Pin Mini: off"; label: "Keep mini player above other windows"; light-mode: root.light-mode; clicked => { root.toggle-mini-pin(); } }
+                                Text { height: 18px; text: "Mini opacity · " + root.mini-opacity.to-fixed(0) + "%"; color: root.secondary; font-size: 12px; }
+                                TideSlider { height: 28px; light-mode: root.light-mode; minimum: 60; maximum: 100; value: root.mini-opacity; label: "Mini player opacity"; value-text: root.mini-opacity.to-fixed(0) + "%"; released(value) => { root.change-mini-opacity(value); } }
+                                Text { height: 42px; text: "Pinning and opacity apply only to Mini. Expand restores the normal window. Exclusive fullscreen games may cover it."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
                                 Text { height: 48px; text: "Global shortcuts work while Tide is in the background. Choose unused Ctrl or Alt combinations, such as Ctrl+Alt+P."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
                                 Text { height: 18px; text: "Play / pause"; color: root.foreground; font-size: 12px; }
                                 LineEdit { height: 36px; text <=> root.shortcut-toggle; placeholder-text: "Disabled"; accessible-label: "Global play pause shortcut"; }
@@ -1652,6 +1667,12 @@ export component AppWindow inherits Window {
                                 LineEdit { height: 36px; text <=> root.shortcut-previous; placeholder-text: "Disabled"; accessible-label: "Global previous song shortcut"; }
                                 LibraryButton { height: 36px; caption: "Apply shortcuts"; label: "Save and register global shortcuts"; light-mode: root.light-mode; clicked => { root.apply-shortcuts(); } }
                                 Text { text: root.shortcut-status; color: root.secondary; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
+                                Rectangle { height: 1px; background: root.outline; }
+                                Text { height: 20px; text: "Discord"; color: root.foreground; font-size: 15px; font-weight: 600; }
+                                Text { height: 42px; text: "Optionally share the song and artist with Discord desktop. Pausing clears the activity. No account or Jam invite is shared."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
+                                LineEdit { height: 36px; text <=> root.discord-application-id; enabled: !root.discord-presence-enabled; placeholder-text: "Discord application ID"; accessible-label: "Public Discord application ID"; }
+                                LibraryButton { height: 40px; quiet: false; active: root.discord-presence-enabled; caption: root.discord-presence-enabled ? "Share listening: on" : "Share listening: off"; label: "Toggle Discord listening activity"; light-mode: root.light-mode; clicked => { root.toggle-discord-presence(); } }
+                                Text { text: root.discord-status; color: root.secondary; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
                                 Rectangle { height: 1px; background: root.outline; }
                                 Text { height: 20px; text: "Recommendations"; color: root.foreground; font-size: 15px; font-weight: 600; }
                                 LibraryButton { height: 40px; quiet: false; active: root.history-feedback-enabled; caption: root.history-feedback-enabled ? "Listening history: on" : "Listening history: off"; label: "Toggle sending actual listening to YouTube Music history"; light-mode: root.light-mode; clicked => { root.toggle-history-feedback(); } }
@@ -1818,6 +1839,8 @@ export component AppWindow inherits Window {
                 vertical-stretch: root.collapsed ? 1 : 0;
                 track-title: root.track-title;
                 track-artist: root.track-artist;
+                mini-pinned: root.mini-pinned;
+                toggle-mini-pin => { root.toggle-mini-pin(); }
                 artist-enabled: root.track-artist-enabled && !root.account-busy && !root.artist-picker-open && !root.settings-open && !root.account-open;
                 audio-quality: root.audio-quality;
                 playback-hint: root.collapsed && root.feedback-notice != "" ? root.feedback-notice : root.playback-hint;
