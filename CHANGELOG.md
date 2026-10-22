@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.3.0 — 2026-10-22
+
 - Add Like/Dislike controls, including clearing a rating, for the selected account.
 - Save songs to owned playlists and remove exact entries without changing the queue.
 - Add optional listening-history feedback based on actual playback, off by default.

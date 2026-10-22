@@ -1377,6 +1377,10 @@ export component AppWindow inherits Window {
     }
 
     app-focus := FocusScope {
+        // The window provides its sizing rules. Descendant responsive branches
+        // must not become a constraint on the window width they inspect.
+        min-width: 0px; preferred-width: 0px; max-width: 10000px;
+        min-height: 0px; preferred-height: 0px; max-height: 10000px;
         key-pressed(event) => {
             if root.artist-picker-open {
                 if event.text == Key.Escape { root.back-detail(); return accept; }

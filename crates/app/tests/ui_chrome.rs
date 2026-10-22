@@ -349,7 +349,10 @@ fn settings_theme_account_and_song_menu_remain_independent() {
         );
         click(&ui, 1087.0, 185.0);
         draw(&window, 1140, 800);
-        key(&ui, Key::UpArrow);
+        // Radio is the third item; playlist saving now follows it.
+        key(&ui, Key::DownArrow);
+        key(&ui, Key::DownArrow);
+        key(&ui, Key::DownArrow);
         key(&ui, Key::Return);
         draw(&window, 1140, 800);
         assert_eq!(
