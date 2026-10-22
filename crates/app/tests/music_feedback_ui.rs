@@ -127,4 +127,57 @@ fn native_ratings_remain_reachable_and_do_not_take_over_transport() {
         "History consent is not reachable in Settings"
     );
     draw(&window, 1140, 1400, "history-settings-on");
+    ui.set_settings_open(false);
+    ui.set_collection_enabled(true);
+    ui.set_playlist_picker_song(
+        "A long selected song title that must stay inside the chooser".into(),
+    );
+    ui.set_playlist_choices(slint::ModelRc::new(slint::VecModel::from(vec![
+        "First editable playlist".into(),
+        "Second editable playlist".into(),
+    ])));
+    let chosen = Rc::new(RefCell::new(Vec::new()));
+    let captured = chosen.clone();
+    ui.on_pick_playlist(move |index| captured.borrow_mut().push(index));
+    let refreshed = Rc::new(RefCell::new(0));
+    let captured = refreshed.clone();
+    ui.on_refresh_playlist_choices(move || *captured.borrow_mut() += 1);
+    let weak = ui.as_weak();
+    ui.on_cancel_playlist_picker(move || weak.upgrade().unwrap().set_playlist_picker_open(false));
+    for (width, height, light) in [(1140, 800, false), (650, 420, true)] {
+        ui.set_light_mode(light);
+        ui.set_playlist_picker_open(true);
+        draw(&window, width, height, &format!("playlist-picker-{width}"));
+        let x = width as f32 - 200.0;
+        let before = chosen.borrow().len();
+        click(&ui, x, 168.0);
+        assert_eq!(
+            chosen.borrow().len(),
+            before + 1,
+            "Playlist selection is clipped"
+        );
+        assert_eq!(chosen.borrow().last(), Some(&0));
+        ui.set_playlist_choices_busy(true);
+        click(&ui, x, 168.0);
+        assert_eq!(
+            chosen.borrow().len(),
+            before + 1,
+            "Refreshing picker accepted stale choices"
+        );
+        ui.set_playlist_choices_busy(false);
+        let before = *refreshed.borrow();
+        click(&ui, x, height as f32 - 174.0);
+        assert_eq!(*refreshed.borrow(), before + 1, "Refresh is clipped");
+        click(&ui, width as f32 - 28.0, 94.0);
+        assert!(!ui.get_playlist_picker_open(), "Chooser cannot be closed");
+        ui.set_playlist_picker_open(true);
+        draw(&window, width, height, "playlist-picker-keyboard");
+        ui.window().dispatch_event(WindowEvent::KeyPressed {
+            text: slint::platform::Key::Escape.into(),
+        });
+        assert!(
+            !ui.get_playlist_picker_open(),
+            "Escape did not close chooser"
+        );
+    }
 }

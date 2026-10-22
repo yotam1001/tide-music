@@ -82,7 +82,10 @@ impl FeedbackRequest {
                 result.operation == FeedbackOperation::Rate && result.rating == Some(*rating)
             }
             Self::PlaylistAdd { .. } => result.operation == FeedbackOperation::PlaylistAdd,
-            Self::PlaylistRemove { .. } => result.operation == FeedbackOperation::PlaylistRemove,
+            Self::PlaylistRemove { entry_id, .. } => {
+                result.operation == FeedbackOperation::PlaylistRemove
+                    && result.entry_id.as_deref() == Some(entry_id.as_str())
+            }
             Self::History { .. } => result.operation == FeedbackOperation::History,
         }
     }
@@ -105,6 +108,8 @@ pub struct FeedbackResult {
     pub video_id: String,
     pub playlist_id: Option<String>,
     pub rating: Option<Rating>,
+    #[serde(default)]
+    pub entry_id: Option<String>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -143,6 +148,7 @@ mod tests {
             video_id: "K4DyBUG242c".into(),
             playlist_id: None,
             rating: Some(Rating::Like),
+            entry_id: None,
         };
         assert!(request.accepts(&result));
         result.video_id = "00000000001".into();
@@ -176,5 +182,25 @@ mod tests {
             video_id: "https://example.test".into()
         }
         .valid());
+    }
+    #[test]
+    fn removing_a_duplicate_song_requires_the_exact_entry_acknowledgement() {
+        let request = FeedbackRequest::PlaylistRemove {
+            video_id: "00000000001".into(),
+            playlist_id: "PLfixture".into(),
+            entry_id: "entry-two".into(),
+        };
+        let mut result = FeedbackResult {
+            operation: FeedbackOperation::PlaylistRemove,
+            video_id: request.video_id().into(),
+            playlist_id: Some("PLfixture".into()),
+            rating: None,
+            entry_id: Some("entry-one".into()),
+        };
+        assert!(!request.accepts(&result));
+        result.entry_id = None;
+        assert!(!request.accepts(&result));
+        result.entry_id = Some("entry-two".into());
+        assert!(request.accepts(&result));
     }
 }

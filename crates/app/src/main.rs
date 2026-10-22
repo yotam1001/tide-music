@@ -1556,6 +1556,9 @@ fn search(query: String, cancel: Arc<AtomicBool>) -> Result<Vec<Track>, String> 
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if std::env::args().any(|arg| arg == "--smoke-collection-read") {
+        return music_feedback::read_probe().map_err(Into::into);
+    }
     let jam_ownership_smoke = std::env::args().any(|arg| arg == "--smoke-jam-ownership");
     if jam_ownership_smoke && !cfg!(feature = "experimental-jams") {
         return Err("Jam ownership verification requires an experimental-jams build".into());
@@ -1803,9 +1806,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let picker_busy = Rc::new(PickerState::default());
     #[cfg(feature = "experimental-jams")]
     jam::install(&state, &ui, &picker_busy);
-    music_feedback::install(&state, &ui);
     let (tx, rx) = mpsc::sync_channel(2);
     let (library_tx, library_rx) = mpsc::sync_channel::<LibraryResult>(2);
+    music_feedback::install(&state, &ui, &library_tx);
     {
         let state = state.clone();
         let weak = ui.as_weak();

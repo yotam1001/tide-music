@@ -182,7 +182,7 @@ fn guest_mini_keeps_leave_and_volume_reachable_and_blocks_transport() {
         "Settings is clipped at minimum width"
     );
     ui.set_settings_open(false);
-    click(&ui, 370.0, 32.0);
+    click(&ui, 60.0, 198.0);
     assert!(ui.get_jam_open(), "Jam is inaccessible at minimum width");
     ui.set_jam_open(false);
     ui.set_jam_guest(true);

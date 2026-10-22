@@ -663,7 +663,7 @@ def feedback(client, request):
             if getattr(client.add_history_item(song), "status_code", None) != 204:
                 raise ValueError("unconfirmed history")
         return {"type": "feedback", "result": {"operation": kind, "video_id": video,
-                "playlist_id": playlist, "rating": rating}}
+                "playlist_id": playlist, "rating": rating, "entry_id": entry}}
     except Exception:
         # A timeout might follow a completed write. Leave the result unconfirmed;
         # do not retry, disconnect the player, or expose response URLs/headers.

@@ -72,6 +72,7 @@ class FeedbackTests(unittest.TestCase):
         client = self.client()
         result = feedback(client, self.request("playlistremove", playlist_id="PLfixture", entry_id="entry-two"))
         self.assertEqual(result["type"], "feedback")
+        self.assertEqual(result["result"]["entry_id"], "entry-two")
         client.remove_playlist_items.assert_called_once_with(
             "PLfixture", [{"videoId": self.video, "setVideoId": "entry-two"}])
         client = self.client()
