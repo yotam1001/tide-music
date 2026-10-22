@@ -148,6 +148,7 @@ fn shortcuts_capture_keys_cancel_and_clear_without_transport() {
     ui.set_settings_more_open(true);
     ui.set_settings_scroll_y(-180.0);
     ui.set_settings_open(false);
+    draw(&window, 650, 420, "settings-small-closed");
     ui.set_settings_open(true);
     draw(&window, 650, 420, "settings-reopened");
     assert_eq!(
