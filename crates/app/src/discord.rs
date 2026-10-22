@@ -22,14 +22,21 @@ impl Activity {
             return None;
         }
         fn bounded(value: &str) -> String {
-            value
-                .chars()
-                .filter(|c| !c.is_control())
-                .take(128)
-                .collect()
+            let mut result = String::new();
+            for c in value.chars().filter(|c| !c.is_control()) {
+                if result.len() + c.len_utf8() > 128 {
+                    break;
+                }
+                result.push(c);
+            }
+            result
+        }
+        let title = bounded(title);
+        if title.trim().is_empty() {
+            return None;
         }
         Some(Self {
-            title: bounded(title),
+            title,
             artist: bounded(artist),
         })
     }
@@ -124,14 +131,23 @@ impl Drop for Worker {
         }
     }
 }
+#[cfg(any(windows, test))]
+trait Transport {
+    fn send(&self, opcode: u32, data: &[u8], deadline: Instant) -> std::io::Result<()>;
+    fn receive(&self, deadline: Instant) -> std::io::Result<(u32, Vec<u8>)>;
+}
 #[cfg(windows)]
-fn request(
-    pipe: &tide_windows::discord_pipe::DiscordPipe,
-    opcode: u32,
-    data: Value,
-    nonce: Option<&str>,
-) -> Result<(), ()> {
-    let deadline = tide_windows::discord_pipe::DiscordPipe::deadline();
+impl Transport for tide_windows::discord_pipe::DiscordPipe {
+    fn send(&self, opcode: u32, data: &[u8], deadline: Instant) -> std::io::Result<()> {
+        self.send(opcode, data, deadline)
+    }
+    fn receive(&self, deadline: Instant) -> std::io::Result<(u32, Vec<u8>)> {
+        self.receive(deadline)
+    }
+}
+#[cfg(any(windows, test))]
+fn request(pipe: &impl Transport, opcode: u32, data: Value, nonce: Option<&str>) -> Result<(), ()> {
+    let deadline = Instant::now() + Duration::from_millis(500);
     pipe.send(
         opcode,
         &serde_json::to_vec(&data).map_err(|_| ())?,
@@ -145,7 +161,7 @@ fn request(
             pipe.send(4, &bytes, deadline).map_err(|_| ())?;
             continue;
         }
-        if code == 2 {
+        if code != 1 {
             return Err(());
         }
         let response: Value = serde_json::from_slice(&bytes).map_err(|_| ())?;
@@ -153,7 +169,7 @@ fn request(
             return Err(());
         }
         if nonce.is_none() && response["evt"] == "READY"
-            || nonce.is_some_and(|n| response["nonce"] == n)
+            || nonce.is_some_and(|n| response["cmd"] == "SET_ACTIVITY" && response["nonce"] == n)
         {
             return Ok(());
         }
@@ -254,5 +270,77 @@ mod tests {
         assert!(presence.worker.is_none());
         presence.update(true, "bad", None);
         assert!(presence.worker.is_none());
+    }
+}
+
+#[cfg(test)]
+mod protocol_tests {
+    use super::*;
+    use std::{cell::RefCell, collections::VecDeque};
+    struct Fake {
+        replies: RefCell<VecDeque<(u32, Vec<u8>)>>,
+        writes: RefCell<Vec<(u32, Vec<u8>)>>,
+    }
+    impl Fake {
+        fn new(values: Vec<(u32, Value)>) -> Self {
+            Self {
+                replies: RefCell::new(
+                    values
+                        .into_iter()
+                        .map(|(op, v)| (op, serde_json::to_vec(&v).unwrap()))
+                        .collect(),
+                ),
+                writes: RefCell::new(Vec::new()),
+            }
+        }
+    }
+    impl Transport for Fake {
+        fn send(&self, op: u32, bytes: &[u8], _deadline: Instant) -> std::io::Result<()> {
+            self.writes.borrow_mut().push((op, bytes.to_vec()));
+            Ok(())
+        }
+        fn receive(&self, _deadline: Instant) -> std::io::Result<(u32, Vec<u8>)> {
+            self.replies
+                .borrow_mut()
+                .pop_front()
+                .ok_or(std::io::ErrorKind::UnexpectedEof.into())
+        }
+    }
+    #[test]
+    fn requires_ready_and_matching_acknowledgement() {
+        let pipe = Fake::new(vec![(1, json!({"evt":"READY"}))]);
+        assert!(request(
+            &pipe,
+            0,
+            json!({"v":1,"client_id":"123456789012345678"}),
+            None
+        )
+        .is_ok());
+        let pipe = Fake::new(vec![
+            (1, json!({"cmd":"SET_ACTIVITY","nonce":"old"})),
+            (1, json!({"cmd":"SET_ACTIVITY","nonce":"2"})),
+        ]);
+        assert!(request(&pipe, 1, payload(None, 2), Some("2")).is_ok());
+        let pipe = Fake::new(vec![(1, json!({"cmd":"WRONG","nonce":"2"}))]);
+        assert!(request(&pipe, 1, payload(None, 2), Some("2")).is_err());
+    }
+    #[test]
+    fn handles_ping_errors_and_unsolicited_event_flood() {
+        let pipe = Fake::new(vec![
+            (3, json!({"ping":1})),
+            (1, json!({"cmd":"SET_ACTIVITY","nonce":"2"})),
+        ]);
+        assert!(request(&pipe, 1, payload(None, 2), Some("2")).is_ok());
+        assert_eq!(pipe.writes.borrow()[1].0, 4);
+        let pipe = Fake::new(vec![(1, json!({"evt":"ERROR","nonce":"2"}))]);
+        assert!(request(&pipe, 1, payload(None, 2), Some("2")).is_err());
+        let pipe = Fake::new(vec![(1, json!({"evt":"UNRELATED"})); 9]);
+        assert!(request(&pipe, 0, json!({}), None).is_err());
+        assert_eq!(pipe.replies.borrow().len(), 1);
+        let pipe = Fake {
+            replies: RefCell::new(VecDeque::from([(1, b"invalid json".to_vec())])),
+            writes: RefCell::new(Vec::new()),
+        };
+        assert!(request(&pipe, 0, json!({}), None).is_err());
     }
 }

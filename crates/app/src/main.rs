@@ -3121,6 +3121,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     s.active_playback
                         && p.generation == s.generation
                         && !p.paused
+                        && !p.loading
                         && !p.ended
                         && p.error.is_none()
                 });
