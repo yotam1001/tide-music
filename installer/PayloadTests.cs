@@ -37,7 +37,11 @@ internal static class PayloadTests {
     [STAThread] public static int Main(string[] args) {
         var fixtureName = Path.GetFileName(System.Reflection.Assembly.GetExecutingAssembly().Location);
         if (fixtureName == "startup-failure.exe") return 37;
-        if (fixtureName == "startup-success.exe") { System.Threading.Thread.Sleep(5000); return 0; }
+        if (fixtureName == "startup-success.exe") { System.Threading.Thread.Sleep(30000); return 0; }
+        if (args.Length == 2 && args[0] == "--reopen-child") {
+            using (var player = SetupWindow.StartPlayer(args[1], false)) Console.WriteLine("REOPENED|" + player.Id);
+            return 0;
+        }
         if (args.Length == 1 && args[0] == "--handoff-child") { System.Threading.Thread.Sleep(1200); return 0; }
         if (args.Length == 1 && args[0].StartsWith("--readiness-child", StringComparison.Ordinal)) {
             if (args[0] == "--readiness-child-utf16") {
@@ -149,6 +153,25 @@ internal static class PayloadTests {
             using (var running = SetupWindow.StartPlayer(goodPlayer, false)) {
                 if (running.HasExited) throw new Exception("Started player was not alive.");
                 running.Kill(); running.WaitForExit();
+            }
+            using (var launcher = Process.Start(new ProcessStartInfo {
+                FileName = System.Reflection.Assembly.GetExecutingAssembly().Location,
+                Arguments = "--reopen-child \"" + goodPlayer + "\"", UseShellExecute = false,
+                CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true
+            })) {
+                var receipt = launcher.StandardOutput.ReadLineAsync();
+                if (!receipt.Wait(10000) || receipt.Result == null || !receipt.Result.StartsWith("REOPENED|", StringComparison.Ordinal))
+                    throw new Exception("Reopen fixture did not identify its child.");
+                using (var player = Process.GetProcessById(Int32.Parse(receipt.Result.Substring(9)))) {
+                    try {
+                        if (player.MainModule.FileName != goodPlayer || player.HasExited)
+                            throw new Exception("Reopened fixture is not the expected live child.");
+                        var remaining = launcher.StandardOutput.ReadToEndAsync();
+                        var errors = launcher.StandardError.ReadToEndAsync();
+                        if (!launcher.WaitForExit(10000) || launcher.ExitCode != 0 || !remaining.Wait(2000) || !errors.Wait(2000))
+                            throw new Exception("Reopened player retained the setup output pipes.");
+                    } finally { if (!player.HasExited) { player.Kill(); player.WaitForExit(); } }
+                }
             }
         } finally { File.Delete(failedPlayer); File.Delete(goodPlayer); }
         var previousModules = Environment.GetEnvironmentVariable("PSModulePath");

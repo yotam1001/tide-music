@@ -390,7 +390,10 @@ namespace TideSetup {
         internal static Process StartPlayer(string executable, bool account) {
             var player = Process.Start(new ProcessStartInfo {
                 FileName = executable, Arguments = account ? "--connect-account" : "",
-                WorkingDirectory = Path.GetDirectoryName(executable), UseShellExecute = false, CreateNoWindow = true
+                // Shell launch detaches the interactive player from setup's
+                // inherited confirmation pipes. It inherits this process's
+                // environment, including the existing per-user profile.
+                WorkingDirectory = Path.GetDirectoryName(executable), UseShellExecute = true
             });
             if (player == null) throw new IOException("Windows did not start Tide. Retry Open Tide.");
             if (player.WaitForExit(1000)) {

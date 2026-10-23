@@ -241,8 +241,11 @@ try {
         if (!$taskSetupProcess.HasExited -and $taskSetupProcess.MainWindowHandle -ne 0) { throw 'Automatic update opened a separate setup window.' }
     }
     if (!$taskSetupProcess.WaitForExit(600000) -or $taskSetupProcess.ExitCode -ne 0) { throw 'Automatic setup handoff did not finish.' }
-    [IO.File]::WriteAllText((Join-Path $taskEvidence 'setup.stdout.log'), $taskReady.Result + [Environment]::NewLine + $taskSetupOutput.GetAwaiter().GetResult())
-    [IO.File]::WriteAllText((Join-Path $taskEvidence 'setup.stderr.log'), $taskSetupError.GetAwaiter().GetResult())
+    if (!$taskSetupOutput.Wait(15000) -or !$taskSetupError.Wait(15000)) {
+        throw 'Reopened Tide inherited the setup confirmation pipes; they must close when setup exits.'
+    }
+    [IO.File]::WriteAllText((Join-Path $taskEvidence 'setup.stdout.log'), $taskReady.Result + [Environment]::NewLine + $taskSetupOutput.Result)
+    [IO.File]::WriteAllText((Join-Path $taskEvidence 'setup.stderr.log'), $taskSetupError.Result)
     if (!$taskParent.HasExited -or $taskParent.ExitCode -ne 0) { throw 'The previous player did not close normally.' }
     $taskUpdatedRelease = Assert-CleanInstallation $taskUpdatedVersion
     if ($taskUpdatedRelease -eq $taskFirstRelease -or (Test-Path -LiteralPath $taskFirstRelease)) {
