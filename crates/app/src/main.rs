@@ -973,9 +973,7 @@ fn save(settings: &Settings) {
     };
     if let Ok(bytes) = serde_json::to_vec_pretty(settings) {
         if settings_store::save(&path, &bytes).is_err() {
-            eprintln!(
-                "Tide could not save preferences; the previous saved settings were preserved."
-            );
+            eprintln!("Tide could not finish saving preferences.");
         }
     }
 }

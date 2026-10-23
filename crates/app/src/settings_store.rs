@@ -46,10 +46,11 @@ pub(super) fn save(path: &Path, bytes: &[u8]) -> io::Result<()> {
         return Err(io::ErrorKind::InvalidData.into());
     }
     fs::create_dir_all(path.parent().ok_or(io::ErrorKind::InvalidInput)?)?;
-    // Never replace a good recovery copy with a truncated/corrupt primary file.
-    if let Some(previous) = read(path) {
-        replace(&backup(path), &previous)?;
-    }
+    // Both copies contain the latest completed choice, not the previous one.
+    // Otherwise recovering after an opt-out could silently re-enable sharing.
+    // Publish the backup first so a failed primary replacement leaves the live
+    // primary intact, and never copy potentially corrupted old primary bytes.
+    replace(&backup(path), bytes)?;
     replace(path, bytes)
 }
 
@@ -73,8 +74,8 @@ mod tests {
         save(&path, DISABLED).unwrap();
         fs::write(&path, b"{interrupted old-version save").unwrap();
         let recovered = load(&path).unwrap();
-        assert_eq!(recovered["history_feedback"], true);
-        assert_eq!(recovered["discord_presence"], true);
+        assert_eq!(recovered["history_feedback"], false);
+        assert_eq!(recovered["discord_presence"], false);
         save(&path, ENABLED).unwrap();
         assert_eq!(read(&backup(&path)).unwrap(), ENABLED);
         assert_eq!(fs::read_dir(path.parent().unwrap()).unwrap().count(), 2);
