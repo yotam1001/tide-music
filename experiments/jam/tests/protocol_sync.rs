@@ -315,3 +315,23 @@ fn stale_hosts_network_loss_and_slow_replies_pause_without_loading_more() {
         vec![Action::Pause(true)]
     );
 }
+
+#[test]
+fn skip_schema_rejects_commands_urls_paths_and_unrelated_plays() {
+    for input in [
+        r#"{"play_id":1,"video":"https://example.test/evil.exe"}"#,
+        r#"{"play_id":1,"video":"../evil.exe"}"#,
+        r#"{"play_id":1,"video":"abcdefghijk","command":"exec"}"#,
+    ] {
+        assert!(serde_json::from_str::<Skip>(input).is_err());
+    }
+    let mut skip = Skip {
+        play_id: 1,
+        video: VideoId::parse("abcdefghijk").unwrap(),
+    };
+    assert!(skip.matches(&timeline()));
+    skip.play_id = 2;
+    assert!(!skip.matches(&timeline()));
+    skip.play_id = 0;
+    assert!(!skip.matches(&timeline()));
+}

@@ -20,9 +20,57 @@ pub struct Jam {
     view: Option<(View, u64, Instant)>,
     began: Option<Instant>,
     accepted_request: u64,
+    accepted_skip: u64,
 }
 pub fn following(s: &State) -> bool {
     s.jam.guest
+}
+/// Derive artwork locally from a validated ID, never from a peer-supplied URL.
+fn thumbnail(video: &VideoId) -> String {
+    format!("https://i.ytimg.com/vi/{}/hqdefault.jpg", video.as_str())
+}
+fn with_thumbnail(mut track: Track, video: &VideoId) -> Track {
+    if track.artwork_url.as_ref().is_none_or(|url| url.is_empty()) {
+        track.artwork_url = Some(thumbnail(video));
+    }
+    track
+}
+pub fn request_skip(s: &State, u: &AppWindow) {
+    let skip = s
+        .jam
+        .view
+        .as_ref()
+        .filter(|(view, _, received)| {
+            received.elapsed() < Duration::from_secs(3)
+                && view
+                    .age_ms
+                    .saturating_add(received.elapsed().as_millis() as u64)
+                    < STALE_MS
+        })
+        .and_then(|(view, _, _)| view.timeline.as_ref())
+        .filter(|t| !t.loading)
+        .and_then(|t| {
+            t.queue.get(t.index).map(|video| Skip {
+                play_id: t.play_id,
+                video: video.clone(),
+            })
+        });
+    let sent = skip.is_some_and(|skip| {
+        s.jam.connected
+            && !s.jam.terminal
+            && s.jam
+                .session
+                .as_ref()
+                .is_some_and(|session| session.request_skip(skip))
+    });
+    u.set_jam_queue_notice(
+        if sent {
+            "Requesting skip for everyone…"
+        } else {
+            "Wait for a fresh Jam connection before skipping"
+        }
+        .into(),
+    );
 }
 pub fn request_source(s: &State, u: &AppWindow, source: &str) {
     match video(source) {
@@ -72,23 +120,25 @@ fn accept_requests(s: &mut State, u: &AppWindow, requests: Vec<QueueRequest>) {
                 break;
             }
             let source = request.video.playback_url();
-            let track = s
-                .search_tracks
-                .iter()
-                .chain(s.detail_tracks.iter())
-                .chain(s.settings.queue.tracks.iter())
-                .find(|t| t.source == source)
-                .cloned()
-                .unwrap_or(Track {
-                    artists: Vec::new(),
-                    title: format!("YouTube track · {}", request.video.as_str()),
-                    artist: "Jam request".into(),
-                    album: String::new(),
-                    source,
-                    duration_seconds: None,
-                    artwork_url: None,
-                    recommended: false,
-                });
+            let track = with_thumbnail(
+                s.search_tracks
+                    .iter()
+                    .chain(s.detail_tracks.iter())
+                    .chain(s.settings.queue.tracks.iter())
+                    .find(|t| t.source == source)
+                    .cloned()
+                    .unwrap_or(Track {
+                        artists: Vec::new(),
+                        title: format!("YouTube track · {}", request.video.as_str()),
+                        artist: "Jam request".into(),
+                        album: String::new(),
+                        source,
+                        duration_seconds: None,
+                        artwork_url: None,
+                        recommended: false,
+                    }),
+                &request.video,
+            );
             // A guest addition belongs after manually queued songs and before autoplay.
             if !s.settings.queue.insert_manual(track, false) {
                 break;
@@ -634,7 +684,7 @@ fn guest_update(
         status,
     })
 }
-pub fn tick(s: &mut State, u: &AppWindow) {
+pub fn tick(s: &mut State, u: &AppWindow, tx: &mpsc::SyncSender<LibraryResult>) {
     if let Some(notice) = s.jam.session.as_ref().and_then(Session::take_notice) {
         u.set_jam_queue_notice(notice.into());
     }
@@ -649,8 +699,17 @@ pub fn tick(s: &mut State, u: &AppWindow) {
             members,
             open,
             requests,
+            skip,
         }) => {
             accept_requests(s, u, requests);
+            if let Some(skip) = skip {
+                if skip.play_id != s.jam.accepted_skip
+                    && host_timeline(s).is_ok_and(|timeline| skip.matches(&timeline))
+                {
+                    s.jam.accepted_skip = skip.play_id;
+                    next_track(s, u, tx);
+                }
+            }
             s.jam.connected = true;
             u.set_jam_invite_code(invite_code.as_str().into());
             u.set_jam_locked(!open);
@@ -768,29 +827,32 @@ pub fn tick(s: &mut State, u: &AppWindow) {
                 .iter()
                 .map(|id| {
                     let source = id.playback_url();
-                    s.settings
-                        .queue
-                        .tracks
-                        .iter()
-                        .chain(
-                            s.jam
-                                .original
-                                .as_ref()
-                                .into_iter()
-                                .flat_map(|(queue, _)| queue.tracks.iter()),
-                        )
-                        .find(|track| track.source == source)
-                        .cloned()
-                        .unwrap_or(Track {
-                            artists: Vec::new(),
-                            title: format!("YouTube track · {}", id.as_str()),
-                            artist: "Jam".into(),
-                            album: String::new(),
-                            source,
-                            duration_seconds: None,
-                            artwork_url: None,
-                            recommended: false,
-                        })
+                    with_thumbnail(
+                        s.settings
+                            .queue
+                            .tracks
+                            .iter()
+                            .chain(
+                                s.jam
+                                    .original
+                                    .as_ref()
+                                    .into_iter()
+                                    .flat_map(|(queue, _)| queue.tracks.iter()),
+                            )
+                            .find(|track| track.source == source)
+                            .cloned()
+                            .unwrap_or(Track {
+                                artists: Vec::new(),
+                                title: format!("YouTube track · {}", id.as_str()),
+                                artist: "Jam".into(),
+                                album: String::new(),
+                                source,
+                                duration_seconds: None,
+                                artwork_url: None,
+                                recommended: false,
+                            }),
+                        id,
+                    )
                 })
                 .collect();
             s.settings.queue = Queue {
@@ -874,6 +936,13 @@ pub fn ownership_smoke(state: &Rc<RefCell<State>>, u: &AppWindow, pickers: &Rc<P
             3,
             "a repeated delivery duplicated the song"
         );
+        assert!(s
+            .settings
+            .queue
+            .tracks
+            .iter()
+            .any(|track| track.artwork_url.as_deref()
+                == Some("https://i.ytimg.com/vi/fixture0003/hqdefault.jpg")));
         assert_eq!(s.settings.queue.current, Some(1));
         assert_eq!(
             s.generation, generation,

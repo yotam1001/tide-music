@@ -24,7 +24,7 @@ def main():
         path = ROOT / name
         if (
             path.name.lower() in FORBIDDEN
-            or path.name.lower().endswith((".jam-invite.json", ".jam-operator-key"))
+            or path.name.lower().endswith((".jam-invite.json", ".jam-operator-key", ".dpapi", ".pfx", ".p12", ".pkcs8"))
             or name.startswith((".tools/", ".local/", "target/"))
         ):
             failed.append((name, "forbidden local file"))

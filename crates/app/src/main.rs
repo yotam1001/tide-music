@@ -32,6 +32,7 @@ mod performance;
 mod playback_feedback;
 mod radio;
 mod settings_location;
+mod shortcut_capture;
 mod updater;
 slint::include_modules!();
 
@@ -1395,6 +1396,28 @@ fn is_youtube_source(source: &str) -> bool {
     host == "youtu.be" || host == "youtube.com" || host.ends_with(".youtube.com")
 }
 
+fn next_track(s: &mut State, u: &AppWindow, tx: &mpsc::SyncSender<LibraryResult>) {
+    if !local_controls_allowed(s) {
+        return;
+    }
+    let repeat = s.settings.repeat;
+    let previous = s.settings.queue.current;
+    if s.settings.queue.next_track(repeat).is_some() {
+        if !play(s, u) {
+            s.settings.queue.current = previous;
+            refresh(u, s);
+        }
+    } else if s.settings.autoplay && s.account_verified {
+        send(s, u, PlaybackCommand::Stop);
+        s.active_playback = false;
+        s.radio_resume_when_ready = true;
+        s.radio_requests.reset();
+        request_radio(s, u, tx, false);
+        u.set_paused(true);
+        u.set_status_text("Finding the next recommended song...".into());
+    }
+}
+
 fn select_and_play(state: &mut State, ui: &AppWindow, index: usize) {
     if !local_controls_allowed(state) {
         return;
@@ -1575,6 +1598,14 @@ fn search(query: String, cancel: Arc<AtomicBool>) -> Result<Vec<Track>, String> 
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if std::env::args().nth(1).as_deref() == Some("--verify-update-files") {
+        let paths: Vec<_> = std::env::args_os().skip(2).collect();
+        if paths.len() != 2 {
+            return Err("Expected signed manifest and installer paths".into());
+        }
+        return updater::verify_files(Path::new(&paths[0]), Path::new(&paths[1]))
+            .map_err(Into::into);
+    }
     if std::env::args().any(|arg| arg == "--smoke-collection-read") {
         return music_feedback::read_probe().map_err(Into::into);
     }
@@ -1681,7 +1712,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ..Settings::default()
         };
     }
-    if settings.discord_application_id.trim().is_empty() {
+    if !discord::valid_id(settings.discord_application_id.trim()) {
         settings.discord_application_id = default_discord_application_id();
     }
     settings.queue.tracks.truncate(2000);
@@ -2637,27 +2668,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let weak = ui.as_weak();
         let tx = library_tx.clone();
         ui.on_next_track(move || {
-            if !local_controls_allowed(&state.borrow()) {
-                return;
-            }
             if let Some(u) = weak.upgrade() {
                 let mut s = state.borrow_mut();
-                let repeat = s.settings.repeat;
-                let previous = s.settings.queue.current;
-                if s.settings.queue.next_track(repeat).is_some() {
-                    if !play(&mut s, &u) {
-                        s.settings.queue.current = previous;
-                        refresh(&u, &s);
-                    }
-                } else if s.settings.autoplay && s.account_verified {
-                    send(&mut s, &u, PlaybackCommand::Stop);
-                    s.active_playback = false;
-                    s.radio_resume_when_ready = true;
-                    s.radio_requests.reset();
-                    request_radio(&mut s, &u, &tx, false);
-                    u.set_paused(true);
-                    u.set_status_text("Finding the next recommended song...".into());
+                #[cfg(feature = "experimental-jams")]
+                if jam::following(&s) {
+                    jam::request_skip(&s, &u);
+                    return;
                 }
+                next_track(&mut s, &u, &tx);
             }
         });
     }
@@ -2726,15 +2744,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
     bind!(on_toggle_discord_presence, |s, u| {
-        let id = u.get_discord_application_id().to_string();
-        if !s.settings.discord_presence && !discord::valid_id(id.trim()) {
-            u.set_discord_status("Enter a valid public Discord application ID first".into());
-        } else {
-            s.settings.discord_application_id = id.trim().to_owned();
-            s.settings.discord_presence = !s.settings.discord_presence;
-            u.set_discord_presence_enabled(s.settings.discord_presence);
-            save(&s.settings);
-        }
+        // Normal users connect to Tide's registered app, without developer setup.
+        s.settings.discord_application_id = default_discord_application_id();
+        u.set_discord_application_id(s.settings.discord_application_id.clone().into());
+        s.settings.discord_presence = !s.settings.discord_presence;
+        u.set_discord_presence_enabled(s.settings.discord_presence);
+        save(&s.settings);
     });
     bind!(on_toggle_update_checks, |s, u| {
         s.settings.check_updates = !s.settings.check_updates;
@@ -2858,12 +2873,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let state = state.clone();
         let weak = ui.as_weak();
         ui.on_media_command(move |action, value| {
-            if !local_controls_allowed(&state.borrow()) {
+            if !local_controls_allowed(&state.borrow()) && action != 3 {
                 return;
             }
             let Some(u) = weak.upgrade() else {
                 return;
             };
+            if u.get_shortcut_recording_index() >= 0 {
+                return;
+            }
             // Hardware transport controls follow exactly the same path as the
             // player buttons, including autoplay when Next reaches queue end.
             match action {
@@ -2973,37 +2991,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     #[cfg(windows)]
-    {
-        let state = state.clone();
-        let weak = ui.as_weak();
-        let shortcuts = shortcuts.clone();
-        ui.on_apply_shortcuts(move || {
-            let Some(u) = weak.upgrade() else {
-                return;
-            };
-            let values = [
-                u.get_shortcut_toggle().to_string().trim().to_owned(),
-                u.get_shortcut_next().to_string().trim().to_owned(),
-                u.get_shortcut_previous().to_string().trim().to_owned(),
-            ];
-            let result = tide_windows::shortcuts::parse_bindings(&values).and_then(|bindings| {
-                shortcuts
-                    .borrow_mut()
-                    .as_mut()
-                    .ok_or_else(|| "Global shortcuts are unavailable in this mode.".to_string())?
-                    .apply(bindings)
-            });
-            match result {
-                Ok(()) => {
-                    let mut s = state.borrow_mut();
-                    s.settings.shortcuts = values;
-                    save(&s.settings);
-                    u.set_shortcut_status("Shortcuts saved. Blank fields are disabled.".into());
-                }
-                Err(error) => u.set_shortcut_status(error.into()),
-            }
-        });
-    }
+    shortcut_capture::wire(&ui, state.clone(), shortcuts.clone());
     let output_timer = slint::Timer::default();
     #[cfg(windows)]
     if media_enabled && state.borrow().engine.is_some() {
@@ -3558,7 +3546,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     adopt_saved_connection(&mut s, &u, &library_tx);
                 }
                 #[cfg(feature = "experimental-jams")]
-                jam::tick(&mut s, &u);
+                jam::tick(&mut s, &u, &library_tx);
                 music_feedback::tick(&mut s, &u);
                 let artwork_changed = s.artwork.borrow_mut().poll();
                 if artwork_changed {

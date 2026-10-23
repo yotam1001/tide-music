@@ -51,6 +51,7 @@ pub enum Event {
         members: Vec<u32>,
         open: bool,
         requests: Vec<QueueRequest>,
+        skip: Option<Skip>,
     },
     View {
         view: View,
@@ -73,6 +74,7 @@ struct Shared {
     event: Mutex<Option<Event>>,
     admin: Mutex<VecDeque<Admin>>,
     enqueue: Mutex<VecDeque<VideoId>>,
+    skip: Mutex<Option<Skip>>,
     notice: Mutex<Option<&'static str>>,
     wake: Condvar,
 }
@@ -105,6 +107,7 @@ impl Session {
             event: Mutex::new(None),
             admin: Mutex::new(VecDeque::new()),
             enqueue: Mutex::new(VecDeque::new()),
+            skip: Mutex::new(None),
             notice: Mutex::new(None),
             wake: Condvar::new(),
         });
@@ -186,6 +189,19 @@ impl Session {
             return false;
         }
         queue.push_back(video);
+        true
+    }
+    pub fn request_skip(&self, skip: Skip) -> bool {
+        if self.shared.stopped() || self.finished() {
+            return false;
+        }
+        let Ok(mut pending) = self.shared.skip.lock() else {
+            return false;
+        };
+        if pending.is_some() {
+            return false;
+        }
+        *pending = Some(skip);
         true
     }
     pub fn take_notice(&self) -> Option<&'static str> {
@@ -430,6 +446,9 @@ fn host(
                             open: view.open,
                             // Older relays do not implement collaborative queues.
                             // That must not interrupt synchronized playback.
+                            skip: client
+                                .skip_request(&room.room.room, &room.room.host)
+                                .unwrap_or_default(),
                             requests: client
                                 .requests(&room.room.room, &room.room.host)
                                 .unwrap_or_default(),
@@ -486,6 +505,21 @@ fn follow(shared: &Shared, invite: Invite) -> Result<(), &'static str> {
     let listener = client.listener_id(&membership.room, &membership.token).ok();
     let mut failures = 0;
     while !shared.stopped() {
+        let skip = shared
+            .skip
+            .lock()
+            .map_err(|_| "Jam controls unavailable")?
+            .take();
+        if let Some(skip) = skip {
+            let message = match client.request_skip(&membership.room, &membership.token, &skip) {
+                Ok(()) => "Skip requested for everyone",
+                Err(Error::Limited) => "Jam request limit reached. Wait before requesting another skip.",
+                Err(_) => "Skip was not confirmed. The song may have changed, or the relay needs an update.",
+            };
+            if let Ok(mut notice) = shared.notice.lock() {
+                *notice = Some(message);
+            }
+        }
         let video = shared
             .enqueue
             .lock()
@@ -564,6 +598,7 @@ mod tests {
                 let member = Secret::random().unwrap();
                 let mut state = None;
                 let mut pending: Vec<QueueRequest> = Vec::new();
+                let mut pending_skip: Option<Skip> = None;
                 let mut request_id = 0;
                 let deadline = Instant::now() + Duration::from_secs(8);
                 while !cancel.load(Ordering::Acquire) && Instant::now() < deadline {
@@ -595,6 +630,15 @@ mod tests {
                             })
                             .unwrap(),
                         )
+                    } else if head.starts_with("POST ") && head.contains("/skip HTTP") {
+                        let value: Skip = serde_json::from_slice(&body).unwrap();
+                        assert!(state
+                            .as_ref()
+                            .is_some_and(|timeline| value.matches(timeline)));
+                        pending_skip = Some(value);
+                        ("204 No Content", vec![])
+                    } else if head.starts_with("GET ") && head.contains("/skip HTTP") {
+                        ("200 OK", serde_json::to_vec(&pending_skip).unwrap())
                     } else if head.starts_with("POST ") && head.contains("/requests HTTP") {
                         let value: Enqueue = serde_json::from_slice(&body).unwrap();
                         request_id += 1;
@@ -620,6 +664,12 @@ mod tests {
                     } else if head.starts_with("PUT ") {
                         let timeline: Timeline = serde_json::from_slice(&body).unwrap();
                         timeline.validate().unwrap();
+                        if pending_skip
+                            .as_ref()
+                            .is_some_and(|skip| !skip.matches(&timeline))
+                        {
+                            pending_skip = None;
+                        }
                         state = Some(timeline);
                         ("204 No Content", vec![])
                     } else if head.starts_with("GET ") && head.contains("/members HTTP") {
@@ -715,6 +765,46 @@ mod tests {
             "cancellation blocked the UI caller"
         );
         wait(|| session.finished().then_some(()));
+    }
+    #[test]
+    fn guest_skip_worker_delivers_a_track_scoped_request_to_the_host() {
+        let fixture = Fixture::start();
+        let host = Session::start(Start::HostCode {
+            endpoint: fixture.endpoint.clone(),
+            timeline: Timeline {
+                revision: 1,
+                play_id: 1,
+                queue: vec![VideoId::parse("fixture0001").unwrap()],
+                index: 0,
+                position_ms: 0,
+                paused: true,
+                loading: false,
+            },
+        })
+        .unwrap();
+        let code = wait(|| match host.take_event() {
+            Some(Event::Hosting { invite_code, .. }) => Some(invite_code),
+            _ => None,
+        });
+        let guest = Session::start(Start::GuestCode { code }).unwrap();
+        let observed = wait(|| match guest.take_event() {
+            Some(Event::View { view, .. }) => view.timeline,
+            _ => None,
+        });
+        let skip = Skip {
+            play_id: observed.play_id,
+            video: observed.queue[observed.index].clone(),
+        };
+        assert!(guest.request_skip(skip.clone()));
+        wait(|| match host.take_event() {
+            Some(Event::Hosting {
+                skip: Some(received),
+                ..
+            }) if received == skip => Some(()),
+            _ => None,
+        });
+        end(&guest);
+        end(&host);
     }
     #[test]
     fn guest_queue_worker_delivers_once_and_host_acknowledges_without_changing_timeline() {

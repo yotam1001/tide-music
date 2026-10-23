@@ -185,6 +185,22 @@ impl Client {
         self.request("POST", &Self::path(room, "/requests")?, Some(member), &body)
             .map(|_| ())
     }
+    /// Never retry a control POST automatically after an ambiguous response.
+    pub fn request_skip(&self, room: &str, member: &Secret, skip: &Skip) -> Result<(), Error> {
+        if skip.play_id == 0 {
+            return Err(Error::Invalid);
+        }
+        let body = serde_json::to_vec(skip).map_err(|_| Error::Invalid)?;
+        self.request("POST", &Self::path(room, "/skip")?, Some(member), &body)
+            .map(|_| ())
+    }
+    pub fn skip_request(&self, room: &str, host: &Secret) -> Result<Option<Skip>, Error> {
+        let skip: Option<Skip> = self.json("GET", &Self::path(room, "/skip")?, Some(host), b"")?;
+        if skip.as_ref().is_some_and(|s| s.play_id == 0) {
+            return Err(Error::Invalid);
+        }
+        Ok(skip)
+    }
     pub fn requests(&self, room: &str, host: &Secret) -> Result<Vec<QueueRequest>, Error> {
         let requests: Vec<QueueRequest> =
             self.json("GET", &Self::path(room, "/requests")?, Some(host), b"")?;

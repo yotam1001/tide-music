@@ -99,3 +99,37 @@ their capabilities. A bearer holder can still occupy slots before the host acts,
 so explicit approval remains a possible stronger public-launch gate. No Google
 names are exposed: the roster uses room-local anonymous listener IDs.
 Real-host release gates remain open; see RELEASE_PLAN.md.
+
+
+## Artwork and guest skip follow-up (candidate)
+
+Jams do not upload audio, images, installers, cookies, or executable files. The
+queue protocol accepts strict eleven-byte YouTube video IDs; each client resolves
+and plays the song through its own local account. New fallback thumbnails are
+constructed locally as a fixed HTTPS `i.ytimg.com` URL from that validated ID.
+They reuse the existing public-image decoder and its response, pixel, queue and
+cache limits. No peer-supplied image URL or new relay image-storage path is added.
+This reduces the exposed input surface; it is not a claim that image or media
+parsers can never contain vulnerabilities.
+
+The optional `/skip` operation accepts a play ID and validated video ID only.
+Only an active member may submit it; only the host may read it. The relay retains
+at most one pending skip per room, coalesces requests for the same play, shares
+the five-per-minute member budget with queue additions, and clears a request when
+its submitting member leaves/expires/is removed or the published play changes.
+The native host independently checks both identifiers and handles that play at
+most once. Guests never publish authoritative timelines, shell commands, file
+paths, media URLs or account headers. There is no automatic POST retry after an
+ambiguous network result. Old relays report the unsupported operation without
+ending synchronized playback. Both the relay and host need this candidate for
+shared skipping; it is not an installed-release claim.
+
+The desktop updater is separate from Jams. The previous review identified that
+its SHA-256 came from the same GitHub release API as installer metadata. The 0.4.1
+candidate now requires independent Ed25519-signed installer identity metadata,
+verified against a public key built into the app. Missing, invalid, mismatched
+or expired signatures stop the update; there is no unsigned fallback. The local
+DPAPI-protected signing key is outside the repository and CI. Existing clients
+through 0.4.0 cannot gain that check before their first upgrade; see
+[the update trust model](../../docs/IN_APP_UPDATES.md). Jams do not invoke the
+updater or supply executable download locations.

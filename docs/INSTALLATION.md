@@ -29,7 +29,7 @@ report the exact message rather than disabling protections.
 For YouTube Music, follow the
 [Chrome connection guide](https://github.com/yotam1001/tide-music/blob/main/docs/BROWSER_COMPANION_BETA.md).
 It explains **Enable Chrome companion connection** and the extension ID. For
-local audio only, leave that checkbox off and use **Settings → Open audio file**.
+local audio only, leave that checkbox off and use **Settings → More options → Open audio file**.
 Rerun setup if you want to enable the companion later.
 
 ## Update Tide
