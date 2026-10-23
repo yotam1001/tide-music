@@ -35,7 +35,20 @@ internal static class PayloadTests {
         bytes.Position = 0; return bytes;
     }
     [STAThread] public static int Main(string[] args) {
+        var fixtureName = Path.GetFileName(System.Reflection.Assembly.GetExecutingAssembly().Location);
+        if (fixtureName == "startup-failure.exe") return 37;
+        if (fixtureName == "startup-success.exe") { System.Threading.Thread.Sleep(5000); return 0; }
         if (args.Length == 1 && args[0] == "--handoff-child") { System.Threading.Thread.Sleep(1200); return 0; }
+        if (args.Length == 1 && args[0] == "--readiness-child") {
+            try {
+                UpdateOptions.Parse(new[] { "--update-from", Int32.MaxValue.ToString(), "--confirm-ready" }).ConfirmPrepared();
+                return 0;
+            } catch (OperationCanceledException) { return 23; }
+        }
+        if (args.Length == 1 && args[0] == "--preflight-failure-child") {
+            return UpdateOptions.Parse(new[] { "--update-from", Int32.MaxValue.ToString(), "--confirm-ready" })
+                .ReportPreflightFailure(new IOException("Windows uninstall entry mismatch; private-path-and-value")) ? 0 : 1;
+        }
         using (var form = new SetupWindow(true)) {
             var chromeControl = (CheckBox)form.Controls["chromeConnection"];
             var idControl = (TextBox)form.Controls["chromeExtensionId"];
@@ -59,6 +72,31 @@ internal static class PayloadTests {
             throw new Exception("Normal setup unexpectedly enabled automatic installation.");
         var deadParent = UpdateOptions.Parse(new[] { "--update-from", Int32.MaxValue.ToString() });
         deadParent.WaitForPlayer();
+        deadParent.WaitForPlayer(); // Retrying setup must not re-identify a reused PID.
+        using (var rejected = Process.Start(new ProcessStartInfo {
+            FileName = System.Reflection.Assembly.GetExecutingAssembly().Location,
+            Arguments = "--preflight-failure-child", UseShellExecute = false, CreateNoWindow = true,
+            RedirectStandardOutput = true, RedirectStandardError = true
+        })) {
+            var result = rejected.StandardOutput.ReadToEndAsync();
+            if (!rejected.WaitForExit(10000) || rejected.ExitCode != 0 || result.Result.Trim() != "TIDE_UPDATE_FAILED|ownership")
+                throw new Exception("Preflight error must identify its category without private values.");
+        }
+        foreach (var response in new[] { "COMMIT", "CANCEL" }) {
+            using (var prepared = Process.Start(new ProcessStartInfo {
+                FileName = System.Reflection.Assembly.GetExecutingAssembly().Location,
+                Arguments = "--readiness-child", UseShellExecute = false, CreateNoWindow = true,
+                RedirectStandardOutput = true, RedirectStandardInput = true, RedirectStandardError = true
+            })) {
+                var ready = prepared.StandardOutput.ReadLineAsync();
+                if (!ready.Wait(10000) || ready.Result != "TIDE_UPDATE_READY|" + Int32.MaxValue + "|" + Payload.AppVersion)
+                    throw new Exception("Setup readiness receipt was missing or incorrect.");
+                if (prepared.HasExited) throw new Exception("Setup proceeded before explicit commit.");
+                prepared.StandardInput.WriteLine(response); prepared.StandardInput.Flush();
+                if (!prepared.WaitForExit(10000) || prepared.ExitCode != (response == "COMMIT" ? 0 : 23))
+                    throw new Exception("Setup commit/cancel protocol failed.");
+            }
+        }
         using (var updateForm = new SetupWindow(true, deadParent)) {
             if (updateForm.ShowInTaskbar) throw new Exception("Automatic updates must not show a setup taskbar window.");
         }
@@ -86,6 +124,20 @@ internal static class PayloadTests {
         }
         var scratch = Path.Combine(Path.GetTempPath(), "tide setup process " + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(scratch);
+        var failedPlayer = Path.Combine(scratch, "startup-failure.exe");
+        var goodPlayer = Path.Combine(scratch, "startup-success.exe");
+        File.Copy(System.Reflection.Assembly.GetExecutingAssembly().Location, failedPlayer);
+        File.Copy(System.Reflection.Assembly.GetExecutingAssembly().Location, goodPlayer);
+        try {
+            for (var attempt = 0; attempt < 2; attempt++) {
+                try { SetupWindow.StartPlayer(failedPlayer, false); throw new Exception("Early startup exit was treated as a restart success."); }
+                catch (IOException error) { if (!error.Message.Contains("exit 37")) throw; }
+            }
+            using (var running = SetupWindow.StartPlayer(goodPlayer, false)) {
+                if (running.HasExited) throw new Exception("Started player was not alive.");
+                running.Kill(); running.WaitForExit();
+            }
+        } finally { File.Delete(failedPlayer); File.Delete(goodPlayer); }
         var previousModules = Environment.GetEnvironmentVariable("PSModulePath");
         try {
             var fixtureScript = Path.Combine(scratch, "fixture.ps1");

@@ -206,8 +206,33 @@ try {
             -WorkingDirectory $env:RUNNER_TEMP -PassThru `
             -RedirectStandardOutput (Join-Path $taskEvidence 'update-parent.stdout.log') `
             -RedirectStandardError (Join-Path $taskEvidence 'update-parent.stderr.log')
-        $taskSetupProcess = Start-Process -FilePath $taskSetup -ArgumentList @('--update-from', $taskParent.Id) `
-            -WorkingDirectory $env:RUNNER_TEMP -PassThru
+        $taskSetupInfo = [Diagnostics.ProcessStartInfo]::new()
+        $taskSetupInfo.FileName = $taskSetup
+        $taskSetupInfo.WorkingDirectory = $env:RUNNER_TEMP
+        $taskSetupInfo.UseShellExecute = $false
+        $taskSetupInfo.CreateNoWindow = $true
+        $taskSetupInfo.RedirectStandardInput = $true
+        $taskSetupInfo.RedirectStandardOutput = $true
+        $taskSetupInfo.RedirectStandardError = $true
+        foreach ($argument in @('--update-from', [string]$taskParent.Id, '--confirm-ready')) {
+            $taskSetupInfo.ArgumentList.Add($argument)
+        }
+        $taskSetupInfo.Environment['APPDATA'] = $taskIsolatedProfile
+        $taskSetupProcess = [Diagnostics.Process]::new()
+        $taskSetupProcess.StartInfo = $taskSetupInfo
+        if (!$taskSetupProcess.Start()) { throw 'Setup handoff process did not start.' }
+        $taskSetupError = $taskSetupProcess.StandardError.ReadToEndAsync()
+        $taskReady = $taskSetupProcess.StandardOutput.ReadLineAsync()
+        if (!$taskReady.Wait(30000) -or $taskReady.Result -cne ('TIDE_UPDATE_READY|' + $taskParent.Id + '|' + $taskUpdatedVersion)) {
+            $taskSetupProcess.StandardInput.Close()
+            throw 'Actual setup did not confirm its version and parent before restart.'
+        }
+        if ($taskSetupProcess.HasExited) { throw 'Actual setup exited before commit.' }
+        $taskSetupOutput = $taskSetupProcess.StandardOutput.ReadToEndAsync()
+        $taskSetupProcess.StandardInput.WriteLine('COMMIT')
+        $taskSetupProcess.StandardInput.Flush()
+        $taskSetupProcess.StandardInput.Close()
+        Write-Host 'PASS actual packaged setup readiness and explicit commit'
     } finally { $env:APPDATA = $taskPreviousAppdata }
     if (!$taskSetupProcess.HasExited) {
         try { $null = $taskSetupProcess.WaitForInputIdle(15000) } catch { if (!$taskSetupProcess.HasExited) { throw } }
@@ -215,6 +240,8 @@ try {
         if (!$taskSetupProcess.HasExited -and $taskSetupProcess.MainWindowHandle -ne 0) { throw 'Automatic update opened a separate setup window.' }
     }
     if (!$taskSetupProcess.WaitForExit(600000) -or $taskSetupProcess.ExitCode -ne 0) { throw 'Automatic setup handoff did not finish.' }
+    [IO.File]::WriteAllText((Join-Path $taskEvidence 'setup.stdout.log'), $taskReady.Result + [Environment]::NewLine + $taskSetupOutput.GetAwaiter().GetResult())
+    [IO.File]::WriteAllText((Join-Path $taskEvidence 'setup.stderr.log'), $taskSetupError.GetAwaiter().GetResult())
     if (!$taskParent.HasExited -or $taskParent.ExitCode -ne 0) { throw 'The previous player did not close normally.' }
     $taskUpdatedRelease = Assert-CleanInstallation $taskUpdatedVersion
     if ($taskUpdatedRelease -eq $taskFirstRelease -or (Test-Path -LiteralPath $taskFirstRelease)) {

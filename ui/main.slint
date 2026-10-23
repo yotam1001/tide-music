@@ -1074,7 +1074,7 @@ component UpdateAction inherits Rectangle {
     in property <float> progress: 0;
     callback activate();
     callback cancel();
-    private property <bool> downloading: root.phase == 1 || root.phase == 3;
+    private property <bool> downloading: root.phase == 1 || root.phase == 2 || root.phase == 3 || root.phase == 4;
     private property <color> ink: root.light-mode ? #593641 : #f0eeef;
     Rectangle {
         width: root.width - (root.downloading ? root.height + 6px : 0px);
@@ -1085,10 +1085,10 @@ component UpdateAction inherits Rectangle {
         Rectangle { x: 5px; y: 5px; width: parent.height - 10px; height: self.width; border-radius: self.height / 2; background: root.light-mode ? #b45249 : #b13e62;
             Path { x: 6px; y: 6px; width: parent.width - 12px; height: parent.height - 12px; viewbox-width: 24; viewbox-height: 24; fill: Colors.transparent; stroke: #fff5ee; stroke-width: 2px; commands: root.phase == 2 ? "M5 12 L10 17 L19 7" : "M12 3 V15 M7 10 L12 15 L17 10 M5 17 V21 H19 V17"; }
         }
-        Text { x: parent.height + 4px; width: max(0px, parent.width - self.x - 8px); height: parent.height; vertical-alignment: center; text: root.phase == 2 ? "Restart to update" : (root.phase == 3 ? "Canceling…" : (root.phase == 1 ? "Updating " + root.progress.to-fixed(0) + "%" : "Update Tide")); color: root.ink; font-size: 12px; font-weight: 600; overflow: elide; }
+        Text { x: parent.height + 4px; width: max(0px, parent.width - self.x - 8px); height: parent.height; vertical-alignment: center; text: root.phase == 4 ? "Preparing restart…" : (root.phase == 2 ? "Restart to update" : (root.phase == 3 ? "Canceling…" : (root.phase == 1 ? "Updating " + root.progress.to-fixed(0) + "%" : "Update Tide"))); color: root.ink; font-size: 12px; font-weight: 600; overflow: elide; }
     }
     if root.downloading : Rectangle { x: parent.width - self.width; width: parent.height; height: parent.height; border-radius: self.height / 2; clip: true;
-        LibraryButton { width: parent.width; height: parent.height; caption: "×"; label: "Cancel update download and keep listening"; light-mode: root.light-mode; quiet: false; enabled: root.phase == 1; clicked => { root.cancel(); } }
+        LibraryButton { width: parent.width; height: parent.height; caption: "×"; label: root.phase == 2 ? "Discard the verified download to download again" : "Cancel update and keep listening"; light-mode: root.light-mode; quiet: false; enabled: root.phase != 3; clicked => { root.cancel(); } }
     }
 }
 

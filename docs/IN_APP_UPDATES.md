@@ -8,10 +8,22 @@ Settings → Updates. Narrow windows retain the Settings update badge.
    keeps playing. The button shows actual byte progress, with a Cancel action.
 2. A successfully verified download becomes Restart to update. Tide keeps playing
    until you choose it; downloading never starts setup or closes the player.
-3. Restart closes Tide normally. The setup helper applies the existing validated
+3. Restart prepares and verifies setup while Tide keeps playing. Setup confirms
+   readiness over a private parent/child pipe; Tide explicitly commits the restart
+   before closing normally. Cancel before that commit keeps the player running.
+   The setup helper applies the existing validated
    installation transaction in the background and reopens Tide. The successful
    update path shows no separate setup window. A failed installation can reveal
    the recovery window so errors are actionable.
+
+From 0.4.2, a failed setup launch or readiness timeout retains the verified
+download and offers Restart again. Reopening Tide can recover an already verified
+cached installer after a fresh release/signature check. The cancel control on a
+ready update lets you choose a fresh download. If installation succeeds but the
+player cannot reopen, setup reports that distinction and keeps Open Tide enabled.
+Manual update checks run immediately rather than silently ignoring clicks during
+a cooldown. Older clients can still launch the new setup through its legacy
+handoff; readiness confirmation applies once the new client is installed.
 
 Accounts, settings, browser helper registration, ownership checks, rollback and
 checksum verification remain part of the existing installation path. The updater

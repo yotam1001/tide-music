@@ -310,7 +310,10 @@ function Invoke-TideDependencies([string]$Release) {
 function Install-Tide([string]$PackageRoot, [string]$InstallRoot, [string]$ShortcutRoot, [string]$Browser, [string]$ExtensionId, [string]$AppVersion = '0.1.0-preview') {
     Invoke-TideSetupOperation { Install-TideCore $PackageRoot $InstallRoot $ShortcutRoot $Browser $ExtensionId $AppVersion }
 }
-function Install-TideCore([string]$PackageRoot, [string]$InstallRoot, [string]$ShortcutRoot, [string]$Browser, [string]$ExtensionId, [string]$AppVersion) {
+function Test-TideInstall([string]$PackageRoot, [string]$InstallRoot, [string]$ShortcutRoot, [string]$Browser, [string]$ExtensionId, [string]$AppVersion) {
+    Invoke-TideSetupOperation { Install-TideCore $PackageRoot $InstallRoot $ShortcutRoot $Browser $ExtensionId $AppVersion -PreflightOnly }
+}
+function Install-TideCore([string]$PackageRoot, [string]$InstallRoot, [string]$ShortcutRoot, [string]$Browser, [string]$ExtensionId, [string]$AppVersion, [switch]$PreflightOnly) {
     if ($AppVersion -notmatch '^[0-9][A-Za-z0-9.+-]{0,63}$') { throw 'Invalid application version.' }
     Write-TideProgress 5 'Checking the setup package'
     $payload = @(Get-TideVerifiedPayload $PackageRoot)
@@ -319,7 +322,7 @@ function Install-TideCore([string]$PackageRoot, [string]$InstallRoot, [string]$S
     if ($Browser -in @('Chrome','Edge') -and $ExtensionId -notmatch '^[a-p]{32}$') { throw 'Enter the exact ID displayed by the installed browser extension.' }
     $old = Get-TideInstallState $InstallRoot
     Assert-TidePlainPath $ShortcutRoot
-    Assert-TideStopped $InstallRoot
+    if (!$PreflightOnly) { Assert-TideStopped $InstallRoot }
     $oldRelease = $null; $oldLinks = @{}
     if ($old) {
         $oldRelease = Get-TideChild $InstallRoot ('releases/' + $old.Release)
@@ -338,6 +341,7 @@ function Install-TideCore([string]$PackageRoot, [string]$InstallRoot, [string]$S
         $actual = Get-TideShortcut (Join-Path $ShortcutRoot $name)
         if ($actual -and (!$old -or !(Test-TideShortcutMatch $actual $oldLinks[$name]))) { throw 'A different Start menu shortcut exists; it was left unchanged.' }
     }
+    if ($PreflightOnly) { Write-Output 'TIDE_PREFLIGHT_OK'; return }
     $id = [Guid]::NewGuid().ToString('N')
     $release = Get-TideChild $InstallRoot ('releases/' + $id)
     # Serialise install/update/removal. Root creation never replaces existing files.

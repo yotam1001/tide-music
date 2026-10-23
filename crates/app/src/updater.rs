@@ -1,10 +1,13 @@
 //! Published stable releases only. No Google sessions or browser state enter this module.
+mod handoff;
 mod publisher;
 
 use semver::Version;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use slint::ComponentHandle;
+#[cfg(test)]
+use std::time::Instant;
 use std::{
     cell::RefCell,
     fs::{self, File, OpenOptions},
@@ -15,7 +18,7 @@ use std::{
         atomic::{AtomicBool, AtomicU32, Ordering},
         mpsc, Arc,
     },
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 const API: &str = "https://api.github.com/repos/yotam1001/tide-music/releases/latest";
@@ -497,7 +500,7 @@ fn installed_player(base: &Path, executable: &Path) -> bool {
         && executable == root.join("releases").join(release).join("tide-music.exe")
 }
 
-fn launch(path: &Path, release: &Release) -> Result<(), String> {
+fn verified_installer(path: &Path, release: &Release) -> Result<File, String> {
     require_authorization(release)?;
     plain(path)?;
     let mut options = OpenOptions::new();
@@ -512,39 +515,55 @@ fn launch(path: &Path, release: &Release) -> Result<(), String> {
         .open(path)
         .map_err(|_| "Could not open the verified installer")?;
     copy_verified(&mut file, &mut std::io::sink(), release)?;
-    std::process::Command::new(path)
-        .arg("--update-from")
-        .arg(std::process::id().to_string())
-        .current_dir(path.parent().ok_or("Invalid installer path")?)
-        .spawn()
-        .map_err(|_| "Windows could not start setup. Your player is still running.")?;
-    Ok(())
+    Ok(file)
+}
+#[derive(Debug)]
+struct LaunchFailure {
+    message: String,
+    keep_ready: bool,
+}
+fn launch(path: &Path, release: &Release) -> Result<handoff::Pending, LaunchFailure> {
+    let _guard = verified_installer(path, release).map_err(|message| LaunchFailure {
+        message,
+        keep_ready: false,
+    })?;
+    handoff::Pending::start(path, &release.version.to_string()).map_err(|message| LaunchFailure {
+        message,
+        keep_ready: true,
+    })
+}
+fn cached_installer(release: &Release, base: &Path) -> Option<PathBuf> {
+    require_authorization(release).ok()?;
+    let path = cache_directory(base).ok()?.join("TideSetup.exe");
+    verified_installer(&path, release).ok()?;
+    Some(path)
 }
 
 enum Completion {
-    Checked(Result<Option<Release>, String>),
+    Checked(Result<(Option<Release>, Option<PathBuf>), String>),
     Downloaded(Result<PathBuf, String>),
 }
 pub(super) struct Updater {
     timer: slint::Timer,
     receiver: Option<mpsc::Receiver<Completion>>,
     available: Option<Release>,
-    last_check: Option<Instant>,
     base: Option<PathBuf>,
     transfer: Option<Arc<Transfer>>,
     ready: Option<PathBuf>,
+    handoff: Option<handoff::Pending>,
 }
 impl Updater {
+    fn restart_failed(&mut self, ui: &super::AppWindow, error: LaunchFailure) {
+        if !error.keep_ready {
+            self.ready = None;
+        }
+        ui.set_update_busy(false);
+        ui.set_update_phase(if self.ready.is_some() { 2 } else { 0 });
+        ui.set_update_status(error.message.into());
+    }
     fn start(owner: &Rc<RefCell<Self>>, ui: &super::AppWindow, install: bool) {
         let mut state = owner.borrow_mut();
-        if state.receiver.is_some() {
-            return;
-        }
-        if !install
-            && state
-                .last_check
-                .is_some_and(|t| t.elapsed() < Duration::from_secs(60))
-        {
+        if state.receiver.is_some() || state.handoff.is_some() {
             return;
         }
         let (sender, receiver) = mpsc::channel();
@@ -565,16 +584,19 @@ impl Updater {
                         &task_transfer,
                     ))
                 } else {
-                    Completion::Checked(check())
+                    Completion::Checked(check().map(|candidate| {
+                        let cached = candidate
+                            .as_ref()
+                            .zip(base.as_ref())
+                            .and_then(|(release, base)| cached_installer(release, base));
+                        (candidate, cached)
+                    }))
                 };
                 let _ = sender.send(completion);
             });
         if task.is_err() {
             ui.set_update_status("Could not start the update check".into());
             return;
-        }
-        if !install {
-            state.last_check = Some(Instant::now());
         }
         state.receiver = Some(receiver);
         state.transfer = install.then_some(transfer);
@@ -605,10 +627,36 @@ impl Updater {
         );
     }
     fn poll(&mut self, ui: &super::AppWindow) {
+        if let Some(pending) = &mut self.handoff {
+            if let Some(result) = pending.poll() {
+                self.handoff = None;
+                self.timer.stop();
+                ui.set_update_busy(false);
+                ui.set_update_phase(2);
+                match result {
+                    Ok(()) => {
+                        ui.set_update_status("Setup is ready. Restarting Tide…".into());
+                        let _ = slint::quit_event_loop();
+                    }
+                    Err(message) => self.restart_failed(
+                        ui,
+                        LaunchFailure {
+                            message,
+                            keep_ready: true,
+                        },
+                    ),
+                }
+            }
+            return;
+        }
         if let Some(transfer) = &self.transfer {
             ui.set_update_progress(transfer.percent.load(Ordering::Relaxed) as f32);
         }
-        let result = match self.receiver.as_ref().unwrap().try_recv() {
+        let Some(receiver) = self.receiver.as_ref() else {
+            self.timer.stop();
+            return;
+        };
+        let result = match receiver.try_recv() {
             Ok(result) => result,
             Err(mpsc::TryRecvError::Empty) => return,
             Err(_) => Completion::Checked(Err("The update task stopped. Try again later.".into())),
@@ -628,22 +676,10 @@ impl Updater {
             return;
         }
         match result {
-            Completion::Checked(Ok(candidate)) => {
-                let unchanged =
-                    candidate
-                        .as_ref()
-                        .zip(self.available.as_ref())
-                        .is_some_and(|(a, b)| {
-                            a.version == b.version
-                                && a.digest == b.digest
-                                && a.size == b.size
-                                && a.url == b.url
-                        });
-                if !unchanged {
-                    self.ready = None;
-                    ui.set_update_phase(0);
-                    ui.set_update_progress(0.0);
-                }
+            Completion::Checked(Ok((candidate, cached))) => {
+                self.ready = cached;
+                ui.set_update_phase(if self.ready.is_some() { 2 } else { 0 });
+                ui.set_update_progress(if self.ready.is_some() { 100.0 } else { 0.0 });
                 let status = candidate
                     .as_ref()
                     .map(|r| format!("Tide {} is available", r.version))
@@ -680,10 +716,10 @@ pub(super) fn wire(ui: &super::AppWindow, enabled: bool) -> Rc<RefCell<Updater>>
         timer: slint::Timer::default(),
         receiver: None,
         available: None,
-        last_check: None,
         base,
         transfer: None,
         ready: None,
+        handoff: None,
     }));
     let state = owner.clone();
     let weak = ui.as_weak();
@@ -700,7 +736,7 @@ pub(super) fn wire(ui: &super::AppWindow, enabled: bool) -> Rc<RefCell<Updater>>
                 return;
             }
             let mut updater = state.borrow_mut();
-            if updater.receiver.is_some() {
+            if updater.receiver.is_some() || updater.handoff.is_some() {
                 return;
             }
             if let Some(path) = updater.ready.clone() {
@@ -708,13 +744,25 @@ pub(super) fn wire(ui: &super::AppWindow, enabled: bool) -> Rc<RefCell<Updater>>
                     return;
                 };
                 match launch(&path, release) {
-                    Ok(()) => {
-                        let _ = slint::quit_event_loop();
+                    Ok(pending) => {
+                        updater.handoff = Some(pending);
+                        ui.set_update_busy(true);
+                        ui.set_update_phase(4);
+                        ui.set_update_status("Preparing setup. Your music continues…".into());
+                        let owner = Rc::downgrade(&state);
+                        let weak = ui.as_weak();
+                        updater.timer.start(
+                            slint::TimerMode::Repeated,
+                            Duration::from_millis(100),
+                            move || {
+                                if let (Some(owner), Some(ui)) = (owner.upgrade(), weak.upgrade()) {
+                                    owner.borrow_mut().poll(&ui);
+                                }
+                            },
+                        );
                     }
                     Err(error) => {
-                        updater.ready = None;
-                        ui.set_update_phase(0);
-                        ui.set_update_status(error.into());
+                        updater.restart_failed(&ui, error);
                     }
                 }
                 return;
@@ -727,10 +775,22 @@ pub(super) fn wire(ui: &super::AppWindow, enabled: bool) -> Rc<RefCell<Updater>>
     let weak = ui.as_weak();
     ui.on_cancel_update(move || {
         if let Some(ui) = weak.upgrade() {
-            if let Some(transfer) = &state.borrow().transfer {
+            let mut updater = state.borrow_mut();
+            if updater.handoff.take().is_some() {
+                updater.timer.stop();
+                ui.set_update_busy(false);
+                ui.set_update_phase(2);
+                ui.set_update_status(
+                    "Restart canceled. The verified update is ready to retry.".into(),
+                );
+            } else if let Some(transfer) = &updater.transfer {
                 transfer.canceled.store(true, Ordering::Relaxed);
                 ui.set_update_phase(3);
                 ui.set_update_status("Canceling download…".into());
+            } else if updater.ready.take().is_some() {
+                ui.set_update_phase(0);
+                ui.set_update_progress(0.0);
+                ui.set_update_status("Ready to download the update again.".into());
             }
         }
     });
@@ -772,8 +832,31 @@ mod tests {
             .contains("publisher signature"));
         assert!(launch(&base.path().join("missing.exe"), &release)
             .unwrap_err()
+            .message
             .contains("publisher signature"));
         assert_eq!(std::fs::read_dir(base.path()).unwrap().count(), 0);
+    }
+    #[test]
+    fn resume_cached_download_only_after_fresh_authorization_and_hash_check() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut release = parse(&metadata("v0.2.0")).unwrap().unwrap();
+        assert!(cached_installer(&release, directory.path()).is_none());
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
+        let path = stage_installer(&release, directory.path(), &mut &b"Tide"[..]).unwrap();
+        release.authorization = Some(publisher::test_authorization(
+            "0.2.0",
+            &release.digest,
+            release.size,
+        ));
+        assert_eq!(
+            cached_installer(&release, directory.path()),
+            Some(path.clone())
+        );
+        fs::write(&path, b"TIDE").unwrap();
+        assert!(cached_installer(&release, directory.path()).is_none());
+        fs::write(&path, b"Tide").unwrap();
+        fs::write(path.parent().unwrap().join(".tide-updater"), "foreign").unwrap();
+        assert!(cached_installer(&release, directory.path()).is_none());
     }
     #[test]
     fn installed_stable_and_previews_offer_0_1_2_but_equal_versions_do_not() {
@@ -957,10 +1040,10 @@ mod tests {
             timer: slint::Timer::default(),
             receiver: Some(receiver),
             available: Some(release),
-            last_check: None,
             base: Some(base.path().to_owned()),
             transfer: Some(Arc::new(Transfer::default())),
             ready: None,
+            handoff: None,
         };
         sender
             .send(Completion::Downloaded(Ok(path.clone())))
@@ -970,6 +1053,23 @@ mod tests {
         assert_eq!(ui.get_update_phase(), 2);
         assert_eq!(ui.get_update_progress(), 100.0);
         assert!(!ui.get_update_busy());
+        updater.restart_failed(
+            &ui,
+            LaunchFailure {
+                message: "Synthetic Windows start failure".into(),
+                keep_ready: true,
+            },
+        );
+        assert_eq!(updater.ready.as_ref(), Some(&path));
+        assert_eq!(
+            ui.get_update_phase(),
+            2,
+            "Restart must remain available after launch failure"
+        );
+        assert!(!ui.get_update_busy());
+        // A late queued timer callback after cancellation must not panic.
+        updater.receiver = None;
+        updater.poll(&ui);
         // No executable was launched: this fixture is deliberately not an EXE.
         let (sender, receiver) = mpsc::channel();
         updater.receiver = Some(receiver);
@@ -1020,6 +1120,13 @@ mod tests {
             &source,
             r#"class Fixture { static void Main(string[] args) {
             var receipt = System.Reflection.Assembly.GetExecutingAssembly().Location + ".receipt";
+            var modePath = System.Reflection.Assembly.GetExecutingAssembly().Location + ".mode";
+            var mode = System.IO.File.Exists(modePath) ? System.IO.File.ReadAllText(modePath) : "good";
+            if (mode == "early") return;
+            if (mode == "silent") { System.Console.ReadLine(); return; }
+            System.Console.WriteLine(mode == "ownership" ? "TIDE_UPDATE_FAILED|ownership" : mode == "bad" ? "WRONG" : "TIDE_UPDATE_READY|" + args[1] + "|0.2.0");
+            System.Console.Out.Flush();
+            if (System.Console.ReadLine() != "COMMIT") return;
             System.IO.File.WriteAllText(receipt + ".tmp", System.String.Join("|", args));
             System.IO.File.Move(receipt + ".tmp", receipt);
         } }"#,
@@ -1054,10 +1161,20 @@ mod tests {
         let mut tampered = bytes.clone();
         *tampered.last_mut().unwrap() ^= 1;
         fs::write(&exe, tampered).unwrap();
-        assert!(launch(&exe, &release).is_err());
+        assert!(!launch(&exe, &release).unwrap_err().keep_ready);
         assert!(!receipt.exists());
         fs::write(&exe, bytes).unwrap();
-        launch(&exe, &release).unwrap();
+        let mut pending = launch(&exe, &release).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if let Some(result) = pending.poll() {
+                result.unwrap();
+                break;
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        pending.wait_for_test_exit();
         let started = Instant::now();
         let actual = loop {
             match fs::read_to_string(&receipt) {
@@ -1075,6 +1192,73 @@ mod tests {
                 }
             }
         };
-        assert_eq!(actual, format!("--update-from|{}", std::process::id()));
+        assert_eq!(
+            actual,
+            format!("--update-from|{}|--confirm-ready", std::process::id())
+        );
+        fs::remove_file(&receipt).unwrap();
+        for mode in ["bad", "early", "silent", "ownership"] {
+            fs::write(exe.with_extension("exe.mode"), mode).unwrap();
+            let mut pending = launch(&exe, &release).unwrap();
+            if mode == "silent" {
+                pending.expire_for_test();
+            }
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                if let Some(result) = pending.poll() {
+                    let error = result.unwrap_err();
+                    if mode == "ownership" {
+                        assert!(error.contains("registration conflict"));
+                    }
+                    break;
+                }
+                assert!(Instant::now() < deadline);
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            drop(pending);
+            assert!(
+                !receipt.exists(),
+                "Failed/canceled setup must not receive COMMIT"
+            );
+            assert!(
+                exe.exists(),
+                "A restart failure must retain the verified download"
+            );
+        }
+        fs::write(exe.with_extension("exe.mode"), "good").unwrap();
+        drop(launch(&exe, &release).unwrap());
+        assert!(
+            !receipt.exists(),
+            "Canceling preparation must not commit an update"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_start_failure_is_retryable_without_discarding_verified_download() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("TideSetup.exe");
+        let bytes = b"signed fixture that is not a Windows executable";
+        fs::write(&path, bytes).unwrap();
+        let digest = format!("{:x}", Sha256::digest(bytes));
+        let release = Release {
+            version: Version::parse("0.2.0").unwrap(),
+            url: String::new(),
+            digest: digest.clone(),
+            size: bytes.len() as u64,
+            authorization: Some(publisher::test_authorization(
+                "0.2.0",
+                &digest,
+                bytes.len() as u64,
+            )),
+        };
+        for _ in 0..2 {
+            let error = launch(&path, &release).unwrap_err();
+            assert!(error.keep_ready);
+            assert!(error
+                .message
+                .contains("Windows could not start setup (code"));
+            assert_eq!(fs::read(&path).unwrap(), bytes);
+        }
     }
 }

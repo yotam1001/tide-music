@@ -104,6 +104,19 @@ function Must-Fail([scriptblock]$Action) {
 function New-Install { Install-Tide $package $root $links 'Chrome' ('a' * 32) | Out-Null }
 function Current-Release { $state = Get-TideInstallState $root; return Join-Path $root ('releases/' + $state.Release) }
 switch ($Scenario) {
+    'preflight' {
+        $events = @(Test-TideInstall $package $root $links 'None' '' '1.2.3')
+        if ($events[-1] -ne 'TIDE_PREFLIGHT_OK' -or (Test-Path -LiteralPath $root) -or (Test-Path -LiteralPath $links)) { throw 'Fresh preflight wrote an installation' }
+        New-Install; $previous = Current-Release; $entry = Get-TideUninstallEntry
+        $global:Busy = $true; $global:FailDependency = $true
+        $events = @(Test-TideInstall $package $root $links 'None' '' '1.2.3')
+        if ($events[-1] -ne 'TIDE_PREFLIGHT_OK' -or (Current-Release) -ne $previous -or !(Test-TideUninstallEntryMatch (Get-TideUninstallEntry) $entry)) { throw 'Running-player preflight changed ownership or registration' }
+        $global:AppsEntry.UninstallString = 'different.exe'
+        Must-Fail { Test-TideInstall $package $root $links 'None' '' '1.2.3' }
+        if ($global:AppsEntry.UninstallString -ne 'different.exe') { throw 'Conflicting preflight changed registration' }
+        $global:AppsEntry = $entry; $global:Busy = $false; $global:FailDependency = $false
+        Uninstall-Tide $root $links | Out-Null
+    }
     'fresh-remove' {
         New-Install
         $release = Current-Release
@@ -365,7 +378,7 @@ class WindowsInstallTests(unittest.TestCase):
             self.assertIn(b"PASS isolated installer lifecycle", result.stdout)
 
     def test_isolated_lifecycle(self):
-        for scenario in ("fresh-remove", "upgrade", "preserve-extra", "dependency-failure-first",
+        for scenario in ("preflight", "fresh-remove", "upgrade", "preserve-extra", "dependency-failure-first",
                          "dependency-failure-update", "shortcut-failure", "registration-failure", "busy",
                          "unknown-root", "shortcut-conflict", "registration-conflict",
                          "changed-shortcut-removal", "changed-registration-removal", "corrupt-package",
@@ -404,7 +417,7 @@ class WindowsInstallTests(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("powershell.exe"), "requires built-in Windows PowerShell 5.1")
     def test_builtin_windows_powershell_lifecycle(self):
-        for scenario in ("fresh-remove", "upgrade", "registration-failure", "runtime-api-independent", "runtime-corrupt-download", "app-entry-write-failure-update", "protocol"):
+        for scenario in ("preflight", "fresh-remove", "upgrade", "registration-failure", "runtime-api-independent", "runtime-corrupt-download", "app-entry-write-failure-update", "protocol"):
             with self.subTest(scenario=scenario):
                 self.run_scenario(scenario, "powershell.exe")
 
