@@ -141,6 +141,31 @@ fn update_pill_download_cancel_and_restart_do_not_touch_playback() {
         let r = restarts.get();
         click(&ui, 820.0, 32.0);
         assert_eq!(restarts.get(), r + 1, "Restart is not reachable");
+        ui.set_update_phase(4);
+        ui.set_update_busy(true);
+        draw(&window, 1140, 800, "updater-preparing-restart");
+        click(&ui, 820.0, 32.0);
+        assert_eq!(
+            restarts.get(),
+            r + 1,
+            "Preparing started a duplicate restart"
+        );
+        let c = cancellations.get();
+        click(&ui, 920.0, 32.0);
+        assert_eq!(
+            cancellations.get(),
+            c + 1,
+            "Preparing restart could not be canceled"
+        );
+        ui.set_update_phase(2);
+        ui.set_update_busy(false);
+        draw(&window, 1140, 800, "updater-retry-restart");
+        click(&ui, 820.0, 32.0);
+        assert_eq!(
+            restarts.get(),
+            r + 2,
+            "Restart remained blocked after a failed/canceled attempt"
+        );
         assert_eq!(playback.get(), 0);
         assert_eq!(ui.get_track_title(), "Synthetic update fixture");
     }

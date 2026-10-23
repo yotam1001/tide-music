@@ -135,11 +135,11 @@ namespace TideSetup {
                 + " -AppVersion " + Payload.AppVersion
                 + (Chrome ? " -Browser Chrome -ChromiumExtensionId " + ExtensionId : "");
         }
-        internal ProcessStartInfo StartInfo(string script) {
+        internal ProcessStartInfo StartInfo(string script, bool preflight = false) {
             var system = Environment.GetFolderPath(Environment.SpecialFolder.System);
             var start = new ProcessStartInfo {
                 FileName = Path.Combine(system, "WindowsPowerShell", "v1.0", "powershell.exe"),
-                Arguments = Arguments(script), UseShellExecute = false, CreateNoWindow = true,
+                Arguments = Arguments(script) + (preflight ? " -PreflightOnly" : ""), UseShellExecute = false, CreateNoWindow = true,
                 RedirectStandardOutput = true, RedirectStandardError = true,
                 StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8
             };
@@ -152,24 +152,72 @@ namespace TideSetup {
 
     internal sealed class UpdateOptions {
         internal readonly int ParentId;
-        UpdateOptions(int parentId) { ParentId = parentId; }
+        readonly bool confirmReady;
+        bool readySent, parentFinished;
+        internal bool RequiresConfirmation { get { return confirmReady; } }
+        UpdateOptions(int parentId, bool confirm) { ParentId = parentId; confirmReady = confirm; }
         internal static UpdateOptions Parse(string[] args) {
             if (args.Length == 0 || (args.Length == 1 && (args[0] == "--preview" || args[0] == "--verify-payload"))) return null;
             int id;
-            if (args.Length != 2 || args[0] != "--update-from" || !Int32.TryParse(args[1], out id)
+            if ((args.Length != 2 && args.Length != 3) || args[0] != "--update-from"
+                || (args.Length == 3 && args[2] != "--confirm-ready") || !Int32.TryParse(args[1], out id)
                 || id <= 0 || id == Process.GetCurrentProcess().Id) throw new ArgumentException("Invalid update handoff.");
-            return new UpdateOptions(id);
+            return new UpdateOptions(id, args.Length == 3);
+        }
+        internal void ConfirmPrepared() {
+            if (confirmReady && !readySent) {
+                WriteProtocolLine("TIDE_UPDATE_READY|" + ParentId + "|" + Payload.AppVersion);
+                readySent = true;
+                // This is an ASCII pipe protocol, independent of the user's
+                // console code page and .NET's redirected TextReader encoding.
+                var answer = System.Threading.Tasks.Task.Factory.StartNew(delegate {
+                    var input = Console.OpenStandardInput();
+                    var bytes = new StringBuilder();
+                    for (var index = 0; index < 32; index++) {
+                        var value = input.ReadByte();
+                        if (value < 0) return "";
+                        // Framework StreamWriter.AutoFlush can emit a UTF-8
+                        // preamble merely by opening redirected StandardInput.
+                        if (index == 0 && value == 0xef) {
+                            if (input.ReadByte() != 0xbb || input.ReadByte() != 0xbf) return "";
+                            continue;
+                        }
+                        if (value == 10) return bytes.ToString().TrimEnd('\r');
+                        if (value > 127) return "";
+                        bytes.Append((char)value);
+                    }
+                    return "";
+                });
+                if (!answer.Wait(35000) || answer.Result != "COMMIT")
+                    throw new OperationCanceledException("Update restart canceled before installation.");
+            }
+        }
+        static void WriteProtocolLine(string line) {
+            var bytes = Encoding.ASCII.GetBytes(line + "\n");
+            var output = Console.OpenStandardOutput();
+            output.Write(bytes, 0, bytes.Length); output.Flush();
+        }
+        internal bool ReportPreflightFailure(Exception error) {
+            if (!confirmReady || readySent) return false;
+            var text = error.Message.ToLowerInvariant();
+            var category = text.Contains("another tide setup") ? "busy"
+                : (text.Contains("uninstall entry") || text.Contains("start menu") || text.Contains("owned tide installation")) ? "ownership"
+                : text.Contains("checksum") ? "package" : "preflight";
+            WriteProtocolLine("TIDE_UPDATE_FAILED|" + category);
+            return true;
         }
         internal void WaitForPlayer() {
+            if (parentFinished) return;
             Process parent;
             try { parent = Process.GetProcessById(ParentId); }
-            catch (ArgumentException) { return; } // The player already finished shutting down.
+            catch (ArgumentException) { parentFinished = true; return; }
             using (parent) {
                 try {
-                    if (parent.HasExited) return;
+                    if (parent.HasExited) { parentFinished = true; return; }
                     if (!String.Equals(parent.ProcessName, "tide-music", StringComparison.OrdinalIgnoreCase)) throw new IOException("The update handoff does not identify Tide.");
-                } catch (InvalidOperationException) { return; }
+                } catch (InvalidOperationException) { parentFinished = true; return; }
                 if (!parent.WaitForExit(120000)) throw new IOException("Tide is still closing. Close it before retrying setup.");
+                parentFinished = true;
             }
         }
     }
@@ -258,6 +306,8 @@ namespace TideSetup {
             worker.RunWorkerCompleted += delegate(object sender, RunWorkerCompletedEventArgs args) {
                 busy = false; action.Enabled = true; close.Enabled = true; guide.Enabled = true;
                 if (args.Error != null) {
+                    if (args.Error is OperationCanceledException) { Close(); return; }
+                    if (update != null && update.ReportPreflightFailure(args.Error)) { Close(); return; }
                     RevealUpdateError();
                     heading.Text = "Setup couldn't finish"; status.Text = "Your saved account and preferences were not removed.";
                     description.Text = "Close Tide if it is running, check your connection, then try again.";
@@ -291,11 +341,26 @@ namespace TideSetup {
         }
         void RunInstall(object sender, DoWorkEventArgs args) {
             if (preview) { worker.ReportProgress(100, "Preview complete · nothing installed"); args.Result = null; return; }
-            string root = null, result = null; var errors = new StringBuilder();
+            string root = null, result = null;
             try {
-                if (update != null) { worker.ReportProgress(0, "Waiting for Tide to close…"); update.WaitForPlayer(); }
                 root = Payload.Extract();
                 var start = options.StartInfo(Path.Combine(root, "scripts", "install-windows.ps1"));
+                if (!File.Exists(start.FileName)) throw new IOException("Windows PowerShell is unavailable; setup has not changed your installation.");
+                if (update != null) {
+                    if (update.RequiresConfirmation && RunSetup(options.StartInfo(Path.Combine(root, "scripts", "install-windows.ps1"), true)) != "TIDE_PREFLIGHT_OK")
+                        throw new IOException("Setup did not finish its read-only installation checks.");
+                    update.ConfirmPrepared();
+                    worker.ReportProgress(0, "Waiting for Tide to close…");
+                    update.WaitForPlayer();
+                }
+                result = RunSetup(start);
+                if (result == null || !Path.GetFullPath(result).StartsWith(installRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) || Path.GetFileName(result) != "tide-music.exe" || !File.Exists(result))
+                    throw new IOException("Setup finished without a valid application path. Try setup again.");
+                args.Result = result;
+            } finally { if (root != null) { try { Payload.Remove(root); } catch (IOException) { /* A locked staging file can be cleared by Windows temp cleanup. */ } } }
+        }
+        string RunSetup(ProcessStartInfo start) {
+                string result = null; var errors = new StringBuilder();
                 using (var process = new Process { StartInfo = start }) {
                     process.OutputDataReceived += delegate(object source, DataReceivedEventArgs line) {
                         if (line.Data == null) return;
@@ -303,20 +368,39 @@ namespace TideSetup {
                         int percent;
                         if (parts.Length == 3 && parts[0] == "TIDE_PROGRESS" && Int32.TryParse(parts[1], out percent)) worker.ReportProgress(percent, parts[2]);
                         if (line.Data.StartsWith("TIDE_RESULT|", StringComparison.Ordinal)) result = line.Data.Substring(12);
+                        if (line.Data == "TIDE_PREFLIGHT_OK") result = line.Data;
                     };
                     process.ErrorDataReceived += delegate(object source, DataReceivedEventArgs line) { if (line.Data != null) lock (errors) { if (errors.Length < 4000) errors.AppendLine(line.Data); } };
                     process.Start(); process.BeginOutputReadLine(); process.BeginErrorReadLine(); process.WaitForExit();
                     if (process.ExitCode != 0) throw new IOException(errors.Length == 0 ? "Installation failed. Check your connection and close Tide before retrying." : errors.ToString());
                 }
-                if (result == null || !Path.GetFullPath(result).StartsWith(installRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) || Path.GetFileName(result) != "tide-music.exe" || !File.Exists(result))
-                    throw new IOException("Setup finished without a valid application path. Try setup again.");
-                args.Result = result;
-            } finally { if (root != null) { try { Payload.Remove(root); } catch (IOException) { /* A locked staging file can be cleared by Windows temp cleanup. */ } } }
+                return result;
         }
         void OpenTide(bool account) {
             if (preview) { MessageBox.Show(this, "This is a visual preview. No application was installed.", "Tide Setup"); return; }
-            try { Process.Start(new ProcessStartInfo { FileName = installed, Arguments = account ? "--connect-account" : "", WorkingDirectory = Path.GetDirectoryName(installed), UseShellExecute = true }); Close(); }
-            catch (Exception) { RevealUpdateError(); MessageBox.Show(this, "Tide could not open. Try launching it from the Start menu.", "Tide Setup"); }
+            try { using (var player = StartPlayer(installed, account)) { } Close(); }
+            catch (Exception error) {
+                RevealUpdateError();
+                heading.Text = "Update installed; Tide couldn't reopen";
+                status.Text = "Your new version is installed. Choose Open Tide to retry.";
+                action.Text = "Open Tide"; action.Enabled = true;
+                errorDetails.Text = error.Message; errorDetails.Visible = true; errorDetails.BringToFront();
+            }
+        }
+        internal static Process StartPlayer(string executable, bool account) {
+            var player = Process.Start(new ProcessStartInfo {
+                FileName = executable, Arguments = account ? "--connect-account" : "",
+                // Shell launch detaches the interactive player from setup's
+                // inherited confirmation pipes. It inherits this process's
+                // environment, including the existing per-user profile.
+                WorkingDirectory = Path.GetDirectoryName(executable), UseShellExecute = true
+            });
+            if (player == null) throw new IOException("Windows did not start Tide. Retry Open Tide.");
+            if (player.WaitForExit(1000)) {
+                var code = player.ExitCode; player.Dispose();
+                throw new IOException("Tide closed during startup (exit " + code + "). Retry Open Tide or open it from Start.");
+            }
+            return player;
         }
     }
     internal static class Program {

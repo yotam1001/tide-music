@@ -41,6 +41,12 @@ to update** when convenient. The update applies in the background and reopens
 Tide; your account and preferences are kept. See [in-app updates](IN_APP_UPDATES.md).
 You can turn startup checks off in Settings.
 
+Updates keep your listening-history choice, Discord presence, theme, volume,
+shortcuts and other preferences in your Windows user profile, outside the app's
+versioned installation folder. Settings are saved by atomic replacement, with
+one recovery backup. An unreadable queue does not reset your other preferences.
+History reporting and Discord sharing stay off by default until you enable them.
+
 Preview 1 and preview 2 can discover stable **0.1.3** through this updater.
 The updater skips prerelease targets and drafts; it does not skip an installed
 preview when a newer stable version exists. If needed, download **TideSetup.exe**,
@@ -53,6 +59,12 @@ Chrome, following the connection guide.
 
 If an update fails, setup aims to leave the previous installation usable. Read
 the error before retrying. Setup never force-closes another Tide process.
+
+Only one setup or uninstall can run at a time for the current Windows user.
+If setup says another operation is running, let that operation finish before
+retrying. Ownership conflicts report the differing field names, without their
+values. Do not delete the Windows uninstall entry to bypass a conflict; include
+those field names when reporting the problem.
 
 ## Remove Tide
 

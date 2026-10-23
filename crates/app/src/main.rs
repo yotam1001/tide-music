@@ -32,11 +32,13 @@ mod performance;
 mod playback_feedback;
 mod radio;
 mod settings_location;
+mod settings_store;
 mod shortcut_capture;
 mod updater;
 slint::include_modules!();
 
 #[derive(Serialize, Deserialize)]
+#[serde(default)]
 struct Settings {
     queue: Queue,
     light_mode: bool,
@@ -928,6 +930,40 @@ fn update_model<T: Clone + PartialEq + 'static>(model: ModelRc<T>, rows: Vec<T>)
 fn settings_path() -> Option<PathBuf> {
     settings_location::settings_path(|key| std::env::var_os(key).map(PathBuf::from))
 }
+fn restore_settings(value: serde_json::Value) -> Settings {
+    let mut settings = Settings::default();
+    let serde_json::Value::Object(mut fields) = value else {
+        return settings;
+    };
+    // A stale or damaged queue must not reset privacy/appearance preferences.
+    // Missing fields in older versions retain their individual defaults.
+    macro_rules! restore {
+        ($($field:ident),+ $(,)?) => {
+            $(if let Some(value) = fields.remove(stringify!($field)) {
+                if let Ok(value) = serde_json::from_value(value) {
+                    settings.$field = value;
+                }
+            })+
+        };
+    }
+    restore!(
+        queue,
+        light_mode,
+        compact_mode,
+        autoplay,
+        check_updates,
+        media_controls,
+        history_feedback,
+        discord_presence,
+        discord_application_id,
+        mini_pinned,
+        mini_opacity,
+        shortcuts,
+        volume,
+        repeat,
+    );
+    settings
+}
 fn save(settings: &Settings) {
     if settings.transient {
         return;
@@ -935,11 +971,10 @@ fn save(settings: &Settings) {
     let Some(path) = settings_path() else {
         return;
     };
-    if let Some(p) = path.parent() {
-        let _ = std::fs::create_dir_all(p);
-    }
     if let Ok(bytes) = serde_json::to_vec_pretty(settings) {
-        let _ = std::fs::write(path, bytes);
+        if settings_store::save(&path, &bytes).is_err() {
+            eprintln!("Tide could not finish saving preferences.");
+        }
     }
 }
 fn sanitize_queue(queue: &mut Queue) -> bool {
@@ -1648,8 +1683,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     } else {
         settings_path()
-            .and_then(|path| std::fs::read(path).ok())
-            .and_then(|b| serde_json::from_slice(&b).ok())
+            .and_then(|path| settings_store::load(&path))
+            .map(restore_settings)
             .unwrap_or_default()
     };
     let smoke_autoplay_depletion = std::env::args().any(|a| a == "--smoke-autoplay-depletion");
@@ -4485,6 +4520,51 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn upgrade_restores_preferences_even_if_queue_or_other_fields_are_incompatible() {
+        let settings = restore_settings(serde_json::json!({
+            "history_feedback": true,
+            "discord_presence": true,
+            "light_mode": true,
+            "volume": 37.0,
+            "shortcuts": ["Ctrl+Alt+P", "Ctrl+Alt+Left", "Ctrl+Alt+Right"],
+            "queue": {"tracks": "damaged old queue"},
+            "mini_opacity": "invalid type",
+            "future_version_field": true
+        }));
+        assert!(settings.history_feedback);
+        assert!(settings.discord_presence);
+        assert!(settings.light_mode);
+        assert_eq!(settings.volume, Some(37.0));
+        assert_eq!(settings.shortcuts[0], "Ctrl+Alt+P");
+        assert!(settings.queue.tracks.is_empty());
+        assert_eq!(settings.mini_opacity, 100);
+        assert!(settings.autoplay);
+    }
+
+    #[test]
+    fn preferences_survive_save_restart_and_upgrade_with_both_opt_in_states() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("TideMusic/settings.json");
+        for enabled in [true, false] {
+            let settings = Settings {
+                history_feedback: enabled,
+                discord_presence: enabled,
+                light_mode: true,
+                ..Settings::default()
+            };
+            settings_store::save(&path, &serde_json::to_vec(&settings).unwrap()).unwrap();
+            let restored = restore_settings(settings_store::load(&path).unwrap());
+            assert_eq!(restored.history_feedback, enabled);
+            assert_eq!(restored.discord_presence, enabled);
+            assert!(restored.light_mode);
+        }
+        let old = restore_settings(serde_json::json!({"light_mode": true}));
+        assert!(!old.history_feedback);
+        assert!(!old.discord_presence);
+        assert!(old.light_mode);
+    }
 
     #[test]
     fn old_settings_keep_media_keys_and_do_not_register_global_shortcuts() {
