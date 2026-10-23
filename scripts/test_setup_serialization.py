@@ -81,7 +81,7 @@ class SetupSerializationTests(unittest.TestCase):
             if not shutil.which(shell):
                 continue
             with self.subTest(shell=shell), tempfile.TemporaryDirectory(prefix="tide-setup-lock-") as directory:
-                root = Path(directory)
+                root = Path(directory).resolve()
                 env = os.environ.copy()
                 if shell == "powershell.exe":
                     env["PSModulePath"] = str(Path(os.environ["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/Modules")
