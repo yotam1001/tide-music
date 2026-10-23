@@ -28,6 +28,7 @@ tide-jam-lab = { path = "../../experiments/jam", default-features = false, optio
 zeroize = { version = "1", optional = true }
 semver = "1"
 sha2 = "0.10"
+ring = "=0.17.14"
 
 
 [build-dependencies]

@@ -124,10 +124,12 @@ ambiguous network result. Old relays report the unsupported operation without
 ending synchronized playback. Both the relay and host need this candidate for
 shared skipping; it is not an installed-release claim.
 
-The desktop updater is separate from Jams. Its HTTPS release-location checks,
-bounded downloads and SHA-256 checks detect transport corruption or mismatched
-assets, but the expected digest is supplied by the same GitHub release API. This
-is not independent publisher authentication. A compromised publishing account
-could replace both the executable and its digest. Independently signed update
-metadata with a pinned verification key is a remaining hardening item. Jams do
-not invoke the updater or supply executable download locations.
+The desktop updater is separate from Jams. The previous review identified that
+its SHA-256 came from the same GitHub release API as installer metadata. The 0.4.1
+candidate now requires independent Ed25519-signed installer identity metadata,
+verified against a public key built into the app. Missing, invalid, mismatched
+or expired signatures stop the update; there is no unsigned fallback. The local
+DPAPI-protected signing key is outside the repository and CI. Existing clients
+through 0.4.0 cannot gain that check before their first upgrade; see
+[the update trust model](../../docs/IN_APP_UPDATES.md). Jams do not invoke the
+updater or supply executable download locations.

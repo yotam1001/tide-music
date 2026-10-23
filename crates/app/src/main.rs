@@ -1598,6 +1598,14 @@ fn search(query: String, cancel: Arc<AtomicBool>) -> Result<Vec<Track>, String> 
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if std::env::args().nth(1).as_deref() == Some("--verify-update-files") {
+        let paths: Vec<_> = std::env::args_os().skip(2).collect();
+        if paths.len() != 2 {
+            return Err("Expected signed manifest and installer paths".into());
+        }
+        return updater::verify_files(Path::new(&paths[0]), Path::new(&paths[1]))
+            .map_err(Into::into);
+    }
     if std::env::args().any(|arg| arg == "--smoke-collection-read") {
         return music_feedback::read_probe().map_err(Into::into);
     }

@@ -1,4 +1,6 @@
 //! Published stable releases only. No Google sessions or browser state enter this module.
+mod publisher;
+
 use semver::Version;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -13,7 +15,7 @@ use std::{
         atomic::{AtomicBool, AtomicU32, Ordering},
         mpsc, Arc,
     },
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 const API: &str = "https://api.github.com/repos/yotam1001/tide-music/releases/latest";
@@ -26,6 +28,7 @@ pub(super) struct Release {
     url: String,
     digest: String,
     size: u64,
+    authorization: Option<publisher::Authorization>,
 }
 #[derive(Deserialize)]
 struct Metadata {
@@ -86,6 +89,7 @@ fn parse_release(bytes: &[u8], current: &str) -> Result<Option<Release>, String>
         url: expected_url,
         digest: digest.to_lowercase(),
         size: asset.size,
+        authorization: None,
     }))
 }
 
@@ -124,7 +128,116 @@ pub(super) fn check() -> Result<Option<Release>, String> {
     if bytes.len() > 256 * 1024 {
         return Err("Release information is too large".into());
     }
-    parse_release(&bytes, env!("CARGO_PKG_VERSION"))
+    let Some(mut release) = parse_release(&bytes, env!("CARGO_PKG_VERSION"))? else {
+        return Ok(None);
+    };
+    let manifest = fetch_manifest(&release)?;
+    release.authorization = Some(publisher::authenticate(
+        &manifest,
+        &release.version.to_string(),
+        &release.digest,
+        release.size,
+        unix_time()?,
+    )?);
+    Ok(Some(release))
+}
+
+fn unix_time() -> Result<u64, String> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|time| time.as_secs())
+        .map_err(|_| "Check the Windows date and time before updating".into())
+}
+fn require_authorization(release: &Release) -> Result<(), String> {
+    if release
+        .authorization
+        .as_ref()
+        .is_some_and(|auth| unix_time().is_ok_and(|now| auth.valid(now)))
+    {
+        Ok(())
+    } else {
+        Err("A valid publisher signature is required. Check for updates again.".into())
+    }
+}
+
+/// Offline release audit: no window, account, network, install or execution.
+pub(super) fn verify_files(manifest: &Path, installer: &Path) -> Result<(), String> {
+    plain(manifest)?;
+    plain(installer)?;
+    let mut envelope = Vec::new();
+    File::open(manifest)
+        .map_err(|_| "Could not open signed manifest")?
+        .take(publisher::MAX_MANIFEST as u64 + 1)
+        .read_to_end(&mut envelope)
+        .map_err(|_| "Could not read signed manifest")?;
+    let mut file = File::open(installer).map_err(|_| "Could not open installer")?;
+    let mut sha = Sha256::new();
+    let mut count = 0u64;
+    let mut buffer = [0u8; 16 * 1024];
+    loop {
+        let size = file
+            .read(&mut buffer)
+            .map_err(|_| "Could not hash installer")?;
+        if size == 0 {
+            break;
+        }
+        count = count.saturating_add(size as u64);
+        if count > MAX_INSTALLER {
+            return Err("Installer too large".into());
+        }
+        sha.update(&buffer[..size]);
+    }
+    publisher::authenticate(
+        &envelope,
+        env!("CARGO_PKG_VERSION"),
+        &format!("{:x}", sha.finalize()),
+        count,
+        unix_time()?,
+    )?;
+    println!("PASS publisher signature and exact installer identity; nothing executed");
+    Ok(())
+}
+fn fetch_manifest(release: &Release) -> Result<Vec<u8>, String> {
+    let client = agent(10);
+    let mut url = format!(
+        "https://github.com/yotam1001/tide-music/releases/download/v{}/TideUpdate.json",
+        release.version
+    );
+    for _ in 0..4 {
+        if !allowed_download(&url) {
+            return Err("Unexpected signed manifest destination".into());
+        }
+        let mut response = client
+            .get(&url)
+            .header("User-Agent", "Tide-Updater")
+            .call()
+            .map_err(|_| "Could not retrieve the publisher signature. Nothing was installed.")?;
+        if response.status().as_u16() == 200 {
+            let mut bytes = Vec::new();
+            response
+                .body_mut()
+                .as_reader()
+                .take(publisher::MAX_MANIFEST as u64 + 1)
+                .read_to_end(&mut bytes)
+                .map_err(|_| "Could not read publisher signature")?;
+            if bytes.len() > publisher::MAX_MANIFEST {
+                return Err("Signed manifest is too large".into());
+            }
+            return Ok(bytes);
+        }
+        if !matches!(response.status().as_u16(), 301 | 302 | 303 | 307 | 308) {
+            return Err(
+                "This release has no valid publisher signature. Nothing was installed.".into(),
+            );
+        }
+        url = response
+            .headers()
+            .get("location")
+            .and_then(|header| header.to_str().ok())
+            .ok_or("Invalid signed manifest redirect")?
+            .to_owned();
+    }
+    Err("Too many signed manifest redirects".into())
 }
 
 fn allowed_download(url: &str) -> bool {
@@ -274,6 +387,7 @@ impl Drop for PartialDownload {
 }
 
 fn download(release: &Release, base: &Path, transfer: &Transfer) -> Result<PathBuf, String> {
+    require_authorization(release)?;
     let agent = agent(180);
     let mut url = release.url.clone();
     let mut response = None;
@@ -384,6 +498,7 @@ fn installed_player(base: &Path, executable: &Path) -> bool {
 }
 
 fn launch(path: &Path, release: &Release) -> Result<(), String> {
+    require_authorization(release)?;
     plain(path)?;
     let mut options = OpenOptions::new();
     options.read(true);
@@ -647,6 +762,18 @@ mod tests {
     }
     fn parse(value: &serde_json::Value) -> Result<Option<Release>, String> {
         parse_release(&serde_json::to_vec(value).unwrap(), "0.1.0")
+    }
+    #[test]
+    fn unsigned_metadata_never_authorizes_download_or_execution() {
+        let release = parse(&metadata("v0.5.0")).unwrap().unwrap();
+        let base = tempfile::tempdir().unwrap();
+        assert!(download(&release, base.path(), &Transfer::default())
+            .unwrap_err()
+            .contains("publisher signature"));
+        assert!(launch(&base.path().join("missing.exe"), &release)
+            .unwrap_err()
+            .contains("publisher signature"));
+        assert_eq!(std::fs::read_dir(base.path()).unwrap().count(), 0);
     }
     #[test]
     fn installed_stable_and_previews_offer_0_1_2_but_equal_versions_do_not() {
