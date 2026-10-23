@@ -166,13 +166,30 @@ namespace TideSetup {
         }
         internal void ConfirmPrepared() {
             if (confirmReady && !readySent) {
-                Console.WriteLine("TIDE_UPDATE_READY|" + ParentId + "|" + Payload.AppVersion);
-                Console.Out.Flush();
+                WriteProtocolLine("TIDE_UPDATE_READY|" + ParentId + "|" + Payload.AppVersion);
                 readySent = true;
-                var answer = Console.In.ReadLineAsync();
+                // This is an ASCII pipe protocol, independent of the user's
+                // console code page and .NET's redirected TextReader encoding.
+                var answer = System.Threading.Tasks.Task.Factory.StartNew(delegate {
+                    var input = Console.OpenStandardInput();
+                    var bytes = new StringBuilder();
+                    for (var index = 0; index < 32; index++) {
+                        var value = input.ReadByte();
+                        if (value < 0) return "";
+                        if (value == 10) return bytes.ToString().TrimEnd('\r');
+                        if (value > 127) return "";
+                        bytes.Append((char)value);
+                    }
+                    return "";
+                });
                 if (!answer.Wait(35000) || answer.Result != "COMMIT")
                     throw new OperationCanceledException("Update restart canceled before installation.");
             }
+        }
+        static void WriteProtocolLine(string line) {
+            var bytes = Encoding.ASCII.GetBytes(line + "\n");
+            var output = Console.OpenStandardOutput();
+            output.Write(bytes, 0, bytes.Length); output.Flush();
         }
         internal bool ReportPreflightFailure(Exception error) {
             if (!confirmReady || readySent) return false;
@@ -180,8 +197,7 @@ namespace TideSetup {
             var category = text.Contains("another tide setup") ? "busy"
                 : (text.Contains("uninstall entry") || text.Contains("start menu") || text.Contains("owned tide installation")) ? "ownership"
                 : text.Contains("checksum") ? "package" : "preflight";
-            Console.WriteLine("TIDE_UPDATE_FAILED|" + category);
-            Console.Out.Flush();
+            WriteProtocolLine("TIDE_UPDATE_FAILED|" + category);
             return true;
         }
         internal void WaitForPlayer() {

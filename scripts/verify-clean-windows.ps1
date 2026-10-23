@@ -229,8 +229,9 @@ try {
         }
         if ($taskSetupProcess.HasExited) { throw 'Actual setup exited before commit.' }
         $taskSetupOutput = $taskSetupProcess.StandardOutput.ReadToEndAsync()
-        $taskSetupProcess.StandardInput.WriteLine('COMMIT')
-        $taskSetupProcess.StandardInput.Flush()
+        $taskCommitBytes = [Text.Encoding]::ASCII.GetBytes("COMMIT`n")
+        $taskSetupProcess.StandardInput.BaseStream.Write($taskCommitBytes, 0, $taskCommitBytes.Length)
+        $taskSetupProcess.StandardInput.BaseStream.Flush()
         $taskSetupProcess.StandardInput.Close()
         Write-Host 'PASS actual packaged setup readiness and explicit commit'
     } finally { $env:APPDATA = $taskPreviousAppdata }

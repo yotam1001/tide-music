@@ -7,6 +7,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Check native setup handshake before the Rust build
+        run: python -m unittest discover -s scripts -p test_installer_bootstrap.py
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy

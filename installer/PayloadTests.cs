@@ -39,7 +39,10 @@ internal static class PayloadTests {
         if (fixtureName == "startup-failure.exe") return 37;
         if (fixtureName == "startup-success.exe") { System.Threading.Thread.Sleep(5000); return 0; }
         if (args.Length == 1 && args[0] == "--handoff-child") { System.Threading.Thread.Sleep(1200); return 0; }
-        if (args.Length == 1 && args[0] == "--readiness-child") {
+        if (args.Length == 1 && args[0].StartsWith("--readiness-child", StringComparison.Ordinal)) {
+            if (args[0] == "--readiness-child-utf16") {
+                Console.InputEncoding = Encoding.Unicode; Console.OutputEncoding = Encoding.Unicode;
+            }
             try {
                 UpdateOptions.Parse(new[] { "--update-from", Int32.MaxValue.ToString(), "--confirm-ready" }).ConfirmPrepared();
                 return 0;
@@ -82,19 +85,24 @@ internal static class PayloadTests {
             if (!rejected.WaitForExit(10000) || rejected.ExitCode != 0 || result.Result.Trim() != "TIDE_UPDATE_FAILED|ownership")
                 throw new Exception("Preflight error must identify its category without private values.");
         }
-        foreach (var response in new[] { "COMMIT", "CANCEL" }) {
+        foreach (var encoding in new[] { "", "-utf16" }) foreach (var response in new[] { "COMMIT", "CANCEL" }) {
             using (var prepared = Process.Start(new ProcessStartInfo {
                 FileName = System.Reflection.Assembly.GetExecutingAssembly().Location,
-                Arguments = "--readiness-child", UseShellExecute = false, CreateNoWindow = true,
+                Arguments = "--readiness-child" + encoding, UseShellExecute = false, CreateNoWindow = true,
                 RedirectStandardOutput = true, RedirectStandardInput = true, RedirectStandardError = true
             })) {
                 var ready = prepared.StandardOutput.ReadLineAsync();
                 if (!ready.Wait(10000) || ready.Result != "TIDE_UPDATE_READY|" + Int32.MaxValue + "|" + Payload.AppVersion)
                     throw new Exception("Setup readiness receipt was missing or incorrect.");
                 if (prepared.HasExited) throw new Exception("Setup proceeded before explicit commit.");
-                prepared.StandardInput.WriteLine(response); prepared.StandardInput.Flush();
-                if (!prepared.WaitForExit(10000) || prepared.ExitCode != (response == "COMMIT" ? 0 : 23))
-                    throw new Exception("Setup commit/cancel protocol failed.");
+                var bytes = Encoding.ASCII.GetBytes(response + "\n");
+                prepared.StandardInput.BaseStream.Write(bytes, 0, bytes.Length); prepared.StandardInput.BaseStream.Flush();
+                if (!prepared.WaitForExit(10000)) {
+                    prepared.Kill(); prepared.WaitForExit();
+                    throw new Exception("Setup " + response + encoding + " timed out.");
+                }
+                if (prepared.ExitCode != (response == "COMMIT" ? 0 : 23))
+                    throw new Exception("Setup " + response + encoding + " returned " + prepared.ExitCode + ": " + prepared.StandardError.ReadToEnd());
             }
         }
         using (var updateForm = new SetupWindow(true, deadParent)) {
