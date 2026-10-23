@@ -85,7 +85,7 @@ internal static class PayloadTests {
             if (!rejected.WaitForExit(10000) || rejected.ExitCode != 0 || result.Result.Trim() != "TIDE_UPDATE_FAILED|ownership")
                 throw new Exception("Preflight error must identify its category without private values.");
         }
-        foreach (var encoding in new[] { "", "-utf16" }) foreach (var response in new[] { "COMMIT", "CANCEL" }) {
+        foreach (var encoding in new[] { "", "-utf16" }) foreach (var preamble in new[] { false, true }) foreach (var response in new[] { "COMMIT", "CANCEL" }) {
             using (var prepared = Process.Start(new ProcessStartInfo {
                 FileName = System.Reflection.Assembly.GetExecutingAssembly().Location,
                 Arguments = "--readiness-child" + encoding, UseShellExecute = false, CreateNoWindow = true,
@@ -95,8 +95,13 @@ internal static class PayloadTests {
                 if (!ready.Wait(10000) || ready.Result != "TIDE_UPDATE_READY|" + Int32.MaxValue + "|" + Payload.AppVersion)
                     throw new Exception("Setup readiness receipt was missing or incorrect.");
                 if (prepared.HasExited) throw new Exception("Setup proceeded before explicit commit.");
+                var input = prepared.StandardInput;
+                if (preamble && input.Encoding.GetPreamble().Length == 0) {
+                    var marker = new byte[] { 0xef, 0xbb, 0xbf };
+                    input.BaseStream.Write(marker, 0, marker.Length);
+                }
                 var bytes = Encoding.ASCII.GetBytes(response + "\n");
-                prepared.StandardInput.BaseStream.Write(bytes, 0, bytes.Length); prepared.StandardInput.BaseStream.Flush();
+                input.BaseStream.Write(bytes, 0, bytes.Length); input.BaseStream.Flush();
                 if (!prepared.WaitForExit(10000)) {
                     prepared.Kill(); prepared.WaitForExit();
                     throw new Exception("Setup " + response + encoding + " timed out.");

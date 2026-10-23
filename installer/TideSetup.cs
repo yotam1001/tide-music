@@ -176,6 +176,12 @@ namespace TideSetup {
                     for (var index = 0; index < 32; index++) {
                         var value = input.ReadByte();
                         if (value < 0) return "";
+                        // Framework StreamWriter.AutoFlush can emit a UTF-8
+                        // preamble merely by opening redirected StandardInput.
+                        if (index == 0 && value == 0xef) {
+                            if (input.ReadByte() != 0xbb || input.ReadByte() != 0xbf) return "";
+                            continue;
+                        }
                         if (value == 10) return bytes.ToString().TrimEnd('\r');
                         if (value > 127) return "";
                         bytes.Append((char)value);
