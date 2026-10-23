@@ -1,4 +1,4 @@
-# Gaming integrations (in review)
+# Gaming integrations
 
 ## Discord presence
 
@@ -8,8 +8,8 @@ activity. No YouTube credentials, source URLs, account details, artwork download
 Jam invitations or Discord bot tokens are included.
 
 Tide defaults to its registered **public Discord application ID**,
-`1562782377111982222`. Turn sharing on to connect. The ID field remains available
-for custom development applications. This ID is not a secret; never enter a bot token.
+`1562782377111982222`. Turn sharing on to connect; no application ID or bot token
+is needed from users.
 The desktop Discord client must be running. There is no browser requirement.
 
 One native worker starts only when sharing is enabled with a valid ID. A single
@@ -21,9 +21,9 @@ The public ID and opt-in preference are saved in existing Tide settings.
 
 ## Pinned Mini
 
-Use Mini, then Pin; or set Pin Mini in Settings → Mini player. This uses the
+Use Mini, then Pin. This uses the
 existing native window, without a second process, browser, injected game hook or
-new graphics engine. Opacity is adjustable between 60% and 100% in Settings.
+new graphics engine. Opacity is adjustable between 60% and 100% in Settings → More options.
 Expanding restores normal opacity and removes the always-on-top state. The
 preference is retained for the next time Mini opens. Exclusive fullscreen games
 can cover ordinary desktop windows; borderless/windowed games are the target.

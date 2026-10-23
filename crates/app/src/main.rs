@@ -32,6 +32,7 @@ mod performance;
 mod playback_feedback;
 mod radio;
 mod settings_location;
+mod shortcut_capture;
 mod updater;
 slint::include_modules!();
 
@@ -1703,7 +1704,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ..Settings::default()
         };
     }
-    if settings.discord_application_id.trim().is_empty() {
+    if !discord::valid_id(settings.discord_application_id.trim()) {
         settings.discord_application_id = default_discord_application_id();
     }
     settings.queue.tracks.truncate(2000);
@@ -2735,15 +2736,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
     bind!(on_toggle_discord_presence, |s, u| {
-        let id = u.get_discord_application_id().to_string();
-        if !s.settings.discord_presence && !discord::valid_id(id.trim()) {
-            u.set_discord_status("Enter a valid public Discord application ID first".into());
-        } else {
-            s.settings.discord_application_id = id.trim().to_owned();
-            s.settings.discord_presence = !s.settings.discord_presence;
-            u.set_discord_presence_enabled(s.settings.discord_presence);
-            save(&s.settings);
-        }
+        // Normal users connect to Tide's registered app, without developer setup.
+        s.settings.discord_application_id = default_discord_application_id();
+        u.set_discord_application_id(s.settings.discord_application_id.clone().into());
+        s.settings.discord_presence = !s.settings.discord_presence;
+        u.set_discord_presence_enabled(s.settings.discord_presence);
+        save(&s.settings);
     });
     bind!(on_toggle_update_checks, |s, u| {
         s.settings.check_updates = !s.settings.check_updates;
@@ -2873,6 +2871,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let Some(u) = weak.upgrade() else {
                 return;
             };
+            if u.get_shortcut_recording_index() >= 0 {
+                return;
+            }
             // Hardware transport controls follow exactly the same path as the
             // player buttons, including autoplay when Next reaches queue end.
             match action {
@@ -2982,37 +2983,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     #[cfg(windows)]
-    {
-        let state = state.clone();
-        let weak = ui.as_weak();
-        let shortcuts = shortcuts.clone();
-        ui.on_apply_shortcuts(move || {
-            let Some(u) = weak.upgrade() else {
-                return;
-            };
-            let values = [
-                u.get_shortcut_toggle().to_string().trim().to_owned(),
-                u.get_shortcut_next().to_string().trim().to_owned(),
-                u.get_shortcut_previous().to_string().trim().to_owned(),
-            ];
-            let result = tide_windows::shortcuts::parse_bindings(&values).and_then(|bindings| {
-                shortcuts
-                    .borrow_mut()
-                    .as_mut()
-                    .ok_or_else(|| "Global shortcuts are unavailable in this mode.".to_string())?
-                    .apply(bindings)
-            });
-            match result {
-                Ok(()) => {
-                    let mut s = state.borrow_mut();
-                    s.settings.shortcuts = values;
-                    save(&s.settings);
-                    u.set_shortcut_status("Shortcuts saved. Blank fields are disabled.".into());
-                }
-                Err(error) => u.set_shortcut_status(error.into()),
-            }
-        });
-    }
+    shortcut_capture::wire(&ui, state.clone(), shortcuts.clone());
     let output_timer = slint::Timer::default();
     #[cfg(windows)]
     if media_enabled && state.borrow().engine.is_some() {

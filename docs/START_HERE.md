@@ -35,7 +35,7 @@ To try Tide without an account, skip this step and play a local audio file.
 - After connecting, search in the top bar, choose a playlist in **Library**, or
   pick a **Home** recommendation.
 - Open **Queue** to see upcoming tracks. Drag an upcoming song's handle to reorder.
-- Use **Settings → Open audio file** for music on your PC.
+- Use **Settings → More options → Open audio file** for music on your PC.
 - The sun/moon button changes theme. **Mini** makes the player smaller.
 
 ## Updates and help

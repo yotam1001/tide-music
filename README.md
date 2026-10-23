@@ -41,7 +41,7 @@ API keys.
    Web Store. For local files only, just open the EXE and choose **Install Tide**.
 3. **Play something.** Open Tide from Start. After connecting, search in the top
    bar, choose a playlist in **Library**, or pick a **Home** recommendation.
-   To play a file without an account, use **Settings → Open audio file**.
+   To play a file without an account, use **Settings → More options → Open audio file**.
 
 Setup adds Tide to Start. Already installed? Rerunning setup can enable the
 companion without uninstalling Tide. [Installation help](docs/INSTALLATION.md)
