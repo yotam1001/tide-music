@@ -60,6 +60,12 @@ Chrome, following the connection guide.
 If an update fails, setup aims to leave the previous installation usable. Read
 the error before retrying. Setup never force-closes another Tide process.
 
+Only one setup or uninstall can run at a time for the current Windows user.
+If setup says another operation is running, let that operation finish before
+retrying. Ownership conflicts report the differing field names, without their
+values. Do not delete the Windows uninstall entry to bypass a conflict; include
+those field names when reporting the problem.
+
 ## Remove Tide
 
 1. To remove the saved sign-in too, first choose **Account → Disconnect account**
