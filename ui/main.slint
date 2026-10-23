@@ -256,6 +256,7 @@ component TideButton inherits Rectangle {
 // becomes part of the shared track model.
 component TransportButtons inherits Rectangle {
     in property <bool> enabled: true;
+    in property <bool> next-enabled: root.enabled;
     in property <bool> paused;
     in property <bool> repeat-enabled;
     in property <bool> light-mode: false;
@@ -331,7 +332,7 @@ component TransportButtons inherits Rectangle {
         }
 
         TideButton {
-            enabled: root.enabled;
+            enabled: root.next-enabled;
             width: 42px;
             height: 40px;
             label: "Next track";
@@ -1080,6 +1081,7 @@ component UpdateAction inherits Rectangle {
 
 component PlayerBar inherits Rectangle {
     in property <bool> transport-enabled: true;
+    in property <bool> skip-enabled: root.transport-enabled;
     in property <bool> window-minimized: false;
     private property <int> input-revision: 0;
     private property <bool> repaint-phase: false;
@@ -1157,7 +1159,7 @@ component PlayerBar inherits Rectangle {
                     if root.playback-hint == "" && root.audio-quality != "" : Text { text: root.audio-quality; color: root.secondary; font-size: 10px; overflow: elide; }
                 }
             }
-            TransportButtons { enabled: root.transport-enabled; x: (parent.width - self.width) / 2; y: 2px; width: 150px; height: 48px; paused: root.paused; light-mode: root.light-mode; show-repeat: false; show-shuffle: false; toggle-pause => { root.toggle-pause(); } previous-track => { root.previous-track(); } next-track => { root.next-track(); } }
+            TransportButtons { enabled: root.transport-enabled; next-enabled: root.skip-enabled; x: (parent.width - self.width) / 2; y: 2px; width: 150px; height: 48px; paused: root.paused; light-mode: root.light-mode; show-repeat: false; show-shuffle: false; toggle-pause => { root.toggle-pause(); } previous-track => { root.previous-track(); } next-track => { root.next-track(); } }
             HorizontalLayout {
                 x: parent.width - self.width;
                 y: 8px;
@@ -1833,7 +1835,7 @@ export component AppWindow inherits Window {
                                     }
                                 }
                                 if root.jam-active && root.jam-guest && root.jam-listener-id > 0 : Text { text: "You are Listener " + root.jam-listener-id; color: root.foreground; font-weight: 600; }
-                                if root.jam-active : Text { height: 68px; text: root.jam-guest ? "Browse your music and select a song to add it to the shared queue. The host controls playback. Your volume stays local." : "Send the invite code to friends. They paste it into Join a Jam. Each person plays using their own account."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
+                                if root.jam-active : Text { height: 68px; text: root.jam-guest ? "Browse your music and select a song to add it to the shared queue. Press Next to request a skip for everyone. Your volume stays local." : "Send the invite code to friends. They paste it into Join a Jam. Each person plays using their own account."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
                                 if root.jam-active : LibraryButton { height: 36px; quiet: false; light-mode: root.light-mode; caption: root.jam-guest ? "Leave Jam" : "End Jam"; label: root.jam-guest ? "Leave Jam and restore your paused local queue" : "Close the hosted room for all guests"; clicked => { root.jam-leave(); } }
                                 if !root.jam-active : Text { text: "Start a Jam"; color: root.foreground; font-weight: 600; }
                                 if !root.jam-active : Text { height: 44px; text: "Play a song, start a room and invite your friends. Each person uses their own YouTube Music account."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
@@ -1865,6 +1867,7 @@ export component AppWindow inherits Window {
             PlayerBar {
                 window-minimized: root.minimized;
                 transport-enabled: !root.jam-guest;
+                skip-enabled: true;
                 preferred-height: 110px;
                 min-height: 110px;
                 max-height: root.collapsed ? 1000px : 110px;

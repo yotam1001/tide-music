@@ -51,6 +51,7 @@ struct Room {
     members: Vec<Member>,
     pending: Vec<PendingRequest>,
     next_request: u64,
+    skip: Option<(u32, Skip)>,
 }
 #[derive(Default)]
 pub struct Store {
@@ -69,6 +70,13 @@ impl Store {
                 .retain(|member| now.saturating_sub(member.seen) < MEMBER_IDLE_MS);
             room.pending
                 .retain(|p| room.members.iter().any(|m| m.id == p.member));
+            if room
+                .skip
+                .as_ref()
+                .is_some_and(|(id, _)| !room.members.iter().any(|m| m.id == *id))
+            {
+                room.skip = None;
+            }
         }
         while self
             .creates
@@ -133,6 +141,7 @@ impl Store {
                 members: Vec::new(),
                 pending: Vec::new(),
                 next_request: 1,
+                skip: None,
             },
         );
         self.creates.push_back(now);
@@ -220,6 +229,9 @@ impl Store {
         let replacement = Secret::random().map_err(internal)?;
         room.members.remove(index);
         room.pending.retain(|p| p.member != member_id);
+        if room.skip.as_ref().is_some_and(|(id, _)| *id == member_id) {
+            room.skip = None;
+        }
         room.invite = replacement;
         Ok(RotatedInvite {
             invite: room.invite.clone(),
@@ -277,6 +289,58 @@ impl Store {
         });
         Ok(())
     }
+    pub fn request_skip(
+        &mut self,
+        id: &str,
+        token: &Secret,
+        skip: Skip,
+        now: u64,
+    ) -> Result<(), Failure> {
+        self.clean(now);
+        let room = self.rooms.get_mut(id).ok_or(MISSING)?;
+        let member = room
+            .members
+            .iter_mut()
+            .find(|m| m.token.matches(token))
+            .ok_or(MISSING)?;
+        if !room.timeline.as_ref().is_some_and(|t| skip.matches(t)) {
+            return Err((StatusCode::CONFLICT, "Song has already changed"));
+        }
+        // All listeners requesting the same play collapse to a single operation.
+        if room
+            .skip
+            .as_ref()
+            .is_some_and(|(_, pending)| pending == &skip)
+        {
+            return Ok(());
+        }
+        while member
+            .requests
+            .front()
+            .is_some_and(|t| now.saturating_sub(*t) >= 60_000)
+        {
+            member.requests.pop_front();
+        }
+        if member.requests.len() >= 5 {
+            return Err((StatusCode::TOO_MANY_REQUESTS, "Jam request limit reached"));
+        }
+        member.requests.push_back(now);
+        member.seen = now;
+        room.skip = Some((member.id, skip));
+        Ok(())
+    }
+    pub fn skip_request(
+        &mut self,
+        id: &str,
+        host: &Secret,
+        now: u64,
+    ) -> Result<Option<Skip>, Failure> {
+        Ok(self
+            .hosted(id, host, now)?
+            .skip
+            .as_ref()
+            .map(|(_, skip)| skip.clone()))
+    }
     pub fn requests(
         &mut self,
         id: &str,
@@ -325,6 +389,13 @@ impl Store {
                 return Err((StatusCode::TOO_MANY_REQUESTS, "Publish rate exceeded"));
             }
         }
+        if room
+            .skip
+            .as_ref()
+            .is_some_and(|(_, skip)| !skip.matches(&timeline))
+        {
+            room.skip = None;
+        }
         room.timeline = Some(timeline);
         room.updated = now;
         Ok(())
@@ -364,6 +435,9 @@ impl Store {
             .ok_or(MISSING)?;
         let member = room.members.remove(index);
         room.pending.retain(|p| p.member != member.id);
+        if room.skip.as_ref().is_some_and(|(id, _)| *id == member.id) {
+            room.skip = None;
+        }
         Ok(())
     }
 }
@@ -547,6 +621,27 @@ async fn enqueue(
     let auth = token(&headers)?;
     s.with(|store, now| store.enqueue(&id, &auth, value.video, now))?;
     Ok(StatusCode::NO_CONTENT)
+}
+async fn request_skip(
+    State(s): State<Shared>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(value): Json<Skip>,
+) -> Result<StatusCode, Failure> {
+    checked_id(&id)?;
+    let auth = token(&headers)?;
+    s.with(|store, now| store.request_skip(&id, &auth, value, now))?;
+    Ok(StatusCode::NO_CONTENT)
+}
+async fn skip_request(
+    State(s): State<Shared>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<Option<Skip>>, Failure> {
+    checked_id(&id)?;
+    let auth = token(&headers)?;
+    s.with(|store, now| store.skip_request(&id, &auth, now))
+        .map(Json)
 }
 async fn requests(
     State(s): State<Shared>,
@@ -755,6 +850,7 @@ async fn serve_inner(
         .route("/v1/rooms", post(create))
         .route("/v1/rooms/{id}/join", post(join))
         .route("/v1/rooms/{id}/requests", get(requests).post(enqueue))
+        .route("/v1/rooms/{id}/skip", get(skip_request).post(request_skip))
         .route("/v1/rooms/{id}/requests/{request}", delete(acknowledge))
         .route("/v1/rooms/{id}/state", get(view).put(publish))
         .route("/v1/rooms/{id}", delete(close))
@@ -802,6 +898,122 @@ async fn serve_inner(
 #[cfg(test)]
 mod shared_admission_tests {
     use super::*;
+    #[test]
+    fn skips_require_membership_match_the_current_play_and_do_not_control_the_timeline() {
+        let mut store = Store::default();
+        let room = store.create(0).unwrap();
+        let guest = store.join(&room.room, &room.invite, 1).unwrap();
+        let second = store.join(&room.room, &room.invite, 2).unwrap();
+        let mut timeline = Timeline {
+            revision: 1,
+            play_id: 8,
+            queue: vec![
+                VideoId::parse("abcdefghijk").unwrap(),
+                VideoId::parse("lmnopqrstuv").unwrap(),
+            ],
+            index: 0,
+            position_ms: 0,
+            paused: false,
+            loading: false,
+        };
+        store
+            .publish(&room.room, &room.host, timeline.clone(), 3)
+            .unwrap();
+        let skip = Skip {
+            play_id: 8,
+            video: timeline.queue[0].clone(),
+        };
+        for token in [&room.invite, &room.host] {
+            assert!(store
+                .request_skip(&room.room, token, skip.clone(), 4)
+                .is_err());
+        }
+        let wrong = Skip {
+            play_id: 8,
+            video: timeline.queue[1].clone(),
+        };
+        assert!(store
+            .request_skip(&room.room, &guest.member, wrong, 5)
+            .is_err());
+        store
+            .request_skip(&room.room, &guest.member, skip.clone(), 6)
+            .unwrap();
+        store
+            .request_skip(&room.room, &second.member, skip.clone(), 7)
+            .unwrap();
+        assert!(store.skip_request(&room.room, &guest.member, 8).is_err());
+        assert_eq!(
+            store.skip_request(&room.room, &room.host, 8).unwrap(),
+            Some(skip.clone())
+        );
+        assert_eq!(
+            store.view(&room.room, &guest.member, 9).unwrap().timeline,
+            Some(timeline.clone())
+        );
+        timeline.revision += 1;
+        timeline.play_id += 1;
+        timeline.index = 1;
+        store
+            .publish(&room.room, &room.host, timeline.clone(), 110)
+            .unwrap();
+        assert!(store
+            .skip_request(&room.room, &room.host, 111)
+            .unwrap()
+            .is_none());
+        assert!(store
+            .request_skip(&room.room, &guest.member, skip, 112)
+            .is_err());
+        let skip = Skip {
+            play_id: 9,
+            video: timeline.queue[1].clone(),
+        };
+        store
+            .request_skip(&room.room, &guest.member, skip.clone(), 113)
+            .unwrap();
+        store.leave(&room.room, &guest.member, 114).unwrap();
+        assert!(store
+            .skip_request(&room.room, &room.host, 115)
+            .unwrap()
+            .is_none());
+        assert!(store
+            .request_skip(&room.room, &guest.member, skip, 116)
+            .is_err());
+    }
+    #[test]
+    fn skip_rate_limit_is_shared_with_queue_additions() {
+        let mut store = Store::default();
+        let room = store.create(0).unwrap();
+        let guest = store.join(&room.room, &room.invite, 1).unwrap();
+        let video = VideoId::parse("abcdefghijk").unwrap();
+        store
+            .publish(
+                &room.room,
+                &room.host,
+                Timeline {
+                    revision: 1,
+                    play_id: 1,
+                    queue: vec![video.clone()],
+                    index: 0,
+                    position_ms: 0,
+                    paused: false,
+                    loading: false,
+                },
+                2,
+            )
+            .unwrap();
+        for now in 3..8 {
+            store
+                .enqueue(&room.room, &guest.member, video.clone(), now)
+                .unwrap();
+        }
+        assert_eq!(
+            store
+                .request_skip(&room.room, &guest.member, Skip { play_id: 1, video }, 8)
+                .unwrap_err()
+                .0,
+            StatusCode::TOO_MANY_REQUESTS
+        );
+    }
     #[test]
     fn queue_requests_are_member_only_bounded_and_host_acknowledged() {
         let mut store = Store::default();

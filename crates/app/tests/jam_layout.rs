@@ -93,7 +93,11 @@ fn guest_mini_keeps_leave_and_volume_reachable_and_blocks_transport() {
     for x in [295.0, 350.0, 403.0] {
         click(&ui, x, 66.0);
     }
-    assert_eq!(transport.get(), 0);
+    assert_eq!(
+        transport.get(),
+        1,
+        "Guest Next must be accessible while Previous and Pause remain host-controlled"
+    );
     click(&ui, 620.0, 17.0);
     assert_eq!(left.get(), 1, "Leave is inaccessible in mini mode");
     click(&ui, 615.0, 113.0);

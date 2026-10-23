@@ -36,6 +36,22 @@ fn real_http_role_separation_shared_queue_and_close() {
     client.publish(&room.room, &room.host, &timeline).unwrap();
     let view = client.poll(&room.room, &guest.member).unwrap();
     assert_eq!(view.timeline.unwrap(), timeline);
+    let skip = Skip {
+        play_id: timeline.play_id,
+        video: timeline.queue[0].clone(),
+    };
+    client
+        .request_skip(&room.room, &guest.member, &skip)
+        .unwrap();
+    assert_eq!(
+        client.skip_request(&room.room, &room.host).unwrap(),
+        Some(skip)
+    );
+    assert!(client.skip_request(&room.room, &guest.member).is_err());
+    assert_eq!(
+        client.poll(&room.room, &guest.member).unwrap().timeline,
+        Some(timeline)
+    );
     client.close(&room.room, &room.host).unwrap();
     assert!(client.poll(&room.room, &guest.member).is_err());
 }

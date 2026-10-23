@@ -1395,6 +1395,28 @@ fn is_youtube_source(source: &str) -> bool {
     host == "youtu.be" || host == "youtube.com" || host.ends_with(".youtube.com")
 }
 
+fn next_track(s: &mut State, u: &AppWindow, tx: &mpsc::SyncSender<LibraryResult>) {
+    if !local_controls_allowed(s) {
+        return;
+    }
+    let repeat = s.settings.repeat;
+    let previous = s.settings.queue.current;
+    if s.settings.queue.next_track(repeat).is_some() {
+        if !play(s, u) {
+            s.settings.queue.current = previous;
+            refresh(u, s);
+        }
+    } else if s.settings.autoplay && s.account_verified {
+        send(s, u, PlaybackCommand::Stop);
+        s.active_playback = false;
+        s.radio_resume_when_ready = true;
+        s.radio_requests.reset();
+        request_radio(s, u, tx, false);
+        u.set_paused(true);
+        u.set_status_text("Finding the next recommended song...".into());
+    }
+}
+
 fn select_and_play(state: &mut State, ui: &AppWindow, index: usize) {
     if !local_controls_allowed(state) {
         return;
@@ -2637,27 +2659,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let weak = ui.as_weak();
         let tx = library_tx.clone();
         ui.on_next_track(move || {
-            if !local_controls_allowed(&state.borrow()) {
-                return;
-            }
             if let Some(u) = weak.upgrade() {
                 let mut s = state.borrow_mut();
-                let repeat = s.settings.repeat;
-                let previous = s.settings.queue.current;
-                if s.settings.queue.next_track(repeat).is_some() {
-                    if !play(&mut s, &u) {
-                        s.settings.queue.current = previous;
-                        refresh(&u, &s);
-                    }
-                } else if s.settings.autoplay && s.account_verified {
-                    send(&mut s, &u, PlaybackCommand::Stop);
-                    s.active_playback = false;
-                    s.radio_resume_when_ready = true;
-                    s.radio_requests.reset();
-                    request_radio(&mut s, &u, &tx, false);
-                    u.set_paused(true);
-                    u.set_status_text("Finding the next recommended song...".into());
+                #[cfg(feature = "experimental-jams")]
+                if jam::following(&s) {
+                    jam::request_skip(&s, &u);
+                    return;
                 }
+                next_track(&mut s, &u, &tx);
             }
         });
     }
@@ -2858,7 +2867,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let state = state.clone();
         let weak = ui.as_weak();
         ui.on_media_command(move |action, value| {
-            if !local_controls_allowed(&state.borrow()) {
+            if !local_controls_allowed(&state.borrow()) && action != 3 {
                 return;
             }
             let Some(u) = weak.upgrade() else {
@@ -3558,7 +3567,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     adopt_saved_connection(&mut s, &u, &library_tx);
                 }
                 #[cfg(feature = "experimental-jams")]
-                jam::tick(&mut s, &u);
+                jam::tick(&mut s, &u, &library_tx);
                 music_feedback::tick(&mut s, &u);
                 let artwork_changed = s.artwork.borrow_mut().poll();
                 if artwork_changed {

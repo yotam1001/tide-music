@@ -21,6 +21,21 @@ pub struct QueueRequest {
     pub id: u64,
     pub video: VideoId,
 }
+/// A member may request skipping only the exact play it has observed.
+/// No path, URL, shell command, or player argument crosses this boundary.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Skip {
+    pub play_id: u64,
+    pub video: VideoId,
+}
+impl Skip {
+    pub fn matches(&self, timeline: &Timeline) -> bool {
+        self.play_id != 0
+            && self.play_id == timeline.play_id
+            && timeline.queue.get(timeline.index) == Some(&self.video)
+    }
+}
 pub const MAX_POSITION_MS: u64 = 24 * 60 * 60 * 1000;
 pub const STALE_MS: u64 = 6_000;
 

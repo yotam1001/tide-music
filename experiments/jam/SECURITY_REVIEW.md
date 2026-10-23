@@ -99,3 +99,35 @@ their capabilities. A bearer holder can still occupy slots before the host acts,
 so explicit approval remains a possible stronger public-launch gate. No Google
 names are exposed: the roster uses room-local anonymous listener IDs.
 Real-host release gates remain open; see RELEASE_PLAN.md.
+
+
+## Artwork and guest skip follow-up (candidate)
+
+Jams do not upload audio, images, installers, cookies, or executable files. The
+queue protocol accepts strict eleven-byte YouTube video IDs; each client resolves
+and plays the song through its own local account. New fallback thumbnails are
+constructed locally as a fixed HTTPS `i.ytimg.com` URL from that validated ID.
+They reuse the existing public-image decoder and its response, pixel, queue and
+cache limits. No peer-supplied image URL or new relay image-storage path is added.
+This reduces the exposed input surface; it is not a claim that image or media
+parsers can never contain vulnerabilities.
+
+The optional `/skip` operation accepts a play ID and validated video ID only.
+Only an active member may submit it; only the host may read it. The relay retains
+at most one pending skip per room, coalesces requests for the same play, shares
+the five-per-minute member budget with queue additions, and clears a request when
+its submitting member leaves/expires/is removed or the published play changes.
+The native host independently checks both identifiers and handles that play at
+most once. Guests never publish authoritative timelines, shell commands, file
+paths, media URLs or account headers. There is no automatic POST retry after an
+ambiguous network result. Old relays report the unsupported operation without
+ending synchronized playback. Both the relay and host need this candidate for
+shared skipping; it is not an installed-release claim.
+
+The desktop updater is separate from Jams. Its HTTPS release-location checks,
+bounded downloads and SHA-256 checks detect transport corruption or mismatched
+assets, but the expected digest is supplied by the same GitHub release API. This
+is not independent publisher authentication. A compromised publishing account
+could replace both the executable and its digest. Independently signed update
+metadata with a pinned verification key is a remaining hardening item. Jams do
+not invoke the updater or supply executable download locations.
