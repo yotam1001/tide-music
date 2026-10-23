@@ -1045,6 +1045,11 @@ mod tests {
             url: String::new(),
             digest: format!("{:x}", Sha256::digest(&bytes)),
             size: bytes.len() as u64,
+            authorization: Some(publisher::test_authorization(
+                "0.2.0",
+                &format!("{:x}", Sha256::digest(&bytes)),
+                bytes.len() as u64,
+            )),
         };
         let mut tampered = bytes.clone();
         *tampered.last_mut().unwrap() ^= 1;

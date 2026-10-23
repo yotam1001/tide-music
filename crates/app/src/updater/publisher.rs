@@ -105,6 +105,42 @@ fn verify(
 }
 
 #[cfg(test)]
+pub(super) fn test_authorization(version: &str, digest: &str, size: u64) -> Authorization {
+    use ring::{
+        rand::SystemRandom,
+        signature::{Ed25519KeyPair, KeyPair},
+    };
+    let key = Ed25519KeyPair::from_pkcs8(
+        Ed25519KeyPair::generate_pkcs8(&SystemRandom::new())
+            .unwrap()
+            .as_ref(),
+    )
+    .unwrap();
+    let now = super::unix_time().unwrap();
+    let payload = serde_json::to_string(&serde_json::json!({"schema":1,"version":version,
+        "platform":"windows-x86_64","filename":"TideSetup.exe","size":size,"sha256":digest,
+        "issued_at":now,"expires_at":now+3600}))
+    .unwrap();
+    let signature: String = key
+        .sign(&[DOMAIN, payload.as_bytes()].concat())
+        .as_ref()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let bytes =
+        serde_json::to_vec(&serde_json::json!({"payload":payload,"signature":signature})).unwrap();
+    verify(
+        &bytes,
+        version,
+        digest,
+        size,
+        now,
+        &key.public_key().as_ref().try_into().unwrap(),
+    )
+    .unwrap()
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use ring::{
