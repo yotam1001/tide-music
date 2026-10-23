@@ -79,7 +79,7 @@ $taskIsolatedProfile = Join-Path $taskEvidence 'appdata'
 $taskSentinelDirectory = Join-Path $taskIsolatedProfile 'TideMusic'
 [IO.Directory]::CreateDirectory($taskSentinelDirectory) | Out-Null
 $taskSettings = Join-Path $taskSentinelDirectory 'settings.json'
-$taskSentinel = '{"queue":{"tracks":[],"current":null},"light_mode":false,"compact_mode":false,"autoplay":false,"check_updates":false,"volume":0,"repeat":false}'
+$taskSentinel = '{"queue":{"tracks":[],"current":null},"light_mode":false,"compact_mode":false,"autoplay":false,"check_updates":false,"history_feedback":true,"discord_presence":true,"volume":0,"repeat":false}'
 [IO.File]::WriteAllText($taskSettings, $taskSentinel, [Text.UTF8Encoding]::new($false))
 $taskExpectedSettingsHash = (Get-FileHash -LiteralPath $taskSettings -Algorithm SHA256).Hash
 $taskExtensionId = 'abcdefghijklmnopabcdefghijklmnop' # Deliberately synthetic: not a browser installation.
