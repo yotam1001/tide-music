@@ -1,45 +1,86 @@
 name: Windows checks
-on: [push, pull_request]
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
+  fast-checks:
+    name: Scripts, privacy and browser checks
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: python -m pip install cryptography==50.0.0
+      - run: python scripts/check_public_files.py
+      - run: python -m unittest discover -s helpers -p "test_*.py"
+      - run: python -m unittest discover -s scripts -p "test_*.py"
+      - run: node --test browser-companion/tests/background.test.cjs
   checks:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Check native setup handshake before the Rust build
-        run: python -m unittest discover -s scripts -p test_installer_bootstrap.py
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          cache-on-failure: true
       - run: cargo fmt --all -- --check
-      - name: Check Settings keyboard recording before the full suite
-        run: cargo test -p tide-music --test settings_ui --locked
+      # Stable defaults already enable Jams. Check the full workspace and its
+      # native UI once, then reuse these compiled outputs for isolation probes.
+      - run: cargo test --workspace --locked --features tide-music/experimental-jams
         env:
           TIDE_UI_REVIEW_DIR: .local/ui-review
-      - run: cargo test --workspace --locked
-        env:
-          TIDE_UI_REVIEW_DIR: .local/ui-review
+          TIDE_JAM_LAYOUT_DIR: ${{ github.workspace }}/.local/jam-ui-layouts
+          TIDE_PLAYER_INDICATORS_DIR: ${{ github.workspace }}/.local/player-indicators
       - name: Save synthetic native UI review images
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: tide-ui-review-${{ github.sha }}
-          path: crates/app/.local/ui-review/*.png
+          name: tide-ui-review-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            crates/app/.local/ui-review/*.png
+            .local/jam-ui-layouts/*.png
+            .local/player-indicators/*.png
           if-no-files-found: ignore
           retention-days: 7
-      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - run: python scripts/check_public_files.py
-      - run: python -m unittest discover -s helpers -p "test_*.py"
-      - run: python -m pip install cryptography==50.0.0
-      - run: python -m unittest discover -s scripts -p "test_*.py"
-      - run: node --test browser-companion/tests/background.test.cjs
+      - run: cargo clippy --workspace --all-targets --locked --features tide-music/experimental-jams -- -D warnings
+      - name: Reject private pipe input without blocking guest cancellation
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force .local | Out-Null
+          cargo test -p tide-music --locked --features experimental-jams --bin tide-music --no-run --message-format=json | Set-Content .local/jam-pipe-build.jsonl -Encoding utf8
+          if ($LASTEXITCODE -ne 0) { throw 'Private file probe build failed' }
+          python experiments/jam/check-private-pipe.py --cargo-artifacts .local/jam-pipe-build.jsonl
+          if ($LASTEXITCODE -ne 0) { throw 'Private file cancellation probe failed' }
+      - name: Verify optional transport isolation and callback ownership without a desktop window
+        shell: pwsh
+        run: |
+          $taskDefaultTree = cargo tree -p tide-music --no-default-features --locked --edges normal --prefix none
+          if ($LASTEXITCODE -ne 0) { throw 'Default dependency tree failed' }
+          if ($taskDefaultTree | Select-String '^tide-jam-lab v') { throw 'Opt-out build links the Jam transport' }
+          $taskJamTree = cargo tree -p tide-music --locked --features experimental-jams --edges normal --prefix none
+          if ($LASTEXITCODE -ne 0) { throw 'Experimental dependency tree failed' }
+          if ($taskJamTree | Select-String '^axum v') { throw 'Player links the relay server' }
+          $taskStableTree = cargo tree -p tide-music --locked --edges normal --prefix none
+          if ($LASTEXITCODE -ne 0) { throw 'Stable dependency tree failed' }
+          if (!($taskStableTree | Select-String '^tide-jam-lab v')) { throw 'Stable player is missing Jams' }
+          if ($taskStableTree | Select-String '^axum v') { throw 'Stable player links the relay server' }
+          ./experiments/jam/prepare-native.ps1
+          $env:TIDE_RUNTIME_DIR = (Join-Path $PWD '.local/jam-native-runtime')
+          cargo run -p tide-music --locked --features experimental-jams -- --smoke-jam-ownership
+          if ($LASTEXITCODE -ne 0) { throw 'Guest ownership verification failed' }
   preview:
-    needs: checks
+    # Packaging is isolated and may build while tests/lint run. Publication is
+    # gated on every job by release-ready below.
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -70,6 +111,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: tide-windows-preview-${{ github.sha }}
+          overwrite: true
           path: |
             dist/TideSetup.exe
             dist/tide-windows-preview.zip
@@ -78,6 +120,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: tide-browser-companion-prototypes-${{ github.sha }}
+          overwrite: true
           path: |
             dist/tide-browser-firefox/
             dist/tide-browser-chromium/
@@ -109,7 +152,22 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: ${{ always() && steps.clean-install.outputs.evidence-directory != '' }}
         with:
-          name: tide-clean-windows-evidence-${{ github.sha }}
+          name: tide-clean-windows-evidence-${{ github.sha }}-${{ github.run_attempt }}
           path: ${{ steps.clean-install.outputs.evidence-directory }}
           if-no-files-found: error
           retention-days: 7
+  release-ready:
+    name: Release validation
+    if: ${{ always() }}
+    needs: [fast-checks, checks, installed-preview]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require all validations
+        env:
+          FAST_RESULT: ${{ needs.fast-checks.result }}
+          RUST_RESULT: ${{ needs.checks.result }}
+          INSTALL_RESULT: ${{ needs.installed-preview.result }}
+        run: |
+          test "$FAST_RESULT" = success
+          test "$RUST_RESULT" = success
+          test "$INSTALL_RESULT" = success

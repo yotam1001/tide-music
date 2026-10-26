@@ -5,6 +5,12 @@ edition.workspace = true
 license.workspace = true
 build = "build.rs"
 
+# Generated bindings have no standalone tests. The existing player unit tests
+# and native integration tests validate them without a second empty harness.
+[lib]
+test = false
+doctest = false
+
 [features]
 default = ["jams"]
 jams = ["experimental-jams"]

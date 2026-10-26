@@ -35,7 +35,7 @@ mod settings_location;
 mod settings_store;
 mod shortcut_capture;
 mod updater;
-slint::include_modules!();
+use tide_music::*;
 
 #[derive(Serialize, Deserialize)]
 #[serde(default)]

@@ -4,7 +4,7 @@ use slint::{
 };
 use std::rc::Rc;
 
-slint::include_modules!();
+use tide_music::*;
 
 struct TestPlatform(Rc<MinimalSoftwareWindow>);
 impl slint::platform::Platform for TestPlatform {
