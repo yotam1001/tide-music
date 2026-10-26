@@ -157,7 +157,7 @@ fn settings_theme_account_and_song_menu_remain_independent() {
     ui.set_account_verified(false);
     let idle = draw(&window, 1140, 800);
     ui.window().dispatch_event(WindowEvent::PointerMoved {
-        position: LogicalPosition::new(922.0, 32.0),
+        position: LogicalPosition::new(1012.0, 32.0),
     });
     assert_ne!(
         draw(&window, 1140, 800),
@@ -165,11 +165,15 @@ fn settings_theme_account_and_song_menu_remain_independent() {
         "theme control needs hover feedback"
     );
     assert!(!ui.get_light_mode(), "hover must not switch the theme");
-    click(&ui, 992.0, 32.0);
+    click(&ui, 1058.0, 32.0);
     assert!(
         ui.get_settings_open(),
         "Settings must work without an account"
     );
+    key(&ui, Key::Escape);
+    click(&ui, 1104.0, 32.0);
+    assert!(ui.get_account_open(), "Profile icon must open Account");
+    assert!(!ui.get_settings_open(), "Account must not reopen Settings");
     key(&ui, Key::Escape);
     ui.set_account_connected(true);
     ui.set_account_verified(true);
@@ -186,7 +190,7 @@ fn settings_theme_account_and_song_menu_remain_independent() {
             &draw(&window, width, height),
         );
         // The theme switch is reachable without opening an account or resizing.
-        click(&ui, width as f32 - 218.0, 32.0);
+        click(&ui, width as f32 - 128.0, 32.0);
         assert!(
             ui.get_light_mode(),
             "direct theme control is inaccessible at {width}"
@@ -201,7 +205,7 @@ fn settings_theme_account_and_song_menu_remain_independent() {
             &draw(&window, width, height),
         );
 
-        click(&ui, width as f32 - 148.0, 32.0);
+        click(&ui, width as f32 - 82.0, 32.0);
         assert!(
             ui.get_settings_open(),
             "Settings must be a top-level control"
@@ -215,7 +219,7 @@ fn settings_theme_account_and_song_menu_remain_independent() {
         key(&ui, Key::Escape);
         assert!(!ui.get_settings_open(), "Escape must close Settings");
         draw(&window, width, height);
-        click(&ui, width as f32 - 57.0, 32.0);
+        click(&ui, width as f32 - 36.0, 32.0);
         assert!(
             ui.get_account_open(),
             "header Account entry is inaccessible at {width}"
@@ -438,7 +442,32 @@ fn settings_theme_account_and_song_menu_remain_independent() {
     ui.set_detail_open(true);
     ui.set_detail_title("Late night focus".into());
     ui.set_detail_rows(tracks());
+    ui.set_detail_playlist_known(true);
+    let playlist_action = Rc::new(Cell::new(None));
+    let capture = playlist_action.clone();
+    ui.on_play_detail(move || capture.set(Some("play")));
+    let capture = playlist_action.clone();
+    ui.on_shuffle_detail(move || capture.set(Some("shuffle")));
+    let capture = playlist_action.clone();
+    ui.on_refresh_detail_playlist(move || capture.set(Some("refresh")));
     export("playlist-detail", 1140, 800, &draw(&window, 1140, 800));
+    for (x, action) in [(198.0, "play"), (242.0, "shuffle"), (286.0, "refresh")] {
+        click(&ui, x, 170.0);
+        assert_eq!(
+            playlist_action.get(),
+            Some(action),
+            "Playlist icon hit target"
+        );
+    }
+    ui.set_light_mode(true);
+    export(
+        "playlist-detail-light",
+        1140,
+        800,
+        &draw(&window, 1140, 800),
+    );
+    ui.set_light_mode(false);
+    ui.set_detail_playlist_known(false);
     ui.set_detail_is_artist(true);
     ui.set_detail_title("True North".into());
     ui.set_detail_note("Top songs from YouTube Music".into());
@@ -484,7 +513,8 @@ fn settings_theme_account_and_song_menu_remain_independent() {
     ui.on_choose_artist(move |index| capture.set(Some(index)));
     ui.set_artist_picker_open(true);
     export("artist-choice", 650, 420, &draw(&window, 650, 420));
-    click(&ui, 500.0, 32.0);
+    click(&ui, 568.0, 32.0);
+    click(&ui, 614.0, 32.0);
     assert!(
         !ui.get_settings_open() && !ui.get_account_open(),
         "artist picker must not stack settings/account panels"

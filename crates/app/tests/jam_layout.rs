@@ -178,10 +178,10 @@ fn guest_mini_keeps_leave_and_volume_reachable_and_blocks_transport() {
     ui.set_jam_guest(false);
     ui.set_jam_open(false);
     draw(&window, 650, 420);
-    click(&ui, 600.0, 32.0);
+    click(&ui, 614.0, 32.0);
     assert!(ui.get_account_open(), "Account is clipped at minimum width");
     ui.set_account_open(false);
-    click(&ui, 500.0, 32.0);
+    click(&ui, 568.0, 32.0);
     assert!(
         ui.get_settings_open(),
         "Settings is clipped at minimum width"
