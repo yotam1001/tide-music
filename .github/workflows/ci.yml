@@ -24,7 +24,6 @@ jobs:
       - run: python -m unittest discover -s scripts -p "test_*.py"
       - run: node --test browser-companion/tests/background.test.cjs
   checks:
-    name: Rust and native Jam checks
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
