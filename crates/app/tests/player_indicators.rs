@@ -6,7 +6,7 @@ use slint::platform::{
 use slint::{ComponentHandle, LogicalPosition, PhysicalSize, Rgb8Pixel};
 use std::{cell::Cell, rc::Rc};
 
-slint::include_modules!();
+use tide_music::*;
 
 const WIDTH: usize = 700;
 const HEIGHT: usize = 132;

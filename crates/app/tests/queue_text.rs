@@ -5,7 +5,7 @@ use slint::platform::{
 };
 use slint::{ComponentHandle, LogicalPosition, PhysicalSize, Rgb8Pixel};
 use std::{cell::Cell, rc::Rc};
-slint::include_modules!();
+use tide_music::*;
 
 struct TestPlatform(Rc<MinimalSoftwareWindow>);
 impl slint::platform::Platform for TestPlatform {

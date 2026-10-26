@@ -6,6 +6,8 @@ In the successful second attempt of [the 0.4.3 candidate](https://github.com/yot
 
 Stable app defaults include `jams`, which includes `experimental-jams`. The old separate native-Jam job therefore repeated the app test suite and Clippy using the same effective features.
 
+The generated native interface was also included separately by the player and nine integration-test executables. Those consumers now import one shared UI library, compiling the generated Rust once per build profile instead of compiling a copy into each test. Existing player unit tests and UI integration tests still run; the new bindings-only library does not create an additional empty test harness.
+
 ## Current pipeline
 
 ```mermaid
