@@ -190,7 +190,7 @@ fn settings_theme_account_and_song_menu_remain_independent() {
             &draw(&window, width, height),
         );
         // The theme switch is reachable without opening an account or resizing.
-        click(&ui, width as f32 - 218.0, 32.0);
+        click(&ui, width as f32 - 128.0, 32.0);
         assert!(
             ui.get_light_mode(),
             "direct theme control is inaccessible at {width}"
@@ -205,7 +205,7 @@ fn settings_theme_account_and_song_menu_remain_independent() {
             &draw(&window, width, height),
         );
 
-        click(&ui, width as f32 - 148.0, 32.0);
+        click(&ui, width as f32 - 82.0, 32.0);
         assert!(
             ui.get_settings_open(),
             "Settings must be a top-level control"
@@ -219,7 +219,7 @@ fn settings_theme_account_and_song_menu_remain_independent() {
         key(&ui, Key::Escape);
         assert!(!ui.get_settings_open(), "Escape must close Settings");
         draw(&window, width, height);
-        click(&ui, width as f32 - 57.0, 32.0);
+        click(&ui, width as f32 - 36.0, 32.0);
         assert!(
             ui.get_account_open(),
             "header Account entry is inaccessible at {width}"
@@ -513,7 +513,8 @@ fn settings_theme_account_and_song_menu_remain_independent() {
     ui.on_choose_artist(move |index| capture.set(Some(index)));
     ui.set_artist_picker_open(true);
     export("artist-choice", 650, 420, &draw(&window, 650, 420));
-    click(&ui, 500.0, 32.0);
+    click(&ui, 568.0, 32.0);
+    click(&ui, 614.0, 32.0);
     assert!(
         !ui.get_settings_open() && !ui.get_account_open(),
         "artist picker must not stack settings/account panels"
