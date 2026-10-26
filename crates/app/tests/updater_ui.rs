@@ -101,7 +101,7 @@ fn update_pill_download_cancel_and_restart_do_not_touch_playback() {
             },
         );
         let d = downloads.get();
-        click(&ui, 820.0, 32.0);
+        click(&ui, 920.0, 32.0);
         assert_eq!(downloads.get(), d + 1, "Update action is not reachable");
         draw(
             &window,
@@ -113,17 +113,17 @@ fn update_pill_download_cancel_and_restart_do_not_touch_playback() {
                 "updater-downloading-dark"
             },
         );
-        click(&ui, 820.0, 32.0);
+        click(&ui, 920.0, 32.0);
         assert_eq!(
             downloads.get(),
             d + 1,
             "Busy update started another download"
         );
         let c = cancellations.get();
-        click(&ui, 920.0, 32.0);
+        click(&ui, 1014.0, 32.0);
         assert_eq!(cancellations.get(), c + 1, "Cancel is not reachable");
         draw(&window, 1140, 800, "updater-canceling");
-        click(&ui, 920.0, 32.0);
+        click(&ui, 1014.0, 32.0);
         assert_eq!(cancellations.get(), c + 1);
         ui.set_update_phase(2);
         ui.set_update_busy(false);
@@ -139,19 +139,19 @@ fn update_pill_download_cancel_and_restart_do_not_touch_playback() {
             },
         );
         let r = restarts.get();
-        click(&ui, 820.0, 32.0);
+        click(&ui, 920.0, 32.0);
         assert_eq!(restarts.get(), r + 1, "Restart is not reachable");
         ui.set_update_phase(4);
         ui.set_update_busy(true);
         draw(&window, 1140, 800, "updater-preparing-restart");
-        click(&ui, 820.0, 32.0);
+        click(&ui, 920.0, 32.0);
         assert_eq!(
             restarts.get(),
             r + 1,
             "Preparing started a duplicate restart"
         );
         let c = cancellations.get();
-        click(&ui, 920.0, 32.0);
+        click(&ui, 1014.0, 32.0);
         assert_eq!(
             cancellations.get(),
             c + 1,
@@ -160,7 +160,7 @@ fn update_pill_download_cancel_and_restart_do_not_touch_playback() {
         ui.set_update_phase(2);
         ui.set_update_busy(false);
         draw(&window, 1140, 800, "updater-retry-restart");
-        click(&ui, 820.0, 32.0);
+        click(&ui, 920.0, 32.0);
         assert_eq!(
             restarts.get(),
             r + 2,
@@ -170,7 +170,7 @@ fn update_pill_download_cancel_and_restart_do_not_touch_playback() {
         assert_eq!(ui.get_track_title(), "Synthetic update fixture");
     }
     draw(&window, 650, 420, "updater-narrow-header");
-    click(&ui, 502.0, 32.0);
+    click(&ui, 568.0, 32.0);
     assert!(
         ui.get_settings_open(),
         "Narrow window lost Settings update access"

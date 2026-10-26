@@ -157,7 +157,7 @@ fn settings_theme_account_and_song_menu_remain_independent() {
     ui.set_account_verified(false);
     let idle = draw(&window, 1140, 800);
     ui.window().dispatch_event(WindowEvent::PointerMoved {
-        position: LogicalPosition::new(922.0, 32.0),
+        position: LogicalPosition::new(1012.0, 32.0),
     });
     assert_ne!(
         draw(&window, 1140, 800),
@@ -165,11 +165,15 @@ fn settings_theme_account_and_song_menu_remain_independent() {
         "theme control needs hover feedback"
     );
     assert!(!ui.get_light_mode(), "hover must not switch the theme");
-    click(&ui, 992.0, 32.0);
+    click(&ui, 1058.0, 32.0);
     assert!(
         ui.get_settings_open(),
         "Settings must work without an account"
     );
+    key(&ui, Key::Escape);
+    click(&ui, 1104.0, 32.0);
+    assert!(ui.get_account_open(), "Profile icon must open Account");
+    assert!(!ui.get_settings_open(), "Account must not reopen Settings");
     key(&ui, Key::Escape);
     ui.set_account_connected(true);
     ui.set_account_verified(true);

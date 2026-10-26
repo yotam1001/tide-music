@@ -161,6 +161,9 @@ component TideButton inherits Rectangle {
     in property <string> label;
     in property <string> caption;
     in property <string> leading-icon;
+    in property <string> icon-path;
+    in property <bool> show-tooltip: false;
+    in property <bool> notification: false;
     in property <color> surface-color;
     in property <color> text-color;
     in property <color> accent-color;
@@ -208,7 +211,7 @@ component TideButton inherits Rectangle {
         x: root.leading-icon == "" ? 0px : 28px;
         width: parent.width - self.x;
         height: parent.height;
-        text: root.icon-kind == "" ? root.caption : "";
+        text: root.icon-kind == "" && root.icon-path == "" ? root.caption : "";
         color: root.active ? root.accent-text-color : root.text-color;
         font-size: root.caption-size;
         font-weight: 600;
@@ -222,7 +225,13 @@ component TideButton inherits Rectangle {
         fill: transparent; stroke: root.icon-color; stroke-width: 1.5px;
         commands: root.leading-icon;
     }
-    if root.icon-kind != "" : Path {
+    if root.show-tooltip : Tooltip { text: root.label; }
+    if root.notification : Rectangle {
+        x: root.width - 10px; y: 5px; width: 6px; height: 6px;
+        border-radius: 3px;
+        background: root.active ? root.accent-text-color : root.accent-color;
+    }
+    if root.icon-kind != "" || root.icon-path != "" : Path {
         x: (root.width - 20px) / 2;
         y: (root.height - 20px) / 2;
         width: 20px;
@@ -232,7 +241,8 @@ component TideButton inherits Rectangle {
         fill: root.icon-kind == "play" || root.icon-kind == "pause" || root.icon-kind == "previous" || root.icon-kind == "next" ? root.icon-color : Colors.transparent;
         stroke: root.icon-color;
         stroke-width: 1.5px;
-        commands: root.icon-kind == "play" ? "M 7 4 L 20 12 L 7 20 Z"
+        commands: root.icon-path != "" ? root.icon-path
+            : root.icon-kind == "play" ? "M 7 4 L 20 12 L 7 20 Z"
             : root.icon-kind == "pause" ? "M 6 5 L 9 5 L 9 19 L 6 19 Z M 15 5 L 18 5 L 18 19 L 15 19 Z"
             : root.icon-kind == "previous" ? "M 6 5 L 6 19 M 18 5 L 9 12 L 18 19 Z"
             : root.icon-kind == "next" ? "M 18 5 L 18 19 M 6 5 L 15 12 L 6 19 Z"
@@ -1490,13 +1500,12 @@ export component AppWindow inherits Window {
                     cross-axis-alignment: center;
                     Image { width: 28px; height: 28px; source: @image-url("assets/tide-icon.png"); image-fit: contain; }
                     if root.header-branding : Text { width: 56px; text: "Tide"; color: root.foreground; font-size: 21px; font-weight: 700; }
-                    if root.header-branding : SearchMark { ink: root.secondary; }
                     LineEdit { horizontal-stretch: 1; height: 36px; font-size: 13px; enabled: root.browsing-enabled; text <=> root.source-input; placeholder-text: "Search music or paste a link"; accessible-label: "Search music or paste a YouTube link"; accepted(value) => { if value != "" { root.add-source(value); } } }
-                    LibraryButton { width: 74px; light-mode: root.light-mode; enabled: root.browsing-enabled; caption: "Search"; label: "Search for music or open the pasted link"; clicked => { if root.source-input != "" { root.add-source(root.source-input); } } }
-                    LibraryButton { width: 36px; height: 36px; enabled: !root.artist-picker-open; light-mode: root.light-mode; caption: root.light-mode ? "☾" : "☼"; label: root.light-mode ? "Switch to dark theme" : "Switch to light theme"; clicked => { root.switch-mode(); } }
+                    LibraryButton { width: 36px; height: 36px; show-tooltip: true; light-mode: root.light-mode; enabled: root.browsing-enabled; icon-path: "M 10.5 3 A 7.5 7.5 0 1 0 10.5 18 A 7.5 7.5 0 1 0 10.5 3 Z M 16 16 L 22 22"; label: "Search for music or open the pasted link"; clicked => { if root.source-input != "" { root.add-source(root.source-input); } } }
+                    LibraryButton { width: 36px; height: 36px; show-tooltip: true; enabled: !root.artist-picker-open; light-mode: root.light-mode; caption: root.light-mode ? "☾" : "☼"; label: root.light-mode ? "Switch to dark theme" : "Switch to light theme"; clicked => { root.switch-mode(); } }
                     if root.header-branding && !root.settings-open && root.update-installable && (root.update-available || root.update-phase > 0) : UpdateAction { width: 198px; height: 36px; light-mode: root.light-mode; busy: root.update-busy; phase: root.update-phase; progress: root.update-progress; activate => { root.install-update(); } cancel => { root.cancel-update(); } }
-                    LibraryButton { width: 84px; quiet: false; enabled: !root.artist-picker-open; light-mode: root.light-mode; caption: root.update-available ? "Settings •" : "Settings"; label: root.update-available ? "Open settings, update available" : "Open settings"; active: root.settings-open; clicked => { root.settings-open = !root.settings-open; } }
-                    LibraryButton { width: 78px; quiet: false; enabled: !root.artist-picker-open && !root.jam-guest; light-mode: root.light-mode; caption: "Account"; label: "Open YouTube Music account"; active: root.account-open; clicked => { root.account-open = !root.account-open; } }
+                    LibraryButton { width: 36px; height: 36px; show-tooltip: true; quiet: false; enabled: !root.artist-picker-open; light-mode: root.light-mode; icon-path: "M 9 3 L 15 3 L 16 6 L 19 6 L 22 11 L 20 13 L 21 16 L 17 20 L 14 19 L 12 22 L 7 20 L 7 17 L 4 16 L 3 10 L 6 8 L 6 5 Z M 12 8 A 4 4 0 1 0 12 16 A 4 4 0 1 0 12 8 Z"; notification: root.update-available; label: root.update-available ? "Open settings, update available" : "Open settings"; active: root.settings-open; clicked => { root.settings-open = !root.settings-open; } }
+                    LibraryButton { width: 36px; height: 36px; show-tooltip: true; quiet: false; enabled: !root.artist-picker-open && !root.jam-guest; light-mode: root.light-mode; icon-path: "M 12 2 A 10 10 0 1 0 12 22 A 10 10 0 1 0 12 2 Z M 12 6 A 3 3 0 1 0 12 12 A 3 3 0 1 0 12 6 Z M 5 19 C 5 12 19 12 19 19"; label: "Open YouTube Music account"; active: root.account-open; clicked => { root.account-open = !root.account-open; } }
 
                 }
             }
