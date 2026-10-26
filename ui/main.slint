@@ -227,11 +227,12 @@ component TideButton inherits Rectangle {
     }
     if root.show-tooltip : Tooltip {
         Rectangle {
+            max-width: 320px;
             background: root.surface-color;
             border-width: 1px; border-color: root.outline-color; border-radius: 6px;
             HorizontalLayout {
                 padding: 8px;
-                Text { text: root.label; color: root.text-color; font-size: 12px; }
+                Text { max-width: 304px; wrap: word-wrap; text: root.label; color: root.text-color; font-size: 12px; }
             }
         }
     }
