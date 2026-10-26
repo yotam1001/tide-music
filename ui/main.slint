@@ -225,7 +225,16 @@ component TideButton inherits Rectangle {
         fill: transparent; stroke: root.icon-color; stroke-width: 1.5px;
         commands: root.leading-icon;
     }
-    if root.show-tooltip : Tooltip { text: root.label; }
+    if root.show-tooltip : Tooltip {
+        Rectangle {
+            background: root.surface-color;
+            border-width: 1px; border-color: root.outline-color; border-radius: 6px;
+            HorizontalLayout {
+                padding: 8px;
+                Text { text: root.label; color: root.text-color; font-size: 12px; }
+            }
+        }
+    }
     if root.notification : Rectangle {
         x: root.width - 10px; y: 5px; width: 6px; height: 6px;
         border-radius: 3px;
