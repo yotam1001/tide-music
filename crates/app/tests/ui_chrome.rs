@@ -442,7 +442,32 @@ fn settings_theme_account_and_song_menu_remain_independent() {
     ui.set_detail_open(true);
     ui.set_detail_title("Late night focus".into());
     ui.set_detail_rows(tracks());
+    ui.set_detail_playlist_known(true);
+    let playlist_action = Rc::new(Cell::new(None));
+    let capture = playlist_action.clone();
+    ui.on_play_detail(move || capture.set(Some("play")));
+    let capture = playlist_action.clone();
+    ui.on_shuffle_detail(move || capture.set(Some("shuffle")));
+    let capture = playlist_action.clone();
+    ui.on_refresh_detail_playlist(move || capture.set(Some("refresh")));
     export("playlist-detail", 1140, 800, &draw(&window, 1140, 800));
+    for (x, action) in [(198.0, "play"), (242.0, "shuffle"), (286.0, "refresh")] {
+        click(&ui, x, 170.0);
+        assert_eq!(
+            playlist_action.get(),
+            Some(action),
+            "Playlist icon hit target"
+        );
+    }
+    ui.set_light_mode(true);
+    export(
+        "playlist-detail-light",
+        1140,
+        800,
+        &draw(&window, 1140, 800),
+    );
+    ui.set_light_mode(false);
+    ui.set_detail_playlist_known(false);
     ui.set_detail_is_artist(true);
     ui.set_detail_title("True North".into());
     ui.set_detail_note("Top songs from YouTube Music".into());
