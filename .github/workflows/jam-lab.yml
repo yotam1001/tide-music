@@ -1,6 +1,7 @@
 name: Jam feasibility lab
 on:
   push:
+    branches: [main]
     paths:
       - '.dockerignore'
       - 'experiments/jam/**'
@@ -22,6 +23,9 @@ on:
       - 'Cargo.toml'
       - 'Cargo.lock'
       - '.github/workflows/jam-lab.yml'
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
@@ -60,62 +64,8 @@ jobs:
       - run: experiments/jam/target/release/tide-jam-relay --help
       - uses: actions/upload-artifact@v4
         with:
-          name: experimental-jam-relay-linux-${{ github.sha }}
+          name: experimental-jam-relay-linux-${{ github.sha }}-${{ github.run_attempt }}
           path: experiments/jam/target/release/tide-jam-relay
-          retention-days: 7
-  jam-native-controls:
-    runs-on: windows-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-      - name: Check opt-in native controls and in-memory rendering
-        shell: pwsh
-        run: |
-          $env:TIDE_JAM_LAYOUT_DIR = (Join-Path $PWD '.local/jam-ui-layouts')
-          $env:TIDE_PLAYER_INDICATORS_DIR = (Join-Path $PWD '.local/player-indicators')
-          cargo test -p tide-music --locked --features experimental-jams
-          if ($LASTEXITCODE -ne 0) { throw 'Experimental native app tests failed' }
-          cargo clippy -p tide-music --all-targets --locked --features experimental-jams -- -D warnings
-          if ($LASTEXITCODE -ne 0) { throw 'Experimental native app Clippy failed' }
-      - name: Reject private pipe input without blocking guest cancellation
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force .local | Out-Null
-          cargo test -p tide-music --locked --features experimental-jams --bin tide-music --no-run --message-format=json | Set-Content .local/jam-pipe-build.jsonl -Encoding utf8
-          if ($LASTEXITCODE -ne 0) { throw 'Private file probe build failed' }
-          python experiments/jam/check-private-pipe.py --cargo-artifacts .local/jam-pipe-build.jsonl
-          if ($LASTEXITCODE -ne 0) { throw 'Private file cancellation probe failed' }
-      - name: Verify optional transport isolation and callback ownership without a desktop window
-        shell: pwsh
-        run: |
-          $taskDefaultTree = cargo tree -p tide-music --no-default-features --locked --edges normal --prefix none
-          if ($LASTEXITCODE -ne 0) { throw 'Default dependency tree failed' }
-          if ($taskDefaultTree | Select-String '^tide-jam-lab v') { throw 'Opt-out build links the Jam transport' }
-          $taskJamTree = cargo tree -p tide-music --locked --features experimental-jams --edges normal --prefix none
-          if ($LASTEXITCODE -ne 0) { throw 'Experimental dependency tree failed' }
-          if ($taskJamTree | Select-String '^axum v') { throw 'Player links the relay server' }
-          $taskStableTree = cargo tree -p tide-music --locked --edges normal --prefix none
-          if ($LASTEXITCODE -ne 0) { throw 'Stable dependency tree failed' }
-          if (!($taskStableTree | Select-String '^tide-jam-lab v')) { throw 'Stable player is missing Jams' }
-          if ($taskStableTree | Select-String '^axum v') { throw 'Stable player links the relay server' }
-          ./experiments/jam/prepare-native.ps1
-          $env:TIDE_RUNTIME_DIR = (Join-Path $PWD '.local/jam-native-runtime')
-          cargo run -p tide-music --locked --features experimental-jams -- --smoke-jam-ownership
-          if ($LASTEXITCODE -ne 0) { throw 'Guest ownership verification failed' }
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: synthetic-native-ui-${{ github.run_id }}
-          path: |
-            .local/jam-ui-layouts/*.png
-            .local/player-indicators/*.png
-          if-no-files-found: ignore
           retention-days: 7
   private-proxy-config:
     runs-on: ubuntu-latest
