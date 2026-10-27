@@ -1,0 +1,38 @@
+name: WinGet release smoke test
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/tide-winget]
+    paths:
+      - .github/workflows/winget-smoke.yml
+      - scripts/test-winget-release.ps1
+      - packaging/winget/**
+permissions:
+  contents: read
+jobs:
+  clean-install:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ensure WinGet is available
+        shell: pwsh
+        run: |
+          if (!(Get-Command winget -ErrorAction SilentlyContinue)) {
+            Install-Module Microsoft.WinGet.Client -Force -Repository PSGallery -Scope CurrentUser
+            Repair-WinGetPackageManager -AllUsers
+          }
+          winget --version
+          if ($LASTEXITCODE -ne 0) { throw 'WinGet is unavailable.' }
+      - name: Install, inspect, repeat install, and uninstall
+        shell: pwsh
+        run: ./scripts/test-winget-release.ps1
+      - name: Upload diagnostic logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tide-winget-smoke-logs
+          path: |
+            .local/winget-smoke/
+            ~/AppData/Local/Packages/Microsoft.DesktopAppInstaller_8wekyb3d8bbwe/LocalState/DiagOutputDir/
+          if-no-files-found: ignore
