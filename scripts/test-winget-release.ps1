@@ -26,8 +26,24 @@ winget validate --manifest $taskManifest --disable-interactivity
 if ($LASTEXITCODE -ne 0) { throw 'Manifest validation failed.' }
 winget settings --enable LocalManifestFiles
 if ($LASTEXITCODE -ne 0) { throw 'Could not enable local manifests on the test runner.' }
-winget install --manifest $taskManifest --silent --accept-package-agreements --accept-source-agreements --disable-interactivity --verbose-logs
-if ($LASTEXITCODE -ne 0) { throw "WinGet installation failed: $LASTEXITCODE" }
+$taskWinGet = (Get-Command winget).Source
+$taskInstallOut = Join-Path $taskLogs 'winget-install.stdout.log'
+$taskInstallErr = Join-Path $taskLogs 'winget-install.stderr.log'
+$taskArguments = 'install --manifest "' + $taskManifest + '" --silent --accept-package-agreements --accept-source-agreements --disable-interactivity --verbose-logs'
+$taskWinGetProcess = Start-Process -FilePath $taskWinGet -ArgumentList $taskArguments -WindowStyle Hidden -PassThru -RedirectStandardOutput $taskInstallOut -RedirectStandardError $taskInstallErr
+$taskInstallDeadline = [DateTime]::UtcNow.AddMinutes(3)
+while (!$taskWinGetProcess.WaitForExit(15000)) {
+    Get-Content -LiteralPath $taskInstallOut -Tail 5 -ErrorAction SilentlyContinue
+    'Installation record exists: ' + (Test-Path -LiteralPath (Join-Path $taskInstallRoot '.tide-install.json'))
+    Get-CimInstance Win32_Process | Where-Object { $_.Name -match '^(TideSetup.*|powershell|winget)\.exe$' } | Select-Object Name, ProcessId, ParentProcessId | Format-Table
+    if ([DateTime]::UtcNow -gt $taskInstallDeadline) {
+        Stop-Process -Id $taskWinGetProcess.Id -Force
+        throw 'WinGet install exceeded three minutes; inspect the captured process and client logs.'
+    }
+}
+Get-Content -LiteralPath $taskInstallOut
+Get-Content -LiteralPath $taskInstallErr
+if ($taskWinGetProcess.ExitCode -ne 0) { throw "WinGet installation failed: $($taskWinGetProcess.ExitCode)" }
 $taskEntry = Get-ItemProperty -LiteralPath $taskKey
 if ($taskEntry.DisplayName -ne 'Tide' -or $taskEntry.Publisher -ne 'Tide contributors' -or $taskEntry.DisplayVersion -ne '0.4.5') {
     throw 'Windows Apps metadata differs from the package manifest.'
