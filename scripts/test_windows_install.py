@@ -364,6 +364,30 @@ switch ($Scenario) {
         $global:AppsEntry = Get-TideUninstallRegistration $previous $root '0.1.0-preview'
         Uninstall-Tide $root $links | Out-Null
     }
+    'owned-stale-registration-manifest' {
+        New-Install; $previous = Current-Release
+        $global:AppsEntry.DisplayVersion = '0.4.1'
+        $before = Get-TideUninstallEntry
+        $record = Join-Path $previous '.tide-release.json'
+        $original = [IO.File]::ReadAllText($record)
+        foreach ($attack in @('traversal','rooted','alias','self','missing-script','product')) {
+            $manifest = $original | ConvertFrom-Json
+            switch ($attack) {
+                'traversal' { $manifest.Files += '../foreign.txt' }
+                'rooted' { $manifest.Files += (Join-Path $Fixture 'foreign.txt') }
+                'alias' { $manifest.Files += 'scripts/./install-windows.ps1' }
+                'self' { $manifest.Files += '.tide-release.json' }
+                'missing-script' { $manifest.Files = @($manifest.Files | Where-Object { $_ -ne 'scripts/install-windows.ps1' }) }
+                'product' { $manifest.Product = 'another.product' }
+            }
+            Write-TideJson $record $manifest
+            Must-Fail { Test-TideInstall $package $root $links 'None' '' '0.4.3' }
+            if ((Current-Release) -ne $previous -or !(Test-TideUninstallEntryMatch (Get-TideUninstallEntry) $before)) { throw 'Invalid ownership manifest changed the installation' }
+        }
+        [IO.File]::WriteAllText($record, $original)
+        $global:AppsEntry.DisplayVersion = '0.1.0-preview'
+        Uninstall-Tide $root $links | Out-Null
+    }
     'app-entry-migration' {
         New-Install; $global:AppsEntry = $null
         Install-Tide $package $root $links 'None' '' | Out-Null
@@ -443,7 +467,7 @@ class WindowsInstallTests(unittest.TestCase):
                          "traversal-record", "reparse", "lock", "download", "archive-paths",
                          "runtime-api-independent", "runtime-corrupt-download", "app-entry-conflict",
                          "app-entry-update-conflict", "app-entry-write-failure-first", "app-entry-write-failure-update",
-                         "app-entry-marker-failure", "app-entry-version-update", "owned-stale-registration", "owned-stale-registration-rollback", "owned-stale-registration-tampered", "owned-stale-registration-foreign", "app-entry-migration", "app-entry-new-race", "protocol"):
+                         "app-entry-marker-failure", "app-entry-version-update", "owned-stale-registration", "owned-stale-registration-rollback", "owned-stale-registration-tampered", "owned-stale-registration-foreign", "owned-stale-registration-manifest", "app-entry-migration", "app-entry-new-race", "protocol"):
             with self.subTest(scenario=scenario):
                 self.run_scenario(scenario)
 
@@ -475,7 +499,7 @@ class WindowsInstallTests(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("powershell.exe"), "requires built-in Windows PowerShell 5.1")
     def test_builtin_windows_powershell_lifecycle(self):
-        for scenario in ("preflight", "fresh-remove", "upgrade", "registration-failure", "runtime-api-independent", "runtime-corrupt-download", "app-entry-write-failure-update", "app-entry-version-update", "owned-stale-registration", "owned-stale-registration-rollback", "owned-stale-registration-tampered", "owned-stale-registration-foreign", "protocol"):
+        for scenario in ("preflight", "fresh-remove", "upgrade", "registration-failure", "runtime-api-independent", "runtime-corrupt-download", "app-entry-write-failure-update", "app-entry-version-update", "owned-stale-registration", "owned-stale-registration-rollback", "owned-stale-registration-tampered", "owned-stale-registration-foreign", "owned-stale-registration-manifest", "protocol"):
             with self.subTest(scenario=scenario):
                 self.run_scenario(scenario, "powershell.exe")
 

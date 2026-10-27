@@ -106,9 +106,23 @@ function Test-TideOwnedUninstallRegistration($Actual, [string]$InstallRoot) {
         # Includes the product, publisher, root, exact uninstall command and
         # complete field set. Arbitrary commands/foreign registrations fail.
         if (!(Test-TideUninstallEntryMatch $Actual $expected)) { return $false }
-        $owned = @(Get-TideOwnedReleasePaths $registeredRelease)
+        $ownershipPath = Get-TideChild $registeredRelease '.tide-release.json'
+        $ownership = Read-TideJson $ownershipPath
+        if ($ownership.Product -ne 'org.tidemusic.windows.preview' -or @($ownership.Files).Count -eq 0) { return $false }
+        $owned = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+        foreach ($relativePath in @($ownership.Files)) {
+            if ($relativePath -isnot [string] -or $relativePath -notmatch '^[A-Za-z0-9_. /-]+$' -or
+                $relativePath -match '(^|/)\.\.(/|$)' -or [IO.Path]::IsPathRooted($relativePath)) { return $false }
+            $ownedPath = [IO.Path]::GetFullPath([IO.Path]::Combine($registeredRelease, $relativePath))
+            if (!$ownedPath.StartsWith($registeredRelease + '\', [StringComparison]::OrdinalIgnoreCase) -or
+                $ownedPath -eq $ownershipPath -or !$owned.Add($ownedPath)) { return $false }
+        }
+        # Check the manifest lexically, then filesystem/checksum-validate the
+        # executable and packaged scripts below. Traversing every Python runtime
+        # file here can exceed the player's readiness timeout on a slower disk.
+        # Full reparse/path validation still runs before any owned-file removal.
         foreach ($name in @('tide-music.exe','scripts/install-windows.ps1','scripts/install-common.ps1')) {
-            if ((Get-TideChild $registeredRelease $name) -notin $owned) { return $false }
+            if (!$owned.Contains((Get-TideChild $registeredRelease $name))) { return $false }
         }
         # An ownership marker alone is insufficient: verify the registered
         # executable and all packaged scripts against its saved checksum list.
