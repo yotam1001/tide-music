@@ -16,10 +16,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Ensure WinGet is available
-        shell: pwsh
+        shell: powershell
         run: |
-          Install-Module Microsoft.WinGet.Client -Force -Repository PSGallery -Scope CurrentUser
-          Repair-WinGetPackageManager -AllUsers -Latest
+          $ErrorActionPreference = 'Stop'
+          $ProgressPreference = 'SilentlyContinue'
+          $taskBootstrap = Join-Path $env:RUNNER_TEMP 'winget-bootstrap'
+          New-Item -ItemType Directory -Path $taskBootstrap | Out-Null
+          $taskBase = 'https://github.com/microsoft/winget-cli/releases/download/v1.29.380/'
+          $taskBundle = Join-Path $taskBootstrap 'AppInstaller.msixbundle'
+          $taskDependencies = Join-Path $taskBootstrap 'dependencies.zip'
+          Invoke-WebRequest -UseBasicParsing -Uri ($taskBase + 'Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle') -OutFile $taskBundle -TimeoutSec 120
+          Invoke-WebRequest -UseBasicParsing -Uri ($taskBase + 'DesktopAppInstaller_Dependencies.zip') -OutFile $taskDependencies -TimeoutSec 120
+          Expand-Archive -LiteralPath $taskDependencies -DestinationPath (Join-Path $taskBootstrap 'dependencies')
+          $taskPaths = @(Get-ChildItem (Join-Path $taskBootstrap 'dependencies/x64') -Recurse -File | Where-Object { $_.Extension -in @('.appx', '.msix') } | ForEach-Object FullName)
+          Add-AppxPackage -Path $taskBundle -DependencyPath $taskPaths -ForceUpdateFromAnyVersion -ForceApplicationShutdown
           winget --version
           if ($LASTEXITCODE -ne 0) { throw 'WinGet is unavailable.' }
       - name: Install, inspect, repeat install, and uninstall
