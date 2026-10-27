@@ -43,7 +43,9 @@ You can turn startup checks off in Settings.
 
 Setup repairs an older Windows version/icon/uninstall entry only when its
 product, installation root and command match Tide and its registered release
-passes the ownership and package checksum checks. The readiness check does not
+passes the ownership and package checksum checks. When that old release folder
+has already been removed, the active installation must pass those checks instead.
+The readiness check does not
 change that entry. Unrelated or modified registrations remain protected.
 
 Updates keep your listening-history choice, Discord presence, theme, volume,
