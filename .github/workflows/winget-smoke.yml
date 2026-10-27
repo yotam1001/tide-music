@@ -18,10 +18,8 @@ jobs:
       - name: Ensure WinGet is available
         shell: pwsh
         run: |
-          if (!(Get-Command winget -ErrorAction SilentlyContinue)) {
-            Install-Module Microsoft.WinGet.Client -Force -Repository PSGallery -Scope CurrentUser
-            Repair-WinGetPackageManager -AllUsers
-          }
+          Install-Module Microsoft.WinGet.Client -Force -Repository PSGallery -Scope CurrentUser
+          Repair-WinGetPackageManager -AllUsers -Latest
           winget --version
           if ($LASTEXITCODE -ne 0) { throw 'WinGet is unavailable.' }
       - name: Install, inspect, repeat install, and uninstall
