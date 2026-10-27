@@ -306,17 +306,25 @@ switch ($Scenario) {
         if (!(Test-TideUninstallEntryMatch $global:AppsEntry $expected)) { throw 'Version/uninstall path did not update' }
         Uninstall-Tide $root $links | Out-Null
     }
-    'owned-stale-registration' {
+    { $_ -in @('owned-stale-registration','owned-removed-registration','removed-registration-tampered','removed-registration-unowned','removed-registration-foreign-folder') } {
         Install-Tide $package $root $links 'Chrome' ('a' * 32) '0.4.2' | Out-Null
         $previous = Current-Release
         $retained = Join-Path $root ('releases/' + ('b' * 32))
-        Copy-Item -LiteralPath $previous -Destination $retained -Recurse
+        if ($Scenario -eq 'owned-stale-registration') { Copy-Item -LiteralPath $previous -Destination $retained -Recurse }
         # Match the reported three-field conflict: a previous owned version
         # and its icon/uninstall paths, with the correct product/root identity.
         $global:AppsEntry = Get-TideUninstallRegistration $retained $root '0.4.1'
         $before = Get-TideUninstallEntry
         $expected = Get-TideUninstallRegistration $previous $root '0.4.2'
         if ((Get-TideUninstallConflictMessage $before $expected) -notmatch 'DisplayIcon, DisplayVersion, UninstallString') { throw 'Fixture does not reproduce the reported conflict' }
+        if ($Scenario -eq 'removed-registration-tampered') { [IO.File]::WriteAllText((Join-Path $previous 'scripts/install-windows.ps1'), 'tampered active script') }
+        if ($Scenario -eq 'removed-registration-unowned') { Remove-Item -LiteralPath (Join-Path $previous '.tide-release.json') }
+        if ($Scenario -eq 'removed-registration-foreign-folder') { [IO.Directory]::CreateDirectory($retained) | Out-Null }
+        if ($Scenario -like 'removed-registration-*') {
+            Must-Fail { Test-TideInstall $package $root $links 'None' '' '0.4.3' }
+            if ((Current-Release) -ne $previous -or !(Test-TideUninstallEntryMatch (Get-TideUninstallEntry) $before)) { throw 'Unverified recovery changed installation' }
+            break
+        }
         $events = @(Test-TideInstall $package $root $links 'None' '' '0.4.3')
         if ($events[-1] -ne 'TIDE_PREFLIGHT_OK' -or !(Test-TideUninstallEntryMatch (Get-TideUninstallEntry) $before) -or (Current-Release) -ne $previous) { throw 'Recovery preflight changed the installation' }
         Install-Tide $package $root $links 'None' '' '0.4.3' | Out-Null
@@ -467,7 +475,7 @@ class WindowsInstallTests(unittest.TestCase):
                          "traversal-record", "reparse", "lock", "download", "archive-paths",
                          "runtime-api-independent", "runtime-corrupt-download", "app-entry-conflict",
                          "app-entry-update-conflict", "app-entry-write-failure-first", "app-entry-write-failure-update",
-                         "app-entry-marker-failure", "app-entry-version-update", "owned-stale-registration", "owned-stale-registration-rollback", "owned-stale-registration-tampered", "owned-stale-registration-foreign", "owned-stale-registration-manifest", "app-entry-migration", "app-entry-new-race", "protocol"):
+                         "app-entry-marker-failure", "app-entry-version-update", "owned-stale-registration", "owned-removed-registration", "removed-registration-tampered", "removed-registration-unowned", "removed-registration-foreign-folder", "owned-stale-registration-rollback", "owned-stale-registration-tampered", "owned-stale-registration-foreign", "owned-stale-registration-manifest", "app-entry-migration", "app-entry-new-race", "protocol"):
             with self.subTest(scenario=scenario):
                 self.run_scenario(scenario)
 
@@ -499,7 +507,7 @@ class WindowsInstallTests(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("powershell.exe"), "requires built-in Windows PowerShell 5.1")
     def test_builtin_windows_powershell_lifecycle(self):
-        for scenario in ("preflight", "fresh-remove", "upgrade", "registration-failure", "runtime-api-independent", "runtime-corrupt-download", "app-entry-write-failure-update", "app-entry-version-update", "owned-stale-registration", "owned-stale-registration-rollback", "owned-stale-registration-tampered", "owned-stale-registration-foreign", "owned-stale-registration-manifest", "protocol"):
+        for scenario in ("preflight", "fresh-remove", "upgrade", "registration-failure", "runtime-api-independent", "runtime-corrupt-download", "app-entry-write-failure-update", "app-entry-version-update", "owned-stale-registration", "owned-removed-registration", "removed-registration-tampered", "removed-registration-unowned", "removed-registration-foreign-folder", "owned-stale-registration-rollback", "owned-stale-registration-tampered", "owned-stale-registration-foreign", "owned-stale-registration-manifest", "protocol"):
             with self.subTest(scenario=scenario):
                 self.run_scenario(scenario, "powershell.exe")
 

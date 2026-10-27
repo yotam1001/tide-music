@@ -199,12 +199,11 @@ try {
     $taskVersionReader = [IO.StreamReader]::new($taskVersionStream)
     try { $taskUpdatedVersion = $taskVersionReader.ReadToEnd().Trim() } finally { $taskVersionReader.Dispose() }
     # Reproduce the three-field conflict seen in a real in-app update. A
-    # retained, checksum-verified Tide release still owns the registered old
-    # icon/uninstall command, while the active marker is newer. Setup must
+    # removed Tide release is still named by the registered old icon/uninstall
+    # command, while the active installation is newer and valid. Setup must
     # confirm readiness without changing it, then repair it only after COMMIT.
     $taskRetainedRelease = Get-TideChild $taskInstallRoot ('releases/' + ('b' * 32))
     if (Test-Path -LiteralPath $taskRetainedRelease) { throw 'Retained-release fixture already exists.' }
-    Copy-Item -LiteralPath $taskFirstRelease -Destination $taskRetainedRelease -Recurse
     $taskOriginalEntry = Get-TideUninstallEntry
     $taskStaleEntry = Get-TideUninstallRegistration $taskRetainedRelease $taskInstallRoot '0.1.0-older-probe'
     Set-TideUninstallRegistration $taskOriginalEntry $taskStaleEntry
