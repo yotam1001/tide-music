@@ -1,0 +1,39 @@
+name: Diagnose unattended release setup
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/tide-winget]
+    paths: [.github/workflows/winget-diagnostic.yml]
+permissions:
+  contents: read
+jobs:
+  direct-setup:
+    runs-on: windows-latest
+    timeout-minutes: 12
+    steps:
+      - name: Run the published setup with captured output
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $taskInstaller = Join-Path $env:RUNNER_TEMP 'TideSetup-winget.exe'
+          Invoke-WebRequest -Uri 'https://github.com/yotam1001/tide-music/releases/download/v0.4.5/TideSetup-winget.exe' -OutFile $taskInstaller -TimeoutSec 120
+          if ((Get-FileHash $taskInstaller).Hash -ne '48D7A36C026D9A7F61075000A55B1ADE909852F49DA777DA60B31077941B9090') { throw 'Public hash mismatch.' }
+          $taskStdout = Join-Path $env:RUNNER_TEMP 'tide-setup.stdout.log'
+          $taskStderr = Join-Path $env:RUNNER_TEMP 'tide-setup.stderr.log'
+          $taskProcess = Start-Process -FilePath $taskInstaller -ArgumentList '--silent' -WindowStyle Hidden -PassThru -RedirectStandardOutput $taskStdout -RedirectStandardError $taskStderr
+          $taskDeadline = [DateTime]::UtcNow.AddMinutes(9)
+          while (!$taskProcess.WaitForExit(15000)) {
+            'Setup is still running. Latest output:'
+            Get-Content -LiteralPath $taskStdout -Tail 5 -ErrorAction SilentlyContinue
+            Get-Content -LiteralPath $taskStderr -Tail 2 -ErrorAction SilentlyContinue | ForEach-Object { $_.Substring(0, [Math]::Min($_.Length, 1500)) }
+            if ([DateTime]::UtcNow -gt $taskDeadline) { throw 'Setup exceeded the diagnostic deadline.' }
+          }
+          Get-Content -LiteralPath $taskStdout
+          Get-Content -LiteralPath $taskStderr | ForEach-Object { $_.Substring(0, [Math]::Min($_.Length, 1500)) }
+          if ($taskProcess.ExitCode -ne 0) { throw "Direct setup failed: $($taskProcess.ExitCode)" }
+          Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\TideMusic' | Select-Object DisplayName, DisplayVersion, Publisher
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: direct-setup-diagnostics
+          path: ${{ runner.temp }}/tide-setup.*.log
