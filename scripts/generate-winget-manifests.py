@@ -45,7 +45,6 @@ InstallerSwitches:
   Silent: --silent
   SilentWithProgress: --silent
 UpgradeBehavior: install
-ElevationRequirement: elevationProhibited
 AppsAndFeaturesEntries:
 - DisplayName: Tide
   Publisher: Tide contributors
