@@ -198,6 +198,19 @@ try {
     if ($null -eq $taskVersionStream) { throw 'Setup has no embedded app version.' }
     $taskVersionReader = [IO.StreamReader]::new($taskVersionStream)
     try { $taskUpdatedVersion = $taskVersionReader.ReadToEnd().Trim() } finally { $taskVersionReader.Dispose() }
+    # Reproduce the three-field conflict seen in a real in-app update. A
+    # retained, checksum-verified Tide release still owns the registered old
+    # icon/uninstall command, while the active marker is newer. Setup must
+    # confirm readiness without changing it, then repair it only after COMMIT.
+    $taskRetainedRelease = Get-TideChild $taskInstallRoot ('releases/' + ('b' * 32))
+    if (Test-Path -LiteralPath $taskRetainedRelease) { throw 'Retained-release fixture already exists.' }
+    Copy-Item -LiteralPath $taskFirstRelease -Destination $taskRetainedRelease -Recurse
+    $taskOriginalEntry = Get-TideUninstallEntry
+    $taskStaleEntry = Get-TideUninstallRegistration $taskRetainedRelease $taskInstallRoot '0.1.0-older-probe'
+    Set-TideUninstallRegistration $taskOriginalEntry $taskStaleEntry
+    if ((Get-TideUninstallConflictMessage $taskStaleEntry $taskOriginalEntry) -notmatch 'DisplayIcon, DisplayVersion, UninstallString') {
+        throw 'Real handoff fixture did not reproduce the expected conflict.'
+    }
     $taskPreviousAppdata = $env:APPDATA
     try {
         $env:APPDATA = $taskIsolatedProfile
@@ -228,6 +241,9 @@ try {
             throw 'Actual setup did not confirm its version and parent before restart.'
         }
         if ($taskSetupProcess.HasExited) { throw 'Actual setup exited before commit.' }
+        if (!(Test-TideUninstallEntryMatch (Get-TideUninstallEntry) $taskStaleEntry)) {
+            throw 'Setup changed the registration before restart was committed.'
+        }
         $taskSetupOutput = $taskSetupProcess.StandardOutput.ReadToEndAsync()
         $taskCommitBytes = [Text.Encoding]::ASCII.GetBytes("COMMIT`n")
         $taskSetupProcess.StandardInput.BaseStream.Write($taskCommitBytes, 0, $taskCommitBytes.Length)

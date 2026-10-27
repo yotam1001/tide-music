@@ -41,6 +41,11 @@ to update** when convenient. The update applies in the background and reopens
 Tide; your account and preferences are kept. See [in-app updates](IN_APP_UPDATES.md).
 You can turn startup checks off in Settings.
 
+Setup repairs an older Windows version/icon/uninstall entry only when its
+product, installation root and command match Tide and its registered release
+passes the ownership and package checksum checks. The readiness check does not
+change that entry. Unrelated or modified registrations remain protected.
+
 Updates keep your listening-history choice, Discord presence, theme, volume,
 shortcuts and other preferences in your Windows user profile, outside the app's
 versioned installation folder. Settings are saved by atomic replacement, with

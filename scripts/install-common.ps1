@@ -44,8 +44,10 @@ function Remove-TideUninstallEntryKey {
 }
 function Test-TideUninstallEntryMatch($Actual, $Expected) {
     if ($null -eq $Expected) { return $null -eq $Actual }
-    if ($null -eq $Actual -or $Actual.Count -ne $Expected.Count) { return $false }
-    foreach ($name in $Expected.Keys) {
+    # Registry value names may be "Count" or "Keys". Use dictionary methods,
+    # not adapted properties which PowerShell can resolve to those values.
+    if ($null -eq $Actual -or $Actual.get_Count() -ne $Expected.get_Count()) { return $false }
+    foreach ($name in $Expected.get_Keys()) {
         if (!$Actual.ContainsKey($name) -or $Actual[$name] -ne $Expected[$name]) { return $false }
     }
     return $true
@@ -85,6 +87,34 @@ function Get-TideUninstallRegistration([string]$Release, [string]$InstallRoot, [
         UninstallString=('"{0}" {1}' -f $links['Uninstall Tide.lnk'].Target, $links['Uninstall Tide.lnk'].Arguments)
         NoModify=1; NoRepair=1
     }
+}
+function Test-TideOwnedUninstallRegistration($Actual, [string]$InstallRoot) {
+    # Version metadata can lag the atomic installation record after an older
+    # upgrade. Prove ownership of the registered release instead of treating
+    # every version/path difference as a different product. Keep the original
+    # snapshot for Set-TideUninstallRegistration's compare-and-swap checks.
+    if ($null -eq $Actual -or !$Actual.ContainsKey('DisplayVersion') -or !$Actual.ContainsKey('DisplayIcon')) { return $false }
+    if ($Actual.DisplayVersion -isnot [string] -or $Actual.DisplayVersion -notmatch '^[0-9][A-Za-z0-9.+-]{0,63}$' -or $Actual.DisplayIcon -isnot [string]) { return $false }
+    $prefix = $InstallRoot.TrimEnd('\') + '\releases\'
+    if (!$Actual.DisplayIcon.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) { return $false }
+    $relative = $Actual.DisplayIcon.Substring($prefix.Length)
+    if ($relative -notmatch '^([a-f0-9]{32})\\tide-music\.exe$') { return $false }
+    $registeredId = $Matches[1]
+    try {
+        $registeredRelease = Get-TideChild $InstallRoot ('releases/' + $registeredId)
+        $expected = Get-TideUninstallRegistration $registeredRelease $InstallRoot $Actual.DisplayVersion
+        # Includes the product, publisher, root, exact uninstall command and
+        # complete field set. Arbitrary commands/foreign registrations fail.
+        if (!(Test-TideUninstallEntryMatch $Actual $expected)) { return $false }
+        $owned = @(Get-TideOwnedReleasePaths $registeredRelease)
+        foreach ($name in @('tide-music.exe','scripts/install-windows.ps1','scripts/install-common.ps1')) {
+            if ((Get-TideChild $registeredRelease $name) -notin $owned) { return $false }
+        }
+        # An ownership marker alone is insufficient: verify the registered
+        # executable and all packaged scripts against its saved checksum list.
+        Get-TideVerifiedPayload $registeredRelease | Out-Null
+        return $true
+    } catch { return $false }
 }
 function Set-TideUninstallRegistration($Expected, $Value) {
     $actual = Get-TideUninstallEntry
@@ -333,7 +363,8 @@ function Install-TideCore([string]$PackageRoot, [string]$InstallRoot, [string]$S
     if ($null -ne $oldUninstall) {
         $oldVersion = if ($old -and $old.PSObject.Properties['AppVersion']) { $old.AppVersion } else { '0.1.0-preview' }
         $expectedUninstall = if ($old) { Get-TideUninstallRegistration $oldRelease $InstallRoot $oldVersion } else { $null }
-        if (!(Test-TideUninstallEntryMatch $oldUninstall $expectedUninstall)) {
+        if (!(Test-TideUninstallEntryMatch $oldUninstall $expectedUninstall) -and
+            (!$old -or !(Test-TideOwnedUninstallRegistration $oldUninstall $InstallRoot))) {
             throw (Get-TideUninstallConflictMessage $oldUninstall $expectedUninstall)
         }
     }
