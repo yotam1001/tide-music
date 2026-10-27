@@ -39,7 +39,7 @@ $global:FailAppWrite = 0
 $global:RaceNewAppEntry = $false
 function Get-TideUninstallEntry {
     if ($null -eq $global:AppsEntry) { return $null }
-    $copy = @{}; foreach ($name in $global:AppsEntry.Keys) { $copy[$name] = $global:AppsEntry[$name] }
+    $copy = @{}; foreach ($name in $global:AppsEntry.get_Keys()) { $copy[$name] = $global:AppsEntry[$name] }
     return $copy
 }
 function New-TideUninstallEntry {
@@ -306,6 +306,88 @@ switch ($Scenario) {
         if (!(Test-TideUninstallEntryMatch $global:AppsEntry $expected)) { throw 'Version/uninstall path did not update' }
         Uninstall-Tide $root $links | Out-Null
     }
+    'owned-stale-registration' {
+        Install-Tide $package $root $links 'Chrome' ('a' * 32) '0.4.2' | Out-Null
+        $previous = Current-Release
+        $retained = Join-Path $root ('releases/' + ('b' * 32))
+        Copy-Item -LiteralPath $previous -Destination $retained -Recurse
+        # Match the reported three-field conflict: a previous owned version
+        # and its icon/uninstall paths, with the correct product/root identity.
+        $global:AppsEntry = Get-TideUninstallRegistration $retained $root '0.4.1'
+        $before = Get-TideUninstallEntry
+        $expected = Get-TideUninstallRegistration $previous $root '0.4.2'
+        if ((Get-TideUninstallConflictMessage $before $expected) -notmatch 'DisplayIcon, DisplayVersion, UninstallString') { throw 'Fixture does not reproduce the reported conflict' }
+        $events = @(Test-TideInstall $package $root $links 'None' '' '0.4.3')
+        if ($events[-1] -ne 'TIDE_PREFLIGHT_OK' -or !(Test-TideUninstallEntryMatch (Get-TideUninstallEntry) $before) -or (Current-Release) -ne $previous) { throw 'Recovery preflight changed the installation' }
+        Install-Tide $package $root $links 'None' '' '0.4.3' | Out-Null
+        $current = Current-Release
+        if ($current -eq $previous -or !(Test-TideUninstallEntryMatch (Get-TideUninstallEntry) (Get-TideUninstallRegistration $current $root '0.4.3'))) { throw 'Owned stale registration did not upgrade' }
+        Uninstall-Tide $root $links | Out-Null
+    }
+    'owned-stale-registration-rollback' {
+        New-Install; $previous = Current-Release
+        $global:AppsEntry.DisplayVersion = '0.4.1'
+        $before = Get-TideUninstallEntry
+        $pending = Join-Path $root '.tide-install.pending.json'
+        [IO.File]::WriteAllText($pending, 'preserve interrupted record')
+        Must-Fail { Install-Tide $package $root $links 'None' '' '0.4.3' }
+        if ((Current-Release) -ne $previous -or !(Test-TideUninstallEntryMatch (Get-TideUninstallEntry) $before)) { throw 'Recovery rollback did not restore exact previous registration' }
+        Remove-Item -LiteralPath $pending
+        # A later successful retry repairs the version metadata.
+        Install-Tide $package $root $links 'None' '' '0.4.3' | Out-Null
+        Uninstall-Tide $root $links | Out-Null
+    }
+    'owned-stale-registration-tampered' {
+        New-Install; $previous = Current-Release
+        $global:AppsEntry.DisplayVersion = '0.4.1'
+        $before = Get-TideUninstallEntry
+        [IO.File]::WriteAllText((Join-Path $previous 'scripts/install-windows.ps1'), 'foreign modified script')
+        Must-Fail { Test-TideInstall $package $root $links 'None' '' '0.4.3' }
+        if ((Current-Release) -ne $previous -or !(Test-TideUninstallEntryMatch (Get-TideUninstallEntry) $before)) { throw 'Tampered recovery changed the installation' }
+    }
+    'owned-stale-registration-foreign' {
+        New-Install; $previous = Current-Release
+        foreach ($attack in @('command','root','product','extra-count','extra-keys','traversal')) {
+            $global:AppsEntry = Get-TideUninstallRegistration $previous $root '0.4.1'
+            switch ($attack) {
+                'command' { $global:AppsEntry.UninstallString = 'foreign.exe' }
+                'root' { $global:AppsEntry.InstallLocation = (Join-Path $Fixture 'another-product') }
+                'product' { $global:AppsEntry.TideProduct = 'another.product' }
+                'extra-count' { $global:AppsEntry['Count'] = 10 }
+                'extra-keys' { $global:AppsEntry['Keys'] = 'foreign-value' }
+                'traversal' { $global:AppsEntry.DisplayIcon = (Join-Path $root 'releases/../foreign.exe') }
+            }
+            $before = Get-TideUninstallEntry
+            Must-Fail { Test-TideInstall $package $root $links 'None' '' '0.4.3' }
+            if ((Current-Release) -ne $previous -or !(Test-TideUninstallEntryMatch (Get-TideUninstallEntry) $before)) { throw 'Foreign registration was changed' }
+        }
+        $global:AppsEntry = Get-TideUninstallRegistration $previous $root '0.1.0-preview'
+        Uninstall-Tide $root $links | Out-Null
+    }
+    'owned-stale-registration-manifest' {
+        New-Install; $previous = Current-Release
+        $global:AppsEntry.DisplayVersion = '0.4.1'
+        $before = Get-TideUninstallEntry
+        $record = Join-Path $previous '.tide-release.json'
+        $original = [IO.File]::ReadAllText($record)
+        foreach ($attack in @('traversal','rooted','alias','self','missing-script','product')) {
+            $manifest = $original | ConvertFrom-Json
+            switch ($attack) {
+                'traversal' { $manifest.Files += '../foreign.txt' }
+                'rooted' { $manifest.Files += (Join-Path $Fixture 'foreign.txt') }
+                'alias' { $manifest.Files += 'scripts/./install-windows.ps1' }
+                'self' { $manifest.Files += '.tide-release.json' }
+                'missing-script' { $manifest.Files = @($manifest.Files | Where-Object { $_ -ne 'scripts/install-windows.ps1' }) }
+                'product' { $manifest.Product = 'another.product' }
+            }
+            Write-TideJson $record $manifest
+            Must-Fail { Test-TideInstall $package $root $links 'None' '' '0.4.3' }
+            if ((Current-Release) -ne $previous -or !(Test-TideUninstallEntryMatch (Get-TideUninstallEntry) $before)) { throw 'Invalid ownership manifest changed the installation' }
+        }
+        [IO.File]::WriteAllText($record, $original)
+        $global:AppsEntry.DisplayVersion = '0.1.0-preview'
+        Uninstall-Tide $root $links | Out-Null
+    }
     'app-entry-migration' {
         New-Install; $global:AppsEntry = $null
         Install-Tide $package $root $links 'None' '' | Out-Null
@@ -385,7 +467,7 @@ class WindowsInstallTests(unittest.TestCase):
                          "traversal-record", "reparse", "lock", "download", "archive-paths",
                          "runtime-api-independent", "runtime-corrupt-download", "app-entry-conflict",
                          "app-entry-update-conflict", "app-entry-write-failure-first", "app-entry-write-failure-update",
-                         "app-entry-marker-failure", "app-entry-version-update", "app-entry-migration", "app-entry-new-race", "protocol"):
+                         "app-entry-marker-failure", "app-entry-version-update", "owned-stale-registration", "owned-stale-registration-rollback", "owned-stale-registration-tampered", "owned-stale-registration-foreign", "owned-stale-registration-manifest", "app-entry-migration", "app-entry-new-race", "protocol"):
             with self.subTest(scenario=scenario):
                 self.run_scenario(scenario)
 
@@ -417,7 +499,7 @@ class WindowsInstallTests(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("powershell.exe"), "requires built-in Windows PowerShell 5.1")
     def test_builtin_windows_powershell_lifecycle(self):
-        for scenario in ("preflight", "fresh-remove", "upgrade", "registration-failure", "runtime-api-independent", "runtime-corrupt-download", "app-entry-write-failure-update", "protocol"):
+        for scenario in ("preflight", "fresh-remove", "upgrade", "registration-failure", "runtime-api-independent", "runtime-corrupt-download", "app-entry-write-failure-update", "app-entry-version-update", "owned-stale-registration", "owned-stale-registration-rollback", "owned-stale-registration-tampered", "owned-stale-registration-foreign", "owned-stale-registration-manifest", "protocol"):
             with self.subTest(scenario=scenario):
                 self.run_scenario(scenario, "powershell.exe")
 
