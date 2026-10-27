@@ -172,12 +172,7 @@ namespace TideSetup {
             string root = null, result = null; var errors = new StringBuilder();
             try {
                 root = Payload.Extract();
-                var start = new ProcessStartInfo {
-                    FileName = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe"),
-                    Arguments = Program.InstallArguments(root, Program.SetupVersion()),
-                    UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true,
-                    StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8
-                };
+                var start = Program.InstallStartInfo(root, Program.SetupVersion());
                 using (var process = new Process { StartInfo = start }) {
                     process.OutputDataReceived += delegate(object source, DataReceivedEventArgs line) {
                         if (line.Data == null) return;
@@ -227,14 +222,20 @@ namespace TideSetup {
                 default: return "invalid";
             }
         }
-        internal static int RunUnattended(string root, string version) {
+        internal static ProcessStartInfo InstallStartInfo(string root, string version) {
             var start = new ProcessStartInfo {
                 FileName = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe"),
                 Arguments = InstallArguments(root, version),
                 UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true,
                 StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8
             };
-            using (var process = new Process { StartInfo = start }) {
+            // PowerShell 7 exports a module path that Windows PowerShell 5.1
+            // cannot use. Setup only needs the OS's built-in 5.1 modules.
+            start.EnvironmentVariables["PSModulePath"] = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "Modules");
+            return start;
+        }
+        internal static int RunUnattended(string root, string version) {
+            using (var process = new Process { StartInfo = InstallStartInfo(root, version) }) {
                 process.OutputDataReceived += delegate(object sender, DataReceivedEventArgs line) { if (line.Data != null) Console.Out.WriteLine(line.Data); };
                 process.ErrorDataReceived += delegate(object sender, DataReceivedEventArgs line) { if (line.Data != null) Console.Error.WriteLine(line.Data); };
                 process.Start(); process.BeginOutputReadLine(); process.BeginErrorReadLine(); process.WaitForExit();

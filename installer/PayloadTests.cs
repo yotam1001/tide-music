@@ -55,7 +55,7 @@ internal static class PayloadTests {
         try {
             Directory.CreateDirectory(Path.Combine(fakeRoot, "scripts"));
             var script = Path.Combine(fakeRoot, "scripts", "install-windows.ps1");
-            File.WriteAllText(script, "param($Mode, $AppVersion)\nif ($Mode -ne 'Install' -or $AppVersion -ne '0.4.6') { exit 99 }\n1..1000 | ForEach-Object { [Console]::Out.WriteLine('out'); [Console]::Error.WriteLine('err') }\nexit 0\n");
+            File.WriteAllText(script, "param($Mode, $AppVersion)\n$ErrorActionPreference = 'Stop'\nif ($Mode -ne 'Install' -or $AppVersion -ne '0.4.6') { exit 99 }\nGet-FileHash -LiteralPath $PSCommandPath | Out-Null\n1..1000 | ForEach-Object { [Console]::Out.WriteLine('out'); [Console]::Error.WriteLine('err') }\nexit 0\n");
             if (Program.RunUnattended(fakeRoot, "0.4.6") != 0) throw new Exception("Silent setup arguments or stream draining failed");
             File.WriteAllText(script, "param($Mode, $AppVersion)\nexit 23\n");
             if (Program.RunUnattended(fakeRoot, "0.4.6") != 23) throw new Exception("Silent setup lost child failure code");

@@ -22,6 +22,7 @@ class InstallerBootstrapTests(unittest.TestCase):
                 archive = root / "payload.zip"
                 script = (
                     "param($Mode, $AppVersion)\n"
+                    "$ErrorActionPreference = 'Stop'\nGet-FileHash -LiteralPath $PSCommandPath | Out-Null\n"
                     "if ($Mode -ne 'Install' -or $AppVersion -ne '0.4.5') { exit 99 }\n"
                     f"exit {exit_code}\n"
                 ).encode()
@@ -45,7 +46,7 @@ class InstallerBootstrapTests(unittest.TestCase):
                     f"/resource:{version},Tide.Version", str(ROOT / "installer/TideSetup.cs")
                 ], capture_output=True, timeout=30)
                 self.assertEqual(result.returncode, 0, result.stdout.decode(errors="replace"))
-                environment = dict(os.environ, TEMP=str(root), TMP=str(root))
+                environment = dict(os.environ, TEMP=str(root), TMP=str(root), PSModulePath=str(root / 'invalid-parent-modules'))
                 for args, expected in ((["--silent"], exit_code), (["--verify-payload"], 0),
                                        (["--help"], 0), (["--bad"], 2), (["--silent", "--preview"], 2)):
                     result = subprocess.run([str(output), *args], env=environment, capture_output=True, timeout=15)

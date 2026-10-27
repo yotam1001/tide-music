@@ -28,8 +28,9 @@ def generate(installer, version, installer_url, destination):
         raise ValueError("Expected a Windows EXE installer")
     with installer.open("rb") as stream:
         digest = hashlib.file_digest(stream, "sha256").hexdigest().upper()
-    if digest == "BD0A2504709772174EFF2EB91E86789EB4DF625CA749E86D1DD7FB2AD0A72775":
-        raise ValueError("The original v0.4.5 installer does not support silent installation")
+    if digest in {"BD0A2504709772174EFF2EB91E86789EB4DF625CA749E86D1DD7FB2AD0A72775",
+                  "48D7A36C026D9A7F61075000A55B1ADE909852F49DA777DA60B31077941B9090"}:
+        raise ValueError("This installer lacks the required unattended setup compatibility fixes")
     destination = Path(destination)
     if destination.exists():
         raise FileExistsError("Refusing to overwrite an existing manifest directory")
