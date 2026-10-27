@@ -13,7 +13,7 @@ For an installer-only packaging revision of v0.4.5, build the new wrapper around
 the exact published `tide-windows-preview.zip`, preserving the application bytes:
 
 ```powershell
-pwsh -File scripts/build-installer.ps1 -Package .local/winget-prep/tide-windows-preview.zip -Destination dist/winget/TideSetup-winget.exe -AppVersion 0.4.5
+pwsh -File scripts/build-installer.ps1 -Package .local/winget-prep/tide-windows-preview.zip -Destination dist/winget/TideSetup-winget-r2.exe -AppVersion 0.4.5
 ```
 
 The ZIP's published SHA-256 is
@@ -22,12 +22,12 @@ The wrapper validates the ZIP and each embedded file before installation. It
 installs per user, downloads checksum-pinned private playback dependencies,
 registers `Tide` / `Tide contributors` / `0.4.5` in Windows Apps, and supports
 `--silent`. Its existing uninstall command is noninteractive. Neither operation
-requires elevation. The original release asset must not be overwritten.
+requires elevation. The original release asset must not be overwritten. Revision r2 also isolates the Windows PowerShell module path so setup works when launched from PowerShell 7.
 
 ## Manifests
 
 ```powershell
-python scripts/generate-winget-manifests.py --installer dist/winget/TideSetup-winget.exe --version 0.4.5 --installer-url https://github.com/yotam1001/tide-music/releases/download/v0.4.5/TideSetup-winget.exe --output .local/winget-prep/manifests/t/TideMusic/Tide/0.4.5
+python scripts/generate-winget-manifests.py --installer dist/winget/TideSetup-winget-r2.exe --version 0.4.5 --installer-url https://github.com/yotam1001/tide-music/releases/download/v0.4.5/TideSetup-winget-r2.exe --output .local/winget-prep/manifests/t/TideMusic/Tide/0.4.5
 winget validate --manifest .local/winget-prep/manifests/t/TideMusic/Tide/0.4.5 --disable-interactivity
 ```
 
@@ -40,7 +40,7 @@ asset exists, can be downloaded, or installs successfully.
 1. Test on a clean Windows VM: unattended install, playback dependency setup,
    Apps version detection, repeat install/update, and unattended uninstall.
    Test ordinary interactive setup too. Preserve saved account data.
-2. Obtain approval to publish the additional `TideSetup-winget.exe` release asset.
+2. Obtain approval to publish the additional `TideSetup-winget-r2.exe` release asset.
    Publish its SHA-256 alongside it. Download the public asset and compare its hash
    with `InstallerSha256`; never point these manifests at the old GUI-only EXE.
 3. In the test VM, enable local manifests if needed and run
