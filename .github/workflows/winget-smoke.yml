@@ -27,12 +27,24 @@ jobs:
       - name: Install, inspect, repeat install, and uninstall
         shell: pwsh
         run: ./scripts/test-winget-release.ps1
+      - name: Collect WinGet logs
+        if: always()
+        shell: pwsh
+        run: |
+          $taskLogs = '.local/winget-smoke'
+          New-Item -ItemType Directory -Force $taskLogs | Out-Null
+          $taskSource = Join-Path $env:LOCALAPPDATA 'Packages/Microsoft.DesktopAppInstaller_8wekyb3d8bbwe/LocalState/DiagOutputDir'
+          if (Test-Path -LiteralPath $taskSource) {
+            Get-ChildItem -LiteralPath $taskSource -File -Filter '*.log' | Copy-Item -Destination $taskLogs
+          }
       - name: Upload diagnostic logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: tide-winget-smoke-logs
           path: |
-            .local/winget-smoke/
-            ~/AppData/Local/Packages/Microsoft.DesktopAppInstaller_8wekyb3d8bbwe/LocalState/DiagOutputDir/
+            .local/winget-smoke/*.txt
+            .local/winget-smoke/*.json
+            .local/winget-smoke/*.log
+          include-hidden-files: true
           if-no-files-found: ignore

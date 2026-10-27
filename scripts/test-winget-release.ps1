@@ -13,7 +13,7 @@ if ((Test-Path -LiteralPath $taskKey) -or (Test-Path -LiteralPath $taskInstallRo
 $taskManifest = Join-Path $PSScriptRoot '../packaging/winget/0.4.5'
 $taskLogs = Join-Path $PSScriptRoot '../.local/winget-smoke'
 [IO.Directory]::CreateDirectory($taskLogs) | Out-Null
-$taskInstallerManifest = Get-Content (Join-Path $taskManifest 'TideMusic.Tide.installer.yaml') -Raw
+$taskInstallerManifest = (Get-Content (Join-Path $taskManifest 'TideMusic.Tide.installer.yaml') -Raw).Replace("`r", '')
 $taskUrl = [regex]::Match($taskInstallerManifest, '(?m)^  InstallerUrl: (https://[^\r\n]+)$').Groups[1].Value
 $taskExpectedHash = [regex]::Match($taskInstallerManifest, '(?m)^  InstallerSha256: ([A-Fa-f0-9]{64})$').Groups[1].Value
 if (!$taskUrl -or !$taskExpectedHash) { throw 'Manifest URL or hash is missing.' }
