@@ -948,6 +948,17 @@ async fn run_worker(
                                 && message.get("error").and_then(Value::as_str).is_some_and(|e| e != "success") {
                                 if let Some(running) = player.as_mut() { running.audio_options = None; }
                             }
+                            let audio_message = matches!(message.get("request_id").and_then(Value::as_i64), Some(-101 | -102))
+                                || (message.get("event").and_then(Value::as_str) == Some("property-change")
+                                    && matches!(message.get("name").and_then(Value::as_str), Some("audio-device-list" | "af")));
+                            // These properties belong to the player, not a track. Keep
+                            // output discovery current even after EOF or a canceled load.
+                            if audio_message {
+                                let mut view = snapshot_write(&snapshot);
+                                apply_ipc_message(&mut state, &mut view, &message,
+                                    desired_generation.load(Ordering::Acquire), supersede_epoch.load(Ordering::Acquire));
+                                continue;
+                            }
                             let loaded;
                             {
                                 let _gate = send_gate.lock().unwrap_or_else(|p| p.into_inner());
