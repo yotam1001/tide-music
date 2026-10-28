@@ -76,6 +76,8 @@ jobs:
           if ($taskStableTree | Select-String '^axum v') { throw 'Stable player links the relay server' }
           ./experiments/jam/prepare-native.ps1
           $env:TIDE_RUNTIME_DIR = (Join-Path $PWD '.local/jam-native-runtime')
+          cargo test -p tide-playback --locked native_audio_preferences_probe -- --ignored --nocapture
+          if ($LASTEXITCODE -ne 0) { throw 'Native normalization and audio configuration probe failed' }
           cargo run -p tide-music --locked --features experimental-jams -- --smoke-jam-ownership
           if ($LASTEXITCODE -ne 0) { throw 'Guest ownership verification failed' }
   preview:
