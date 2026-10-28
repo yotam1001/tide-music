@@ -245,9 +245,11 @@ try {
         }
         # Keep a second, real Tide window alive through COMMIT. It has no timed
         # exit: the installer must close it normally, rather than fail its guard.
+        # This GUI fixture must be visible on the disposable runner so Windows
+        # can deliver the same CloseMainWindow request as a real player window.
         $taskSecondPlayer = Start-Process -FilePath (Join-Path $taskFirstRelease 'tide-music.exe') `
             -ArgumentList @('--benchmark-mode', 'compact') -WorkingDirectory $env:RUNNER_TEMP `
-            -WindowStyle Hidden -PassThru `
+            -PassThru `
             -RedirectStandardOutput (Join-Path $taskEvidence 'second-player.stdout.log') `
             -RedirectStandardError (Join-Path $taskEvidence 'second-player.stderr.log')
         if (!$taskSecondPlayer.WaitForInputIdle(15000)) { throw 'Second Tide window did not initialize.' }
