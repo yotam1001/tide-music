@@ -404,9 +404,46 @@ namespace TideSetup {
         }
     }
     internal static class Program {
+        internal static string SetupVersion() { return Payload.AppVersion; }
+        internal static string InstallArguments(string root, string version) {
+            if (!Regex.IsMatch(version, @"^[0-9][A-Za-z0-9.+-]{0,63}$")) throw new ArgumentException("Invalid setup version.");
+            return "-NoLogo -NoProfile -ExecutionPolicy Bypass -File \"" + Path.Combine(root, "scripts", "install-windows.ps1") + "\" -Mode Install -AppVersion \"" + version + "\"";
+        }
+        internal static string Mode(string[] args) {
+            if (args.Length == 0) return "gui";
+            if (args[0] == "--update-from") {
+                try { UpdateOptions.Parse(args); return "update"; } catch (ArgumentException) { return "invalid"; }
+            }
+            if (args.Length != 1) return "invalid";
+            switch (args[0]) {
+                case "--silent": return "silent";
+                case "--preview": return "preview";
+                case "--verify-payload": return "verify";
+                case "--help": return "help";
+                default: return "invalid";
+            }
+        }
+        internal static int RunUnattended(string root, string version) {
+            var start = new InstallOptions(false, null).StartInfo(Path.Combine(root, "scripts", "install-windows.ps1"));
+            start.Arguments = InstallArguments(root, version);
+            using (var process = new Process { StartInfo = start }) {
+                process.OutputDataReceived += delegate(object sender, DataReceivedEventArgs line) { if (line.Data != null) Console.Out.WriteLine(line.Data); };
+                process.ErrorDataReceived += delegate(object sender, DataReceivedEventArgs line) { if (line.Data != null) Console.Error.WriteLine(line.Data); };
+                process.Start(); process.BeginOutputReadLine(); process.BeginErrorReadLine(); process.WaitForExit();
+                return process.ExitCode;
+            }
+        }
         [STAThread] static int Main(string[] args) {
+            var mode = Mode(args);
+            if (mode == "invalid") { Console.Error.WriteLine("Unknown setup arguments. Use --help."); return 2; }
+            if (mode == "help") { Console.Out.WriteLine("TideSetup.exe [--silent | --preview | --verify-payload | --update-from PID [--confirm-ready] | --help]"); return 0; }
             try {
-                var update = UpdateOptions.Parse(args);
+                var update = mode == "update" ? UpdateOptions.Parse(args) : null;
+                if (mode == "silent") {
+                    string root = null;
+                    try { root = Payload.Extract(); return RunUnattended(root, SetupVersion()); }
+                    finally { if (root != null) Payload.Remove(root); }
+                }
                 if (args.Length == 1 && args[0] == "--verify-payload") { var root = Payload.Extract(); Payload.Remove(root); return 0; }
                 Application.EnableVisualStyles(); Application.SetCompatibleTextRenderingDefault(false);
                 Application.Run(new SetupWindow(args.Length == 1 && args[0] == "--preview", update)); return 0;

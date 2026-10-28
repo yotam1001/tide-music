@@ -1,6 +1,7 @@
 # Build one self-contained Windows setup EXE from a validated public preview ZIP.
 [CmdletBinding()]
-param([Parameter(Mandatory)][string]$Package, [string]$Destination = 'dist/TideSetup.exe')
+param([Parameter(Mandatory)][string]$Package, [string]$Destination = 'dist/TideSetup.exe',
+    [ValidatePattern('^[0-9][A-Za-z0-9.+-]{0,63}$')][string]$AppVersion)
 $ErrorActionPreference = 'Stop'
 $taskRoot = [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 . (Join-Path $PSScriptRoot 'install-common.ps1')
@@ -24,7 +25,7 @@ if (Test-Path -LiteralPath $taskAssemblyInfo) { throw 'Assembly-version staging 
 $taskCargoText = Get-Content -LiteralPath (Join-Path $taskRoot 'Cargo.toml') -Raw
 $taskVersionMatch = [regex]::Match($taskCargoText, '(?ms)^\[workspace\.package\]\s*\r?\nversion\s*=\s*"([^"]+)"')
 if (!$taskVersionMatch.Success) { throw 'Cannot determine installer version from Cargo.toml.' }
-$taskVersion = $taskVersionMatch.Groups[1].Value
+$taskVersion = if ($AppVersion) { $AppVersion } else { $taskVersionMatch.Groups[1].Value }
 $taskNumericMatch = [regex]::Match($taskVersion, '^(\d+)\.(\d+)\.(\d+)(?:[-+][0-9A-Za-z.+-]+)?$')
 if (!$taskNumericMatch.Success) { throw 'Installer version must be a valid numeric release with an optional suffix.' }
 $taskVersionParts = @(1..3 | ForEach-Object { [int]$taskNumericMatch.Groups[$_].Value })

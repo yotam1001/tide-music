@@ -200,6 +200,25 @@ internal static class PayloadTests {
         }
         var unsafePath = Path.Combine(Path.GetTempPath(), "unowned-directory");
         try { Payload.Remove(unsafePath); throw new Exception("Unowned removal was allowed"); } catch (IOException) { }
-        Console.WriteLine("PASS: payload checksums, exact file set, traversal, duplicates and confined cleanup"); return 0;
+        Console.WriteLine("PASS: payload checksums, exact file set, traversal, duplicates and confined cleanup");
+        if (Program.Mode(new string[0]) != "gui" || Program.Mode(new[] { "--silent" }) != "silent" ||
+            Program.Mode(new[] { "--preview" }) != "preview" || Program.Mode(new[] { "--help" }) != "help" ||
+            Program.Mode(new[] { "--verify-payload" }) != "verify" ||
+            Program.Mode(new[] { "--unknown" }) != "invalid" || Program.Mode(new[] { "--silent", "--preview" }) != "invalid" ||
+            Program.Mode(new[] { "--update-from", "-1" }) != "invalid" || Program.Mode(new[] { "--update-from", "12345", "--confirm-ready" }) != "update")
+            throw new Exception("Command-line routing regression");
+        if (Program.SetupVersion() != "0.1.0-preview.1") throw new Exception("Embedded setup version was not read");
+        try { Program.InstallArguments("unused", "1.0\"; exit 0"); throw new Exception("Unsafe version accepted"); }
+        catch (ArgumentException) { }
+        var fakeRoot = Path.Combine(Path.GetTempPath(), "tide-cli-fixture-" + Guid.NewGuid().ToString("N"));
+        try {
+            Directory.CreateDirectory(Path.Combine(fakeRoot, "scripts"));
+            var silentScript = Path.Combine(fakeRoot, "scripts", "install-windows.ps1");
+            File.WriteAllText(silentScript, "param($Mode, $AppVersion)\n$ErrorActionPreference = 'Stop'\nif ($Mode -ne 'Install' -or $AppVersion -ne '0.4.6') { exit 99 }\nGet-FileHash -LiteralPath $PSCommandPath | Out-Null\n1..1000 | ForEach-Object { [Console]::Out.WriteLine('out'); [Console]::Error.WriteLine('err') }\nexit 0\n");
+            if (Program.RunUnattended(fakeRoot, "0.4.6") != 0) throw new Exception("Silent setup arguments or stream draining failed");
+            File.WriteAllText(silentScript, "param($Mode, $AppVersion)\nexit 23\n");
+            if (Program.RunUnattended(fakeRoot, "0.4.6") != 23) throw new Exception("Silent setup lost child failure code");
+        } finally { Directory.Delete(fakeRoot, true); }
+        Console.WriteLine("PASS: silent setup, embedded version, stream draining and failure exit code"); return 0;
     }
 }

@@ -4,6 +4,10 @@ You need **Windows x64** and internet access. The installer sets up the playback
 tools for you. No Rust, Python, terminal commands or API key are needed.
 Installation is for your Windows user and does not require administrator access.
 
+WinGet packaging is under review. See [the packaging guide](WINGET.md) for its
+status and build instructions. Newly built installers support `--silent` for
+unattended installation, with the same payload validation as the graphical setup.
+
 Download [TideSetup.exe](https://github.com/yotam1001/tide-music/releases/latest/download/TideSetup.exe)
 from the [Windows release](https://github.com/yotam1001/tide-music/releases/latest).
 For YouTube Music, get its matching **tide-browser-chromium.zip** too.
