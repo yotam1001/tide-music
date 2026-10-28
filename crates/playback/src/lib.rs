@@ -16,6 +16,8 @@ use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader, WriteHa
 use tokio::sync::{mpsc, watch};
 use url::Url;
 
+mod audio_options;
+pub use audio_options::AudioOptions;
 mod cookie_updates;
 mod prefetch;
 pub use cookie_updates::CookieUpdate;
@@ -50,6 +52,7 @@ pub struct PlaybackHandle {
     desired_generation: Arc<AtomicU64>,
     supersede_epoch: Arc<AtomicU64>,
     desired_volume: Arc<AtomicU64>,
+    audio_options: Arc<Mutex<AudioOptions>>,
     intent: Arc<Mutex<PlaybackIntent>>,
     snapshot: Arc<RwLock<PlaybackSnapshot>>,
     send_gate: Arc<Mutex<()>>,
@@ -133,6 +136,7 @@ fn start_runtime(runtimes: RuntimePaths) -> Result<PlaybackHandle, String> {
     }));
     let desired_generation = Arc::new(AtomicU64::new(0));
     let supersede_epoch = Arc::new(AtomicU64::new(0));
+    let audio_options = Arc::new(Mutex::new(AudioOptions::default()));
     let desired_volume = Arc::new(AtomicU64::new(100.0_f64.to_bits()));
     let intent = Arc::new(Mutex::new(PlaybackIntent::default()));
     let shutdown_requested = Arc::new(AtomicBool::new(false));
@@ -145,6 +149,7 @@ fn start_runtime(runtimes: RuntimePaths) -> Result<PlaybackHandle, String> {
     let worker_epoch = Arc::clone(&supersede_epoch);
     let worker_gate = Arc::clone(&send_gate);
     let worker_volume = Arc::clone(&desired_volume);
+    let worker_audio_options = Arc::clone(&audio_options);
     let worker_intent = Arc::clone(&intent);
     let worker_preparation = Arc::clone(&preparation);
     let worker_cookie_updates = Arc::clone(&cookie_updates);
@@ -161,6 +166,7 @@ fn start_runtime(runtimes: RuntimePaths) -> Result<PlaybackHandle, String> {
                     supersede_epoch: worker_epoch,
                     send_gate: worker_gate,
                     desired_volume: worker_volume,
+                    audio_options: worker_audio_options,
                     intent: worker_intent,
                     preparation: worker_preparation,
                     preparation_rx,
@@ -177,6 +183,7 @@ fn start_runtime(runtimes: RuntimePaths) -> Result<PlaybackHandle, String> {
         desired_generation,
         supersede_epoch,
         desired_volume,
+        audio_options,
         intent,
         snapshot,
         send_gate,
@@ -206,6 +213,23 @@ pub fn start_local_benchmark() -> Result<PlaybackHandle, String> {
 }
 
 impl PlaybackHandle {
+    /// Applies locally, including for Jam guests. Options survive worker recovery.
+    pub fn configure_audio(&self, options: AudioOptions) -> Result<(), String> {
+        if !options.valid() {
+            return Err("Choose a valid Windows audio output.".into());
+        }
+        let _gate = self.send_gate.lock().unwrap_or_else(|p| p.into_inner());
+        if self.shutdown_requested.load(Ordering::Acquire) {
+            return Err("Playback is shutting down.".into());
+        }
+        self.command_tx
+            .try_send(WorkerCommand::ConfigureAudio)
+            .map_err(command_queue_error)?;
+        *self.audio_options.lock().unwrap_or_else(|p| p.into_inner()) = options;
+        self.snapshot_write().audio_settings_error = false;
+        Ok(())
+    }
+
     /// Queue a playback command without waiting for mpv or network I/O.
     pub fn send(&self, command: PlaybackCommand) -> Result<(), String> {
         if self.shutdown_requested.load(Ordering::Acquire) {
@@ -444,6 +468,7 @@ fn next_epoch(current: u64) -> u64 {
 }
 
 enum WorkerCommand {
+    ConfigureAudio,
     Load(PendingLoad),
     Stop {
         epoch: u64,
@@ -475,6 +500,7 @@ struct WorkerControls {
     desired_generation: Arc<AtomicU64>,
     supersede_epoch: Arc<AtomicU64>,
     desired_volume: Arc<AtomicU64>,
+    audio_options: Arc<Mutex<AudioOptions>>,
     intent: Arc<Mutex<PlaybackIntent>>,
     send_gate: Arc<Mutex<()>>,
     preparation: Arc<Preparation>,
@@ -643,6 +669,7 @@ struct RunningPlayer {
     writer: PipeWriter,
     reader_task: tokio::task::JoinHandle<()>,
     session_id: u64,
+    audio_options: Option<AudioOptions>,
 }
 
 #[cfg(windows)]
@@ -820,6 +847,7 @@ async fn run_worker(
         desired_generation,
         supersede_epoch,
         desired_volume,
+        audio_options,
         intent,
         send_gate,
         preparation,
@@ -870,6 +898,15 @@ async fn run_worker(
                         state = PlayerState::default();
                         if let Some(mut running) = player.take() { terminate_player(&mut running).await; }
                     }
+                    WorkerCommand::ConfigureAudio => {
+                        let options = {
+                            let _gate = send_gate.lock().unwrap_or_else(|p| p.into_inner());
+                            audio_options.lock().unwrap_or_else(|p| p.into_inner()).clone()
+                        };
+                        if let Some(running) = player.as_mut() {
+                            fault = apply_audio_options(running, &options).await.is_err();
+                        }
+                    }
                     WorkerCommand::Action { epoch, command } => {
                         // Accepted targets are authoritative, including controls queued
                         // while reconnecting. Pause/seek wait until the file is ready.
@@ -907,6 +944,21 @@ async fn run_worker(
                     Some(IpcEvent::Line { session_id, line })
                         if player.as_ref().is_some_and(|running| running.session_id == session_id) => {
                         if let Ok(message) = serde_json::from_str::<Value>(&line) {
+                            if matches!(message.get("request_id").and_then(Value::as_i64), Some(-101 | -102))
+                                && message.get("error").and_then(Value::as_str).is_some_and(|e| e != "success") {
+                                if let Some(running) = player.as_mut() { running.audio_options = None; }
+                            }
+                            let audio_message = matches!(message.get("request_id").and_then(Value::as_i64), Some(-101 | -102))
+                                || (message.get("event").and_then(Value::as_str) == Some("property-change")
+                                    && matches!(message.get("name").and_then(Value::as_str), Some("audio-device-list" | "af")));
+                            // These properties belong to the player, not a track. Keep
+                            // output discovery current even after EOF or a canceled load.
+                            if audio_message {
+                                let mut view = snapshot_write(&snapshot);
+                                apply_ipc_message(&mut state, &mut view, &message,
+                                    desired_generation.load(Ordering::Acquire), supersede_epoch.load(Ordering::Acquire));
+                                continue;
+                            }
                             let loaded;
                             {
                                 let _gate = send_gate.lock().unwrap_or_else(|p| p.into_inner());
@@ -1011,7 +1063,9 @@ async fn run_worker(
                                 epoch: current.load.epoch, cookie_updates: Arc::clone(&cookie_updates) }).await {
                             Ok(Some(mut running)) => {
                                 next_session_id = next_session_id.wrapping_add(1).max(1);
-                                if observe_properties(&mut running).await.is_err() {
+                                let options = audio_options.lock().unwrap_or_else(|p| p.into_inner()).clone();
+                                if observe_properties(&mut running).await.is_err()
+                                    || apply_audio_options(&mut running, &options).await.is_err() {
                                     fault = true;
                                 } else {
                                     let mut load = current.load.clone();
@@ -1260,6 +1314,7 @@ async fn launch_player(
         writer,
         reader_task,
         session_id,
+        audio_options: None,
     };
     if let Err(error) = send_ipc_command(
         &mut running.writer,
@@ -1349,6 +1404,8 @@ async fn observe_properties(player: &mut RunningPlayer) -> io::Result<()> {
         (7, "audio-codec-name"),
         (8, "audio-bitrate"),
         (9, "audio-params/samplerate"),
+        (10, "audio-device-list"),
+        (11, "af"),
     ] {
         send_ipc_command(
             &mut player.writer,
@@ -1357,6 +1414,36 @@ async fn observe_properties(player: &mut RunningPlayer) -> io::Result<()> {
         )
         .await?;
     }
+    Ok(())
+}
+
+#[cfg(windows)]
+async fn apply_audio_options(player: &mut RunningPlayer, options: &AudioOptions) -> io::Result<()> {
+    if player
+        .audio_options
+        .as_ref()
+        .is_none_or(|old| old.device != options.device)
+    {
+        send_ipc_command(
+            &mut player.writer,
+            json!(["set_property", "audio-device", options.device]),
+            Some(-101),
+        )
+        .await?;
+    }
+    if player
+        .audio_options
+        .as_ref()
+        .is_none_or(|old| old.normalize != options.normalize)
+    {
+        send_ipc_command(
+            &mut player.writer,
+            json!(["af", "set", options.filter()]),
+            Some(-102),
+        )
+        .await?;
+    }
+    player.audio_options = Some(options.clone());
     Ok(())
 }
 
@@ -1443,6 +1530,36 @@ fn apply_ipc_message(
     desired_generation: u64,
     desired_epoch: u64,
 ) {
+    if message.get("event").and_then(Value::as_str) == Some("property-change")
+        && message.get("name").and_then(Value::as_str) == Some("audio-device-list")
+    {
+        snapshot.audio_devices = audio_options::devices(&message["data"]);
+        return;
+    }
+    if message.get("event").and_then(Value::as_str) == Some("property-change")
+        && message.get("name").and_then(Value::as_str) == Some("af")
+    {
+        snapshot.normalization_active = message["data"].as_array().is_some_and(|filters| {
+            filters.iter().take(16).any(|f| {
+                f["label"].as_str() == Some("tide-normalize")
+                    && f["enabled"].as_bool() != Some(false)
+            })
+        });
+        return;
+    }
+    if matches!(
+        message.get("request_id").and_then(Value::as_i64),
+        Some(-101 | -102)
+    ) {
+        if message
+            .get("error")
+            .and_then(Value::as_str)
+            .is_some_and(|error| error != "success")
+        {
+            snapshot.audio_settings_error = true;
+        }
+        return;
+    }
     if let Some(request_id) = message.get("request_id").and_then(Value::as_i64) {
         if let Some(RequestPurpose::Load { generation, epoch }) = state.requests.remove(&request_id)
         {
@@ -1728,6 +1845,71 @@ mod tests {
             apply_property(&mut p, "audio-params/samplerate", &value);
             assert!(p.audio_sample_rate.is_none());
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "requires bundled mpv; hosted CI uses null audio"]
+    fn native_audio_preferences_probe() {
+        let path = env::temp_dir().join(format!("tide-audio-options-{}.wav", std::process::id()));
+        let sample_bytes = 8000_u32 * 2 * 12;
+        let mut wav = Vec::new();
+        wav.extend(b"RIFF");
+        wav.extend((sample_bytes + 36).to_le_bytes());
+        wav.extend(b"WAVEfmt ");
+        wav.extend(16_u32.to_le_bytes());
+        wav.extend(1_u16.to_le_bytes());
+        wav.extend(1_u16.to_le_bytes());
+        wav.extend(8000_u32.to_le_bytes());
+        wav.extend(16000_u32.to_le_bytes());
+        wav.extend(2_u16.to_le_bytes());
+        wav.extend(16_u16.to_le_bytes());
+        wav.extend(b"data");
+        wav.extend(sample_bytes.to_le_bytes());
+        wav.resize(sample_bytes as usize + 44, 0);
+        fs::write(&path, wav).unwrap();
+        let handle = start_local_benchmark().unwrap();
+        handle.send(PlaybackCommand::SetVolume(0.0)).unwrap();
+        handle
+            .configure_audio(AudioOptions {
+                normalize: true,
+                ..Default::default()
+            })
+            .unwrap();
+        handle
+            .send(PlaybackCommand::Load {
+                source: path.to_string_lossy().into_owned(),
+                generation: 1,
+            })
+            .unwrap();
+        for enabled in [true, false, true] {
+            handle
+                .configure_audio(AudioOptions {
+                    normalize: enabled,
+                    ..Default::default()
+                })
+                .unwrap();
+            let deadline = Instant::now() + Duration::from_secs(8);
+            loop {
+                let p = handle.snapshot();
+                assert!(
+                    !p.audio_settings_error,
+                    "Bundled mpv rejected audio configuration"
+                );
+                assert!(p.error.is_none(), "Local audio failed");
+                assert_eq!(p.volume, 0.0);
+                if !p.loading && p.position > 0.1 && p.normalization_active == enabled {
+                    break;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "Audio configuration was not observed"
+                );
+                thread::sleep(Duration::from_millis(25));
+            }
+        }
+        drop(handle);
+        fs::remove_file(path).unwrap();
     }
 
     // Opt-in: own muted local silence and only the mpv owned by this test.

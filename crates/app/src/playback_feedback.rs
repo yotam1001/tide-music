@@ -60,7 +60,10 @@ pub(crate) fn quality(p: &PlaybackSnapshot) -> String {
 
 pub(crate) fn failure(p: &PlaybackSnapshot) -> (&'static str, &'static str) {
     if p.output_unavailable {
-        ("Audio output unavailable. Reconnect your headphones or select a Windows default output. Tide retries when an output returns.", "Retry audio")
+        (
+            "Audio output unavailable. Choose Settings → Audio, then retry.",
+            "Retry audio",
+        )
     } else {
         (
             "This song could not play after two retries. Retry the song or choose another track.",

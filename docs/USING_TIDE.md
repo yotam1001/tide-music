@@ -33,13 +33,24 @@ owns a combination, Tide reports the conflict and keeps
 your previous shortcuts. Choose combinations unused by your games; exclusive
 keyboard handling in some games or elevated apps still needs hardware testing.
 
-Tide uses Windows' shared default audio output so games can use the same device.
-Normal output changes are handled by its WASAPI backend. If output initialization
-fails and its bounded retries stop, returning a default multimedia output triggers
-one retry of the same song, retaining position and pause intent. Stop, a different
-song, natural completion and unrelated network failures are not resumed by this
-path. No device identifiers are stored. This needs physical Bluetooth/USB/HDMI
-switching checks before claiming compatibility with every device.
+**Settings → Audio** lets you choose Windows default or a specific output.
+Play a song once to discover outputs. Windows default follows system output
+changes; a selected device stays selected until you change it. An unavailable
+saved output is labeled clearly instead of silently replacing your preference.
+Output choices and normalization survive restarts and app updates and apply only
+to your own player, including in a Jam. Physical Bluetooth/USB/HDMI switching
+still needs hardware validation.
+
+**Even volume**, off by default, smooths levels with a native FFmpeg dynaudnorm
+filter. It processes streamed audio in small windows, without downloading or
+analyzing entire songs. It changes dynamics and adds a small processing delay;
+turn it off to keep the original sound. This is real-time dynamic normalization,
+not a whole-track loudness measurement.
+
+A song that still fails after bounded recovery offers **Retry song** and **Skip**.
+Output failures direct you to Audio settings. Retry restores position and pause
+intent; Skip uses your normal queue/autoplay. Dismiss hides the notice without
+changing your saved login. Playback errors do not by themselves request a reconnect.
 
 ## Home and Library
 
@@ -54,6 +65,11 @@ switching checks before claiming compatibility with every device.
   recommendations. If YouTube does not offer the mix, retry later; its absence
   does not mean your account needs reconnecting.
 - **Search:** stays separate from the queue until you select or queue a song.
+  Small covers load on demand using the existing bounded thumbnail cache.
+- **Search this list:** filters playlist/artist tracks by title, artist or album.
+  All words must match; playback order and duplicate entries are preserved.
+- **Search queue:** use the magnifying glass in Queue. Clear the search before
+  dragging to reorder; filtering never changes your queue.
 
 Tide reads your existing library without downloading your whole collection.
 The thumbs beside the player like or dislike the current song on YouTube Music;

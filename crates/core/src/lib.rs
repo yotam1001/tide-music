@@ -49,8 +49,17 @@ pub enum PlaybackCommand {
     Shutdown,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AudioDevice {
+    pub name: String,
+    pub description: String,
+}
+
 #[derive(Clone, Debug)]
 pub struct PlaybackSnapshot {
+    pub audio_devices: Vec<AudioDevice>,
+    pub audio_settings_error: bool,
+    pub normalization_active: bool,
     pub generation: u64,
     pub position: f64,
     pub duration: f64,
@@ -72,6 +81,9 @@ pub struct PlaybackSnapshot {
 impl Default for PlaybackSnapshot {
     fn default() -> Self {
         Self {
+            audio_devices: Vec::new(),
+            audio_settings_error: false,
+            normalization_active: false,
             generation: 0,
             position: 0.0,
             duration: 0.0,

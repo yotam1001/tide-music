@@ -787,6 +787,7 @@ component LibraryEntry inherits Rectangle {
 // Each row tests the captured pointer against its actual bounds, including section
 // headings. Coordinates are window-relative so scrolling does not shift the pointer.
 component QueueItem inherits Rectangle {
+    in property <bool> reorder-enabled: true;
     in property <bool> collection-enabled: false;
     callback add-playlist();
     in property <bool> enabled: true;
@@ -842,7 +843,7 @@ component QueueItem inherits Rectangle {
             current: root.index == root.current-index;
             light-mode: root.light-mode;
             removable: true;
-            draggable: root.index > root.current-index;
+            draggable: root.reorder-enabled && root.index > root.current-index;
             dragging: root.drag-source == root.index;
             drag-in-progress: root.drag-source >= 0;
             show-duration: true;
@@ -863,6 +864,13 @@ component QueueItem inherits Rectangle {
 }
 
 component QueueDrawer inherits Rectangle {
+    in-out property <string> query;
+    in property <[int]> matches;
+    callback filter-changed();
+    private property <bool> filter-open: false;
+    private property <bool> filtering: root.query != "";
+    changed query => { root.cancel-drag(); root.artwork-scroll-y = 0px; }
+
     in property <bool> collection-enabled: false;
     callback add-playlist(int);
     in-out property <length> artwork-scroll-y;
@@ -935,11 +943,19 @@ component QueueDrawer inherits Rectangle {
             spacing: 7px;
             cross-axis-alignment: center;
             Text { horizontal-stretch: 1; text: "Queue"; color: root.light-mode ? #392e33 : #f0eeef; font-size: 20px; font-weight: 600; }
+            LibraryButton { width: 30px; height: 30px; show-tooltip: true; light-mode: root.light-mode; active: root.filter-open || root.filtering; icon-path: "M 16 10 A 6 6 0 1 0 4 10 A 6 6 0 1 0 16 10 M 14 14 L 21 21"; label: "Search queue"; clicked => { root.filter-open = !root.filter-open; if !root.filter-open { root.query = ""; root.filter-changed(); } } }
             LibraryButton { width: 30px; height: 30px; enabled: root.enabled; caption: "..."; label: "More queue actions"; light-mode: root.light-mode; clicked => { queue-menu.show(); } }
             LibraryButton { width: 30px; height: 30px; enabled: root.enabled; caption: "×"; label: "Close queue drawer"; light-mode: root.light-mode; clicked => { root.cancel-drag(); root.close(); } }
         }
+        if root.filter-open || root.filtering : HorizontalLayout {
+            height: 34px; spacing: 6px;
+            LineEdit { horizontal-stretch: 1; text <=> root.query; edited => { root.filter-changed(); } placeholder-text: "Search queue"; accessible-label: "Filter queue by title, artist or album"; }
+            if root.filtering : LibraryButton { width: 30px; height: 30px; caption: "×"; label: "Clear queue search"; light-mode: root.light-mode; clicked => { root.query = ""; root.filter-changed(); } }
+        }
+        if root.filtering : Text { height: 16px; text: "Clear search to reorder songs"; color: root.light-mode ? #716773 : #a1a5ae; font-size: 11px; }
+        if root.filtering && root.matches.length == 0 : EmptyState { vertical-stretch: 1; light-mode: root.light-mode; heading: "No matching songs"; detail: "Try another title, artist or album."; }
         // The fixed rail owns pointer capture while ListView recycles song rows.
-        if root.rows.length > 0 : queue-area := Rectangle {
+        if root.rows.length > 0 && (!root.filtering || root.matches.length > 0) : queue-area := Rectangle {
             vertical-stretch: 1;
             private property <bool> drag-in-list: root.drag-x >= self.absolute-position.x && root.drag-x < self.absolute-position.x + queue-list.visible-width
                 && root.drag-y >= self.absolute-position.y && root.drag-y < self.absolute-position.y + queue-list.visible-height;
@@ -975,15 +991,16 @@ component QueueDrawer inherits Rectangle {
                 accessible-label: "Playback queue including manual choices and autoplay";
                 mouse-drag-pan-enabled: false;
                 horizontal-scrollbar-policy: always-off;
-                for visible-index in max(0, root.rows.length - max(0, root.current-index)) : QueueItem {
+                for visible-index in (root.filtering ? root.matches.length : max(0, root.rows.length - max(0, root.current-index))) : QueueItem {
                     collection-enabled: root.collection-enabled;
                     width: queue-list.visible-width;
                     enabled: root.enabled;
-                    index: visible-index + max(0, root.current-index);
+                    index: root.filtering ? root.matches[visible-index] : visible-index + max(0, root.current-index);
                     track: root.rows[self.index];
+                    reorder-enabled: !root.filtering;
                     current-index: root.current-index;
                     light-mode: root.light-mode;
-                    heading: self.index == max(0, root.current-index) || self.index == root.current-index + 1 || self.track.recommended != root.rows[max(0, self.index - 1)].recommended;
+                    heading: root.filtering ? (visible-index == 0 || self.index == root.current-index + 1 || self.track.recommended != root.rows[root.matches[max(0, visible-index - 1)]].recommended) : (self.index == max(0, root.current-index) || self.index == root.current-index + 1 || self.track.recommended != root.rows[max(0, self.index - 1)].recommended);
                     drag-source: root.drag-source;
                     drag-recommended: root.drag-recommended;
                     drag-in-list: queue-area.drag-in-list;
@@ -1013,7 +1030,7 @@ component QueueDrawer inherits Rectangle {
                 }
             }
             rail := TouchArea {
-                enabled: root.enabled;
+                enabled: root.enabled && !root.filtering;
                 x: 0px;
                 y: 0px;
                 width: min(44px, parent.width);
@@ -1343,14 +1360,31 @@ export component AppWindow inherits Window {
     callback remove-playlist-song(int);
     callback refresh-detail-playlist();
     in-out property <int> shortcut-recording-index: -1;
+    in-out property <bool> settings-audio-open: false;
+    in property <bool> normalize-volume: false;
+    in property <[string]> audio-device-names;
+    in property <int> audio-device-index;
+    in property <string> audio-status;
+    callback toggle-normalization();
+    callback choose-audio-device(int);
     in-out property <bool> settings-shortcuts-open: false;
     in-out property <bool> settings-more-open: false;
     in-out property <length> settings-scroll-y: 0px;
     changed settings-shortcuts-open => { root.settings-scroll-y = 0px; }
+    changed settings-audio-open => { root.settings-scroll-y = 0px; }
     callback begin-shortcut(int);
     callback cancel-shortcut();
     callback clear-shortcut(int);
     callback record-shortcut(string, bool, bool, bool, bool);
+    in-out property <string> queue-filter;
+    in property <[int]> queue-matches;
+    callback filter-queue();
+
+    in-out property <string> detail-filter;
+    in property <[int]> detail-matches;
+    callback filter-detail();
+
+    changed detail-title => { root.detail-filter = ""; }
     in property <[TrackRow]> rows;
     in property <int> current-index;
     in property <string> track-title;
@@ -1417,6 +1451,8 @@ export component AppWindow inherits Window {
     callback reorder-queue-track(int, int);
     callback start-track-radio(int, int);
     callback retry-error();
+    callback skip-error();
+    callback dismiss-error();
     private property <color> foreground: root.light-mode ? #392e33 : #f0eeef;
     private property <color> secondary: root.light-mode ? #716773 : #a1a5ae;
     private property <color> surface: root.light-mode ? #f9f4ee : #191c22;
@@ -1442,7 +1478,7 @@ export component AppWindow inherits Window {
     changed settings-open => {
         root.settings-scroll-y = 0px;
         if root.settings-open { root.playlist-picker-open = false; root.account-open = false; root.jam-open = false; app-focus.focus(); }
-        else { root.cancel-shortcut(); root.settings-shortcuts-open = false; root.settings-more-open = false; }
+        else { root.cancel-shortcut(); root.settings-shortcuts-open = false; root.settings-audio-open = false; root.settings-more-open = false; }
     }
     changed account-open => {
         if root.account-open { root.playlist-picker-open = false; root.settings-open = false; root.jam-open = false; app-focus.focus(); }
@@ -1553,7 +1589,7 @@ export component AppWindow inherits Window {
                             padding: root.compact-mode ? 18px : 28px;
                             spacing: 12px;
                             if root.error-message != "" : Rectangle {
-                                height: 58px;
+                                height: root.narrow-navigation ? 92px : 58px;
                                 border-radius: 8px;
                                 background: root.light-mode ? #ecd7cc : #39252a;
                                 HorizontalLayout {
@@ -1562,6 +1598,8 @@ export component AppWindow inherits Window {
                                     cross-axis-alignment: center;
                                     Text { horizontal-stretch: 1; text: root.error-message; color: root.foreground; font-size: 12px; wrap: word-wrap; overflow: elide; accessible-live-region: assertive; }
                                     LibraryButton { width: root.error-is-account || root.playback-error-action != "" ? 128px : 70px; light-mode: root.light-mode; caption: root.error-is-account ? "Account settings" : root.error-retryable ? (root.playback-error-action != "" ? root.playback-error-action : "Retry") : "Dismiss"; enabled: root.browsing-enabled; label: root.error-is-account ? "Open account settings to resolve the connection problem" : root.error-retryable ? "Retry interrupted playback or recommendations" : "Dismiss this error"; clicked => { root.retry-error(); } }
+                                    if root.playback-error-action != "" && !root.jam-guest : LibraryButton { width: 56px; caption: "Skip"; label: "Skip this failed song"; light-mode: root.light-mode; enabled: root.browsing-enabled && (root.current-index < root.rows.length - 1 || root.repeat-enabled || (root.autoplay-enabled && root.account-verified)); clicked => { root.skip-error(); } }
+                                    LibraryButton { width: 28px; caption: "×"; label: "Dismiss error"; light-mode: root.light-mode; clicked => { root.dismiss-error(); } }
                                 }
                             }
                             if root.detail-open : VerticalLayout {
@@ -1570,7 +1608,7 @@ export component AppWindow inherits Window {
                                     height: 48px;
                                     spacing: 10px;
                                     cross-axis-alignment: center;
-                                    VerticalLayout { horizontal-stretch: 1; spacing: 4px; Text { text: root.detail-title; color: root.foreground; font-size: 26px; font-weight: 600; overflow: elide; } Text { text: root.detail-busy ? (root.detail-is-artist ? "Loading top songs…" : "Loading tracks…") : root.detail-is-artist ? "Top songs · " + root.detail-rows.length + " songs" : "" + root.detail-rows.length + " tracks"; color: root.secondary; font-size: 12px; } }
+                                    VerticalLayout { horizontal-stretch: 1; spacing: 4px; Text { text: root.detail-title; color: root.foreground; font-size: 26px; font-weight: 600; overflow: elide; } Text { text: root.detail-busy ? (root.detail-is-artist ? "Loading top songs…" : "Loading tracks…") : root.detail-is-artist ? "Top songs · " + root.detail-rows.length + " songs" : root.detail-filter != "" ? "" + root.detail-matches.length + " of " + root.detail-rows.length + " tracks" : "" + root.detail-rows.length + " tracks"; color: root.secondary; font-size: 12px; } }
                                     LibraryButton { width: 36px; show-tooltip: true; light-mode: root.light-mode; enabled: root.browsing-enabled; icon-path: "M 20 12 L 4 12 M 10 6 L 4 12 L 10 18"; label: root.detail-is-artist ? "Back from artist page" : "Close playlist details"; clicked => { if root.detail-is-artist { root.back-detail(); } else { root.close-detail(); } } }
                                 }
                                 HorizontalLayout {
@@ -1579,16 +1617,19 @@ export component AppWindow inherits Window {
                                     LibraryButton { width: 36px; round: true; show-tooltip: true; light-mode: root.light-mode; caption: "▶"; label: "Play " + root.detail-title; active: true; enabled: !root.jam-guest && root.browsing-enabled && !root.detail-busy && root.detail-rows.length > 0; clicked => { root.play-detail(); } }
                                     LibraryButton { width: 36px; show-tooltip: true; light-mode: root.light-mode; caption: "⇄"; label: "Shuffle " + root.detail-title; enabled: !root.jam-guest && root.browsing-enabled && !root.detail-busy && root.detail-rows.length > 0; clicked => { root.shuffle-detail(); } }
                                     if root.detail-playlist-known : LibraryButton { width: 36px; show-tooltip: true; light-mode: root.light-mode; icon-path: "M 20 7 L 20 3 M 20 7 L 16 7 M 20 7 A 9 9 0 1 0 21 14"; label: "Refresh this playlist from YouTube Music"; enabled: root.browsing-enabled && !root.account-busy && !root.collection-busy; clicked => { root.refresh-detail-playlist(); } }
-                                    Rectangle { horizontal-stretch: 1; }
+                                    LineEdit { horizontal-stretch: 1; height: 34px; text <=> root.detail-filter; edited => { root.filter-detail(); } placeholder-text: "Search this list"; accessible-label: "Filter this list by title, artist or album"; }
+                                    if root.detail-filter != "" : LibraryButton { width: 30px; height: 30px; caption: "×"; label: "Clear list search"; light-mode: root.light-mode; clicked => { root.detail-filter = ""; root.filter-detail(); } }
                                 }
                                 if root.detail-note != "" : Text { text: root.detail-note; color: root.secondary; font-size: 12px; wrap: word-wrap; }
-                                if root.detail-rows.length > 0 : ListView {
+                                if root.detail-rows.length > 0 && (root.detail-filter == "" || root.detail-matches.length > 0) : ListView {
                                     content-y <=> root.detail-artwork-y;
                                     changed visible-height => { root.detail-artwork-height = self.visible-height; }
                                     vertical-stretch: 1;
                                     accessible-label: "Tracks in " + root.detail-title;
-                                    for row[index] in root.detail-rows : SongRow { shared-queue: root.jam-guest; collection-enabled: root.collection-enabled && !root.collection-busy; playlist-removable: root.detail-editable && index < root.detail-editable-entries.length && root.detail-editable-entries[index]; enabled: root.browsing-enabled; track: row; index: index; light-mode: root.light-mode; select => { root.select-detail-track(index); } queue(next) => { root.queue-detail-track(index, next); } radio => { root.start-track-radio(1, index); } artist => { root.open-artist(1, index); } add-playlist => { root.add-to-playlist(1, index); } remove-playlist => { root.remove-playlist-song(index); } }
+                                    for visible-index in (root.detail-filter == "" ? root.detail-rows.length : root.detail-matches.length) : SongRow {
+                                        private property <int> source-index: root.detail-filter == "" ? visible-index : root.detail-matches[visible-index]; shared-queue: root.jam-guest; collection-enabled: root.collection-enabled && !root.collection-busy; playlist-removable: root.detail-editable && self.source-index < root.detail-editable-entries.length && root.detail-editable-entries[self.source-index]; enabled: root.browsing-enabled; track: root.detail-rows[self.source-index]; index: self.source-index; light-mode: root.light-mode; select => { root.select-detail-track(self.source-index); } queue(next) => { root.queue-detail-track(self.source-index, next); } radio => { root.start-track-radio(1, self.source-index); } artist => { root.open-artist(1, self.source-index); } add-playlist => { root.add-to-playlist(1, self.source-index); } remove-playlist => { root.remove-playlist-song(self.source-index); } }
                                 }
+                                if root.detail-filter != "" && root.detail-matches.length == 0 && root.detail-rows.length > 0 : EmptyState { vertical-stretch: 1; light-mode: root.light-mode; heading: "No matching songs"; detail: "Clear the search to see the full list."; }
                                 if root.detail-rows.length == 0 : EmptyState { vertical-stretch: 1; light-mode: root.light-mode; heading: root.detail-busy ? (root.detail-is-artist ? "Loading top songs…" : "Loading tracks…") : root.detail-is-artist ? "No top songs available" : "No tracks to show"; detail: root.detail-busy ? "Please wait for YouTube Music." : root.detail-is-artist ? "Try another artist, or go back to your music." : "Choose another playlist from your Library."; }
                             }
                             if root.search-open && !root.detail-open : VerticalLayout {
@@ -1658,6 +1699,9 @@ export component AppWindow inherits Window {
                         }
                     }
                     if root.queue-open && root.wide : QueueDrawer {
+                        query <=> root.queue-filter;
+                        matches: root.queue-matches;
+                        filter-changed => { root.filter-queue(); }
                         artwork-scroll-y <=> root.queue-artwork-y;
                         artwork-view-height <=> root.queue-artwork-height;
                         enabled: !root.settings-open && !root.account-open && !root.jam-open && !root.jam-guest;
@@ -1688,6 +1732,9 @@ export component AppWindow inherits Window {
                     height: parent.height;
                     Rectangle { x: 0px; y: 0px; width: max(0px, parent.width - 340px); height: parent.height; background: #00000060; TouchArea { clicked => { root.queue-open = false; } } }
                     QueueDrawer {
+                        query <=> root.queue-filter;
+                        matches: root.queue-matches;
+                        filter-changed => { root.filter-queue(); }
                         artwork-scroll-y <=> root.queue-artwork-y;
                         artwork-view-height <=> root.queue-artwork-height;
                         enabled: !root.settings-open && !root.account-open && !root.jam-open && !root.jam-guest;
@@ -1740,7 +1787,17 @@ export component AppWindow inherits Window {
                                     Rectangle { height: 1px; background: root.outline; }
                                     Text { height: 36px; text: "Your keyboard’s media keys work automatically. Custom shortcuts also work in the background."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
                                 }
-                                if !root.settings-shortcuts-open : VerticalLayout {
+                                if root.settings-audio-open : VerticalLayout {
+                                    spacing: 12px; alignment: start;
+                                    LibraryButton { height: 34px; caption: "‹  Back"; label: "Back to general settings"; light-mode: root.light-mode; clicked => { root.settings-audio-open = false; } }
+                                    Text { text: "Audio"; color: root.foreground; font-size: 20px; font-weight: 600; }
+                                    Text { text: "Output device"; color: root.secondary; font-size: 12px; }
+                                    ComboBox { model: root.audio-device-names; current-index: root.audio-device-index; selected(value) => { root.choose-audio-device(self.current-index); } }
+                                    Text { text: root.audio-status; color: root.secondary; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
+                                    LibraryButton { height: 38px; quiet: false; active: root.normalize-volume; caption: root.normalize-volume ? "Even volume: on" : "Even volume: off"; label: "Toggle volume normalization"; light-mode: root.light-mode; clicked => { root.toggle-normalization(); } }
+                                    Text { text: "Smooth out loud and quiet songs locally. This changes the sound and adds a small processing delay. Off preserves the original dynamics."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
+                                }
+                                if !root.settings-shortcuts-open && !root.settings-audio-open : VerticalLayout {
                                     spacing: 10px; alignment: start;
                                     Text { height: 18px; text: "Window size"; color: root.secondary; font-size: 12px; }
                                     HorizontalLayout {
@@ -1756,6 +1813,7 @@ export component AppWindow inherits Window {
                                     Text { height: 18px; text: "Show the playing song on Discord."; color: root.secondary; font-size: 12px; }
                                     if root.discord-presence-enabled : Text { text: root.discord-status; color: root.secondary; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
                                     LibraryButton { height: 38px; quiet: false; caption: "Keyboard shortcuts   ›"; label: "Configure keyboard shortcuts"; light-mode: root.light-mode; clicked => { root.settings-shortcuts-open = true; app-focus.focus(); } }
+                                    LibraryButton { height: 38px; quiet: false; caption: "Audio   ›"; label: "Choose audio output and volume normalization"; light-mode: root.light-mode; clicked => { root.settings-audio-open = true; } }
                                     Rectangle { height: 1px; background: root.outline; }
                                     Text { text: root.update-status; color: root.secondary; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
                                     LibraryButton { height: 38px; quiet: false; caption: root.update-busy ? "Please wait…" : "Check for updates"; label: "Check GitHub for a newer stable Tide release"; light-mode: root.light-mode; enabled: !root.update-busy; clicked => { root.check-updates(); } }

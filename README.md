@@ -49,6 +49,9 @@ companion without uninstalling Tide. [Installation help](docs/INSTALLATION.md)
 ## What you can do
 
 - Play songs, playlists and local audio with native playback.
+- Search within playlists and the queue by title, artist or album.
+- Choose Tide’s audio output and optionally smooth volume between songs.
+- See small cover images in search, loaded through a bounded memory cache.
 - Listen together in Jams: invite friends, share a queue and stay in sync.
 - Select an artist name to browse their top songs, then play, shuffle or queue.
 - See loading/retry feedback and the observed audio format in the player.

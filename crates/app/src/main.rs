@@ -15,6 +15,8 @@ use tide_core::{PlaybackCommand, Queue, Track};
 mod artists;
 mod artwork;
 mod artwork_view;
+mod audio_settings;
+mod browse_filter;
 mod connection;
 mod discord;
 mod discovery;
@@ -63,6 +65,8 @@ struct Settings {
     #[serde(default)]
     shortcuts: [String; 3],
     volume: Option<f64>,
+    normalize_volume: bool,
+    audio_device: String,
     repeat: bool,
     #[serde(skip)]
     transient: bool,
@@ -83,6 +87,8 @@ impl Default for Settings {
             mini_opacity: 100,
             shortcuts: Default::default(),
             volume: None,
+            normalize_volume: false,
+            audio_device: "auto".into(),
             repeat: false,
             transient: false,
         }
@@ -840,6 +846,7 @@ fn configure_account_playback(s: &mut State, u: &AppWindow) -> bool {
     match result {
         Ok(engine) => {
             s.engine = Some(engine);
+            audio_settings::apply(s, u);
             s.command_error = None;
             send(s, u, PlaybackCommand::SetVolume(u.get_volume() as f64));
             true
@@ -960,6 +967,8 @@ fn restore_settings(value: serde_json::Value) -> Settings {
         mini_opacity,
         shortcuts,
         volume,
+        normalize_volume,
+        audio_device,
         repeat,
     );
     settings
@@ -1027,9 +1036,16 @@ fn content_rows(
     y: f32,
     height: f32,
     row_height: f32,
+    selected: &[usize],
 ) -> Vec<TrackRow> {
     let mut artwork = s.artwork.borrow_mut();
-    let images = artwork_view::visible_range(y, height, tracks.iter().map(|_| row_height));
+    let range = artwork_view::visible_range(y, height, selected.iter().map(|_| row_height));
+    let images: std::collections::HashSet<_> = selected
+        .iter()
+        .skip(range.start)
+        .take(range.len())
+        .copied()
+        .collect();
     tracks
         .iter()
         .enumerate()
@@ -1050,6 +1066,11 @@ fn content_rows(
         .collect()
 }
 fn refresh_content_models(s: &State, u: &AppWindow) {
+    let selected = browse_filter::matching(&s.detail_tracks, 0, &u.get_detail_filter());
+    u.set_detail_matches(update_model(
+        u.get_detail_matches(),
+        selected.iter().map(|i| *i as i32).collect(),
+    ));
     u.set_detail_rows(update_model(
         u.get_detail_rows(),
         content_rows(
@@ -1059,6 +1080,7 @@ fn refresh_content_models(s: &State, u: &AppWindow) {
             u.get_detail_artwork_y(),
             u.get_detail_artwork_height(),
             u.global::<LayoutMetrics>().get_browse_row_height(),
+            &selected,
         ),
     ));
     u.set_search_rows(update_model(
@@ -1070,6 +1092,7 @@ fn refresh_content_models(s: &State, u: &AppWindow) {
             u.get_search_artwork_y(),
             u.get_search_artwork_height(),
             u.global::<LayoutMetrics>().get_browse_row_height(),
+            &(0..s.search_tracks.len()).collect::<Vec<_>>(),
         ),
     ));
 }
@@ -1160,24 +1183,34 @@ fn refresh(ui: &AppWindow, state: &State) {
     let metrics = ui.global::<LayoutMetrics>();
     let row_height = metrics.get_queue_row_height();
     let heading_height = metrics.get_queue_heading_height();
+    let selected = browse_filter::matching(
+        &state.settings.queue.tracks,
+        current,
+        &ui.get_queue_filter(),
+    );
+    ui.set_queue_matches(update_model(
+        ui.get_queue_matches(),
+        selected.iter().map(|i| *i as i32).collect(),
+    ));
     let queue_images = artwork_view::visible_range(
         ui.get_queue_artwork_y(),
         ui.get_queue_artwork_height(),
-        state
-            .settings
-            .queue
-            .tracks
-            .iter()
-            .enumerate()
-            .skip(current)
-            .map(|(index, track)| {
-                let heading = index == current
-                    || index == current + 1
-                    || track.recommended
-                        != state.settings.queue.tracks[index.saturating_sub(1)].recommended;
-                row_height + if heading { heading_height } else { 0.0 }
-            }),
+        selected.iter().enumerate().map(|(position, index)| {
+            let track = &state.settings.queue.tracks[*index];
+            let heading = position == 0
+                || *index == current + 1
+                || track.recommended
+                    != state.settings.queue.tracks[selected[position.saturating_sub(1)]]
+                        .recommended;
+            row_height + if heading { heading_height } else { 0.0 }
+        }),
     );
+    let queue_images: std::collections::HashSet<_> = selected
+        .iter()
+        .skip(queue_images.start)
+        .take(queue_images.len())
+        .copied()
+        .collect();
     let current_art = state
         .settings
         .queue
@@ -1206,7 +1239,7 @@ fn refresh(ui: &AppWindow, state: &State) {
                     index == current
                         || (ui.get_queue_open()
                             && index >= current
-                            && queue_images.contains(&(index - current)))
+                            && queue_images.contains(&index))
                 })
                 .map(|url| artwork.get_or_request(url))
                 .unwrap_or_default(),
@@ -1621,7 +1654,7 @@ fn search(query: String, cancel: Arc<AtomicBool>) -> Result<Vec<Track>, String> 
             Some(Track {
                 artists: Vec::new(),
                 duration_seconds: metadata::seconds(e["duration"].as_f64().unwrap_or(0.0)),
-                artwork_url: None,
+                artwork_url: Some(format!("https://i.ytimg.com/vi/{id}/default.jpg")),
                 recommended: false,
                 title: e["title"].as_str().unwrap_or("Untitled").into(),
                 artist: e["uploader"].as_str().unwrap_or("").into(),
@@ -1902,6 +1935,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &ui,
         PlaybackCommand::SetVolume(ui.get_volume() as f64),
     );
+    audio_settings::install(&state, &ui);
     let picker_busy = Rc::new(PickerState::default());
     #[cfg(feature = "experimental-jams")]
     jam::install(&state, &ui, &picker_busy);
@@ -2461,6 +2495,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     {
         let weak = ui.as_weak();
+        ui.on_skip_error(move || {
+            if let Some(u) = weak.upgrade() {
+                u.invoke_next_track();
+            }
+        });
+        let weak = ui.as_weak();
+        let error_state = state.clone();
+        ui.on_dismiss_error(move || {
+            if let Some(u) = weak.upgrade() {
+                error_state.borrow_mut().command_error = None;
+                u.set_error_message("".into());
+                u.set_error_retryable(false);
+                u.set_playback_error_action("".into());
+            }
+        });
+    }
+    {
+        let weak = ui.as_weak();
         ui.on_close_search(move || {
             if let Some(u) = weak.upgrade() {
                 u.set_search_open(false);
@@ -2625,7 +2677,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 state.search_cancel.store(false, Ordering::Release);
                 let cancel = state.search_cancel.clone();
                 ui.set_search_artwork_y(0.0);
-                ui.set_search_artwork_y(0.0);
                 ui.set_search_open(true);
                 ui.set_detail_open(false);
                 ui.set_search_busy(true);
@@ -2636,6 +2687,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 state.search_worker = Some(std::thread::spawn(move || {
                     let _ = tx.try_send((generation, search(query, cancel)));
                 }));
+            }
+        });
+    }
+    {
+        let detail_state = state.clone();
+        let weak = ui.as_weak();
+        ui.on_filter_detail(move || {
+            if let Some(u) = weak.upgrade() {
+                u.set_detail_artwork_y(0.0);
+                refresh_content_models(&detail_state.borrow(), &u);
+            }
+        });
+        let state = state.clone();
+        let weak = ui.as_weak();
+        ui.on_filter_queue(move || {
+            if let Some(u) = weak.upgrade() {
+                u.set_queue_artwork_y(0.0);
+                refresh(&u, &state.borrow());
             }
         });
     }
@@ -3045,7 +3114,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let mut s = state.borrow_mut();
                         let now = Instant::now();
                         if let Some(available) = watcher.take_available() {
-                            recovery.changed(available, s.generation, now);
+                            recovery.changed(
+                                available && s.settings.audio_device == "auto",
+                                s.generation,
+                                now,
+                            );
                         }
                         let Some(engine) = &s.engine else {
                             return;
@@ -3618,6 +3691,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 if let Some(engine) = &s.engine {
                     let p = engine.snapshot();
+                    audio_settings::refresh(&s, &u, &p);
                     if p.generation != s.generation || !s.active_playback {
                         return;
                     }
@@ -3651,7 +3725,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                     if !local_controls_allowed(&s) { return; }
-                    if p.ended {
+                    if p.ended && !failed {
                         let repeat = s.settings.repeat;
                         let previous = s.settings.queue.current;
                         if s.settings.queue.next_track(repeat).is_some() {
@@ -4551,6 +4625,8 @@ mod tests {
             let settings = Settings {
                 history_feedback: enabled,
                 discord_presence: enabled,
+                normalize_volume: enabled,
+                audio_device: "wasapi/fixture".into(),
                 light_mode: true,
                 ..Settings::default()
             };
@@ -4558,6 +4634,8 @@ mod tests {
             let restored = restore_settings(settings_store::load(&path).unwrap());
             assert_eq!(restored.history_feedback, enabled);
             assert_eq!(restored.discord_presence, enabled);
+            assert_eq!(restored.normalize_volume, enabled);
+            assert_eq!(restored.audio_device, "wasapi/fixture");
             assert!(restored.light_mode);
         }
         let old = restore_settings(serde_json::json!({"light_mode": true}));
