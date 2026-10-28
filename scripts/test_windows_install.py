@@ -30,6 +30,7 @@ $session = Join-Path $Fixture 'saved-session-sentinel'
 [IO.File]::WriteAllText($session, 'synthetic unchanged data')
 $global:MockProcesses = $null
 $global:LateProcesses = $null
+$global:ReopenedProcesses = @{}
 $global:Busy = $false
 $global:FailDependency = $false
 $global:FailShortcut = $false
@@ -57,6 +58,7 @@ function Write-TideUninstallValue {
 }
 function Remove-TideUninstallValue { param($Name) $global:AppsEntry.Remove($Name) }
 function Remove-TideUninstallEntryKey { $global:AppsEntry = $null }
+function Get-TideCloseCandidate { param($Id) if ($global:ReopenedProcesses.ContainsKey($Id)) { return $global:ReopenedProcesses[$Id] }; return @($global:MockProcesses | Where-Object Id -EQ $Id)[0] }
 function Get-TideOwnedProcesses { param($InstallRoot) if ($null -ne $global:MockProcesses) { return @($global:MockProcesses | Where-Object { !$_.HasExited }) }; if ($global:Busy) { return @('synthetic owned process') }; return @() }
 function Get-TideShortcut {
     param($Path)
@@ -109,6 +111,7 @@ function Current-Release { $state = Get-TideInstallState $root; return Join-Path
 function New-MockPlayer([string]$Path, [string]$Name = 'tide-music') {
     $p = [pscustomobject]@{Id=123; StartTime=[DateTime]::UtcNow; Path=$Path; ProcessName=$Name; SessionId=[Diagnostics.Process]::GetCurrentProcess().SessionId; HasExited=$false; Handle=[IntPtr]::Zero; CloseCount=0}
     $p | Add-Member -MemberType ScriptMethod -Name CloseMainWindow -Value { $this.CloseCount++; $this.HasExited=$true; return $true }
+    $p | Add-Member -MemberType ScriptMethod -Name Dispose -Value { }
     return $p
 }
 switch ($Scenario) {
@@ -149,6 +152,13 @@ switch ($Scenario) {
             Must-Fail { Wait-TideStopped $root 0 }
             if ($p.CloseCount -or $p.HasExited) { throw ('Unexpected player close: ' + $mode) }
         }
+        [IO.File]::Copy((Join-Path $package 'tide-music.exe'), (Join-Path $release 'tide-music.exe'), $true)
+        $stale = New-MockPlayer (Join-Path $release 'tide-music.exe')
+        $recycled = New-MockPlayer (Join-Path $Fixture 'foreign.exe')
+        $global:MockProcesses = @($stale); $global:ReopenedProcesses[$stale.Id] = $recycled
+        Must-Fail { Wait-TideStopped $root 0 }
+        if ($stale.CloseCount -or $recycled.CloseCount -or $recycled.HasExited) { throw 'A recycled PID inherited stale close authorization' }
+        $global:ReopenedProcesses = @{}
         $global:MockProcesses = $null
         # Restore fixture payload so ordinary owned cleanup remains verifiable.
         [IO.File]::Copy((Join-Path $package 'tide-music.exe'), (Join-Path $release 'tide-music.exe'), $true)

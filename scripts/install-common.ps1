@@ -292,14 +292,18 @@ function Test-TideClosablePlayer($Process, [string]$InstallRoot) {
         return $true
     } catch { return $false }
 }
+function Get-TideCloseCandidate([int]$Id) { return [Diagnostics.Process]::GetProcessById($Id) }
 function Request-TidePlayerClose($Process, [string]$InstallRoot) {
-    if (!(Test-TideClosablePlayer $Process $InstallRoot)) { return $false }
+    $candidate = $null
     try {
-        # Hold the original process handle; a recycled PID is not a new target.
-        $null = $Process.Handle
-        if ($Process.HasExited) { return $false }
-        return $Process.CloseMainWindow()
+        # Reopen and pin the target before consulting any cached process data.
+        # A name/path from enumeration must never authorize a recycled PID.
+        $candidate = Get-TideCloseCandidate $Process.Id
+        $null = $candidate.Handle
+        if (!(Test-TideClosablePlayer $candidate $InstallRoot) -or $candidate.HasExited) { return $false }
+        return $candidate.CloseMainWindow()
     } catch { return $false }
+    finally { if ($null -ne $candidate) { $candidate.Dispose() } }
 }
 function Wait-TideStopped([string]$InstallRoot, [ValidateRange(0,120)][int]$TimeoutSeconds = 30) {
     $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
