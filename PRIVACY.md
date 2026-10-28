@@ -109,7 +109,9 @@ metadata. Decoded artwork is cached in bounded application memory.
 
 The app stores local preferences and queue metadata, including track titles,
 artists, albums, durations, artwork/source URLs and any selected local audio
-paths. This metadata is not encrypted by Tide.
+paths. This metadata is not encrypted by Tide. A chosen audio output identifier
+and volume-normalization preference are also stored locally; neither is sent
+to the Jam relay or other listeners.
 
 Explicit Like/Dislike and playlist menu actions send the selected rating, video
 ID and, for playlist edits, playlist/entry IDs to your selected YouTube Music

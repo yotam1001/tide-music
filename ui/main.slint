@@ -1000,7 +1000,7 @@ component QueueDrawer inherits Rectangle {
                     reorder-enabled: !root.filtering;
                     current-index: root.current-index;
                     light-mode: root.light-mode;
-                    heading: self.index == max(0, root.current-index) || self.index == root.current-index + 1 || self.track.recommended != root.rows[max(0, self.index - 1)].recommended;
+                    heading: root.filtering ? (visible-index == 0 || self.index == root.current-index + 1 || self.track.recommended != root.rows[root.matches[max(0, visible-index - 1)]].recommended) : (self.index == max(0, root.current-index) || self.index == root.current-index + 1 || self.track.recommended != root.rows[max(0, self.index - 1)].recommended);
                     drag-source: root.drag-source;
                     drag-recommended: root.drag-recommended;
                     drag-in-list: queue-area.drag-in-list;
@@ -1608,7 +1608,7 @@ export component AppWindow inherits Window {
                                     height: 48px;
                                     spacing: 10px;
                                     cross-axis-alignment: center;
-                                    VerticalLayout { horizontal-stretch: 1; spacing: 4px; Text { text: root.detail-title; color: root.foreground; font-size: 26px; font-weight: 600; overflow: elide; } Text { text: root.detail-busy ? (root.detail-is-artist ? "Loading top songs…" : "Loading tracks…") : root.detail-is-artist ? "Top songs · " + root.detail-rows.length + " songs" : "" + root.detail-rows.length + " tracks"; color: root.secondary; font-size: 12px; } }
+                                    VerticalLayout { horizontal-stretch: 1; spacing: 4px; Text { text: root.detail-title; color: root.foreground; font-size: 26px; font-weight: 600; overflow: elide; } Text { text: root.detail-busy ? (root.detail-is-artist ? "Loading top songs…" : "Loading tracks…") : root.detail-is-artist ? "Top songs · " + root.detail-rows.length + " songs" : root.detail-filter != "" ? "" + root.detail-matches.length + " of " + root.detail-rows.length + " tracks" : "" + root.detail-rows.length + " tracks"; color: root.secondary; font-size: 12px; } }
                                     LibraryButton { width: 36px; show-tooltip: true; light-mode: root.light-mode; enabled: root.browsing-enabled; icon-path: "M 20 12 L 4 12 M 10 6 L 4 12 L 10 18"; label: root.detail-is-artist ? "Back from artist page" : "Close playlist details"; clicked => { if root.detail-is-artist { root.back-detail(); } else { root.close-detail(); } } }
                                 }
                                 HorizontalLayout {

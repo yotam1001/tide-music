@@ -1195,12 +1195,13 @@ fn refresh(ui: &AppWindow, state: &State) {
     let queue_images = artwork_view::visible_range(
         ui.get_queue_artwork_y(),
         ui.get_queue_artwork_height(),
-        selected.iter().map(|index| {
+        selected.iter().enumerate().map(|(position, index)| {
             let track = &state.settings.queue.tracks[*index];
-            let heading = *index == current
+            let heading = position == 0
                 || *index == current + 1
                 || track.recommended
-                    != state.settings.queue.tracks[index.saturating_sub(1)].recommended;
+                    != state.settings.queue.tracks[selected[position.saturating_sub(1)]]
+                        .recommended;
             row_height + if heading { heading_height } else { 0.0 }
         }),
     );
