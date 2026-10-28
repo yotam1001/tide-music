@@ -3,9 +3,32 @@
   "name": "Tide session companion (prototype)",
   "version": "0.1.0",
   "description": "Explicitly import one YouTube Music session into the local Tide native host.",
-  "permissions": ["activeTab", "webRequest", "nativeMessaging"],
-  "host_permissions": ["https://music.youtube.com/*"],
-  "background": {"service_worker": "background-chromium.js"},
-  "action": {"default_popup": "popup.html", "default_title": "Tide session companion"},
-  "content_security_policy": {"extension_pages": "default-src 'self'; script-src 'self'; object-src 'none'; connect-src 'none'"}
+  "permissions": [
+    "activeTab",
+    "webRequest",
+    "nativeMessaging"
+  ],
+  "host_permissions": [
+    "https://music.youtube.com/*"
+  ],
+  "background": {
+    "service_worker": "background-chromium.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Tide session companion",
+    "default_icon": {
+      "16": "icon16.png",
+      "32": "icon32.png"
+    }
+  },
+  "content_security_policy": {
+    "extension_pages": "default-src 'self'; script-src 'self'; object-src 'none'; connect-src 'none'"
+  },
+  "icons": {
+    "16": "icon16.png",
+    "32": "icon32.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  }
 }

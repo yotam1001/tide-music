@@ -1,4 +1,8 @@
-"""Read-only YouTube Music bridge. Credentials arrive on stdin, never argv."""
+"""YouTube Music bridge. Credentials arrive on stdin, never argv.
+
+Collection writes require a separate explicit, strictly validated feedback action.
+Ordinary browsing, radio and automated playback probes remain read-only.
+"""
 import json
 from contextlib import closing
 import os
@@ -16,9 +20,10 @@ from urllib.parse import urlsplit
 MAX_INPUT = 65536
 MAX_TRACKS = 2000
 MAX_RADIO_TRACKS = 25
-MAX_HOME_SHELVES = 8
+MAX_HOME_SHELVES = 3
 MAX_HOME_ITEMS_PER_SHELF = 40
-MAX_HOME_CARDS = 240
+MAX_HOME_CARDS = MAX_HOME_SHELVES * MAX_HOME_ITEMS_PER_SHELF
+MAX_SUPERMIX_SHELVES = 20
 ARTWORK_HOSTS = ("ytimg.com", "ggpht.com", "googleusercontent.com")
 LOGIN_SECONDS = 8 * 60
 LOGIN_RETRY_SECONDS = 15
@@ -271,7 +276,16 @@ def create_client(auth):
     import requests
     from functools import partial
     session = requests.Session()
-    session.request = partial(session.request, timeout=20)
+    transport = session.request
+
+    def contained_request(*args, **kwargs):
+        # Session.get supplies allow_redirects=True itself, which would override
+        # a partial's default. Enforce the boundary at the final request call.
+        kwargs["allow_redirects"] = False
+        kwargs["timeout"] = 20
+        return transport(*args, **kwargs)
+
+    session.request = partial(contained_request, timeout=20)
     headers = initialize_headers()
     headers.update(auth)
     # Avoid ytmusicapi's unrelated anonymous webpage bootstrap. Captured browser
@@ -509,6 +523,24 @@ def artist_names(item):
     return clean(", ".join(name for name in names if name))
 
 
+def artist_links(item):
+    """Retain at most five canonical artist references; never guess from a name."""
+    values = item.get("artists") or item.get("author") or []
+    result = []
+    seen = set()
+    for item in values[:30] if isinstance(values, list) else []:
+        if not isinstance(item, dict):
+            continue
+        artist = item.get("id")
+        name = clean(item.get("name"))
+        if isinstance(artist, str) and re.fullmatch(r"UC[A-Za-z0-9_-]{22}", artist) and name and artist not in seen:
+            result.append({"id": artist, "name": name})
+            seen.add(artist)
+            if len(result) == 5:
+                break
+    return result
+
+
 def duration_seconds(item):
     value = item.get("duration_seconds")
     if isinstance(value, int) and not isinstance(value, bool) and 0 < value < 2**32:
@@ -540,6 +572,7 @@ def tracks(items, limit=MAX_TRACKS, exclude=(), deduplicate=False):
         result.append({
             "title": clean(item.get("title")),
             "artist": artist_names(item),
+            "artists": artist_links(item),
             "album": clean(album.get("name") if isinstance(album, dict) else ""),
             "source": "https://www.youtube.com/watch?v=" + video,
             "artwork_url": artwork_url(item),
@@ -550,17 +583,172 @@ def tracks(items, limit=MAX_TRACKS, exclude=(), deduplicate=False):
     return result
 
 
+def playlist_entry(value):
+    return value if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,256}", value) else None
+
+
+def playlist_context(playlist, data):
+    items = data.get("tracks", []) if isinstance(data, dict) else []
+    items = items if isinstance(items, list) else []
+    entries = [playlist_entry(item.get("setVideoId"))
+               for item in items[:MAX_TRACKS] if isinstance(item, dict)
+               and item.get("isAvailable") is not False and identifier(item.get("videoId"), True)]
+    return {"id": playlist, "editable": data.get("owned") is True, "entries": entries}
+
+
+def feedback(client, request):
+    """Never replay a collection write, or serialize the provider's raw reply."""
+    fields = {
+        "rating": {"kind", "video_id"},
+        "rate": {"kind", "video_id", "rating"},
+        "playlistadd": {"kind", "video_id", "playlist_id"},
+        "playlistremove": {"kind", "video_id", "playlist_id", "entry_id"},
+        "history": {"kind", "video_id"},
+    }
+    if not isinstance(request, dict):
+        return {"type": "error", "code": "feedback_invalid"}
+    kind = request.get("kind")
+    video = identifier(request.get("video_id"), True)
+    if not isinstance(kind, str) or kind not in fields or set(request) != fields[kind] or not video:
+        return {"type": "error", "code": "feedback_invalid"}
+    playlist = identifier(request.get("playlist_id")) if kind.startswith("playlist") else None
+    rating = request.get("rating") if kind == "rate" else None
+    entry = playlist_entry(request.get("entry_id")) if kind == "playlistremove" else None
+    if (kind.startswith("playlist") and not playlist
+            or kind == "rate" and rating not in ("LIKE", "DISLIKE", "INDIFFERENT")
+            or kind == "playlistremove" and not entry):
+        return {"type": "error", "code": "feedback_invalid"}
+    try:
+        if kind == "rating":
+            data = client.get_watch_playlist(videoId=video, limit=1)
+            items = data.get("tracks", []) if isinstance(data, dict) else []
+            for item in items[:50] if isinstance(items, list) else []:
+                if isinstance(item, dict) and item.get("videoId") == video:
+                    value = item.get("likeStatus")
+                    rating = value if value in ("LIKE", "DISLIKE", "INDIFFERENT") else None
+                    break
+        elif kind == "rate":
+            response = client.rate_song(video, rating)
+            if not isinstance(response, dict) or "error" in response:
+                raise ValueError("unconfirmed rating")
+        elif kind in ("playlistadd", "playlistremove"):
+            data = client.get_playlist(playlist, limit=MAX_TRACKS + 1 if entry else 1)
+            if not isinstance(data, dict) or data.get("owned") is not True:
+                return {"type": "error", "code": "feedback_readonly"}
+            if entry:
+                items = data.get("tracks", [])
+                if not isinstance(items, list) or not any(
+                        isinstance(item, dict) and item.get("videoId") == video
+                        and item.get("setVideoId") == entry for item in items[:MAX_TRACKS]):
+                    return {"type": "error", "code": "feedback_entry_changed"}
+                response = client.remove_playlist_items(playlist, [{"videoId": video, "setVideoId": entry}])
+            else:
+                response = client.add_playlist_items(playlist, [video], duplicates=False)
+            status = response.get("status") if isinstance(response, dict) else response
+            if status != "STATUS_SUCCEEDED":
+                raise ValueError("unconfirmed playlist edit")
+        else:
+            # Both calls must use this same authenticated client. Tracking data
+            # stays in this process and can only target YouTube's playback endpoint.
+            song = client.get_song(video)
+            url = song.get("playbackTracking", {}).get("videostatsPlaybackUrl", {}).get("baseUrl")
+            if not isinstance(url, str) or len(url) > 8192 or any(ord(c) < 32 for c in url):
+                raise ValueError("invalid playback tracking")
+            parsed = urlsplit(url)
+            if (parsed.scheme != "https" or parsed.hostname not in
+                    ("s.youtube.com", "music.youtube.com", "www.youtube.com", "youtube.com")
+                    or parsed.username or parsed.password or parsed.port not in (None, 443)
+                    or parsed.fragment or parsed.path != "/api/stats/playback"):
+                raise ValueError("invalid playback destination")
+            if getattr(client.add_history_item(song), "status_code", None) != 204:
+                raise ValueError("unconfirmed history")
+        return {"type": "feedback", "result": {"operation": kind, "video_id": video,
+                "playlist_id": playlist, "rating": rating, "entry_id": entry}}
+    except Exception:
+        # A timeout might follow a completed write. Leave the result unconfirmed;
+        # do not retry, disconnect the player, or expose response URLs/headers.
+        return {"type": "error", "code": "feedback_unavailable" if kind == "rating" else "feedback_unconfirmed"}
+
+
 def run(client, request):
     action = request["action"]
+    if action == "feedback":
+        return feedback(client, request.get("request"))
+    if action == "artists":
+        video = identifier(request.get("video_id"), True)
+        if not video:
+            return {"type": "error", "code": "artist_unavailable"}
+        data = client.get_watch_playlist(videoId=video, limit=1)
+        items = data.get("tracks") if isinstance(data, dict) else None
+        for item in items[:50] if isinstance(items, list) else []:
+            if isinstance(item, dict) and item.get("videoId") == video:
+                return {"type": "artists", "artists": artist_links(item)}
+        return {"type": "artists", "artists": []}
+    if action == "artist":
+        artist = request.get("id")
+        if not isinstance(artist, str) or not re.fullmatch(r"UC[A-Za-z0-9_-]{22}", artist):
+            return {"type": "error", "code": "artist_unavailable"}
+        data = client.get_artist(artist)
+        if not isinstance(data, dict) or not clean(data.get("name")):
+            return {"type": "error", "code": "artist_unavailable"}
+        name = clean(data["name"])
+        songs = data.get("songs")
+        songs = songs if isinstance(songs, dict) else {}
+        items = songs.get("results")
+        items = items if isinstance(items, list) else []
+        playlist = identifier(songs.get("browseId"))
+        if playlist:
+            # Top-song lists may initially contain only five results. Expansion
+            # is bounded and optional: retain the returned top songs on failure.
+            try:
+                expanded = client.get_playlist(playlist, limit=51)
+                if isinstance(expanded, dict) and isinstance(expanded.get("tracks"), list):
+                    items = expanded["tracks"]
+            except Exception:
+                pass
+        bounded = []
+        for item in items[:51]:
+            if isinstance(item, dict):
+                item = dict(item)
+                if not artist_links(item):
+                    item["artists"] = [{"id": artist, "name": name}]
+                bounded.append(item)
+        return {"type": "artist", "name": name, "tracks": tracks(bounded, 50, (), True),
+                "truncated": len(items) > 50}
     if action == "library":
         info = client.get_account_info()
         playlists = client.get_library_playlists(limit=201)
         return {"type": "library", "account": clean(info.get("accountName") or info.get("name") or "YouTube Music"),
                 "playlists": [{"id": identifier(p.get("playlistId")), "title": clean(p.get("title")),
                                "subtitle": clean(str(p.get("count") or "") + " tracks"),
-                               "artwork_url": artwork_url(p)}
+                               "artwork_url": artwork_url(p), "owned": p.get("owned") is True}
                               for p in playlists[:200] if isinstance(p, dict) and identifier(p.get("playlistId"))],
                 "truncated": len(playlists) > 200}
+    if action == "supermix":
+        # Resolve this account's dynamic mix on demand, independently of Home's
+        # small display pool. Never substitute another mix or a public playlist.
+        try:
+            shelves = client.get_home(limit=MAX_SUPERMIX_SHELVES)
+            for shelf in shelves[:MAX_SUPERMIX_SHELVES] if isinstance(shelves, list) else []:
+                items = shelf.get("contents") if isinstance(shelf, dict) else None
+                for item in items[:MAX_HOME_ITEMS_PER_SHELF] if isinstance(items, list) else []:
+                    if not isinstance(item, dict) or item.get("isAvailable") is False:
+                        continue
+                    playlist = identifier(item.get("playlistId"))
+                    title = "".join(clean(item.get("title")).casefold().split())
+                    if not playlist.startswith("RDTMAK") or title not in ("mysupermix", "yoursupermix", "supermix"):
+                        continue
+                    data = client.get_watch_playlist(playlistId=playlist, limit=50)
+                    songs = data.get("tracks") if isinstance(data, dict) else None
+                    if not isinstance(songs, list):
+                        return {"type": "error", "code": "supermix_unavailable"}
+                    selected = tracks(songs, MAX_TRACKS, (), True)
+                    if not selected:
+                        return {"type": "error", "code": "supermix_unavailable"}
+                    return {"type": "tracks", "tracks": selected, "truncated": len(songs) > MAX_TRACKS}
+            return {"type": "error", "code": "supermix_unavailable"}
+        except Exception as error:
+            return verified_request_failure(error, client)
     if action == "radio":
         video = identifier(request.get("video_id"), True)
         empty = {"type": "tracks", "tracks": [], "truncated": False}
@@ -586,10 +774,14 @@ def run(client, request):
         else:
             data = client.get_liked_songs(limit=MAX_TRACKS + 1)
         items = data.get("tracks", [])
-        return {"type": "tracks", "tracks": tracks(items), "truncated": len(items) > MAX_TRACKS}
+        result = {"type": "tracks", "tracks": tracks(items), "truncated": len(items) > MAX_TRACKS}
+        if action == "playlist":
+            result["playlist"] = playlist_context(playlist, data)
+        return result
     if action == "home":
-        # Fetch a wider personalized candidate pool for the app's refresh
-        # selection. The API may overshoot its row limit; cap our output too.
+        # Keep the leading Home rows in provider order. Fetching distant shelves
+        # for novelty diluted the earlier, more relevant selection.
+        # The API may overshoot its row limit; cap our output too.
         shelves = client.get_home(limit=MAX_HOME_SHELVES)
         cards = []
         seen = set()
@@ -621,7 +813,7 @@ def run(client, request):
                     continue
                 seen.add(key)
                 cards.append({"id": item_id, "title": clean(item.get("title")),
-                              "subtitle": artist_names(item),
+                              "subtitle": artist_names(item), "artists": artist_links(item),
                               "kind": kind, "shelf": clean(shelf.get("title")),
                               "artwork_url": artwork_url(item),
                               "duration_seconds": duration_seconds(item)})
@@ -664,7 +856,7 @@ def main():
             except Exception as error:
                 result = verified_request_failure(error, client)
             updated = getattr(session, "_tide_refreshed_headers", None)
-            if updated and result.get("type") != "error":
+            if updated and (result.get("type") != "error" or request.get("action") == "feedback"):
                 result["refreshed_headers"] = updated
         finally:
             session.close()

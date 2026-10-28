@@ -360,13 +360,41 @@ fn decode_thumbnail(bytes: &[u8]) -> Option<Vec<u8>> {
     // Crop before resizing: resize_to_fill on a 4096×1 input would first
     // allocate a 393216×96 intermediate image despite the source pixel cap.
     let edge = width.min(height);
-    Some(
-        image
-            .crop_imm((width - edge) / 2, (height - edge) / 2, edge, edge)
-            .resize_exact(SIDE, SIDE, FilterType::Triangle)
-            .to_rgb8()
-            .into_raw(),
-    )
+    // Borrow the crop instead of copying up to a million source pixels. Match
+    // the source format so filtering retains its original channel precision.
+    macro_rules! resized_rgb {
+        ($pixels:expr, $variant:ident) => {{
+            let view = image::imageops::crop_imm(
+                &$pixels,
+                (width - edge) / 2,
+                (height - edge) / 2,
+                edge,
+                edge,
+            );
+            image::DynamicImage::$variant(image::imageops::resize(
+                &*view,
+                SIDE,
+                SIDE,
+                FilterType::Triangle,
+            ))
+            .into_rgb8()
+            .into_raw()
+        }};
+    }
+    use image::DynamicImage::*;
+    Some(match image {
+        ImageLuma8(pixels) => resized_rgb!(pixels, ImageLuma8),
+        ImageLumaA8(pixels) => resized_rgb!(pixels, ImageLumaA8),
+        ImageRgb8(pixels) => resized_rgb!(pixels, ImageRgb8),
+        ImageRgba8(pixels) => resized_rgb!(pixels, ImageRgba8),
+        ImageLuma16(pixels) => resized_rgb!(pixels, ImageLuma16),
+        ImageLumaA16(pixels) => resized_rgb!(pixels, ImageLumaA16),
+        ImageRgb16(pixels) => resized_rgb!(pixels, ImageRgb16),
+        ImageRgba16(pixels) => resized_rgb!(pixels, ImageRgba16),
+        ImageRgb32F(pixels) => resized_rgb!(pixels, ImageRgb32F),
+        ImageRgba32F(pixels) => resized_rgb!(pixels, ImageRgba32F),
+        _ => return None,
+    })
 }
 
 #[cfg(test)]
@@ -426,6 +454,68 @@ mod tests {
             assert_eq!(pixels.len(), (SIDE * SIDE * 3) as usize);
         }
         assert!(decode_thumbnail(b"not an image").is_none());
+    }
+
+    #[test]
+    fn borrowed_crop_preserves_thumbnail_pixels_and_channel_precision() {
+        use image::{DynamicImage, ImageBuffer, Luma, LumaA, Rgb, Rgba};
+
+        let check = |source: DynamicImage, format| {
+            let mut bytes = Cursor::new(Vec::new());
+            source.write_to(&mut bytes, format).unwrap();
+            let decoded = image::load_from_memory(bytes.get_ref()).unwrap();
+            let edge = decoded.width().min(decoded.height());
+            let expected = decoded
+                .crop_imm(
+                    (decoded.width() - edge) / 2,
+                    (decoded.height() - edge) / 2,
+                    edge,
+                    edge,
+                )
+                .resize_exact(SIDE, SIDE, FilterType::Triangle)
+                .to_rgb8()
+                .into_raw();
+            assert_eq!(decode_thumbnail(bytes.get_ref()).unwrap(), expected);
+        };
+        for (width, height) in [(137, 211), (211, 137), (96, 96), (4096, 1)] {
+            let value = |x, y| ((x * 123 + y * 456) % 65536) as u16;
+            for source in [
+                DynamicImage::ImageLuma8(ImageBuffer::from_fn(width, height, |x, y| {
+                    Luma([value(x, y) as u8])
+                })),
+                DynamicImage::ImageLumaA8(ImageBuffer::from_fn(width, height, |x, y| {
+                    LumaA([value(x, y) as u8, 173])
+                })),
+                DynamicImage::ImageRgb8(ImageBuffer::from_fn(width, height, |x, y| {
+                    Rgb([value(x, y) as u8, 71, 213])
+                })),
+                DynamicImage::ImageRgba8(ImageBuffer::from_fn(width, height, |x, y| {
+                    Rgba([value(x, y) as u8, 71, 213, 173])
+                })),
+                DynamicImage::ImageLuma16(ImageBuffer::from_fn(width, height, |x, y| {
+                    Luma([value(x, y)])
+                })),
+                DynamicImage::ImageLumaA16(ImageBuffer::from_fn(width, height, |x, y| {
+                    LumaA([value(x, y), 41357])
+                })),
+                DynamicImage::ImageRgb16(ImageBuffer::from_fn(width, height, |x, y| {
+                    Rgb([value(x, y), 13271, 51357])
+                })),
+                DynamicImage::ImageRgba16(ImageBuffer::from_fn(width, height, |x, y| {
+                    Rgba([value(x, y), 13271, 51357, 41357])
+                })),
+            ] {
+                check(source, ImageFormat::Png);
+            }
+        }
+        for format in [ImageFormat::Jpeg, ImageFormat::WebP] {
+            check(
+                DynamicImage::ImageRgb8(ImageBuffer::from_fn(137, 211, |x, y| {
+                    Rgb([x as u8, y as u8, 71])
+                })),
+                format,
+            );
+        }
     }
 
     // Use disconnected channels so cache tests cannot perform network requests.

@@ -50,6 +50,7 @@ mod tests {
     fn late_snapshot_cannot_update_another_song_and_metadata_survives_restart() {
         let mut queue = Queue {
             tracks: vec![tide_core::Track {
+                artists: Vec::new(),
                 title: "song".into(),
                 artist: String::new(),
                 album: String::new(),

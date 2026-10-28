@@ -1,11 +1,11 @@
 //! Exercise real queue layout without a desktop window, account or playback.
 use slint::platform::{
     software_renderer::{MinimalSoftwareWindow, RepaintBufferType},
-    PointerEventButton, WindowEvent,
+    Key, PointerEventButton, WindowEvent,
 };
 use slint::{ComponentHandle, LogicalPosition, PhysicalSize, Rgb8Pixel};
 use std::{cell::Cell, rc::Rc};
-slint::include_modules!();
+use tide_music::*;
 
 struct TestPlatform(Rc<MinimalSoftwareWindow>);
 impl slint::platform::Platform for TestPlatform {
@@ -39,6 +39,21 @@ fn click(ui: &AppWindow, x: f32, y: f32) {
         position,
         button: PointerEventButton::Left,
     });
+}
+fn key(ui: &AppWindow, value: Key) {
+    let text: slint::SharedString = value.into();
+    ui.window()
+        .dispatch_event(WindowEvent::KeyPressed { text: text.clone() });
+    ui.window()
+        .dispatch_event(WindowEvent::KeyReleased { text });
+}
+fn remove_via_menu(ui: &AppWindow, window: &MinimalSoftwareWindow, width: u32, x: f32, y: f32) {
+    click(ui, x, y);
+    draw(window, width);
+    // Up from an unselected popup selects its last item: Remove.
+    key(ui, Key::UpArrow);
+    key(ui, Key::Return);
+    draw(window, width);
 }
 fn rows(title: &str, artist: &str) -> slint::ModelRc<TrackRow> {
     Rc::new(slint::VecModel::from(vec![
@@ -79,21 +94,22 @@ fn long_queue_metadata_keeps_duration_and_remove_controls_in_place() {
         for light in [false, true] {
             ui.set_light_mode(light);
             ui.set_rows(rows("Song", "Artist"));
-            let reference = draw(&window, width);
-            export(&format!("short-{width}-{light}"), width, &reference);
-            // Locate the first remove button by real input; no internal widget
-            // geometry or test-only properties are exposed by the app.
+            draw(&window, width);
+            // Locate the first song's actual menu and dispatch its Remove
+            // action using real input, without exposing widget internals.
             let x = width as f32 - 38.0;
             let mut remove_y = None;
             for y in (120_usize..260).step_by(5) {
                 removed.set(-1);
-                click(&ui, x, y as f32);
+                remove_via_menu(&ui, &window, width, x, y as f32);
                 if removed.get() == 0 {
                     remove_y = Some(y);
                     break;
                 }
             }
-            let y = remove_y.expect("short queue's remove button is inaccessible");
+            let y = remove_y.expect("short queue's remove menu action is inaccessible");
+            let reference = draw(&window, width);
+            export(&format!("short-{width}-{light}"), width, &reference);
             for (name, title, artist) in [
                 (
                     "long",
@@ -114,20 +130,21 @@ fn long_queue_metadata_keeps_duration_and_remove_controls_in_place() {
                 // Time and actions are to the right of the flexible text column.
                 // They must render identically regardless of metadata length.
                 for row in y.saturating_sub(8)..y + 32 {
-                    let range = row * width as usize + width as usize - 132
+                    // One menu now holds Remove, reclaiming the former second
+                    // action's width for metadata. Compare the time/menu strip.
+                    let range = row * width as usize + width as usize - 112
                         ..row * width as usize + width as usize - 22;
-                    assert_eq!(&pixels[range.clone()], &reference[range],
+                    assert!(pixels[range.clone()] == reference[range],
                         "metadata displaced queue time/actions: {name}, {width}, light={light}, row={row}");
                     let artwork_and_handle = row * width as usize + width as usize - 326
                         ..row * width as usize + width as usize - 238;
-                    assert_eq!(
-                        &pixels[artwork_and_handle.clone()],
-                        &reference[artwork_and_handle],
+                    assert!(
+                        pixels[artwork_and_handle.clone()] == reference[artwork_and_handle],
                         "metadata escaped left over artwork/drag handle: {name}, {width}, light={light}, row={row}"
                     );
                 }
                 removed.set(-1);
-                click(&ui, x, y as f32);
+                remove_via_menu(&ui, &window, width, x, y as f32);
                 assert_eq!(removed.get(), 0, "long metadata hid remove control");
                 assert_eq!(window.size(), PhysicalSize::new(width, 720));
             }

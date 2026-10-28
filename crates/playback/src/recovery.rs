@@ -39,6 +39,10 @@ impl Track {
         }
     }
 
+    pub fn retry_attempt(&self) -> u8 {
+        self.attempts.min(2) as u8
+    }
+
     pub fn session_started(&mut self, now: Instant) {
         self.retry_at = None;
         self.loaded = false;
@@ -133,6 +137,16 @@ pub(super) fn premature_eof(position: f64, duration: f64) -> bool {
         && duration - position > 3.0_f64.max(duration * 0.01)
 }
 
+// Compare only mpv's fixed error enum text, never logs or arbitrary URL text.
+// The caller must first validate the session, generation and playlist entry.
+pub(super) fn output_failure(message: &Value) -> bool {
+    message
+        .get("file_error")
+        .and_then(Value::as_str)
+        .or_else(|| message.get("error").and_then(Value::as_str))
+        == Some("audio output initialization failed")
+}
+
 pub(super) fn message_failed(
     state: &PlayerState,
     track: &Track,
@@ -176,6 +190,31 @@ mod tests {
             },
             now,
         )
+    }
+    #[test]
+    fn classifies_only_the_fixed_audio_failure_on_the_current_entry() {
+        let track = track(Instant::now());
+        let state = PlayerState {
+            active_generation: Some(2),
+            active_epoch: Some(3),
+            active_entry_id: Some(7),
+            ..Default::default()
+        };
+        let mut message = serde_json::json!({"event":"end-file", "reason":"error", "playlist_entry_id":7, "file_error":"audio output initialization failed"});
+        assert!(output_failure(&message) && message_failed(&state, &track, &message, 2, 3));
+        assert!(!message_failed(&state, &track, &message, 3, 4));
+        message["playlist_entry_id"] = serde_json::json!(8);
+        assert!(!message_failed(&state, &track, &message, 2, 3));
+        for error in [
+            "loading failed",
+            "private signed source",
+            "audio output initialization failed in arbitrary log text",
+        ] {
+            assert!(!output_failure(&serde_json::json!({"file_error":error})));
+        }
+        assert!(!output_failure(
+            &serde_json::json!({"event":"end-file", "reason":"eof"})
+        ));
     }
     #[test]
     fn bounded_retries_survive_progress_and_refresh_original_source() {

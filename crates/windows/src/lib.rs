@@ -6,6 +6,12 @@
 //! as the only media-key handler: disable media keys in the playback backend
 //! rather than also registering a keyboard hook or global media hotkeys.
 
+#[cfg(windows)]
+mod audio_output;
+pub mod shortcuts;
+#[cfg(windows)]
+pub use audio_output::OutputWatcher;
+
 use std::ffi::c_void;
 
 /// Open a web page with Windows' registered default browser, without a shell
@@ -163,3 +169,7 @@ impl MediaSession {
         Err("System media controls are currently supported on Windows only.".into())
     }
 }
+
+#[cfg(windows)]
+pub mod discord_pipe;
+pub mod mini;

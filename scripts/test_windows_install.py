@@ -39,7 +39,7 @@ $global:FailAppWrite = 0
 $global:RaceNewAppEntry = $false
 function Get-TideUninstallEntry {
     if ($null -eq $global:AppsEntry) { return $null }
-    $copy = @{}; foreach ($name in $global:AppsEntry.Keys) { $copy[$name] = $global:AppsEntry[$name] }
+    $copy = @{}; foreach ($name in $global:AppsEntry.get_Keys()) { $copy[$name] = $global:AppsEntry[$name] }
     return $copy
 }
 function New-TideUninstallEntry {
@@ -104,6 +104,19 @@ function Must-Fail([scriptblock]$Action) {
 function New-Install { Install-Tide $package $root $links 'Chrome' ('a' * 32) | Out-Null }
 function Current-Release { $state = Get-TideInstallState $root; return Join-Path $root ('releases/' + $state.Release) }
 switch ($Scenario) {
+    'preflight' {
+        $events = @(Test-TideInstall $package $root $links 'None' '' '1.2.3')
+        if ($events[-1] -ne 'TIDE_PREFLIGHT_OK' -or (Test-Path -LiteralPath $root) -or (Test-Path -LiteralPath $links)) { throw 'Fresh preflight wrote an installation' }
+        New-Install; $previous = Current-Release; $entry = Get-TideUninstallEntry
+        $global:Busy = $true; $global:FailDependency = $true
+        $events = @(Test-TideInstall $package $root $links 'None' '' '1.2.3')
+        if ($events[-1] -ne 'TIDE_PREFLIGHT_OK' -or (Current-Release) -ne $previous -or !(Test-TideUninstallEntryMatch (Get-TideUninstallEntry) $entry)) { throw 'Running-player preflight changed ownership or registration' }
+        $global:AppsEntry.UninstallString = 'different.exe'
+        Must-Fail { Test-TideInstall $package $root $links 'None' '' '1.2.3' }
+        if ($global:AppsEntry.UninstallString -ne 'different.exe') { throw 'Conflicting preflight changed registration' }
+        $global:AppsEntry = $entry; $global:Busy = $false; $global:FailDependency = $false
+        Uninstall-Tide $root $links | Out-Null
+    }
     'fresh-remove' {
         New-Install
         $release = Current-Release
@@ -215,21 +228,47 @@ switch ($Scenario) {
             if (Test-Path -LiteralPath (Join-Path $Fixture $name)) { throw 'Invalid archive wrote files' }
         }
     }
-    'runtime-missing-digest' {
-        $global:MetadataTimeout = $null
-        function Invoke-RestMethod { param($Uri, $TimeoutSec) $global:MetadataTimeout = $TimeoutSec; return @{ assets=@(@{name='mpv-v0.41.0-x86_64-pc-windows-msvc.zip'; browser_download_url='https://example.invalid/mpv.zip'}) } }
-        function Invoke-WebRequest { throw 'Network download must not occur without an upstream digest' }
-        Must-Fail { & (Join-Path $Fixture 'source/scripts/setup-runtime.ps1') -Destination (Join-Path $Fixture 'tools') }
-        if ($global:MetadataTimeout -ne 30) { throw 'Missing bounded metadata timeout' }
-        if (Test-Path -LiteralPath (Join-Path $Fixture 'tools')) { throw 'Missing digest wrote runtime tools' }
+    'runtime-api-independent' {
+        $global:MetadataRequests = 0
+        $global:Downloads = 0
+        function Invoke-RestMethod { $global:MetadataRequests++; throw 'Synthetic GitHub API rate limit' }
+        function Invoke-WebRequest {
+            param([switch]$UseBasicParsing, $Uri, $OutFile, $TimeoutSec)
+            if ($Uri -cne 'https://github.com/mpv-player/mpv/releases/download/v0.41.0/mpv-v0.41.0-x86_64-pc-windows-msvc.zip') { throw 'Unexpected runtime source' }
+            if ($TimeoutSec -ne 300) { throw 'Missing bounded download timeout' }
+            $global:Downloads++
+            [IO.File]::WriteAllBytes($OutFile, [Text.Encoding]::UTF8.GetBytes('fixture'))
+        }
+        # Load the real asset function without running the bootstrap's other
+        # downloads. Common's real checksum/path/overwrite checks remain active.
+        $tokens = $null; $errors = $null
+        $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $Fixture 'source/scripts/setup-runtime.ps1'), [ref]$tokens, [ref]$errors)
+        if ($errors.Count) { throw 'Runtime script did not parse' }
+        $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-VerifiedAsset' }, $true)
+        if (!$definition) { throw 'Missing production asset function' }
+        . ([scriptblock]::Create($definition.Extent.Text))
+        $output = Join-Path $Fixture 'verified.zip'
+        $hash = 'f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d'
+        Get-VerifiedAsset 'mpv-player/mpv' 'v0.41.0' 'mpv-v0.41.0-x86_64-pc-windows-msvc.zip' $output $hash
+        if ([IO.File]::ReadAllText($output) -cne 'fixture' -or $global:Downloads -ne 1 -or $global:MetadataRequests) { throw 'Verified download depended on the API or changed bytes' }
+        Must-Fail { Get-VerifiedAsset 'mpv-player/mpv' 'v0.41.0' 'mpv-v0.41.0-x86_64-pc-windows-msvc.zip' $output $hash }
+        Must-Fail { Get-VerifiedAsset 'mpv-player/mpv' 'v0.41.0' 'mpv-v0.41.0-x86_64-pc-windows-msvc.zip' (Join-Path $Fixture 'missing.zip') '' }
+        if ($global:Downloads -ne 1) { throw 'Missing pin or existing output started a download' }
     }
-    'runtime-changed-digest' {
-        $global:MetadataTimeout = $null
-        function Invoke-RestMethod { param($Uri, $TimeoutSec) $global:MetadataTimeout = $TimeoutSec; return @{ assets=@(@{name='mpv-v0.41.0-x86_64-pc-windows-msvc.zip'; digest=('sha256:' + ('0'*64)); browser_download_url='https://example.invalid/mpv.zip'}) } }
-        function Invoke-WebRequest { throw 'Network download must not occur for a changed upstream digest' }
-        Must-Fail { & (Join-Path $Fixture 'source/scripts/setup-runtime.ps1') -Destination (Join-Path $Fixture 'tools') }
-        if ($global:MetadataTimeout -ne 30) { throw 'Missing bounded metadata timeout' }
-        if (Test-Path -LiteralPath (Join-Path $Fixture 'tools')) { throw 'Changed digest wrote runtime tools' }
+    'runtime-corrupt-download' {
+        $global:MetadataRequests = 0; $global:Downloads = 0
+        function Invoke-RestMethod { $global:MetadataRequests++; throw 'Synthetic GitHub API rate limit' }
+        function Invoke-WebRequest {
+            param([switch]$UseBasicParsing, $Uri, $OutFile, $TimeoutSec)
+            $global:Downloads++
+            [IO.File]::WriteAllText($OutFile, 'corrupted runtime archive')
+        }
+        $failure = $null
+        try { & (Join-Path $Fixture 'source/scripts/setup-runtime.ps1') -Destination (Join-Path $Fixture 'tools') | Out-Null }
+        catch { $failure = $_.Exception.Message }
+        if ($failure -cne 'Dependency download checksum failed.') { throw 'Corrupt runtime was not rejected by its actual checksum' }
+        if ($global:MetadataRequests -or $global:Downloads -ne 1) { throw 'Corrupt runtime did not reach the checksum check without the API' }
+        if (Test-Path -LiteralPath (Join-Path $Fixture 'tools')) { throw 'Corrupt runtime wrote extracted tools' }
     }
     'app-entry-conflict' {
         $global:AppsEntry = @{DisplayName='unrelated product'; UninstallString='unrelated.exe'}
@@ -265,6 +304,96 @@ switch ($Scenario) {
         Install-Tide $package $root $links 'None' '' '1.2.3-preview' | Out-Null
         $expected = Get-TideUninstallRegistration (Current-Release) $root '1.2.3-preview'
         if (!(Test-TideUninstallEntryMatch $global:AppsEntry $expected)) { throw 'Version/uninstall path did not update' }
+        Uninstall-Tide $root $links | Out-Null
+    }
+    { $_ -in @('owned-stale-registration','owned-removed-registration','removed-registration-tampered','removed-registration-unowned','removed-registration-foreign-folder') } {
+        Install-Tide $package $root $links 'Chrome' ('a' * 32) '0.4.2' | Out-Null
+        $previous = Current-Release
+        $retained = Join-Path $root ('releases/' + ('b' * 32))
+        if ($Scenario -eq 'owned-stale-registration') { Copy-Item -LiteralPath $previous -Destination $retained -Recurse }
+        # Match the reported three-field conflict: a previous owned version
+        # and its icon/uninstall paths, with the correct product/root identity.
+        $global:AppsEntry = Get-TideUninstallRegistration $retained $root '0.4.1'
+        $before = Get-TideUninstallEntry
+        $expected = Get-TideUninstallRegistration $previous $root '0.4.2'
+        if ((Get-TideUninstallConflictMessage $before $expected) -notmatch 'DisplayIcon, DisplayVersion, UninstallString') { throw 'Fixture does not reproduce the reported conflict' }
+        if ($Scenario -eq 'removed-registration-tampered') { [IO.File]::WriteAllText((Join-Path $previous 'scripts/install-windows.ps1'), 'tampered active script') }
+        if ($Scenario -eq 'removed-registration-unowned') { Remove-Item -LiteralPath (Join-Path $previous '.tide-release.json') }
+        if ($Scenario -eq 'removed-registration-foreign-folder') { [IO.Directory]::CreateDirectory($retained) | Out-Null }
+        if ($Scenario -like 'removed-registration-*') {
+            Must-Fail { Test-TideInstall $package $root $links 'None' '' '0.4.3' }
+            if ((Current-Release) -ne $previous -or !(Test-TideUninstallEntryMatch (Get-TideUninstallEntry) $before)) { throw 'Unverified recovery changed installation' }
+            break
+        }
+        $events = @(Test-TideInstall $package $root $links 'None' '' '0.4.3')
+        if ($events[-1] -ne 'TIDE_PREFLIGHT_OK' -or !(Test-TideUninstallEntryMatch (Get-TideUninstallEntry) $before) -or (Current-Release) -ne $previous) { throw 'Recovery preflight changed the installation' }
+        Install-Tide $package $root $links 'None' '' '0.4.3' | Out-Null
+        $current = Current-Release
+        if ($current -eq $previous -or !(Test-TideUninstallEntryMatch (Get-TideUninstallEntry) (Get-TideUninstallRegistration $current $root '0.4.3'))) { throw 'Owned stale registration did not upgrade' }
+        Uninstall-Tide $root $links | Out-Null
+    }
+    'owned-stale-registration-rollback' {
+        New-Install; $previous = Current-Release
+        $global:AppsEntry.DisplayVersion = '0.4.1'
+        $before = Get-TideUninstallEntry
+        $pending = Join-Path $root '.tide-install.pending.json'
+        [IO.File]::WriteAllText($pending, 'preserve interrupted record')
+        Must-Fail { Install-Tide $package $root $links 'None' '' '0.4.3' }
+        if ((Current-Release) -ne $previous -or !(Test-TideUninstallEntryMatch (Get-TideUninstallEntry) $before)) { throw 'Recovery rollback did not restore exact previous registration' }
+        Remove-Item -LiteralPath $pending
+        # A later successful retry repairs the version metadata.
+        Install-Tide $package $root $links 'None' '' '0.4.3' | Out-Null
+        Uninstall-Tide $root $links | Out-Null
+    }
+    'owned-stale-registration-tampered' {
+        New-Install; $previous = Current-Release
+        $global:AppsEntry.DisplayVersion = '0.4.1'
+        $before = Get-TideUninstallEntry
+        [IO.File]::WriteAllText((Join-Path $previous 'scripts/install-windows.ps1'), 'foreign modified script')
+        Must-Fail { Test-TideInstall $package $root $links 'None' '' '0.4.3' }
+        if ((Current-Release) -ne $previous -or !(Test-TideUninstallEntryMatch (Get-TideUninstallEntry) $before)) { throw 'Tampered recovery changed the installation' }
+    }
+    'owned-stale-registration-foreign' {
+        New-Install; $previous = Current-Release
+        foreach ($attack in @('command','root','product','extra-count','extra-keys','traversal')) {
+            $global:AppsEntry = Get-TideUninstallRegistration $previous $root '0.4.1'
+            switch ($attack) {
+                'command' { $global:AppsEntry.UninstallString = 'foreign.exe' }
+                'root' { $global:AppsEntry.InstallLocation = (Join-Path $Fixture 'another-product') }
+                'product' { $global:AppsEntry.TideProduct = 'another.product' }
+                'extra-count' { $global:AppsEntry['Count'] = 10 }
+                'extra-keys' { $global:AppsEntry['Keys'] = 'foreign-value' }
+                'traversal' { $global:AppsEntry.DisplayIcon = (Join-Path $root 'releases/../foreign.exe') }
+            }
+            $before = Get-TideUninstallEntry
+            Must-Fail { Test-TideInstall $package $root $links 'None' '' '0.4.3' }
+            if ((Current-Release) -ne $previous -or !(Test-TideUninstallEntryMatch (Get-TideUninstallEntry) $before)) { throw 'Foreign registration was changed' }
+        }
+        $global:AppsEntry = Get-TideUninstallRegistration $previous $root '0.1.0-preview'
+        Uninstall-Tide $root $links | Out-Null
+    }
+    'owned-stale-registration-manifest' {
+        New-Install; $previous = Current-Release
+        $global:AppsEntry.DisplayVersion = '0.4.1'
+        $before = Get-TideUninstallEntry
+        $record = Join-Path $previous '.tide-release.json'
+        $original = [IO.File]::ReadAllText($record)
+        foreach ($attack in @('traversal','rooted','alias','self','missing-script','product')) {
+            $manifest = $original | ConvertFrom-Json
+            switch ($attack) {
+                'traversal' { $manifest.Files += '../foreign.txt' }
+                'rooted' { $manifest.Files += (Join-Path $Fixture 'foreign.txt') }
+                'alias' { $manifest.Files += 'scripts/./install-windows.ps1' }
+                'self' { $manifest.Files += '.tide-release.json' }
+                'missing-script' { $manifest.Files = @($manifest.Files | Where-Object { $_ -ne 'scripts/install-windows.ps1' }) }
+                'product' { $manifest.Product = 'another.product' }
+            }
+            Write-TideJson $record $manifest
+            Must-Fail { Test-TideInstall $package $root $links 'None' '' '0.4.3' }
+            if ((Current-Release) -ne $previous -or !(Test-TideUninstallEntryMatch (Get-TideUninstallEntry) $before)) { throw 'Invalid ownership manifest changed the installation' }
+        }
+        [IO.File]::WriteAllText($record, $original)
+        $global:AppsEntry.DisplayVersion = '0.1.0-preview'
         Uninstall-Tide $root $links | Out-Null
     }
     'app-entry-migration' {
@@ -339,14 +468,14 @@ class WindowsInstallTests(unittest.TestCase):
             self.assertIn(b"PASS isolated installer lifecycle", result.stdout)
 
     def test_isolated_lifecycle(self):
-        for scenario in ("fresh-remove", "upgrade", "preserve-extra", "dependency-failure-first",
+        for scenario in ("preflight", "fresh-remove", "upgrade", "preserve-extra", "dependency-failure-first",
                          "dependency-failure-update", "shortcut-failure", "registration-failure", "busy",
                          "unknown-root", "shortcut-conflict", "registration-conflict",
                          "changed-shortcut-removal", "changed-registration-removal", "corrupt-package",
                          "traversal-record", "reparse", "lock", "download", "archive-paths",
-                         "runtime-missing-digest", "runtime-changed-digest", "app-entry-conflict",
+                         "runtime-api-independent", "runtime-corrupt-download", "app-entry-conflict",
                          "app-entry-update-conflict", "app-entry-write-failure-first", "app-entry-write-failure-update",
-                         "app-entry-marker-failure", "app-entry-version-update", "app-entry-migration", "app-entry-new-race", "protocol"):
+                         "app-entry-marker-failure", "app-entry-version-update", "owned-stale-registration", "owned-removed-registration", "removed-registration-tampered", "removed-registration-unowned", "removed-registration-foreign-folder", "owned-stale-registration-rollback", "owned-stale-registration-tampered", "owned-stale-registration-foreign", "owned-stale-registration-manifest", "app-entry-migration", "app-entry-new-race", "protocol"):
             with self.subTest(scenario=scenario):
                 self.run_scenario(scenario)
 
@@ -378,7 +507,7 @@ class WindowsInstallTests(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("powershell.exe"), "requires built-in Windows PowerShell 5.1")
     def test_builtin_windows_powershell_lifecycle(self):
-        for scenario in ("fresh-remove", "upgrade", "registration-failure", "runtime-missing-digest", "app-entry-write-failure-update", "protocol"):
+        for scenario in ("preflight", "fresh-remove", "upgrade", "registration-failure", "runtime-api-independent", "runtime-corrupt-download", "app-entry-write-failure-update", "app-entry-version-update", "owned-stale-registration", "owned-removed-registration", "removed-registration-tampered", "removed-registration-unowned", "removed-registration-foreign-folder", "owned-stale-registration-rollback", "owned-stale-registration-tampered", "owned-stale-registration-foreign", "owned-stale-registration-manifest", "protocol"):
             with self.subTest(scenario=scenario):
                 self.run_scenario(scenario, "powershell.exe")
 

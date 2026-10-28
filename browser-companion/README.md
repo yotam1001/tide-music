@@ -1,6 +1,20 @@
 # Optional Tide browser session companion
 
-This is an isolated **source prototype**, not a signed, published or browser-verified login solution. A temporary Zen extension and its native-host registration have been installed for an authorized local test, but Zen cannot currently reach the registered host. No extension installation, profile access, native-host registration, or live Google request is performed by the automated tests. The native receiver is implemented in `crates/provider/src/bin/tide-session-host.rs`. This alternative does not choose the application's default login backend.
+**Trying to connect your account?** Start with the
+[step-by-step Chrome guide](https://github.com/yotam1001/tide-music/blob/main/docs/BROWSER_COMPANION_BETA.md).
+This file is the contributor reference for manifests, permissions and protocol
+tests. Normal users do not need its development commands.
+
+This is an optional **source prototype**, not a signed or store-published login solution. A real Chrome import and subsequent authenticated Tide startup passed the local comparison test recorded in [browser connection evidence](https://github.com/yotam1001/tide-music/blob/main/docs/BROWSER_CONNECTION.md#acceptance-evidence). Zen could not reach its registered host in that test; Firefox and Edge are not established by the Chrome result. Mocked browser tests do not install extensions, read profiles or make live Google requests. Separate Windows lifecycle CI exercises actual native-host registration with a synthetic extension ID. The native receiver is implemented in `crates/provider/src/bin/tide-session-host.rs`. This alternative does not choose the application's default login backend.
+
+For Windows beta installation, connection, troubleshooting and removal, follow
+the [Chrome companion beta guide](https://github.com/yotam1001/tide-music/blob/main/docs/BROWSER_COMPANION_BETA.md). Loading the
+extension and registering the local helper are separate steps. **TideSetup.exe**
+can register the Chrome helper when you explicitly enable its optional Chrome
+setup checkbox and enter the exact installed extension ID. It does not load the
+extension or transfer a session automatically. The new graphical registration
+path still needs live Chrome validation; the earlier recorded Chrome success
+used a separately prepared registration.
 
 ## Contents and local tests
 
@@ -26,7 +40,7 @@ python scripts/package-browser-companion.py --family chromium
 
 Each command creates `dist/tide-browser-FAMILY/extension/` with the selected manifest renamed to `manifest.json`, a `tide-browser-FAMILY.zip` containing those same extension files at its root, and `SHA256SUMS` covering the folder payload and ZIP. The exact file allowlist excludes documentation, tests, native-host manifests, local paths and runtime credential files. Unrecognized source additions are ignored. Symlink/reparse-point selected sources and output locations are rejected; staging stays under checked workspace `dist`, publishes by an atomic no-overwrite rename and refuses existing destinations. The packager supports Windows and Linux with `renameat2`; it refuses publication if that safe primitive is unavailable. Use `--destination review-name` for a new folder stem under `dist`; arbitrary output paths are not accepted.
 
-Run packaging tests with `python -m unittest discover -s scripts -p test_browser_companion_package.py`. Installation and distribution are not part of this prototype. Firefox release distribution needs the relevant signing process; Chrome/Edge registration needs the actual extension ID and a matching allowed native-host origin. Producing a ZIP does not validate browser login.
+Run packaging tests with `python -m unittest discover -s scripts -p test_browser_companion_package.py`. Store distribution is not part of this prototype. Firefox release distribution needs the relevant signing process; Chrome/Edge registration needs the actual extension ID and a matching allowed native-host origin. Producing a ZIP does not validate browser login.
 
 ## Prepare the Windows native host
 
@@ -54,7 +68,7 @@ Chromium manifest with the actual installed extension ID. For independent
 browser tests, use a separate host directory with its own matching origin
 policy; setup refuses to replace a different policy beside an existing host.
 
-Registration changes only the current user's selected Tide native-messaging keys and writes the matching policy beside the receiver. It refuses conflicting registrations or policies. Missing shared registry parent keys are created without force-writing existing keys or values; these shared parents remain after rollback or removal. Matching existing registrations are left untouched; a write failure rolls back only keys created by that attempt and still pointing to its manifest or empty. The non-secret policy file is retained for retry. Unregister removes only registrations still pointing to these exact manifests, leaving saved accounts and files intact. These are persistent device changes; preparation does not authorize executing them. Tests exercise temporary files and an in-memory registry stand-in, without actual registry or browser access. Authorized local Zen registration and temporary extension loading have been exercised, but Zen's native connection check fails; signed-in companion imports remain unverified.
+Registration changes only the current user's selected Tide native-messaging keys and writes the matching policy beside the receiver. It refuses conflicting registrations or policies. Missing shared registry parent keys are created without force-writing existing keys or values; these shared parents remain after rollback or removal. Matching existing registrations are left untouched; a write failure rolls back only keys created by that attempt and still pointing to its manifest or empty. The non-secret policy file is retained for retry. Unregister removes only registrations still pointing to these exact manifests, leaving saved accounts and files intact. These are persistent device changes; preparation does not authorize executing them. Tests exercise temporary files and an in-memory registry stand-in, without actual registry or browser access. The real Chrome comparison and unresolved Zen check are recorded in the linked browser connection evidence; neither establishes a general cross-browser or long-term reliability guarantee.
 
 ## Explicit flow
 
@@ -78,7 +92,7 @@ older receiver's valid `invalid_request` reply prompts a host update. Fixed
 messages distinguish unusable registration, permission, launch and timeout
 errors without displaying raw browser errors. Real Zen testing currently fails
 at native-host lookup/validation despite a valid direct framed-host check; see
-[browser connection evidence](../docs/BROWSER_CONNECTION.md).
+[browser connection evidence](https://github.com/yotam1001/tide-music/blob/main/docs/BROWSER_CONNECTION.md).
 
 For session import, the port posts exactly one object:
 

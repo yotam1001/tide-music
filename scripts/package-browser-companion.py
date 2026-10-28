@@ -14,7 +14,8 @@ import stat
 import tempfile
 import zipfile
 
-COMMON_FILES = ("background.js", "popup.html", "popup.js", "popup.css")
+ICON_FILES = {str(size): f"icon{size}.png" for size in (16, 32, 48, 128)}
+COMMON_FILES = ("background.js", "popup.html", "popup.js", "popup.css", *ICON_FILES.values())
 FAMILY_FILES = {
     "firefox": ("background-firefox.js", "manifest.firefox.json"),
     "chromium": ("background-chromium.js", "manifest.chromium.json"),
@@ -89,6 +90,8 @@ def _validate_manifest(manifest: object, family: str) -> None:
         csp = manifest.get("content_security_policy", {}).get("extension_pages")
     if manifest.get("background") != expected_background or action.get("default_popup") != "popup.html":
         raise PackageError("Manifest entry points differ from the package allowlist")
+    if manifest.get("icons") != ICON_FILES or action.get("default_icon") != {size: ICON_FILES[size] for size in ("16", "32")}:
+        raise PackageError("Manifest icons differ from the local Tide icon allowlist")
     if csp != "default-src 'self'; script-src 'self'; object-src 'none'; connect-src 'none'":
         raise PackageError("Manifest must restrict code and resources to the local prototype")
 
@@ -107,6 +110,11 @@ def _read_payload(source: Path, family: str) -> dict[str, bytes]:
         flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
         with os.fdopen(os.open(path, flags), "rb") as stream:
             payload["manifest.json" if filename == manifest_name else filename] = stream.read()
+        if filename in ICON_FILES.values():
+            data = payload[filename]
+            size = int(next(size for size, name in ICON_FILES.items() if name == filename))
+            if len(data) < 33 or not data.startswith(b"\x89PNG\r\n\x1a\n") or data[12:16] != b"IHDR" or int.from_bytes(data[16:20], "big") != size or int.from_bytes(data[20:24], "big") != size:
+                raise PackageError("Tide icon must be a PNG with the advertised dimensions")
     try:
         manifest = json.loads(payload["manifest.json"])
         _validate_manifest(manifest, family)

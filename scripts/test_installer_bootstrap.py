@@ -57,7 +57,7 @@ class InstallerBootstrapTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="tide-bootstrap-test-") as temporary:
             output = Path(temporary) / "payload-tests.exe"
             version = Path(temporary) / "version.txt"
-            version.write_text("0.4.6", encoding="utf-8")
+            version.write_text("0.1.0-preview.1", encoding="utf-8")
             result = subprocess.run([
                 str(COMPILER), "/nologo", "/target:exe", "/main:PayloadTests", "/warnaserror+",
                 "/out:" + str(output), "/reference:System.Windows.Forms.dll", "/reference:System.Drawing.dll",
@@ -66,7 +66,8 @@ class InstallerBootstrapTests(unittest.TestCase):
                 str(ROOT / "installer/TideSetup.cs"), str(ROOT / "installer/PayloadTests.cs")
             ], capture_output=True, timeout=30)
             self.assertEqual(result.returncode, 0, result.stdout.decode(errors="replace"))
-            result = subprocess.run([str(output)], capture_output=True, timeout=30)
+            # Leave headroom beyond the isolated child's bounded startup deadline.
+            result = subprocess.run([str(output)], capture_output=True, timeout=90)
             self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
             self.assertIn(b"PASS: payload", result.stdout)
             self.assertIn(b"PASS: silent setup", result.stdout)

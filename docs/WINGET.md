@@ -1,13 +1,21 @@
 # WinGet packaging
 
-Proposed package identifier: `TideMusic.Tide`. This document describes packaging
-preparation; it does not mean the package is already in Microsoft's catalog.
+Package identifier: `TideMusic.Tide`. The [community submission](https://github.com/microsoft/winget-pkgs/pull/463557)
+has passed Microsoft's installation, metadata, security and CLA checks. It awaits
+moderator approval and is not yet available from the public catalog. Do not
+advertise the catalog install command until publication is verified.
 
 The original v0.4.5 `TideSetup.exe` has no silent mode. Do not submit a manifest
 that passes `--silent` to that file. The app-only preview ZIP also omits managed
 playback dependencies and must not be listed as a self-contained portable app.
 
 ## Installer artifact
+
+Future builds read their version from `Cargo.toml`, embedding it in the payload
+metadata and Windows file properties. `-AppVersion` is an explicit override for
+rebuilding a historical released payload. Interactive setup, updater preflight
+and the update-confirmation handshake retain their existing behavior. `--silent`
+runs the same installer core and returns its exit code without opening setup UI.
 
 For an installer-only packaging revision of v0.4.5, build the new wrapper around
 the exact published `tide-windows-preview.zip`, preserving the application bytes:

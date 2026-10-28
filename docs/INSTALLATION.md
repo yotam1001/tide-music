@@ -1,100 +1,110 @@
-# Windows preview installation
+# Install Tide on Windows
 
-Double-click **TideSetup.exe** and choose **Install Tide**. Setup shows progress
-and a retryable error if a step fails. At completion choose **Open Tide**, or
-**Connect YouTube Music** to open Account directly. No commands or ZIP extraction
-are required. The full ZIP with **Install Tide.cmd** remains an advanced alternative.
-Setup needs internet access and Windows x64. It installs for the current user in
-`%LOCALAPPDATA%\Programs\Tide`, without administrator privileges, PATH changes,
-system Python or manual PowerShell commands. Launch **Tide** from the Start menu.
-The installed release contains its own mpv, yt-dlp, Deno and private account-helper
-Python runtime. The downloaded installer can be removed after setup succeeds.
+You need **Windows x64** and internet access. The installer sets up the playback
+tools for you. No Rust, Python, terminal commands or API key are needed.
+Installation is for your Windows user and does not require administrator access.
 
-The single executable embeds the preview ZIP and its SHA-256 digest. It validates
-the embedded digest, exact file allowlist and individual checksums before staging
-any files in a private temporary folder. The temporary payload is removed after
-setup. It does not contain credentials, a browser profile or an embedded browser.
+WinGet packaging is under review. See [the packaging guide](WINGET.md) for its
+status and build instructions. Newly built installers support `--silent` for
+unattended installation, with the same payload validation as the graphical setup.
 
-Setup validates the packaged SHA-256 manifest before copying its explicit payload.
-Playback downloads use exact upstream release versions and require upstream
-SHA-256 digests matching the checksums pinned in the setup script; a missing digest
-or mismatch stops setup. Embedded CPython 3.14.0
-uses the checksum from the [official Windows release index](https://www.python.org/ftp/python/3.14.0/windows-3.14.0.json).
-The exactly pinned helper dependencies are universal wheels fetched from PyPI;
-each wheel must match both its published and script-pinned SHA-256 digest. No existing Python environment,
-browser profile or saved account data is copied into the installation. Upstream
-archives, Python license and wheel license metadata remain in the owned release.
+Download [TideSetup.exe](https://github.com/yotam1001/tide-music/releases/latest/download/TideSetup.exe)
+from the [Windows release](https://github.com/yotam1001/tide-music/releases/latest).
+For YouTube Music, get its matching **tide-browser-chromium.zip** too.
 
-## Optional browser companion
+## Install and open
 
-The graphical installer opens Account for connection guidance and does not ask
-for request headers or extension IDs. It does not install an unsigned extension
-into the browser automatically. Signed companion distribution and Zen lookup
-remain unresolved.
+For YouTube Music, begin with the
+[Chrome connection guide](https://github.com/yotam1001/tide-music/blob/main/docs/BROWSER_COMPANION_BETA.md).
+Loading the companion before opening setup lets you enable its connection during
+the first installation. For local files only, follow the steps below directly.
 
-In the advanced ZIP launcher, if the ZIP includes `tide-session-host.exe`, setup can register the native helper
-for one selected browser under the current user's registry. Install the separate
-Tide companion extension in that browser first. Choose Chrome or Edge at the setup
-prompt, then paste the **actual extension ID displayed by that browser**. Setup
-accepts only a complete 32-letter Chromium ID; it never guesses an ID or grants
-wildcard origins. An existing different Tide native-host registration is preserved
-and causes setup to stop.
+1. Open the release and expand **Assets** if needed.
+2. Download **TideSetup.exe**, rather than **Source code (zip)**.
+3. Open it and choose **Install Tide**. Stay online while setup downloads and
+   checks the playback tools.
+4. Choose **Open Tide**, or search for **Tide** in the Windows Start menu.
 
-Firefox registration uses the companion's fixed add-on ID. Zen's real native-host
-lookup is still unresolved, and signed public companion distribution remains an
-open release gate. A prepared registration does not prove that a browser can use
-the helper. Choosing None skips first-install registration. On update, the existing
-browser choice is retained unless another browser is explicitly selected.
-The browser extension itself is installed and removed in the browser; setup owns
-only its Tide native-host registration. Manual import remains available in
-[ACCOUNT_SETUP.md](ACCOUNT_SETUP.md).
+The current installer is unsigned, so Windows may show an unknown-publisher or
+download warning. Verify that it came from this repository before deciding to
+continue. If a device policy blocks it, follow your administrator's rules and
+report the exact message rather than disabling protections.
 
-## Update
+For YouTube Music, follow the
+[Chrome connection guide](https://github.com/yotam1001/tide-music/blob/main/docs/BROWSER_COMPANION_BETA.md).
+It explains **Enable Chrome companion connection** and the extension ID. For
+local audio only, leave that checkbox off and use **Settings → More options → Open audio file**.
+Rerun setup if you want to enable the companion later.
 
-Close Tide and let any pending companion request finish. Run the new
-**TideSetup.exe** and choose **Install Tide** again. Setup refuses to stop running processes. It builds
-a fresh private release and verifies dependencies before changing Start menu
-shortcuts or native-host registration. A failed preparation leaves the previous
-installation usable. Registration/shortcut failures restore the previous links
-and matching helper registration. Successful updates remove previous owned files;
-additional files placed there by the user are preserved. Sessions and preferences
-stay in Tide's application-data directory, outside the install directory.
+## Update Tide
 
-## Remove
+For a new **stable** version, open **Settings → Check for updates**. Choose
+**Update Tide** when offered. Downloading and verification happen while music
+continues, with progress and a Cancel action inside Tide. Then choose **Restart
+to update** when convenient. The update applies in the background and reopens
+Tide; your account and preferences are kept. See [in-app updates](IN_APP_UPDATES.md).
+You can turn startup checks off in Settings.
 
-Choose **Tide → Uninstall** in **Windows Settings → Apps**, **Uninstall Tide**
-in the Start menu, or **Uninstall Tide.cmd** from the advanced ZIP. Close Tide first. Removal deletes recorded app/runtime files
-and only shortcuts and native-host keys that still point to that installation.
-Different registrations, modified shortcuts and additional unowned files are
-preserved. Paths containing junctions or symbolic links are rejected. Removal
-does not inspect or delete saved preferences or encrypted sessions. To remove
-a saved session, use **Disconnect** in Tide before uninstalling. Remove the browser
-companion extension through the browser's extension manager separately.
+Setup repairs an older Windows version/icon/uninstall entry only when its
+product, installation root and command match Tide and its registered release
+passes the ownership and package checksum checks. When that old release folder
+has already been removed, the active installation must pass those checks instead.
+The readiness check does not
+change that entry. Unrelated or modified registrations remain protected.
 
-This is a graphical, unsigned preview installer, not a verified stable release. Windows may display an unsigned-download warning.
-Enterprise PowerShell policy may prevent the launcher from running. Fresh
-installation with real downloads, public companion distribution and longer
-playback/session reliability remain release validation requirements.
+Updates keep your listening-history choice, Discord presence, theme, volume,
+shortcuts and other preferences in your Windows user profile, outside the app's
+versioned installation folder. Settings are saved by atomic replacement, with
+one recovery backup. An unreadable queue does not reset your other preferences.
+History reporting and Discord sharing stay off by default until you enable them.
 
-## Build setup from source
+Preview 1 and preview 2 can discover stable **0.1.3** through this updater.
+The updater skips prerelease targets and drafts; it does not skip an installed
+preview when a newer stable version exists. If needed, download **TideSetup.exe**,
+close Tide and run setup again without uninstalling first. Copies without an
+updater need that manual update once.
 
-On Windows, build and validate the preview ZIP first, then run:
+App updates retain the browser choice recorded by setup. The unpacked Chrome
+extension is updated separately: replace its files and choose **Reload** in
+Chrome, following the connection guide.
 
-```powershell
-pwsh -File scripts/build-installer.ps1 -Package dist/tide-windows-preview.zip -AppVersion 0.1.0-preview
-```
+If an update fails, setup aims to leave the previous installation usable. Read
+the error before retrying. Setup never force-closes another Tide process.
 
-The wrapper uses the Windows .NET Framework compiler, WinForms, and the existing
-installer core. No additional installer framework or player runtime is introduced.
-CI builds **TideSetup.exe** alongside the advanced ZIP and verifies its embedded
-payload without installing it. `--preview` exercises only the setup screens;
-`--verify-payload` checks and removes the temporary payload without installing.
+Only one setup or uninstall can run at a time for the current Windows user.
+If setup says another operation is running, let that operation finish before
+retrying. Ownership conflicts report the differing field names, without their
+values. Do not delete the Windows uninstall entry to bypass a conflict; include
+those field names when reporting the problem.
 
-Newly built installers also support `--silent`: this runs the same verified
-payload without opening setup screens, waits for installation, and returns the
-underlying install script's exit code. Close Tide before updating. `--help`
-lists supported arguments; unknown or combined arguments fail without opening
-the GUI. Always pass the actual release version as `-AppVersion` when building;
-this is embedded in setup and used for Windows Apps version detection.
+## Remove Tide
 
-See [WINGET.md](WINGET.md) for manifest generation and submission checks.
+1. To remove the saved sign-in too, first choose **Account → Disconnect account**
+   in Tide.
+2. Close Tide and finish or cancel any companion import.
+3. In **Windows Settings → Apps**, find **Tide** and choose **Uninstall**.
+   **Uninstall Tide** in Start does the same job.
+4. Remove the companion separately from Chrome if you used it.
+
+Uninstalling preserves saved preferences and sessions. Disconnecting removes
+Tide's saved session, without signing you out of Google in your browser.
+
+## Common questions
+
+**Where is Tide installed?** Under `%LOCALAPPDATA%\Programs\Tide`. Launch it
+from Start; you do not need to browse its installation folders.
+
+**Can I delete the installer afterward?** Yes, once setup succeeds.
+
+**Does listening create huge build files?** No. Installed Tide never compiles
+Rust. Development build folders and toolchains are excluded from the package.
+The updater keeps one installer and one partial download, each capped at 96 MiB.
+The installed playback tools need additional disk space.
+
+**I downloaded a ZIP.** Prefer the installer for normal use. The advanced preview
+ZIP contains **Install Tide.cmd**. A GitHub Actions artifact can contain both
+**TideSetup.exe** and that advanced ZIP; use the EXE in the outer download.
+
+[Troubleshooting](https://github.com/yotam1001/tide-music/blob/main/docs/TROUBLESHOOTING.md) ·
+[Account help](ACCOUNT_SETUP.md) ·
+[Installer internals](https://github.com/yotam1001/tide-music/blob/main/docs/INSTALLATION_DETAILS.md)

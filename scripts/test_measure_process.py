@@ -63,7 +63,9 @@ class MeasurementTests(unittest.TestCase):
             '-ArgumentList @("-NoProfile","-File",("`""+$env:TIDE_TEST_CHILD+"`"")) '
             '-WindowStyle Hidden -PassThru; $p.WaitForExit(); $p.Dispose() }\nexit 0\n'
         )
-        self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
+        self.assertEqual(result.returncode, 0,
+                         result.stderr.decode(errors="replace") + "\n"
+                         + json.dumps({"report": report, "failure": failure}, indent=2))
         self.assertEqual(report["exit_code"], 0)
         self.assertTrue(report["helpers_ended"])
         self.assertTrue(report["cleanup_observations"])

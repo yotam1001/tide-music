@@ -13,6 +13,8 @@ use std::{
 };
 use tide_core::Track;
 use zeroize::Zeroize;
+mod feedback;
+pub use feedback::{FeedbackOperation, FeedbackRequest, FeedbackResult, PlaylistDetails, Rating};
 
 const MAX_SESSION: usize = 65536;
 // Local encrypted metadata, removed before any headers reach a helper or HTTP.
@@ -119,6 +121,8 @@ pub struct Playlist {
     pub subtitle: String,
     #[serde(default)]
     pub artwork_url: Option<String>,
+    #[serde(default)]
+    pub owned: bool,
 }
 #[derive(Clone, Deserialize, Serialize)]
 pub struct Card {
@@ -130,23 +134,54 @@ pub struct Card {
     pub kind: String,
     pub shelf: String,
     #[serde(default)]
+    pub artists: Vec<tide_core::Artist>,
+    #[serde(default)]
     pub artwork_url: Option<String>,
 }
 #[derive(Clone, Serialize)]
 #[serde(tag = "action", rename_all = "lowercase")]
 pub enum Request {
-    Connect { database: PathBuf, index: u32 },
-    SwitchAccount { index: u32 },
+    Connect {
+        database: PathBuf,
+        index: u32,
+    },
+    SwitchAccount {
+        index: u32,
+    },
     Library,
-    Playlist { id: String },
-    Radio { video_id: String },
+    Playlist {
+        id: String,
+    },
+    Radio {
+        video_id: String,
+    },
     Liked,
+    Supermix,
     Home,
+    Artist {
+        id: String,
+    },
+    Artists {
+        video_id: String,
+    },
+    Feedback {
+        request: FeedbackRequest,
+        #[serde(skip)]
+        expected: SavedConnection,
+    },
 }
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Response {
     Connected,
+    Artist {
+        name: String,
+        tracks: Vec<Track>,
+        truncated: bool,
+    },
+    Artists {
+        artists: Vec<tide_core::Artist>,
+    },
     Session {
         headers: BTreeMap<String, String>,
     },
@@ -158,6 +193,11 @@ pub enum Response {
     Tracks {
         tracks: Vec<Track>,
         truncated: bool,
+        #[serde(default)]
+        playlist: Option<PlaylistDetails>,
+    },
+    Feedback {
+        result: FeedbackResult,
     },
     Home {
         cards: Vec<Card>,
@@ -184,6 +224,22 @@ impl Drop for RefreshedHeaders {
     }
 }
 
+// Deserialize only the optional credentials a second time. Serde skips the
+// already-decoded track/card metadata without allocating another JSON tree.
+#[derive(Default, Deserialize)]
+#[serde(transparent)]
+struct RefreshedJson(serde_json::Value);
+impl Drop for RefreshedJson {
+    fn drop(&mut self) {
+        zeroize_json(&mut self.0);
+    }
+}
+#[derive(Deserialize)]
+struct RefreshEnvelope {
+    #[serde(default)]
+    refreshed_headers: RefreshedJson,
+}
+
 fn decode_helper_reply(bytes: &[u8]) -> Result<HelperReply, &'static str> {
     // Parse data independently so an invalid optional update cannot hide valid
     // library results or turn a transient error into a rejected session.
@@ -192,19 +248,21 @@ fn decode_helper_reply(bytes: &[u8]) -> Result<HelperReply, &'static str> {
     let mut refreshed = RefreshedHeaders::default();
     if matches!(
         response,
-        Response::Library { .. } | Response::Tracks { .. } | Response::Home { .. }
-    ) {
-        let mut document: serde_json::Value = serde_json::from_slice(bytes)
-            .map_err(|_| "Account helper returned an unsupported response")?;
-        if let Some(value) = document.get_mut("refreshed_headers") {
-            let mut encoded = serde_json::to_vec(value).unwrap_or_default();
-            zeroize_json(value);
+        Response::Library { .. }
+            | Response::Tracks { .. }
+            | Response::Home { .. }
+            | Response::Artist { .. }
+            | Response::Artists { .. }
+            | Response::Feedback { .. }
+    ) || matches!(&response, Response::Error { code } if code.starts_with("feedback_"))
+    {
+        if let Ok(document) = serde_json::from_slice::<RefreshEnvelope>(bytes) {
+            let mut encoded = serde_json::to_vec(&document.refreshed_headers.0).unwrap_or_default();
             if encoded.len() <= MAX_SESSION {
                 refreshed.0 = parse_headers(&encoded).ok();
             }
             encoded.zeroize();
         }
-        zeroize_json(&mut document);
     }
     Ok(HelperReply {
         response,
@@ -875,6 +933,20 @@ impl Provider {
         }
         let (mut headers, revision) = self.read_session()?;
         let expected_connection = SavedConnection::from_headers(&headers, revision);
+        if let Request::Feedback { expected, request } = &request {
+            if expected != &expected_connection
+                || !request.valid()
+                || cancel.load(Ordering::Acquire)
+            {
+                for value in headers.values_mut() {
+                    value.zeroize();
+                }
+                return Err(
+                    "Account changed or collection action is invalid; choose the action again"
+                        .into(),
+                );
+            }
+        }
         let expected_authuser = headers.get("x-goog-authuser").cloned();
         let expected_pageid = headers.get("x-goog-pageid").cloned();
         let expected_cookie =
@@ -1301,7 +1373,9 @@ fn execute_helper(
         Response::Error { code } if code == "container" => {
             Err("Sign-in was found in a Zen container. Tide currently needs YouTube Music signed in on a tab outside that container.".into())
         }
-        Response::Error { code } if code == "session" || code == "request" => {
+        Response::Error { code }
+            if code == "session" || code == "request" || code == "supermix_unavailable" || code == "artist_unavailable" =>
+        {
             Ok(Response::Error { code })
         }
         Response::Error { code } if code == "login_browser" => Err(
@@ -1464,11 +1538,16 @@ fn unprotect(_: &[u8]) -> Result<Vec<u8>, &'static str> {
 
 #[cfg(test)]
 mod tests {
+    // These fixtures intentionally use the production machine-wide Windows mutex.
+    // Serialize fixture owners while keeping each test's real cross-thread locking.
+    #[cfg(windows)]
+    static SESSION_FIXTURES: std::sync::Mutex<()> = std::sync::Mutex::new(());
     use super::*;
 
     #[cfg(windows)]
     #[test]
     fn native_rotation_merges_without_rollback_deletion_or_account_switch() {
+        let _fixture = SESSION_FIXTURES.lock().unwrap_or_else(|e| e.into_inner());
         let directory = std::env::temp_dir().join(format!(
             "tide-native-merge-{}-{}",
             std::process::id(),
@@ -1530,6 +1609,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn api_auth_rotation_preserves_concurrent_non_auth_cookies_and_metadata() {
+        let _fixture = SESSION_FIXTURES.lock().unwrap_or_else(|e| e.into_inner());
         for concurrent_update in [false, true] {
             let directory = std::env::temp_dir().join(format!(
                 "tide-api-merge-{}-{}",
@@ -1629,6 +1709,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn api_refresh_rejects_newer_auth_cohort_even_if_signing_cookie_is_unchanged() {
+        let _fixture = SESSION_FIXTURES.lock().unwrap_or_else(|e| e.into_inner());
         let directory = std::env::temp_dir().join(format!(
             "tide-api-auth-conflict-{}-{}",
             std::process::id(),
@@ -1759,13 +1840,64 @@ mod tests {
             assert!(matches!(reply.response, Response::Tracks { .. }));
             assert!(reply.refreshed.0.is_none());
         }
+        for response in [
+            serde_json::json!({"type":"artist", "name":"Band", "tracks":[], "truncated":false}),
+            serde_json::json!({"type":"artists", "artists":[]}),
+        ] {
+            let mut response = response;
+            response["refreshed_headers"] =
+                serde_json::json!({"cookie":"__Secure-3PAPISID=fresh", "x-goog-authuser":"1"});
+            let reply = decode_helper_reply(&serde_json::to_vec(&response).unwrap()).unwrap();
+            assert!(
+                reply.refreshed.0.is_some(),
+                "artist navigation must retain refreshed session cookies"
+            );
+        }
         let reply = decode_helper_reply(br#"{"type":"home","cards":[]}"#).unwrap();
+        assert!(reply.refreshed.0.is_none());
+    }
+
+    #[test]
+    fn large_playlist_keeps_metadata_and_optional_credentials_separate() {
+        let tracks: Vec<_> = (0..tide_core::MAX_QUEUE_TRACKS)
+            .map(|index| {
+                serde_json::json!({
+                    "title":format!("Track {index}"), "artist":"Fixture artist",
+                    "album":"Fixture album", "source":format!("fixture-{index}"),
+                    "artwork_url":"https://i.ytimg.com/fixture.jpg"
+                })
+            })
+            .collect();
+        let bytes = serde_json::to_vec(&serde_json::json!({
+            "type":"tracks", "tracks":tracks, "truncated":true,
+            "refreshed_headers":{"cookie":"__Secure-3PAPISID=fresh", "x-goog-authuser":"1"}
+        }))
+        .unwrap();
+        let reply = decode_helper_reply(&bytes).unwrap();
+        let Response::Tracks {
+            tracks, truncated, ..
+        } = reply.response
+        else {
+            panic!("Playlist response was lost");
+        };
+        assert!(truncated);
+        assert_eq!(tracks.len(), tide_core::MAX_QUEUE_TRACKS);
+        assert_eq!(tracks.last().unwrap().title, "Track 1999");
+        assert_eq!(reply.refreshed.0.as_ref().unwrap()["x-goog-authuser"], "1");
+
+        // An ambiguous optional update must not discard playable results.
+        let reply = decode_helper_reply(
+            br#"{"type":"tracks","tracks":[],"truncated":false,"refreshed_headers":{"cookie":"__Secure-3PAPISID=fresh" },"refreshed_headers":null}"#,
+        )
+        .unwrap();
+        assert!(matches!(reply.response, Response::Tracks { .. }));
         assert!(reply.refreshed.0.is_none());
     }
 
     #[cfg(windows)]
     #[test]
     fn successful_refresh_is_encrypted_and_updates_existing_playback_lease() {
+        let _fixture = SESSION_FIXTURES.lock().unwrap_or_else(|e| e.into_inner());
         let directory = std::env::temp_dir().join(format!(
             "tide-refresh-test-{}-{}",
             std::process::id(),
@@ -1812,6 +1944,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn rejected_refresh_preserves_session_and_selected_identity() {
+        let _fixture = SESSION_FIXTURES.lock().unwrap_or_else(|e| e.into_inner());
         let directory = std::env::temp_dir().join(format!(
             "tide-refresh-reject-test-{}-{}",
             std::process::id(),
@@ -1864,6 +1997,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn disconnect_waits_for_in_flight_session_commit() {
+        let _fixture = SESSION_FIXTURES.lock().unwrap_or_else(|e| e.into_inner());
         let directory = std::env::temp_dir().join(format!(
             "tide-disconnect-lock-test-{}-{}",
             std::process::id(),
@@ -1904,6 +2038,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn login_generation_preserves_legacy_refreshes_and_tracks_explicit_imports() {
+        let _fixture = SESSION_FIXTURES.lock().unwrap_or_else(|e| e.into_inner());
         let directory = std::env::temp_dir().join(format!(
             "tide-connection-revision-test-{}-{}",
             std::process::id(),
@@ -1957,6 +2092,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn reconnect_rejects_stale_playback_lease_and_verified_candidate() {
+        let _fixture = SESSION_FIXTURES.lock().unwrap_or_else(|e| e.into_inner());
         // Isolate this multi-step race scenario from other storage fixtures.
         let _guard = SessionWriteLock::acquire().unwrap();
         let directory = std::env::temp_dir().join(format!(
@@ -2002,6 +2138,62 @@ mod tests {
         fs::remove_dir_all(directory).unwrap();
     }
     #[test]
+    fn feedback_envelope_does_not_send_local_account_revision_to_the_helper() {
+        let request = Request::Feedback {
+            request: FeedbackRequest::Rate {
+                video_id: "K4DyBUG242c".into(),
+                rating: Rating::Like,
+            },
+            expected: SavedConnection {
+                revision: Some("local-generation".into()),
+                account_index: 1,
+                page_id: None,
+            },
+        };
+        assert_eq!(
+            serde_json::to_value(request).unwrap(),
+            serde_json::json!({
+                "action":"feedback", "request":{"kind":"rate", "video_id":"K4DyBUG242c", "rating":"LIKE"}
+            })
+        );
+        let reply = decode_helper_reply(br#"{"type":"error","code":"feedback_unconfirmed","refreshed_headers":{"cookie":"__Secure-3PAPISID=fresh", "x-goog-authuser":"1"}}"#).unwrap();
+        assert!(reply.refreshed.0.is_some());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn changed_account_rejects_collection_write_before_starting_any_helper() {
+        let _fixture = SESSION_FIXTURES.lock().unwrap_or_else(|e| e.into_inner());
+        let directory = std::env::temp_dir().join(format!(
+            "tide-feedback-binding-{}-{}",
+            std::process::id(),
+            LEASE_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        private_directory(&directory).unwrap();
+        let provider = Provider {
+            directory: directory.clone(),
+        };
+        provider
+            .import_bytes(br#"{"cookie":"__Secure-3PAPISID=old", "x-goog-authuser":"1"}"#)
+            .unwrap();
+        let mut expected = provider.saved_connection().unwrap().unwrap();
+        expected.account_index = 2;
+        let result = provider.execute(
+            Request::Feedback {
+                request: FeedbackRequest::History {
+                    video_id: "K4DyBUG242c".into(),
+                },
+                expected,
+            },
+            Arc::new(AtomicBool::new(false)),
+        );
+        assert!(
+            matches!(result, Err(message) if message == "Account changed or collection action is invalid; choose the action again")
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn radio_request_matches_helper_contract() {
         let request = Request::Radio {
             video_id: "K4DyBUG242c".into(),
@@ -2011,6 +2203,13 @@ mod tests {
             serde_json::json!({
                 "action": "radio", "video_id": "K4DyBUG242c"
             })
+        );
+    }
+    #[test]
+    fn supermix_request_matches_helper_contract() {
+        assert_eq!(
+            serde_json::to_value(Request::Supermix).unwrap(),
+            serde_json::json!({"action": "supermix"})
         );
     }
     #[test]
@@ -2075,6 +2274,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn imported_session_is_encrypted_and_lease_is_removed() {
+        let _fixture = SESSION_FIXTURES.lock().unwrap_or_else(|e| e.into_inner());
         let directory = std::env::temp_dir().join(format!(
             "tide-account-test-{}-{}",
             std::process::id(),

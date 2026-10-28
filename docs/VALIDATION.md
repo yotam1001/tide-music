@@ -1,5 +1,142 @@
 # Prototype validation
 
+## Native UI refinement (2026-10-17)
+
+The shell separates Settings from Account and exposes theme switching directly
+in the header. Account is a labeled header button next to Settings; numbered
+account slots and manual import live under Advanced. Settings has no duplicate
+theme controls. Song and queue actions use explicitly styled Slint popups rather
+than OS context menus or row-expanding action bars. Removing a queue track is
+now a menu action; reordering still uses the existing drag handles. Brand assets and existing color
+literals are retained. See [the UI review](UI_REVIEW.md).
+
+`cargo test -p tide-music --test ui_chrome` exercises real Slint pointer and
+keyboard input with the software renderer: theme without an account, hover
+feedback, settings/account isolation, Escape and outside-click dismissal,
+keyboard song actions, fixed list geometry, popup surface colors in both themes,
+full/compact/minimum layouts, and the absence of a separate Playing status strip.
+Windows CI uploads the synthetic software-renderer gallery for visual review.
+Optional render exports use `TIDE_UI_REVIEW_DIR`. Fixtures are synthetic and do
+not open a desktop window, load saved accounts or start playback. The queue-text
+regression dispatches Remove through the real menu and compares time/action and
+artwork/handle pixels across long, unbroken and mixed-direction metadata.
+
+These checks supplement the existing slider, artwork and restored-surface
+regressions; they do not replace actual Windows focus, physical media keys,
+account onboarding or long-session listening checks. Existing draft beta assets
+are not updated merely by changing the UI source.
+
+## Final candidate and real Windows lifecycle (2026-10-15)
+
+Candidate `f02691501a72aed0f07164999b36437ac1c4b567` passed all jobs in
+[push CI](https://github.com/yotam1001/tide-music/actions/runs/38751976892) and
+[PR CI](https://github.com/yotam1001/tide-music/actions/runs/38751986879).
+The real lifecycle job used disposable hosted Windows runners, actual per-user
+HKCU uninstall/native-host keys and Start-menu shortcuts, pinned real runtime
+downloads, installed local-audio UI smoke checks, update and registered-command
+removal. Both downloaded evidence artifacts report success. The PR artifact uses
+GitHub's synthetic merge revision; the draft downloads use the push artifacts
+for the exact candidate commit.
+
+The downloaded setup passed embedded extraction/cleanup and its embedded ZIP
+hash matches the separate candidate ZIP. ZIP payload, source/checksum/privacy
+checks and both companion archives pass. Text source comparison normalizes
+checkout line endings; icons and archive/extracted file bytes match exactly.
+The setup SHA-256 is
+`2896a85043fc5ce19e2a1352ff26344cb94451d4ada7da828e3c639b1ce37a04`;
+the preview ZIP SHA-256 is
+`29a293eadde97ffb62f41cfa3c5c34eaf4776a3d5b63241c61ab1c446100220a`.
+Local script validation passed 43 tests with three capability skips. Index and
+fresh-public-clone privacy audits passed without findings.
+
+Real CMD regressions first reproduced a waiting launcher's directory lock and
+failure after its child deleted the executing batch file. Both launchers now
+leave the owned working directory and parse their complete result-handling tail
+before setup/removal can delete them. Disposable self-deleting fixtures verify
+success, exact failure exit codes and paths containing spaces and `!`. Launchers
+close their own consoles; callers in an existing CMD shell use `cmd /c`.
+
+An intermediate `a941445` PR check failed when its harmless PowerShell setup
+fixture exceeded the test's 15-second startup deadline. That failure remains
+recorded; both final runs passed without rerunning or relabeling the failed job.
+
+This evidence does not establish interactive installer clicks, high-DPI setup,
+fresh authenticated browser import through the graphical route, physical Fn keys
+with game focus, or weekly session longevity. Chrome used a synthetic extension
+ID; no account credentials were used by CI. The beta remains an unpublished draft
+until the remaining checks and publication review.
+
+## Fresh-runner failures and onboarding hardening (2026-10-15)
+
+The first clean hosted Windows run for `01406d9` did not pass: its Windows
+PowerShell child inherited the PowerShell 7 module path and failed at
+`Get-FileHash` before installation. The failure artifact was downloaded and
+inspected. The graphical setup child, advanced CMD wrappers and hosted probe
+now select the Windows PowerShell system modules without changing the user's
+persistent environment. The C# regression launches a harmless real script with
+an intentionally incompatible inherited module path and verifies hash commands,
+path quoting and exact Chrome arguments; the CMD regression also verifies
+argument transfer and a nonzero child exit code survives the wrapper.
+
+A separate temporary-directory probe reproduced inability to remove the current
+working directory. The real uninstall entry now leaves both the process and
+PowerShell working directories before removal, and the uninstall shortcut uses
+a stable Windows folder. Entry regressions pass in PowerShell 7 and Windows
+PowerShell 5.1. Hosted validation now invokes the actual registered uninstall
+command from the owned install directory instead of invoking only the package
+script. A new passing hosted result is required; the original failed run remains
+failed evidence, not a release pass.
+
+The primary account action now opens browser connection guidance; the legacy Zen
+picker is under Advanced. Companion packages include the existing Tide PNG icon
+resources at 16/32/48/128 with manifest/dimension validation, a prominent
+session-cookie disclosure and privacy link. Privacy and store-preparation docs
+describe actual processing and human publication steps. These changes do not
+establish Chrome Web Store availability or a fresh authenticated browser import.
+
+## Graphical Chrome connection setup (2026-10-15)
+
+New setup source offers an unchecked-by-default Chrome companion option and
+exact extension-ID field. C# tests cover opt-in control behavior, invalid IDs,
+argument/path quoting, passing the normalized ID into the existing owned setup
+core, and control bounds. A setup containing the previously validated matching
+preview ZIP compiled and passed its actual embedded-payload verification. That
+local bridge build is not a new player build or a distributable release asset.
+
+The application Help URL now points to maintained main-branch account guidance.
+Docs lead with companion connection instead of manual headers. Actual browser
+handshake/import through the new graphical route and rendered high-DPI screens
+remain unverified; do not infer them from argument/control tests. Preview capture
+was obscured by another full-screen app; no user game/browser inputs were sent.
+
+A separate clean hosted-Windows CI job is being added for real per-user registry,
+shortcuts, private runtimes, native app, update and removal. Its guard refuses to
+run on this development machine. Passing that job will be fresh Windows system
+integration evidence, not evidence of GUI clicks, authentication or game-focused
+physical keys.
+
+## Actual Windows CI installer candidate (2026-10-15)
+
+Downloaded the successful main-branch `1e403b7` CI artifacts. The actual
+`TideSetup.exe --verify-payload` passed embedded extraction/checksum checks, and
+the matching preview ZIP passed its payload/checksum/privacy gate.
+
+The opt-in `verify-installed-preview.ps1` probe passed real pinned downloads,
+installation, update to a fresh release, and removal. Both installed revisions
+passed mpv/yt-dlp/Deno version probes, managed Python imports, and native UI
+smoke assertions with silent local audio: browsing preservation, queue actions,
+media Next/Previous routing, pointer drag, and long-drag/autoscroll. Update removed
+the previous owned release; uninstall removed all owned installed files, test
+shortcuts, and the fixture uninstall entry.
+
+Isolation matters: the test used disposable files and actual `.lnk` files outside
+the real Start menu, isolated application-data paths, and in-memory uninstall
+registry I/O. It did not change the current user's installed Tide or account.
+It did not test the setup GUI click path or Windows Settings on clean Windows.
+Windows Sandbox is unavailable on the test machine. Authenticated streaming,
+game-focused physical keys, and days-long session behavior were not retested by
+this local-audio probe. See [beta gates](BETA_RELEASE.md).
+
 ## Restore repaint regression (2026-10-13)
 
 Restoring the native window now invalidates the full scene through an identical
@@ -809,3 +946,101 @@ time/actions and artwork/handles unchanged at widths 650, 780 and 1140 in both
 themes. Native remove controls remain reachable. Full names remain in accessibility
 labels. Software images use synthetic metadata only; no user account or playback
 is opened. These ordinary player fixes contain no experimental Jam code.
+
+### Playback runtime downloads without a release API lookup (2026-10-16)
+
+Hosted clean-install checks repeatedly encountered GitHub's unauthenticated API
+rate limit while looking up release metadata. The failed evidence was retained;
+retrying those jobs passed, but the API remained an avoidable setup dependency.
+Setup now downloads the same exact mpv/yt-dlp/Deno release URLs and verifies the
+same reviewed SHA-256 pins against the actual files before extraction. Versions,
+checksums, overwrite refusal, path checks and bounded download timeout are unchanged.
+No GitHub account/token or insecure fallback is added.
+
+Isolated installer lifecycle/package tests pass. New regressions exercise the
+production asset function with the metadata API unavailable, reject missing pins
+and existing output before downloading, and reject a corrupted runtime by the
+actual checksum check before tools are extracted. These cases cover PowerShell 7
+and built-in Windows PowerShell 5.1. The real-download verifier also passes pinned
+CPython/helper imports and all three playback-tool checksums and executable
+versions in a disposable temporary fixture, which is removed afterward. It does
+not install Tide, register a browser host, access an account or show an app window.
+GitHub's download hosting and other upstream services still need to be reachable.
+
+### Experimental native Jams (2026-10-16)
+
+At `cb36f50`, the opt-in experimental app passed 41 unit tests and four
+rendered integration tests, strict workspace Clippy with experimental
+controls, and the offline native ownership probe. The Jam protocol/HTTP/
+TLS/CLI suite passed 27 tests; its native probe is explicitly opt-in.
+These results precede integration of the subsequent main-branch queue
+and installer fixes and do not verify that integration.
+
+Native Jams provide host/join/leave controls, private invite-file handoff,
+bounded background networking and guest control ownership. Worker lifecycle
+tests use synthetic local HTTP fixtures. Rendered input tests cover minimum,
+full, compact and mini layouts, disabled guest transport, reachable local
+volume/Leave and Escape. These do not establish real two-computer
+authenticated YouTube playback, Internet synchronization, long-session
+behavior or deployed proxy safety. The immutable f026915 beta assets do
+not contain Jams, and this branch remains separate for user review.
+
+After integrating main at `d0ed644`, the experimental workspace passes 121 tests
+with four explicitly opt-in probes ignored. Strict workspace Clippy and formatting
+pass. The 27-test Jam suite also passes, with its native probe still opt-in.
+The offline native ownership probe passes without showing a window or loading
+audio. Synthetic host/guest/minimum/mini renders were regenerated; the compact
+light guest view was inspected. This integration retains the current queue-text,
+indicator and setup fixes; it does not close the real-network validation gates.
+
+### Experimental Jam recovery and network faults (2026-10-16)
+
+A native guest's per-track playback error previously marked the entire Jam
+terminal, preventing the host's next song from recovering. A production guest
+update reducer now pauses and waits on that song without repeated loads, while a
+new host play can load and synchronize normally. Its regression failed under the
+previous terminal-error behavior and passes after the change. Stale, slow,
+invalid and explicitly disconnected state cannot revive playback. The updated
+experimental workspace passes 123 tests with four opt-in probes ignored; strict
+workspace and lab Clippy pass.
+
+Two real muted native players passed the original synchronization probe and a
+new delayed/dropped-HTTP probe together in 38.59 seconds. A separate sampled run
+of the new probe passed seven plays, 32 dropped guest requests, outage pause,
+same-membership recovery and eight bounded correction seeks in 22.45 seconds.
+Its debug fixture process tree (two players plus local relay/proxy, without the
+Tide UI or extraction) had 15 samples after discarding five startup samples:
+working-set median/p95 128.01/129.59 MiB, private-bytes median/p95 96.43/97.92 MiB.
+The process exited zero, all observed helpers ended and sampling races were zero.
+These are short synthetic-lab measurements, not release-app overhead or gaming
+performance evidence.
+Both native probes also pass serially with the explicit null-audio CI feature
+in 38.56 seconds; this is separate from the normal muted system-audio evidence.
+See the [Jam lab](../experiments/jam/README.md) for scope and the
+[security review](../experiments/jam/SECURITY_REVIEW.md) for remaining risks.
+No real account or browser session was used; no relay was deployed. The normal
+installer still excludes Jams, and the draft remains unmerged for user review.
+
+### Experimental Jam private-file inputs (2026-10-16)
+
+A controlled Windows named pipe reproduced the production guest file reader
+connecting and remaining blocked after cancellation. A supervisor stopped only
+that isolated test after its deadline. After applying a shared native/CLI private
+file guard, the probe exits zero and the pipe is never connected. Inputs must be
+ordinary, size-bounded files; Windows rejects direct device/UNC namespaces,
+reserved device names and alternate data streams before filesystem access, and
+checks the opened handle without following a final reparse point. Exclusive
+private-file creation remains intact.
+
+The supervised CI gate requires exactly one named ignored test to exist. A fixture
+pointing at a real unrelated Rust test binary reproduced a zero-test false pass;
+the corrected gate rejects that fixture before creating the pipe. A separate
+review agent checked the changed native/CLI guards and identified that gate issue;
+it did not access private data. General filesystem stalls, mapped drives, parent
+reparse traversal and Unix precheck/open races remain outside this narrow fix.
+The lab's 29 HTTP/TLS/protocol/CLI/file tests pass. A parallel local workspace
+build hit Windows' paging-file limit before tests ran; that failure is retained
+and a single-job retry passes all 123 workspace tests with five explicit probes
+ignored, followed by strict workspace Clippy. Strict lab Clippy also passes.
+The named-pipe gate runs its ignored probe separately and passes. The missing-test
+negative fixture fails as required. None of these checks read real private files.

@@ -1,0 +1,25 @@
+# Allowlist the relay build context. Local tools, sessions, videos, build output
+# and untracked credentials must never be uploaded to a Docker build service.
+**
+!Cargo.toml
+!Cargo.lock
+!crates/
+!crates/**/
+!crates/**/Cargo.toml
+!crates/**/*.rs
+!experiments/
+!experiments/jam/
+!experiments/jam/Cargo.toml
+!experiments/jam/Cargo.lock
+!experiments/jam/src/
+!experiments/jam/src/**/
+!experiments/jam/src/**/*.rs
+!experiments/jam/tests/
+!experiments/jam/tests/**/*.rs
+!experiments/jam/render/
+!experiments/jam/render/Dockerfile
+!experiments/jam/render/start.sh
+**/target/**
+**/.local/**
+**/.tools/**
+**/.git/**

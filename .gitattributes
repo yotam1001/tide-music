@@ -7,6 +7,7 @@
 *.toml text eol=lf
 *.lock text eol=lf
 *.py text eol=lf
+*.sh text eol=lf
 *.ps1 text eol=lf
 *.txt text eol=lf
 *.png binary

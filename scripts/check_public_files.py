@@ -22,7 +22,11 @@ def main():
     failed = []
     for name in filter(None, names):
         path = ROOT / name
-        if path.name.lower() in FORBIDDEN or name.startswith((".tools/", ".local/", "target/")):
+        if (
+            path.name.lower() in FORBIDDEN
+            or path.name.lower().endswith((".jam-invite.json", ".jam-operator-key", ".dpapi", ".pfx", ".p12", ".pkcs8"))
+            or name.startswith((".tools/", ".local/", "target/"))
+        ):
             failed.append((name, "forbidden local file"))
         if not path.is_file() or path.suffix.lower() in {".png", ".jpg", ".ico"}:
             continue

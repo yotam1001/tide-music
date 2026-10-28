@@ -2,10 +2,24 @@
 
 Never include API keys, session cookies, access tokens or credential files in commits or issues. This prototype does not require an application API key and does not automatically read browser credentials.
 
+Read [PRIVACY.md](PRIVACY.md) for account-session handling, local storage,
+temporary plaintext playback leases and retention/removal boundaries. The
+recommended browser companion captures only after an explicit selected-tab
+import action and transfers the session to the registered local helper. It does
+not replace the browser's Google sign-in or install itself automatically.
+
 Use GitHub's private vulnerability reporting where available for security issues. Avoid posting exploit details or secrets in public issues. If a credential is exposed, revoke it immediately; deleting a file alone does not remove it from Git history.
 
 Only use trusted mpv and yt-dlp binaries. Local playback helpers run with your user permissions. Do not open untrusted executables disguised as media. Public service playback is unofficial and may fail as providers change.
 
 Optional account imports grant access to your account. Keep the original header file outside Git and remove it when no longer needed. Tide saves an encrypted DPAPI copy in an owner-restricted directory, creates a temporary plaintext YouTube cookie lease for the owned player, and removes it after normal shutdown. Startup/disconnect reap leases from exited processes; conservative process checks can retain a lease after PID reuse or access denial. See [account setup](docs/ACCOUNT_SETUP.md) for these boundaries and disconnect behavior. Never attach account files to bug reports.
 
-Connect account asks the user to explicitly select cookies.sqlite inside their existing Zen profile. The helper opens only that selected database in read-only mode, filters YouTube cookies, and verifies account access before encrypted import. It does not read saved passwords, modify or copy the profile, open debugging ports, or close the user's browser. Normal profiles under the user's Zen profile directory are supported; additional Google accounts can be selected and verified locally. Custom profiles and brand channels can use manual request-header import.
+Advanced → Import Zen profile asks the user to explicitly select cookies.sqlite inside their existing Zen profile. The helper opens only that selected database in read-only mode, filters YouTube cookies, and verifies account access before encrypted import. It does not read saved passwords, modify or copy the profile, open debugging ports, or close the user's browser. Normal profiles under the user's Zen profile directory are supported; additional Google accounts can be selected and verified locally. Custom profiles and brand channels can use manual request-header import.
+
+
+From 0.4.1, in-app updates require independently signed installer identity metadata
+verified against a built-in Ed25519 public key. Missing/expired signatures stop
+updates without executing setup. The private signing key is excluded from the
+repository and CI. This is not Windows Authenticode signing; the bootstrap
+transition from older clients and signing-key ownership are described in
+[the update trust model](docs/IN_APP_UPDATES.md#publisher-authentication-from-041).

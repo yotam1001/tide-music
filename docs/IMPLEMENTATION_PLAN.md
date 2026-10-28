@@ -22,8 +22,14 @@ investigation below is not a claim that every proposed feature is complete.
 ### Deferred roadmap: synchronized listening rooms
 
 Plan a Jam-style feature for friends listening together while gaming, after
-playback reliability and convenient browser login are established. This is
-deferred work with no implementation or release date committed.
+playback reliability and convenient browser login are established. An isolated
+[feasibility lab](../experiments/jam/README.md) now exercises synchronized native
+playback, bounded room capabilities and an opt-in private HTTPS relay transport.
+It is not included in Tide or its installer. Remote use requires an operator's
+own configured TLS proxy and creation key; no hosted Tide service is provided.
+The opt-in native developer build now includes host/join/leave and guest control
+ownership; normal builds do not link its transport. Multi-device/live-service and
+resource validation remain outstanding; no production release date is committed.
 
 Synchronized playback on each participant's device is a required part of the
 feature. A shared queue with audio playing only on the host does not meet its

@@ -49,6 +49,17 @@ class PreviewPackageTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "unexpected"):
                 preview.check(self.archive(directory, extra={"private.txt": b"private"}))
 
+    def test_development_outputs_cannot_ship_with_the_player(self):
+        for name in ("target/debug/tide-music.pdb",
+                     "target/debug/incremental/query-cache.bin",
+                     ".tools/rustup/compiler.exe", ".local/test-run/output.log"):
+            for with_host in (False, True):
+                with self.subTest(name=name, with_host=with_host), tempfile.TemporaryDirectory() as directory:
+                    path = self.archive(directory, extra={name: b"generated development data"},
+                                        with_browser_host=with_host)
+                    with self.assertRaisesRegex(ValueError, "unexpected"):
+                        preview.check(path, with_browser_host=with_host)
+
     def test_corrupt_payload_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaisesRegex(ValueError, "Checksum mismatch"):
