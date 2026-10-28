@@ -108,3 +108,13 @@ ZIP contains **Install Tide.cmd**. A GitHub Actions artifact can contain both
 [Troubleshooting](https://github.com/yotam1001/tide-music/blob/main/docs/TROUBLESHOOTING.md) ·
 [Account help](ACCOUNT_SETUP.md) ·
 [Installer internals](https://github.com/yotam1001/tide-music/blob/main/docs/INSTALLATION_DETAILS.md)
+
+### Extra Tide windows during an update
+
+During an in-app restart, setup requests a normal close from every verified Tide
+player in the current Windows session, including a copy opened while setup is
+downloading. It waits for owned audio helpers and browser requests to finish.
+This happens only after the update is committed; readiness checks never close
+players. Browsers, other Windows sessions, unknown executables and modified
+payloads are never force-stopped. If a window refuses to close, setup times out
+without replacing the active installation; close that window and retry.

@@ -131,6 +131,12 @@ internal static class PayloadTests {
         if (!plain.Arguments(script).Contains("-AppVersion 0.1.0-preview.1")) throw new Exception("Update version not forwarded.");
         if (plain.Chrome || plain.Arguments(script).Contains("-Browser") || !plain.Arguments(script).Contains("-File \"" + script + "\""))
             throw new Exception("Default installer arguments changed browser consent or path quoting.");
+        if (plain.StartInfo(script).Arguments.Contains("-CloseRunningPlayers")
+            || plain.StartInfo(script, true).Arguments.Contains("-CloseRunningPlayers")
+            || !plain.StartInfo(script, false, true).Arguments.EndsWith(" -CloseRunningPlayers", StringComparison.Ordinal))
+            throw new Exception("Closing other player windows must be restricted to committed updates.");
+        try { plain.StartInfo(script, true, true); throw new Exception("Preflight accepted player shutdown."); }
+        catch (ArgumentException) { }
         var chrome = new InstallOptions(true, "  ABCDEFGHIJKLMNOPABCDEFGHIJKLMNOP  ");
         if (!chrome.Chrome || chrome.ExtensionId != "abcdefghijklmnopabcdefghijklmnop"
             || !chrome.Arguments(script).EndsWith(" -Browser Chrome -ChromiumExtensionId abcdefghijklmnopabcdefghijklmnop", StringComparison.Ordinal))

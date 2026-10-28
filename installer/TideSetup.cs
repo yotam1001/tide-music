@@ -135,11 +135,12 @@ namespace TideSetup {
                 + " -AppVersion " + Payload.AppVersion
                 + (Chrome ? " -Browser Chrome -ChromiumExtensionId " + ExtensionId : "");
         }
-        internal ProcessStartInfo StartInfo(string script, bool preflight = false) {
+        internal ProcessStartInfo StartInfo(string script, bool preflight = false, bool closePlayers = false) {
+            if (preflight && closePlayers) throw new ArgumentException("Read-only preflight cannot close player windows.");
             var system = Environment.GetFolderPath(Environment.SpecialFolder.System);
             var start = new ProcessStartInfo {
                 FileName = Path.Combine(system, "WindowsPowerShell", "v1.0", "powershell.exe"),
-                Arguments = Arguments(script) + (preflight ? " -PreflightOnly" : ""), UseShellExecute = false, CreateNoWindow = true,
+                Arguments = Arguments(script) + (preflight ? " -PreflightOnly" : "") + (closePlayers ? " -CloseRunningPlayers" : ""), UseShellExecute = false, CreateNoWindow = true,
                 RedirectStandardOutput = true, RedirectStandardError = true,
                 StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8
             };
@@ -344,7 +345,7 @@ namespace TideSetup {
             string root = null, result = null;
             try {
                 root = Payload.Extract();
-                var start = options.StartInfo(Path.Combine(root, "scripts", "install-windows.ps1"));
+                var start = options.StartInfo(Path.Combine(root, "scripts", "install-windows.ps1"), false, update != null);
                 if (!File.Exists(start.FileName)) throw new IOException("Windows PowerShell is unavailable; setup has not changed your installation.");
                 if (update != null) {
                     if (update.RequiresConfirmation && RunSetup(options.StartInfo(Path.Combine(root, "scripts", "install-windows.ps1"), true)) != "TIDE_PREFLIGHT_OK")

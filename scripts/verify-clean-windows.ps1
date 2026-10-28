@@ -243,6 +243,17 @@ try {
         if (!(Test-TideUninstallEntryMatch (Get-TideUninstallEntry) $taskStaleEntry)) {
             throw 'Setup changed the registration before restart was committed.'
         }
+        # Keep a second, real Tide window alive through COMMIT. It has no timed
+        # exit: the installer must close it normally, rather than fail its guard.
+        # This GUI fixture must be visible on the disposable runner so Windows
+        # can deliver the same CloseMainWindow request as a real player window.
+        $taskSecondPlayer = Start-Process -FilePath (Join-Path $taskFirstRelease 'tide-music.exe') `
+            -ArgumentList @('--benchmark-mode', 'compact') -WorkingDirectory $env:RUNNER_TEMP `
+            -PassThru `
+            -RedirectStandardOutput (Join-Path $taskEvidence 'second-player.stdout.log') `
+            -RedirectStandardError (Join-Path $taskEvidence 'second-player.stderr.log')
+        if (!$taskSecondPlayer.WaitForInputIdle(15000)) { throw 'Second Tide window did not initialize.' }
+        if ($taskSecondPlayer.HasExited) { throw 'Second Tide window exited before update commit.' }
         $taskSetupOutput = $taskSetupProcess.StandardOutput.ReadToEndAsync()
         $taskCommitBytes = [Text.Encoding]::ASCII.GetBytes("COMMIT`n")
         $taskSetupProcess.StandardInput.BaseStream.Write($taskCommitBytes, 0, $taskCommitBytes.Length)
@@ -262,6 +273,9 @@ try {
     [IO.File]::WriteAllText((Join-Path $taskEvidence 'setup.stdout.log'), $taskReady.Result + [Environment]::NewLine + $taskSetupOutput.Result)
     [IO.File]::WriteAllText((Join-Path $taskEvidence 'setup.stderr.log'), $taskSetupError.Result)
     if (!$taskParent.HasExited -or $taskParent.ExitCode -ne 0) { throw 'The previous player did not close normally.' }
+    if (!$taskSecondPlayer.HasExited -or $taskSecondPlayer.ExitCode -ne 0) { throw 'Update did not gracefully close the second real Tide window.' }
+    Write-Host 'PASS committed update gracefully closed a second real Tide instance without force termination'
+
     $taskUpdatedRelease = Assert-CleanInstallation $taskUpdatedVersion
     if ($taskUpdatedRelease -eq $taskFirstRelease -or (Test-Path -LiteralPath $taskFirstRelease)) {
         throw 'Update did not replace and remove the previous owned release.'

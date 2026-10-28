@@ -28,6 +28,9 @@ $links = Join-Path $Fixture 'start-menu'
 $package = Join-Path $Fixture 'package'
 $session = Join-Path $Fixture 'saved-session-sentinel'
 [IO.File]::WriteAllText($session, 'synthetic unchanged data')
+$global:MockProcesses = $null
+$global:LateProcesses = $null
+$global:ReopenedProcesses = @{}
 $global:Busy = $false
 $global:FailDependency = $false
 $global:FailShortcut = $false
@@ -55,7 +58,8 @@ function Write-TideUninstallValue {
 }
 function Remove-TideUninstallValue { param($Name) $global:AppsEntry.Remove($Name) }
 function Remove-TideUninstallEntryKey { $global:AppsEntry = $null }
-function Get-TideOwnedProcesses { param($InstallRoot) if ($global:Busy) { return @('synthetic owned process') }; return @() }
+function Get-TideCloseCandidate { param($Id) if ($global:ReopenedProcesses.ContainsKey($Id)) { return $global:ReopenedProcesses[$Id] }; return @($global:MockProcesses | Where-Object Id -EQ $Id)[0] }
+function Get-TideOwnedProcesses { param($InstallRoot) if ($null -ne $global:MockProcesses) { return @($global:MockProcesses | Where-Object { !$_.HasExited }) }; if ($global:Busy) { return @('synthetic owned process') }; return @() }
 function Get-TideShortcut {
     param($Path)
     if (Test-Path -LiteralPath $Path) { return Read-TideJson $Path }
@@ -71,6 +75,7 @@ function Invoke-TideDependencies {
     $tools = Join-Path $Release 'tools'
     [IO.Directory]::CreateDirectory($tools) | Out-Null
     [IO.File]::WriteAllText((Join-Path $tools 'mpv.exe'), 'synthetic tool, never executed')
+    if ($null -ne $global:LateProcesses) { $global:MockProcesses = $global:LateProcesses; $global:LateProcesses = $null }
     if ($global:FailDependency) { throw 'Synthetic dependency failure' }
     $python = Join-Path $Release '.tools/provider-venv/Scripts'
     [IO.Directory]::CreateDirectory($python) | Out-Null
@@ -103,7 +108,62 @@ function Must-Fail([scriptblock]$Action) {
 }
 function New-Install { Install-Tide $package $root $links 'Chrome' ('a' * 32) | Out-Null }
 function Current-Release { $state = Get-TideInstallState $root; return Join-Path $root ('releases/' + $state.Release) }
+function New-MockPlayer([string]$Path, [string]$Name = 'tide-music') {
+    $p = [pscustomobject]@{Id=123; StartTime=[DateTime]::UtcNow; Path=$Path; ProcessName=$Name; SessionId=[Diagnostics.Process]::GetCurrentProcess().SessionId; HasExited=$false; Handle=[IntPtr]::Zero; CloseCount=0}
+    $p | Add-Member -MemberType ScriptMethod -Name CloseMainWindow -Value { $this.CloseCount++; $this.HasExited=$true; return $true }
+    $p | Add-Member -MemberType ScriptMethod -Name Dispose -Value { }
+    return $p
+}
 switch ($Scenario) {
+    'multiple-player-update' {
+        New-Install; $previous = Current-Release
+        $first = New-MockPlayer (Join-Path $previous 'tide-music.exe')
+        $second = New-MockPlayer (Join-Path $previous 'tide-music.exe')
+        $second.Id = 124
+        $global:MockProcesses = @($first,$second)
+        Test-TideInstall $package $root $links 'None' '' '1.2.3' | Out-Null
+        if ($first.CloseCount -or $second.CloseCount) { throw 'Preflight closed a player before COMMIT' }
+        Install-Tide $package $root $links 'None' '' '1.2.3' -CloseRunningPlayers | Out-Null
+        if ($first.CloseCount -ne 1 -or $second.CloseCount -ne 1 -or (Current-Release) -eq $previous) { throw 'Multiple windows did not close gracefully for update' }
+        $global:MockProcesses = $null
+        Uninstall-Tide $root $links | Out-Null
+    }
+    'late-player-update' {
+        New-Install; $previous = Current-Release
+        $late = New-MockPlayer (Join-Path $previous 'tide-music.exe')
+        $global:MockProcesses = @(); $global:LateProcesses = @($late)
+        Install-Tide $package $root $links 'None' '' '1.2.3' -CloseRunningPlayers | Out-Null
+        if ($late.CloseCount -ne 1 -or (Current-Release) -eq $previous) { throw 'A player opened during downloads blocked update' }
+        $global:MockProcesses = $null
+        Uninstall-Tide $root $links | Out-Null
+    }
+    'close-player-boundaries' {
+        New-Install; $release = Current-Release
+        foreach ($mode in @('outside','helper','session','unowned','tampered')) {
+            $p = New-MockPlayer (Join-Path $release 'tide-music.exe')
+            switch ($mode) {
+                'outside' { $p.Path = Join-Path $Fixture 'tide-music.exe' }
+                'helper' { $p.ProcessName = 'mpv' }
+                'session' { $p.SessionId++ }
+                'unowned' { $p.Path = Join-Path $root ('releases/' + ('c' * 32) + '/tide-music.exe') }
+                'tampered' { [IO.File]::AppendAllText((Join-Path $release 'tide-music.exe'), 'tampered') }
+            }
+            $global:MockProcesses = @($p)
+            Must-Fail { Wait-TideStopped $root 0 }
+            if ($p.CloseCount -or $p.HasExited) { throw ('Unexpected player close: ' + $mode) }
+        }
+        [IO.File]::Copy((Join-Path $package 'tide-music.exe'), (Join-Path $release 'tide-music.exe'), $true)
+        $stale = New-MockPlayer (Join-Path $release 'tide-music.exe')
+        $recycled = New-MockPlayer (Join-Path $Fixture 'foreign.exe')
+        $global:MockProcesses = @($stale); $global:ReopenedProcesses[$stale.Id] = $recycled
+        Must-Fail { Wait-TideStopped $root 0 }
+        if ($stale.CloseCount -or $recycled.CloseCount -or $recycled.HasExited) { throw 'A recycled PID inherited stale close authorization' }
+        $global:ReopenedProcesses = @{}
+        $global:MockProcesses = $null
+        # Restore fixture payload so ordinary owned cleanup remains verifiable.
+        [IO.File]::Copy((Join-Path $package 'tide-music.exe'), (Join-Path $release 'tide-music.exe'), $true)
+        Uninstall-Tide $root $links | Out-Null
+    }
     'preflight' {
         $events = @(Test-TideInstall $package $root $links 'None' '' '1.2.3')
         if ($events[-1] -ne 'TIDE_PREFLIGHT_OK' -or (Test-Path -LiteralPath $root) -or (Test-Path -LiteralPath $links)) { throw 'Fresh preflight wrote an installation' }
@@ -468,7 +528,7 @@ class WindowsInstallTests(unittest.TestCase):
             self.assertIn(b"PASS isolated installer lifecycle", result.stdout)
 
     def test_isolated_lifecycle(self):
-        for scenario in ("preflight", "fresh-remove", "upgrade", "preserve-extra", "dependency-failure-first",
+        for scenario in ("multiple-player-update", "late-player-update", "close-player-boundaries", "preflight", "fresh-remove", "upgrade", "preserve-extra", "dependency-failure-first",
                          "dependency-failure-update", "shortcut-failure", "registration-failure", "busy",
                          "unknown-root", "shortcut-conflict", "registration-conflict",
                          "changed-shortcut-removal", "changed-registration-removal", "corrupt-package",
@@ -507,7 +567,7 @@ class WindowsInstallTests(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("powershell.exe"), "requires built-in Windows PowerShell 5.1")
     def test_builtin_windows_powershell_lifecycle(self):
-        for scenario in ("preflight", "fresh-remove", "upgrade", "registration-failure", "runtime-api-independent", "runtime-corrupt-download", "app-entry-write-failure-update", "app-entry-version-update", "owned-stale-registration", "owned-removed-registration", "removed-registration-tampered", "removed-registration-unowned", "removed-registration-foreign-folder", "owned-stale-registration-rollback", "owned-stale-registration-tampered", "owned-stale-registration-foreign", "owned-stale-registration-manifest", "protocol"):
+        for scenario in ("multiple-player-update", "late-player-update", "close-player-boundaries", "preflight", "fresh-remove", "upgrade", "registration-failure", "runtime-api-independent", "runtime-corrupt-download", "app-entry-write-failure-update", "app-entry-version-update", "owned-stale-registration", "owned-removed-registration", "removed-registration-tampered", "removed-registration-unowned", "removed-registration-foreign-folder", "owned-stale-registration-rollback", "owned-stale-registration-tampered", "owned-stale-registration-foreign", "owned-stale-registration-manifest", "protocol"):
             with self.subTest(scenario=scenario):
                 self.run_scenario(scenario, "powershell.exe")
 

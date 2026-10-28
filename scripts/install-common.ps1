@@ -274,6 +274,58 @@ function Assert-TideStopped([string]$InstallRoot) {
         throw 'Close Tide and its browser companion requests, then run setup again. Running processes were left untouched.'
     }
 }
+# Only an update that has received COMMIT may ask owned player windows to close.
+# Never terminate a process, close a browser, or trust a name without ownership.
+function Test-TideClosablePlayer($Process, [string]$InstallRoot) {
+    try {
+        if ($Process.HasExited -or $Process.ProcessName -ne 'tide-music' -or
+            $Process.SessionId -ne [Diagnostics.Process]::GetCurrentProcess().SessionId) { return $false }
+        $path = [IO.Path]::GetFullPath($Process.Path)
+        $prefix = $InstallRoot.TrimEnd('\') + '\releases\'
+        if (!$path.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) { return $false }
+        $relative = $path.Substring($prefix.Length)
+        if ($relative -notmatch '^[a-f0-9]{32}\\tide-music\.exe$') { return $false }
+        $release = Get-TideChild $InstallRoot ('releases/' + $relative.Substring(0,32))
+        $owner = Read-TideJson (Get-TideChild $release '.tide-release.json')
+        if ($owner.Product -ne 'org.tidemusic.windows.preview' -or $owner.Files -notcontains 'tide-music.exe') { return $false }
+        Get-TideVerifiedPayload $release | Out-Null
+        return $true
+    } catch { return $false }
+}
+function Get-TideCloseCandidate([int]$Id) { return [Diagnostics.Process]::GetProcessById($Id) }
+function Request-TidePlayerClose($Process, [string]$InstallRoot) {
+    $candidate = $null
+    try {
+        # Reopen and pin the target before consulting any cached process data.
+        # A name/path from enumeration must never authorize a recycled PID.
+        $candidate = Get-TideCloseCandidate $Process.Id
+        $null = $candidate.Handle
+        if (!(Test-TideClosablePlayer $candidate $InstallRoot) -or $candidate.HasExited) { return $false }
+        return $candidate.CloseMainWindow()
+    } catch { return $false }
+    finally { if ($null -ne $candidate) { $candidate.Dispose() } }
+}
+function Wait-TideStopped([string]$InstallRoot, [ValidateRange(0,120)][int]$TimeoutSeconds = 30) {
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    $requested = @{}
+    $announced = $false
+    while ($true) {
+        $processes = @(Get-TideOwnedProcesses $InstallRoot)
+        if (!$processes.Count) { return }
+        if (!$announced) { Write-TideProgress 5 'Closing Tide windows and waiting for browser requests to finish'; $announced = $true }
+        foreach ($process in $processes) {
+            try {
+                $identity = [string]$process.Id + ':' + $process.StartTime.ToUniversalTime().Ticks
+                if (!$requested.ContainsKey($identity) -and (Request-TidePlayerClose $process $InstallRoot)) { $requested[$identity] = $true }
+            } catch { }
+        }
+        if (!@(Get-TideOwnedProcesses $InstallRoot).Count) { return }
+        if ([DateTime]::UtcNow -ge $deadline) {
+            throw 'Tide could not close every window or finish a browser request. Close Tide windows and retry. No process was force-stopped.'
+        }
+        Start-Sleep -Milliseconds 250
+    }
+}
 function Get-TideShortcut([string]$Path) {
     if (!(Test-Path -LiteralPath $Path)) { return $null }
     Assert-TidePlainPath $Path
@@ -361,13 +413,13 @@ function Invoke-TideDependencies([string]$Release) {
     Write-TideProgress 55 'Installing the private account helper'
     & (Join-Path $Release 'scripts/setup-provider.ps1') -Managed | Out-Null
 }
-function Install-Tide([string]$PackageRoot, [string]$InstallRoot, [string]$ShortcutRoot, [string]$Browser, [string]$ExtensionId, [string]$AppVersion = '0.1.0-preview') {
-    Invoke-TideSetupOperation { Install-TideCore $PackageRoot $InstallRoot $ShortcutRoot $Browser $ExtensionId $AppVersion }
+function Install-Tide([string]$PackageRoot, [string]$InstallRoot, [string]$ShortcutRoot, [string]$Browser, [string]$ExtensionId, [string]$AppVersion = '0.1.0-preview', [switch]$CloseRunningPlayers) {
+    Invoke-TideSetupOperation { Install-TideCore $PackageRoot $InstallRoot $ShortcutRoot $Browser $ExtensionId $AppVersion -CloseRunningPlayers:$CloseRunningPlayers }
 }
 function Test-TideInstall([string]$PackageRoot, [string]$InstallRoot, [string]$ShortcutRoot, [string]$Browser, [string]$ExtensionId, [string]$AppVersion) {
     Invoke-TideSetupOperation { Install-TideCore $PackageRoot $InstallRoot $ShortcutRoot $Browser $ExtensionId $AppVersion -PreflightOnly }
 }
-function Install-TideCore([string]$PackageRoot, [string]$InstallRoot, [string]$ShortcutRoot, [string]$Browser, [string]$ExtensionId, [string]$AppVersion, [switch]$PreflightOnly) {
+function Install-TideCore([string]$PackageRoot, [string]$InstallRoot, [string]$ShortcutRoot, [string]$Browser, [string]$ExtensionId, [string]$AppVersion, [switch]$PreflightOnly, [switch]$CloseRunningPlayers) {
     if ($AppVersion -notmatch '^[0-9][A-Za-z0-9.+-]{0,63}$') { throw 'Invalid application version.' }
     Write-TideProgress 5 'Checking the setup package'
     $payload = @(Get-TideVerifiedPayload $PackageRoot)
@@ -376,7 +428,6 @@ function Install-TideCore([string]$PackageRoot, [string]$InstallRoot, [string]$S
     if ($Browser -in @('Chrome','Edge') -and $ExtensionId -notmatch '^[a-p]{32}$') { throw 'Enter the exact ID displayed by the installed browser extension.' }
     $old = Get-TideInstallState $InstallRoot
     Assert-TidePlainPath $ShortcutRoot
-    if (!$PreflightOnly) { Assert-TideStopped $InstallRoot }
     $oldRelease = $null; $oldLinks = @{}
     if ($old) {
         $oldRelease = Get-TideChild $InstallRoot ('releases/' + $old.Release)
@@ -397,6 +448,7 @@ function Install-TideCore([string]$PackageRoot, [string]$InstallRoot, [string]$S
         if ($actual -and (!$old -or !(Test-TideShortcutMatch $actual $oldLinks[$name]))) { throw 'A different Start menu shortcut exists; it was left unchanged.' }
     }
     if ($PreflightOnly) { Write-Output 'TIDE_PREFLIGHT_OK'; return }
+    if ($CloseRunningPlayers) { Wait-TideStopped $InstallRoot } else { Assert-TideStopped $InstallRoot }
     $id = [Guid]::NewGuid().ToString('N')
     $release = Get-TideChild $InstallRoot ('releases/' + $id)
     # Serialise install/update/removal. Root creation never replaces existing files.
@@ -423,7 +475,7 @@ function Install-TideCore([string]$PackageRoot, [string]$InstallRoot, [string]$S
         Invoke-TideDependencies $release
         Write-TideProgress 75 'Finishing app setup'
         Invoke-TideBrowserSetup $release 'Prepare' $Browser $ExtensionId
-        Assert-TideStopped $InstallRoot
+        if ($CloseRunningPlayers) { Wait-TideStopped $InstallRoot } else { Assert-TideStopped $InstallRoot }
         if ($old -and $old.Browser -ne 'None') {
             Invoke-TideBrowserSetup $oldRelease 'Unregister' $old.Browser $old.ExtensionId
             $oldUnregistered = $true
