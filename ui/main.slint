@@ -1589,7 +1589,7 @@ export component AppWindow inherits Window {
                             padding: root.compact-mode ? 18px : 28px;
                             spacing: 12px;
                             if root.error-message != "" : Rectangle {
-                                height: 58px;
+                                height: root.narrow-navigation ? 92px : 58px;
                                 border-radius: 8px;
                                 background: root.light-mode ? #ecd7cc : #39252a;
                                 HorizontalLayout {

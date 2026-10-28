@@ -127,6 +127,29 @@ fn filtered_playlist_and_queue_keep_absolute_indices_and_audio_has_its_own_page(
             ui.set_settings_open(false);
             draw(&window, width, "audio-settings-closed");
             assert!(!ui.get_settings_audio_open());
+            ui.set_error_message(
+                "This song could not play. Retry or skip to the next song.".into(),
+            );
+            ui.set_error_retryable(true);
+            ui.set_playback_error_action("Retry song".into());
+            let skipped = Rc::new(Cell::new(false));
+            let capture = skipped.clone();
+            ui.on_skip_error(move || capture.set(true));
+            draw(&window, width, "recovery-actions");
+            for y in (85..185).step_by(5) {
+                for x in ((width as usize - 190)..(width as usize - 30)).step_by(10) {
+                    click(&ui, x as f32, y as f32);
+                    if skipped.get() {
+                        break;
+                    }
+                }
+                if skipped.get() {
+                    break;
+                }
+            }
+            assert!(skipped.get(), "Skip recovery action was not reachable");
+            ui.set_error_message("".into());
+            ui.set_playback_error_action("".into());
         }
     }
 }
