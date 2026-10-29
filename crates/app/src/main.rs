@@ -1247,6 +1247,16 @@ fn refresh(ui: &AppWindow, state: &State) {
         ui.set_lyrics_generation(generation.into());
         ui.set_lyrics_lines(ModelRc::new(VecModel::<LyricRow>::default()));
         ui.set_lyrics_active(-1);
+        ui.set_lyrics_source("".into());
+        ui.set_lyrics_synced(false);
+        ui.set_lyrics_status(
+            if state.active_playback {
+                "Loading lyrics…"
+            } else {
+                "Play a YouTube Music song to see its lyrics."
+            }
+            .into(),
+        );
     }
     let mut artwork = state.artwork.borrow_mut();
     let current = state.settings.queue.current.unwrap_or(0);

@@ -1380,6 +1380,7 @@ fn execute_helper(
     bytes.zeroize();
     let reply = response.map_err(str::to_string)?;
     let response: Result<Response, String> = match reply.response {
+        Response::Error { code } if code == "lyrics_unavailable" => Ok(Response::Error { code }),
         Response::Error { code } if code == "runtime" => {
             Err("Install the optional account helper with scripts/setup-provider.ps1".into())
         }

@@ -212,6 +212,16 @@ pub fn install(state: &Rc<RefCell<State>>, ui: &AppWindow) -> Lyrics {
                         }
                     }
                 }
+                if key.is_none() && ui.get_lyrics_open() {
+                    let message = if s.active_playback && current_video_id(&s).is_some() {
+                        "Connect your YouTube Music account to load lyrics."
+                    } else {
+                        "Play a YouTube Music song to see its lyrics."
+                    };
+                    if ui.get_lyrics_status().as_str() != message {
+                        ui.set_lyrics_status(message.into());
+                    }
+                }
                 if let Some(key) = key {
                     if !r.attempted && r.worker.is_none() {
                         r.attempted = true;
