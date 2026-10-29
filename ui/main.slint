@@ -563,17 +563,17 @@ component PlaylistTile inherits Rectangle {
     border-color: root.light-mode ? #985955 : #d16b89;
     hover := TouchArea {
         width: parent.width; height: parent.height; enabled: root.enabled; mouse-cursor: pointer;
-        action := Button { width: parent.width; height: parent.height; opacity: 0; text: ""; enabled: root.enabled; accessible-label: "Open playlist " + root.title; clicked => { root.open(); } }
+        action := Button { width: parent.width; height: parent.height; opacity: 0; text: ""; enabled: root.enabled; accessible-label: root.playlist-cover ? "Open playlist " + root.title : "Album unavailable: " + root.title; clicked => { root.open(); } }
     }
     if root.featured && root.width >= 360px : HorizontalLayout {
         padding: 20px; spacing: 18px; cross-axis-alignment: center;
         Cover { width: 140px; height: 140px; artwork: root.artwork; playlist: root.playlist-cover; light-mode: root.light-mode; }
         VerticalLayout {
             horizontal-stretch: 1; min-width: 0px; spacing: 6px; alignment: center;
-            Text { height: 14px; text: "Playlist"; color: root.light-mode ? #716773 : #a1a5ae; font-size: 11px; font-weight: 500; }
+            Text { height: 14px; text: root.playlist-cover ? "Playlist" : "Album"; color: root.light-mode ? #716773 : #a1a5ae; font-size: 11px; font-weight: 500; }
             Rectangle { height: 48px; min-width: 0px; clip: true; Text { width: parent.width; height: parent.height; text: root.title; color: root.light-mode ? #392e33 : #f0eeef; font-size: 18px; font-weight: 650; vertical-alignment: center; wrap: word-wrap; overflow: elide; } }
             Text { text: root.subtitle; color: root.light-mode ? #716773 : #a1a5ae; font-size: 12px; overflow: elide; }
-            Rectangle { height: 30px; min-width: 0px; LibraryButton { x: 0px; y: 0px; width: 112px; height: 30px; active: true; caption: root.playlist-cover ? "Open playlist" : "Unavailable"; label: "Open playlist " + root.title; light-mode: root.light-mode; enabled: root.enabled; clicked => { root.open(); } } }
+            Rectangle { height: 30px; min-width: 0px; LibraryButton { x: 0px; y: 0px; width: 112px; height: 30px; active: true; caption: root.playlist-cover ? "Open playlist" : "Unavailable"; label: root.playlist-cover ? "Open playlist " + root.title : "Album unavailable: " + root.title; light-mode: root.light-mode; enabled: root.enabled; clicked => { root.open(); } } }
         }
     }
     if !root.featured || root.width < 360px : VerticalLayout {
@@ -581,7 +581,7 @@ component PlaylistTile inherits Rectangle {
         Rectangle { height: root.featured ? 96px : 132px; min-width: 0px; Cover { width: root.featured ? 96px : 132px; height: self.width; artwork: root.artwork; playlist: root.playlist-cover; light-mode: root.light-mode; } }
         Text { height: 22px; text: root.title; color: root.light-mode ? #392e33 : #f0eeef; font-size: root.featured ? 16px : 14px; font-weight: 600; overflow: elide; }
         Text { height: 18px; text: root.subtitle; color: root.light-mode ? #716773 : #a1a5ae; font-size: 12px; overflow: elide; }
-        if root.featured : Rectangle { height: 30px; min-width: 0px; LibraryButton { x: 0px; y: 0px; width: 112px; height: 30px; active: true; caption: root.playlist-cover ? "Open playlist" : "Unavailable"; label: "Open playlist " + root.title; light-mode: root.light-mode; enabled: root.enabled; clicked => { root.open(); } } }
+        if root.featured : Rectangle { height: 30px; min-width: 0px; LibraryButton { x: 0px; y: 0px; width: 112px; height: 30px; active: true; caption: root.playlist-cover ? "Open playlist" : "Unavailable"; label: root.playlist-cover ? "Open playlist " + root.title : "Album unavailable: " + root.title; light-mode: root.light-mode; enabled: root.enabled; clicked => { root.open(); } } }
     }
 }
 
