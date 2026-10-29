@@ -2,7 +2,7 @@
 //! Synthetic review fixtures only; no account, network, or audio engine.
 use slint::platform::{
     software_renderer::{MinimalSoftwareWindow, RepaintBufferType},
-    PointerEventButton, WindowEvent,
+    Key, PointerEventButton, WindowEvent,
 };
 use slint::{ComponentHandle, LogicalPosition, ModelRc, PhysicalSize, Rgb8Pixel, VecModel};
 use std::{cell::Cell, rc::Rc};
@@ -83,6 +83,9 @@ fn cover_grid_and_list_preserve_song_and_playlist_actions() {
     ui.on_select_recommendation(move |i| capture.set((0, i)));
     let capture = selected.clone();
     ui.on_select_library_playlist(move |i| capture.set((1, i)));
+    let queued = Rc::new(Cell::new(None));
+    let capture = queued.clone();
+    ui.on_queue_recommendation(move |i, next| capture.set(Some((i, next))));
     let weak = ui.as_weak();
     ui.on_toggle_library_view(move || {
         let u = weak.upgrade().unwrap();
@@ -125,6 +128,23 @@ fn cover_grid_and_list_preserve_song_and_playlist_actions() {
                     "Home tile action changed source index at width {width}"
                 );
             }
+            // The tile's action popup must remain usable despite cover clipping.
+            queued.set(None);
+            let menu_x = left + (available - 8.0 * (columns - 1) as f32) / columns as f32 - 27.0;
+            click(&ui, menu_x, 225.0);
+            render(&window, width, light, "home-menu");
+            for value in [Key::DownArrow, Key::Return] {
+                let text: slint::SharedString = value.into();
+                ui.window()
+                    .dispatch_event(WindowEvent::KeyPressed { text: text.clone() });
+                ui.window()
+                    .dispatch_event(WindowEvent::KeyReleased { text });
+            }
+            assert_eq!(
+                queued.get(),
+                Some((0, true)),
+                "Tile menu lost its queue source index"
+            );
             ui.set_library_open(true);
             render(&window, width, light, "library-grid");
             let columns = ui.get_library_columns();
@@ -153,4 +173,28 @@ fn cover_grid_and_list_preserve_song_and_playlist_actions() {
             );
         }
     }
+    // Exercise the real update control without launching any installer here.
+    // Signature/handoff and the actual previous-release install run separately.
+    let updates = Rc::new(Cell::new(0));
+    let capture = updates.clone();
+    ui.on_install_update(move || capture.set(capture.get() + 1));
+    ui.set_update_available(true);
+    ui.set_update_installable(true);
+    ui.set_update_phase(2);
+    render(&window, 1140, false, "update-ready");
+    click(&ui, 860.0, 32.0);
+    assert_eq!(
+        updates.get(),
+        1,
+        "Verified restart action must stay reachable in the header"
+    );
+    ui.set_update_phase(4);
+    ui.set_update_busy(true);
+    render(&window, 1140, false, "update-preparing");
+    click(&ui, 860.0, 32.0);
+    assert_eq!(
+        updates.get(),
+        1,
+        "Preparing restart must reject duplicate clicks"
+    );
 }
