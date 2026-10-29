@@ -67,4 +67,27 @@ fn changing_songs_clears_old_cover_until_the_selected_cover_arrives() {
         !pixels.contains(&blue),
         "Missing artwork retained the previous cover"
     );
+    ui.set_account_connected(true);
+    ui.set_library_open(true);
+    ui.set_library_playlists(ModelRc::new(VecModel::from(vec![PlaylistRow {
+        title: "Playlist without artwork".into(),
+        ..Default::default()
+    }])));
+    draw(&window, &mut pixels);
+    assert_eq!(
+        pixels[339 * 780 + 185],
+        Rgb8Pixel::new(208, 192, 189),
+        "Missing playlist cover must use the bundled sleeve artwork"
+    );
+    ui.set_library_playlists(ModelRc::new(VecModel::from(vec![PlaylistRow {
+        title: "Playlist with source artwork".into(),
+        artwork: cover(blue),
+        ..Default::default()
+    }])));
+    draw(&window, &mut pixels);
+    assert_eq!(
+        pixels[339 * 780 + 185],
+        blue,
+        "Source artwork must replace the shared default cover"
+    );
 }

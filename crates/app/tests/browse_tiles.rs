@@ -94,7 +94,7 @@ fn cover_grid_and_list_preserve_song_and_playlist_actions() {
         u.set_library_grid(!u.get_library_grid());
     });
     ui.show().unwrap();
-    for width in [650, 780, 1140, 1536] {
+    for width in [650, 780, 1140, 1536, 1920] {
         for light in [false, true] {
             ui.set_light_mode(light);
             ui.set_library_open(false);
@@ -128,8 +128,10 @@ fn cover_grid_and_list_preserve_song_and_playlist_actions() {
                     .collect::<Vec<_>>(),
             )));
             render(&window, width, light, "home");
-            let left = if width < 900 { 148.0 } else { 180.0 };
-            let available = width as f32 - left - 28.0;
+            let nav = if width < 900 { 120.0 } else { 152.0 };
+            let page = (width as f32 - nav).min(ui.global::<LayoutMetrics>().get_page_max_width());
+            let left = nav + (width as f32 - nav - page) / 2.0 + 28.0;
+            let available = page - 56.0;
             for index in 0..if spotlight_count > 1 { 2 } else { 1 } {
                 selected.set((-1, -1));
                 click(
@@ -137,7 +139,7 @@ fn cover_grid_and_list_preserve_song_and_playlist_actions() {
                     if index == 0 {
                         left + 30.0
                     } else {
-                        left + available * 0.44 + 42.0
+                        left + available * 0.48 + 42.0
                     },
                     230.0,
                 );
@@ -154,11 +156,20 @@ fn cover_grid_and_list_preserve_song_and_playlist_actions() {
                 }
                 queued.set(None);
                 let menu_x = if index == 0 {
-                    left + available * (if spotlight_count > 1 { 0.44 } else { 1.0 }) - 30.0
+                    left + available * (if spotlight_count > 1 { 0.48 } else { 1.0 }) - 30.0
                 } else {
                     left + available - 30.0
                 };
-                click(&ui, menu_x, if index == 0 { 225.0 } else { 385.0 });
+                let lane = (ui.global::<LayoutMetrics>().get_home_spotlight_height() - 12.0) / 2.0;
+                click(
+                    &ui,
+                    menu_x,
+                    if index == 0 {
+                        225.0
+                    } else {
+                        196.0 + lane + 12.0 + lane / 2.0
+                    },
+                );
                 render(
                     &window,
                     width,
