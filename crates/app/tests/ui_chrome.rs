@@ -3,7 +3,7 @@ use slint::platform::{
     software_renderer::{MinimalSoftwareWindow, RepaintBufferType},
     Key, PointerEventButton, WindowEvent,
 };
-use slint::{ComponentHandle, LogicalPosition, Model, PhysicalSize, Rgb8Pixel};
+use slint::{ComponentHandle, LogicalPosition, PhysicalSize, Rgb8Pixel};
 use std::{cell::Cell, rc::Rc};
 use tide_music::*;
 

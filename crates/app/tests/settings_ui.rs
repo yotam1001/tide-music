@@ -97,7 +97,7 @@ fn shortcuts_capture_keys_cancel_and_clear_without_transport() {
             },
         );
         // The top-level panel opens shortcuts without revealing technical fields.
-        click(&ui, 980.0, 414.0);
+        click(&ui, 980.0, 525.0);
         assert!(ui.get_settings_shortcuts_open());
         draw(&window, 1140, 800, "settings-shortcuts");
         click(&ui, 1000.0, 296.0);
