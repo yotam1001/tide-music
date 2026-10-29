@@ -561,15 +561,10 @@ fn settings_theme_account_and_song_menu_remain_independent() {
     // Secondary controls stay hidden until explicitly expanded.
     ui.set_settings_more_open(false);
     draw(&window, 1140, 1200);
-    ui.set_settings_more_open(true);
+    click(&ui, 920.0, 694.0);
     assert!(ui.get_settings_more_open(), "More options is reachable");
     draw(&window, 1140, 1200);
-    for y in (600..1050).step_by(4) {
-        click(&ui, 1080.0, y as f32);
-        if !ui.get_media_controls_enabled() {
-            break;
-        }
-    }
+    click(&ui, 920.0, 790.0);
     assert!(!ui.get_media_controls_enabled());
     assert_eq!(ui.get_shortcut_toggle(), "Ctrl+Alt+P");
     assert_eq!(ui.get_shortcut_next(), "Ctrl+Alt+N");
