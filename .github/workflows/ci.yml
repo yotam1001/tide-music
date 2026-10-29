@@ -150,8 +150,11 @@ jobs:
       - name: Fetch the actual previous stable player for upgrade validation
         shell: pwsh
         run: |
-          $release = Invoke-RestMethod 'https://api.github.com/repos/yotam1001/tide-music/releases/latest'
-          if ($release.draft -or $release.prerelease -or $release.tag_name -notmatch '^v\d+\.\d+\.\d+$') { throw 'Invalid stable upgrade baseline' }
+          $candidate = [Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $PWD '.local/clean-payload/tide-music.exe')).ProductVersion
+          if ($candidate -notmatch '^\d+\.\d+\.\d+$') { throw 'Invalid upgrade candidate version' }
+          $releases = Invoke-RestMethod 'https://api.github.com/repos/yotam1001/tide-music/releases?per_page=100'
+          $release = $releases | Where-Object { !$_.draft -and !$_.prerelease -and $_.tag_name -match '^v\d+\.\d+\.\d+$' -and [version]$_.tag_name.Substring(1) -lt [version]$candidate } | Sort-Object { [version]$_.tag_name.Substring(1) } -Descending | Select-Object -First 1
+          if (!$release) { throw 'No previous public stable upgrade baseline found' }
           $asset = @($release.assets | Where-Object name -eq 'tide-windows-preview.zip')
           if ($asset.Count -ne 1 -or $asset[0].digest -notmatch '^sha256:[0-9a-f]{64}$') { throw 'Baseline must have a server SHA256 digest' }
           $expectedUrl = 'https://github.com/yotam1001/tide-music/releases/download/' + $release.tag_name + '/tide-windows-preview.zip'

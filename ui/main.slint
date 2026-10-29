@@ -59,6 +59,27 @@ component PreferenceRow inherits Rectangle {
     }
 }
 
+component SettingsLink inherits Rectangle {
+    in property <string> title;
+    in property <string> icon-path;
+    in property <bool> light-mode;
+    callback activated();
+    height: 44px; border-radius: 8px;
+    background: hover.has-hover ? (root.light-mode ? #e9e0d6 : #20252d) : transparent;
+    border-width: action.has-focus ? 2px : 0px;
+    border-color: root.light-mode ? #985955 : #d16b89;
+    hover := TouchArea {
+        width: parent.width; height: parent.height; mouse-cursor: pointer;
+        action := Button { width: parent.width; height: parent.height; opacity: 0; text: ""; accessible-label: root.title; clicked => { root.activated(); } }
+    }
+    HorizontalLayout {
+        padding-left: 8px; padding-right: 8px; spacing: 12px; cross-axis-alignment: center;
+        Path { width: 20px; height: 20px; viewbox-width: 24; viewbox-height: 24; fill: transparent; stroke: root.light-mode ? #716773 : #a1a5ae; stroke-width: 1.5px; commands: root.icon-path; }
+        Text { horizontal-stretch: 1; text: root.title; color: root.light-mode ? #392e33 : #f0eeef; font-size: 14px; }
+        Path { width: 16px; height: 16px; viewbox-width: 24; viewbox-height: 24; fill: transparent; stroke: root.light-mode ? #716773 : #a1a5ae; stroke-width: 1.5px; commands: "M 9 5 L 16 12 L 9 19"; }
+    }
+}
+
 component SearchMark inherits Path {
     in property <color> ink;
     width: 18px;
@@ -504,6 +525,7 @@ component Cover inherits Rectangle {
 }
 
 component PlaylistTile inherits Rectangle {
+    clip: true;
     in property <image> artwork;
     in property <string> title;
     in property <string> subtitle;
@@ -640,6 +662,7 @@ component ArtistLink inherits Rectangle {
 
 component SongRow inherits Rectangle {
     in property <bool> tile-mode: false;
+    clip: root.tile-mode;
     in property <bool> collection-enabled: false;
     in property <bool> playlist-removable: false;
     callback add-playlist();
@@ -1326,9 +1349,8 @@ export component AppWindow inherits Window {
     callback jam-leave();
     in-out property <length> library-artwork-y;
     in-out property <length> library-artwork-height;
-    in-out property <length> library-artwork-width: 700px;
     in-out property <bool> library-grid: true;
-    out property <int> library-columns: root.library-grid ? max(1, min(6, floor(root.library-artwork-width / 164px))) : 1;
+    out property <int> library-columns: root.library-grid ? root.home-columns : 1;
     callback toggle-library-view();
     in-out property <length> home-artwork-y;
     in-out property <length> home-artwork-height;
@@ -1347,8 +1369,11 @@ export component AppWindow inherits Window {
     in property <[PlaylistRow]> library-playlists;
     in property <[RecommendationRow]> recommendations;
     in property <[HomeBrowseRow]> home-browse-rows;
-    in-out property <length> home-artwork-width: 700px;
-    out property <int> home-columns: max(1, min(6, floor(root.home-artwork-width / 164px)));
+    // Derive columns directly from the window, including navigation, padding,
+    // queue and scrollbar. A deferred ListView width callback can retain the
+    // previous screen's column count when navigating after a resize.
+    private property <length> browse-width: max(0px, root.width - (root.compact-mode || root.width < 900px ? 120px : 152px) - (root.compact-mode ? 36px : 56px) - (root.queue-open && root.width >= 1050px ? 340px : 0px) - 16px);
+    out property <int> home-columns: max(1, min(6, floor(root.browse-width / 164px)));
     in property <bool> account-connected;
     in property <bool> account-verified;
     in property <bool> error-retryable;
@@ -1736,7 +1761,6 @@ export component AppWindow inherits Window {
                                 if root.library-playlists.length > 0 : library-list := ListView {
                                     content-y <=> root.library-artwork-y;
                                     changed visible-height => { root.library-artwork-height = self.visible-height; }
-                                    changed visible-width => { root.library-artwork-width = self.visible-width; }
                                     vertical-stretch: 1;
                                     accessible-label: "Your saved playlists";
                                     for group in ceil(root.library-playlists.length / root.library-columns) : Rectangle {
@@ -1777,7 +1801,6 @@ export component AppWindow inherits Window {
                                 if root.recommendations.length > 0 : ListView {
                                     content-y <=> root.home-artwork-y;
                                     changed visible-height => { root.home-artwork-height = self.visible-height; }
-                                    changed visible-width => { root.home-artwork-width = self.visible-width; }
                                     vertical-stretch: 1;
                                     accessible-label: "Home recommendations";
                                     for group in root.home-browse-rows : VerticalLayout {
@@ -1925,8 +1948,8 @@ export component AppWindow inherits Window {
                                     if root.history-feedback-status != "" : Text { text: root.history-feedback-status; color: root.secondary; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
                                     PreferenceRow { title: "Discord activity"; detail: "Show the playing song on your Discord profile."; checked: root.discord-presence-enabled; light-mode: root.light-mode; toggled => { root.toggle-discord-presence(); } }
                                     if root.discord-presence-enabled : Text { text: root.discord-status; color: root.secondary; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
-                                    LibraryButton { height: 38px; quiet: false; caption: "Keyboard shortcuts   ›"; label: "Configure keyboard shortcuts"; light-mode: root.light-mode; clicked => { root.settings-shortcuts-open = true; app-focus.focus(); } }
-                                    LibraryButton { height: 38px; quiet: false; caption: "Audio   ›"; label: "Choose audio output and volume normalization"; light-mode: root.light-mode; clicked => { root.settings-audio-open = true; } }
+                                    SettingsLink { title: "Audio"; icon-path: "M 4 10 L 8 10 L 13 5 L 13 19 L 8 14 L 4 14 Z M 17 8 C 21 10 21 14 17 16 M 19 4 C 27 9 27 15 19 20"; light-mode: root.light-mode; activated => { root.settings-audio-open = true; } }
+                                    SettingsLink { title: "Keyboard shortcuts"; icon-path: "M 2 5 L 22 5 L 22 19 L 2 19 Z M 5 9 L 7 9 M 10 9 L 12 9 M 15 9 L 19 9 M 5 12 L 7 12 M 10 12 L 12 12 M 15 12 L 19 12 M 6 16 L 18 16"; light-mode: root.light-mode; activated => { root.settings-shortcuts-open = true; app-focus.focus(); } }
                                     Rectangle { height: 1px; background: root.outline; }
                                     HorizontalLayout { height: 24px; Text { horizontal-stretch: 1; text: "Updates"; color: root.foreground; font-size: 17px; font-weight: 600; } Text { text: "Tide " + root.app-version; color: root.secondary; font-size: 12px; } }
                                     Text { text: root.update-status; color: root.secondary; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }

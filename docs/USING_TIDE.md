@@ -54,12 +54,14 @@ changing your saved login. Playback errors do not by themselves request a reconn
 
 ## Home and Library
 
-- **Home:** recommendations from your YouTube Music account. Preview 2
-  restores the leading rows and their original order, with limited refresh
-  variety near those recommendations. Preview 1 rotates more aggressively;
-  small upstream pools can repeat in either version.
-- **Library:** your playlists and Liked Songs. Selecting a playlist opens its
-  tracks; **Play** or **Shuffle** starts it.
+- **Home:** cover tiles grouped under your YouTube Music recommendation
+  sections. The layout preserves the provider's order; it does not change
+  which music is recommended. Select a song to play it; its **…** menu offers
+  queue, radio and playlist actions. Playlist tiles open their tracks.
+- **Library:** your playlists, My Supermix and Liked Songs. Use the view icon
+  beside the heading to switch between covers and a compact list. This choice
+  saves automatically. Selecting a playlist opens its tracks; **Play** or
+  **Shuffle** starts it.
 - **My Supermix:** always pinned beside Liked Songs in Library. Opening it finds
   your current account's mix and loads its songs, independent of Home's visible
   recommendations. If YouTube does not offer the mix, retry later; its absence
@@ -70,6 +72,11 @@ changing your saved login. Playback errors do not by themselves request a reconn
   All words must match; playback order and duplicate entries are preserved.
 - **Search queue:** use the magnifying glass in Queue. Clear the search before
   dragging to reorder; filtering never changes your queue.
+
+Both cover grids adjust to the available width. Only thumbnails near the
+visible rows are requested, with at most 40 image references per browsing
+model and the existing 48-entry, 96-pixel thumbnail cache. Scrolling releases
+offscreen references; no artwork disk cache or embedded browser is added.
 
 Tide reads your existing library without downloading your whole collection.
 The thumbs beside the player like or dislike the current song on YouTube Music;
@@ -121,7 +128,7 @@ quality depends on the song, account and extractor.
 - **Mini:** reduce the player; its expand control returns to the full window.
 - **Account:** check the connected identity, get connection help or disconnect.
   Manual imports are under Advanced connection options.
-- **Settings:** check for a stable release. Startup checks are under More options.
+- **Settings:** check for a stable release. Startup checks are under Advanced.
   Preview updates still need the newer installer.
 
 [Troubleshooting](TROUBLESHOOTING.md) · [Privacy](../PRIVACY.md)

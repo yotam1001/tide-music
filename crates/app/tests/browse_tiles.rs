@@ -96,6 +96,10 @@ fn cover_grid_and_list_preserve_song_and_playlist_actions() {
             ui.set_library_grid(true);
             render(&window, width, light, "home-initial");
             let columns = ui.get_home_columns();
+            assert!(
+                width < 1140 || columns >= 5,
+                "Home retained a narrow screen's column count after resize"
+            );
             ui.set_home_browse_rows(ModelRc::new(VecModel::from(
                 (0..((12 + columns - 1) / columns))
                     .map(|r| HomeBrowseRow {

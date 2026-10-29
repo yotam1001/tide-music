@@ -71,7 +71,7 @@ fn native_ratings_remain_reachable_and_do_not_take_over_transport() {
         ui.set_light_mode(light);
         ui.set_current_rating(0);
         draw(&window, width, height, &format!("ratings-{width}"));
-        let x = width as f32 - 210.0;
+        let x = width as f32 - 174.0;
         let y = height as f32 - 74.0;
         let start = ratings.borrow().len();
         for position in [x, x, x + 40.0, x + 40.0] {
@@ -122,7 +122,12 @@ fn native_ratings_remain_reachable_and_do_not_take_over_transport() {
     });
     draw(&window, 1140, 1400, "history-settings-off");
     assert!(!ui.get_history_feedback_enabled());
-    click(&ui, 920.0, 248.0);
+    for y in (260..400).step_by(4) {
+        click(&ui, 1080.0, y as f32);
+        if *consent.borrow() {
+            break;
+        }
+    }
     assert!(
         *consent.borrow(),
         "History consent is not reachable in Settings"
