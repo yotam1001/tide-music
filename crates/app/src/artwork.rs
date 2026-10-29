@@ -601,3 +601,25 @@ mod tests {
         assert!(cache.entries.is_empty());
     }
 }
+
+/// Four shared vector covers, stable across screens and app restarts.
+pub fn fallback_variant(id: &str) -> i32 {
+    (id.bytes().fold(2_166_136_261u32, |hash, byte| {
+        (hash ^ u32::from(byte)).wrapping_mul(16_777_619)
+    }) & 3) as i32
+}
+#[cfg(test)]
+mod fallback_tests {
+    #[test]
+    fn variants_are_stable_bounded_and_not_all_the_same() {
+        let values: Vec<_> = (0..100)
+            .map(|i| super::fallback_variant(&format!("playlist-{i}")))
+            .collect();
+        assert!(values.iter().all(|i| (0..4).contains(i)));
+        assert!((0..4).all(|i| values.contains(&i)));
+        assert_eq!(
+            super::fallback_variant("saved-playlist"),
+            super::fallback_variant("saved-playlist")
+        );
+    }
+}

@@ -164,16 +164,32 @@ pub enum Request {
     Artists {
         video_id: String,
     },
+    Lyrics {
+        video_id: String,
+    },
     Feedback {
         request: FeedbackRequest,
         #[serde(skip)]
         expected: SavedConnection,
     },
 }
+#[derive(Clone, Deserialize, Debug, PartialEq)]
+pub struct LyricLine {
+    pub text: String,
+    pub start_ms: Option<u64>,
+    #[serde(default)]
+    pub end_ms: Option<u64>,
+}
+
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Response {
     Connected,
+    Lyrics {
+        lines: Vec<LyricLine>,
+        synced: bool,
+        source: String,
+    },
     Artist {
         name: String,
         tracks: Vec<Track>,
@@ -253,8 +269,9 @@ fn decode_helper_reply(bytes: &[u8]) -> Result<HelperReply, &'static str> {
             | Response::Home { .. }
             | Response::Artist { .. }
             | Response::Artists { .. }
+            | Response::Lyrics { .. }
             | Response::Feedback { .. }
-    ) || matches!(&response, Response::Error { code } if code.starts_with("feedback_"))
+    ) || matches!(&response, Response::Error { code } if code.starts_with("feedback_") || code == "lyrics_unavailable")
     {
         if let Ok(document) = serde_json::from_slice::<RefreshEnvelope>(bytes) {
             let mut encoded = serde_json::to_vec(&document.refreshed_headers.0).unwrap_or_default();
@@ -434,7 +451,7 @@ impl Provider {
             input.zeroize();
             return Err(SessionImportError::InvalidHeaders);
         }
-        let result = execute_helper(&input, cancel.clone(), Duration::from_secs(60));
+        let result = execute_helper(&input, cancel.clone(), timeout);
         input.zeroize();
         match result
             .map_err(|_| {
@@ -928,6 +945,11 @@ impl Provider {
             };
         }
         let switching = matches!(request, Request::SwitchAccount { .. });
+        let timeout = if matches!(request, Request::Lyrics { .. }) {
+            Duration::from_secs(15)
+        } else {
+            Duration::from_secs(60)
+        };
         if matches!(request, Request::SwitchAccount { index } if index > 9) {
             return Err("Choose an account between 1 and 10".into());
         }
@@ -2158,6 +2180,11 @@ mod tests {
         );
         let reply = decode_helper_reply(br#"{"type":"error","code":"feedback_unconfirmed","refreshed_headers":{"cookie":"__Secure-3PAPISID=fresh", "x-goog-authuser":"1"}}"#).unwrap();
         assert!(reply.refreshed.0.is_some());
+        let lyrics = decode_helper_reply(br#"{"type":"error","code":"lyrics_unavailable","refreshed_headers":{"cookie":"__Secure-3PAPISID=fresh", "x-goog-authuser":"1"}}"#).unwrap();
+        assert!(
+            lyrics.refreshed.0.is_some(),
+            "Optional lyrics failures must retain refreshed cookies"
+        );
     }
 
     #[cfg(windows)]

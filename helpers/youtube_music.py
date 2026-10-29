@@ -670,7 +670,61 @@ def feedback(client, request):
         return {"type": "error", "code": "feedback_unavailable" if kind == "rating" else "feedback_unconfirmed"}
 
 
+def lyrics(client, video):
+    """Read only this video's lyrics; never return credentials or raw errors."""
+    empty = {"type": "lyrics", "lines": [], "synced": False, "source": ""}
+    if not identifier(video, True):
+        return empty
+    try:
+        watch = client.get_watch_playlist(videoId=video, limit=1)
+        browse = watch.get("lyrics") if isinstance(watch, dict) else None
+        if not isinstance(browse, str) or not re.fullmatch(r"MPLYt[A-Za-z0-9_=\-]{1,500}", browse):
+            return empty
+        data = client.get_lyrics(browse, timestamps=True)
+        if not isinstance(data, dict):
+            return empty
+        synced = data.get("hasTimestamps") is True
+        raw = data.get("lyrics")
+        if synced and not isinstance(raw, list):
+            return empty
+        if not synced and not isinstance(raw, str):
+            return empty
+        if not synced and len(raw.encode("utf-8")) > 128_000:
+            return empty
+        result, total, previous = [], 0, -1
+        for item in (raw if synced else raw.splitlines())[:1000]:
+            if synced:
+                text = item.get("text") if isinstance(item, dict) else getattr(item, "text", None)
+                start = item.get("start_time") if isinstance(item, dict) else getattr(item, "start_time", None)
+                if type(start) is not int or not 0 <= start <= 86_400_000 or start < previous:
+                    return empty
+                previous = start
+                end = item.get("end_time") if isinstance(item, dict) else getattr(item, "end_time", None)
+                if end is not None and (type(end) is not int or not start <= end <= 86_400_000):
+                    return empty
+            else:
+                text, start, end = item, None, None
+            if not isinstance(text, str):
+                return empty
+            text = clean(text.replace("\n", " "), 500)
+            if not text.strip():
+                # Retain timed empty lines: they clear the highlight for breaks.
+                if not synced:
+                    continue
+                text = ""
+            total += len(text.encode("utf-8"))
+            if total > 128_000:
+                return empty
+            result.append({"text": text, "start_ms": start, "end_ms": end})
+        return {"type": "lyrics", "lines": result, "synced": synced,
+                "source": clean(data.get("source"), 120) if isinstance(data.get("source"), str) else ""}
+    except Exception:
+        return {"type": "error", "code": "lyrics_unavailable"}
+
+
 def run(client, request):
+    if request.get("action") == "lyrics":
+        return lyrics(client, request.get("video_id"))
     action = request["action"]
     if action == "feedback":
         return feedback(client, request.get("request"))
@@ -856,7 +910,7 @@ def main():
             except Exception as error:
                 result = verified_request_failure(error, client)
             updated = getattr(session, "_tide_refreshed_headers", None)
-            if updated and (result.get("type") != "error" or request.get("action") == "feedback"):
+            if updated and (result.get("type") != "error" or request.get("action") in ("feedback", "lyrics")):
                 result["refreshed_headers"] = updated
         finally:
             session.close()

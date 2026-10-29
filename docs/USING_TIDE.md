@@ -156,3 +156,9 @@ pausing and automatic retries. Otherwise it shows the audio format reported by
 mpv when available, for example **Opus · ~160 kbps · 48 kHz**. The bitrate is an
 approximate packet measurement that can vary during a song; it does not certify
 Premium membership or a fixed source quality. Missing values are omitted.
+
+### Synced lyrics
+
+Use the lyrics icon beside Queue to open the optional panel. Lyrics are fetched from YouTube Music for the current song only while the panel is visible. Available timed lyrics highlight line by line and follow actual playback; click a timed line to seek. Guests in a Jam follow their own playback timing and cannot seek the room through the lyrics panel. Use Following to pause/resume auto-scroll.
+
+Some songs provide plain lyrics or none. Retry is local to lyrics and does not disconnect your account. Closing the panel or switching songs discards stale lyrics. One bounded read may finish to preserve refreshed session cookies; lyrics are not saved to disk. Missing playlist covers use four small bundled illustrations chosen consistently by playlist ID.

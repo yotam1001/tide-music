@@ -64,6 +64,7 @@ fn cover_grid_and_list_preserve_song_and_playlist_actions() {
     ui.set_recommendations(ModelRc::new(VecModel::from(
         (0..12)
             .map(|i| RecommendationRow {
+                cover_variant: i % 4,
                 title: format!("Song {i} with a long title for clipping").into(),
                 subtitle: "Artist with a long name".into(),
                 kind: if i == 1 { "playlist" } else { "song" }.into(),
@@ -74,6 +75,7 @@ fn cover_grid_and_list_preserve_song_and_playlist_actions() {
     ui.set_library_playlists(ModelRc::new(VecModel::from(
         (0..12)
             .map(|i| PlaylistRow {
+                cover_variant: i % 4,
                 title: format!("Playlist {i}").into(),
                 subtitle: "A collection from your library".into(),
                 ..Default::default()
@@ -129,7 +131,7 @@ fn cover_grid_and_list_preserve_song_and_playlist_actions() {
             )));
             render(&window, width, light, "home");
             let nav = if width < 900 { 120.0 } else { 152.0 };
-            let page = (width as f32 - nav).min(ui.global::<LayoutMetrics>().get_page_max_width());
+            let page = width as f32 - nav;
             let left = nav + (width as f32 - nav - page) / 2.0 + 28.0;
             let available = page - 56.0;
             for index in 0..if spotlight_count > 1 { 2 } else { 1 } {

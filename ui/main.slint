@@ -2,7 +2,6 @@ import { AboutSlint, Button, CheckBox, ComboBox, LineEdit, ListView, Palette, Sc
 
 // Artwork viewport calculations read these same logical dimensions from Rust.
 export global LayoutMetrics {
-    out property <length> page-max-width: 1320px;
     out property <length> browse-row-height: 72px;
     out property <length> library-tile-height: 206px;
     out property <length> home-heading-height: 44px;
@@ -29,6 +28,7 @@ export struct ArtistRow { id: string, name: string }
 
 export struct PlaylistRow {
     id: string,
+    cover-variant: int,
     title: string,
     subtitle: string,
     artwork: image,
@@ -36,12 +36,14 @@ export struct PlaylistRow {
 
 export struct RecommendationRow {
     id: string,
+    cover-variant: int,
     title: string,
     subtitle: string,
     artwork: image,
     kind: string,
     shelf: string,
 }
+export struct LyricRow { text: string }
 export struct HomeBrowseRow { start: int, count: int, title: string, layout: string }
 
 // Preferences are rows with independent labels, rather than a wall of buttons.
@@ -516,6 +518,7 @@ component NavigationButton inherits Rectangle {
 
 // Source artwork takes priority; playlists share one bundled fallback image.
 component Cover inherits Rectangle {
+    in property <int> variant;
     in property <bool> playlist: false;
     in property <image> artwork;
     in property <bool> light-mode;
@@ -530,7 +533,7 @@ component Cover inherits Rectangle {
     }
     if (root.artwork.width == 0 || root.artwork.height == 0) && root.playlist : Image {
         width: parent.width; height: parent.height;
-        source: @image-url("assets/playlist-default.svg"); image-fit: cover;
+        source: mod(root.variant, 4) == 1 ? @image-url("assets/playlist-waves.svg") : mod(root.variant, 4) == 2 ? @image-url("assets/playlist-orbit.svg") : mod(root.variant, 4) == 3 ? @image-url("assets/playlist-rhythm.svg") : @image-url("assets/playlist-default.svg"); image-fit: cover;
     }
     if (root.artwork.width == 0 || root.artwork.height == 0) && !root.playlist : Path {
         x: (parent.width - 22px) / 2;
@@ -547,6 +550,7 @@ component Cover inherits Rectangle {
 }
 
 component PlaylistTile inherits Rectangle {
+    in property <int> cover-variant;
     in property <bool> playlist-cover: true;
     clip: true;
     in property <bool> featured: false;
@@ -567,7 +571,7 @@ component PlaylistTile inherits Rectangle {
     }
     if root.featured && root.width >= 360px : HorizontalLayout {
         padding: 20px; spacing: 18px; cross-axis-alignment: center;
-        Cover { width: 140px; height: 140px; artwork: root.artwork; playlist: root.playlist-cover; light-mode: root.light-mode; }
+        Cover { width: 140px; height: 140px; artwork: root.artwork; playlist: root.playlist-cover; variant: root.cover-variant; light-mode: root.light-mode; }
         VerticalLayout {
             horizontal-stretch: 1; min-width: 0px; spacing: 6px; alignment: center;
             Text { height: 14px; text: root.playlist-cover ? "Playlist" : "Album"; color: root.light-mode ? #716773 : #a1a5ae; font-size: 11px; font-weight: 500; }
@@ -578,7 +582,7 @@ component PlaylistTile inherits Rectangle {
     }
     if !root.featured || root.width < 360px : VerticalLayout {
         padding: root.featured ? 14px : 10px; spacing: root.featured ? 5px : 6px; alignment: start;
-        Rectangle { height: root.featured ? 96px : 132px; min-width: 0px; Cover { width: root.featured ? 96px : 132px; height: self.width; artwork: root.artwork; playlist: root.playlist-cover; light-mode: root.light-mode; } }
+        Rectangle { height: root.featured ? 96px : 132px; min-width: 0px; Cover { width: root.featured ? 96px : 132px; height: self.width; artwork: root.artwork; playlist: root.playlist-cover; variant: root.cover-variant; light-mode: root.light-mode; } }
         Text { height: 22px; text: root.title; color: root.light-mode ? #392e33 : #f0eeef; font-size: root.featured ? 16px : 14px; font-weight: 600; overflow: elide; }
         Text { height: 18px; text: root.subtitle; color: root.light-mode ? #716773 : #a1a5ae; font-size: 12px; overflow: elide; }
         if root.featured : Rectangle { height: 30px; min-width: 0px; LibraryButton { x: 0px; y: 0px; width: 112px; height: 30px; active: true; caption: root.playlist-cover ? "Open playlist" : "Unavailable"; label: root.playlist-cover ? "Open playlist " + root.title : "Album unavailable: " + root.title; light-mode: root.light-mode; enabled: root.enabled; clicked => { root.open(); } } }
@@ -868,6 +872,7 @@ component SongRow inherits Rectangle {
 }
 
 component LibraryEntry inherits Rectangle {
+    in property <int> cover-variant;
     in property <bool> playlist-cover: true;
     in property <string> shortcut-icon;
     in property <bool> add-target: false;
@@ -893,7 +898,7 @@ component LibraryEntry inherits Rectangle {
         padding: 10px;
         spacing: 10px;
         cross-axis-alignment: center;
-        if root.shortcut-icon == "" : Cover { width: 48px; height: 48px; artwork: root.artwork; playlist: root.playlist-cover; light-mode: root.light-mode; }
+        if root.shortcut-icon == "" : Cover { width: 48px; height: 48px; artwork: root.artwork; playlist: root.playlist-cover; variant: root.cover-variant; light-mode: root.light-mode; }
         if root.shortcut-icon != "" : Rectangle {
             width: 48px; height: 48px; border-radius: 9px; background: root.light-mode ? #e8d5cb : #30232e;
             Path { x: 12px; y: 12px; width: 24px; height: 24px; viewbox-width: 24; viewbox-height: 24; fill: transparent; stroke: root.light-mode ? #985955 : #e493ad; stroke-width: 1.7px; commands: root.shortcut-icon; }
@@ -946,14 +951,14 @@ component HomeCard inherits Rectangle {
         select => { root.select(root.source-index); } queue(next) => { root.queue(root.source-index, next); } radio => { root.radio(root.source-index); } artist => { root.artist(root.source-index); } add-playlist => { root.add-playlist(root.source-index); }
     }
     if root.item.kind != "song" && !root.quick : PlaylistTile {
-        playlist-cover: root.item.kind == "playlist";
+        playlist-cover: root.item.kind == "playlist"; cover-variant: root.item.cover-variant;
         width: parent.width; height: parent.height; featured: root.featured;
         title: root.item.title; subtitle: root.featured ? root.item.subtitle : (root.item.kind == "playlist" ? "Playlist · " : "Album unavailable · ") + root.item.subtitle; artwork: root.item.artwork;
         light-mode: root.light-mode; enabled: root.enabled && root.item.kind == "playlist";
         open => { root.select(root.source-index); }
     }
     if root.item.kind != "song" && root.quick : LibraryEntry {
-        playlist-cover: root.item.kind == "playlist";
+        playlist-cover: root.item.kind == "playlist"; cover-variant: root.item.cover-variant;
         width: parent.width; height: parent.height; title: root.item.title; subtitle: (root.item.kind == "playlist" ? "Playlist · " : "Album · ") + root.item.subtitle; artwork: root.item.artwork;
         light-mode: root.light-mode; enabled: root.enabled && root.item.kind == "playlist"; navigable: root.item.kind == "playlist";
         open => { root.select(root.source-index); }
@@ -1328,6 +1333,8 @@ component PlayerBar inherits Rectangle {
     in property <bool> compact;
     in property <bool> collapsed;
     in property <bool> queue-open;
+    in property <bool> lyrics-open;
+    callback toggle-lyrics;
     in property <string> track-title;
     in property <string> track-artist;
     in property <bool> artist-enabled;
@@ -1393,11 +1400,12 @@ component PlayerBar inherits Rectangle {
             HorizontalLayout {
                 x: parent.width - self.width;
                 y: 8px;
-                width: root.collapsed ? 150px : 172px;
+                width: root.collapsed ? 150px : 216px;
                 height: 36px;
                 spacing: root.collapsed ? 4px : 8px;
                 RatingButton { width: 32px; height: 36px; enabled: root.rating-enabled && !root.rating-busy; light-mode: root.light-mode; active: root.rating == 1; label: root.rating == 1 ? "Remove like" : "Like this song on YouTube Music"; clicked => { root.rate(root.rating == 1 ? 0 : 1); } }
                 RatingButton { width: 32px; height: 36px; negative: true; enabled: root.rating-enabled && !root.rating-busy; light-mode: root.light-mode; active: root.rating == -1; label: root.rating == -1 ? "Remove dislike" : "Dislike this song on YouTube Music"; clicked => { root.rate(root.rating == -1 ? 0 : -1); } }
+                if !root.collapsed : LibraryButton { width: 36px; height: 36px; show-tooltip: true; light-mode: root.light-mode; icon-path: "M 4 4 L 20 4 L 20 17 L 10 17 L 5 21 L 5 17 L 4 17 Z M 8 8 L 16 8 M 8 12 L 14 12"; label: root.lyrics-open ? "Close lyrics" : "Open lyrics"; active: root.lyrics-open; clicked => { root.toggle-lyrics(); } }
                 if !root.collapsed : LibraryButton { width: 36px; height: 36px; show-tooltip: true; light-mode: root.light-mode; icon-path: "M 4 6 L 20 6 M 4 12 L 14 12 M 4 18 L 14 18 M 18 12 L 23 15 L 18 18 Z"; label: root.queue-open ? "Close queue" : "Open queue"; active: root.queue-open; clicked => { root.toggle-queue(); } }
                 if !root.collapsed : LibraryButton { width: 36px; height: 36px; show-tooltip: true; light-mode: root.light-mode; icon-path: "M 3 5 L 21 5 L 21 19 L 3 19 Z M 12 11 L 19 11 L 19 17 L 12 17 Z"; label: "Open mini player"; clicked => { root.mini(); } }
                 if root.collapsed : LibraryButton { width: 36px; light-mode: root.light-mode; caption: "Pin"; label: root.mini-pinned ? "Unpin mini player" : "Pin mini player above other windows"; active: root.mini-pinned; clicked => { root.toggle-mini-pin(); } }
@@ -1417,6 +1425,52 @@ component PlayerBar inherits Rectangle {
         }
     }
 }
+component LyricsDrawer inherits Rectangle {
+    in property <bool> light-mode;
+    in property <[LyricRow]> lines;
+    in property <int> active: -1;
+    in property <bool> synced;
+    in property <bool> seek-enabled;
+    in property <string> status;
+    in property <string> source;
+    in property <string> song;
+    in property <string> artist;
+    private property <bool> following: true;
+    callback close;
+    callback retry;
+    callback seek-line(int);
+    background: root.light-mode ? #f9f4ee : #191c22;
+    border-width: 1px; border-color: root.light-mode ? #ded0c4 : #292e37;
+    changed active => { if root.following && root.active >= 0 { lyric-list.content-y = -max(0, root.active - 2) * 76px; } }
+    VerticalLayout {
+        padding: 20px; spacing: 10px;
+        HorizontalLayout {
+            height: 36px; spacing: 6px; cross-axis-alignment: center;
+            Text { horizontal-stretch: 1; text: "Lyrics"; font-size: 22px; font-weight: 650; color: root.light-mode ? #392e33 : #f0eeef; }
+            if root.synced && root.lines.length > 0 : LibraryButton { width: 82px; height: 30px; caption: root.following ? "Following" : "Follow"; active: root.following; label: root.following ? "Pause lyrics auto-scroll" : "Follow current lyric line"; light-mode: root.light-mode; clicked => { root.following = !root.following; if root.following && root.active >= 0 { lyric-list.content-y = -max(0, root.active - 2) * 76px; } } }
+            LibraryButton { width: 30px; height: 30px; show-tooltip: true; light-mode: root.light-mode; icon-path: "M 20 7 L 20 3 M 20 7 L 16 7 M 20 7 A 9 9 0 1 0 21 14"; label: "Retry lyrics"; clicked => { root.retry(); } }
+            LibraryButton { width: 30px; height: 30px; light-mode: root.light-mode; caption: "×"; label: "Close lyrics"; clicked => { root.close(); } }
+        }
+        Text { text: root.song; font-size: 14px; font-weight: 600; overflow: elide; color: root.light-mode ? #392e33 : #f0eeef; }
+        Text { text: root.artist; font-size: 12px; overflow: elide; color: root.light-mode ? #716773 : #a1a5ae; }
+        Text { text: root.status; font-size: 11px; wrap: word-wrap; color: root.light-mode ? #716773 : #a1a5ae; }
+        Rectangle { height: 1px; background: root.light-mode ? #ded0c4 : #292e37; }
+        lyric-list := ListView {
+            vertical-stretch: 1; accessible-label: "Song lyrics";
+            for line[index] in root.lines : Rectangle {
+                height: 76px;
+                background: index == root.active ? (root.light-mode ? #eee2d9 : #30232e) : transparent;
+                border-radius: 6px;
+                if index == root.active : Rectangle { x: 0px; y: 12px; width: 3px; height: 52px; border-radius: 1.5px; background: root.light-mode ? #b45448 : #b33d60; }
+                Text { x: 12px; y: 6px; width: max(0px, parent.width - 24px); height: 64px; text: line.text; wrap: word-wrap; overflow: elide; vertical-alignment: center; font-size: 18px; font-weight: index == root.active ? 650 : 400; color: index == root.active ? (root.light-mode ? #88463e : #edb5c6) : (root.light-mode ? #716773 : #a1a5ae); }
+                control := Button { width: parent.width; height: parent.height; opacity: 0; enabled: root.synced && root.seek-enabled; accessible-label: "Seek to lyric: " + line.text; clicked => { root.seek-line(index); } }
+                Rectangle { width: parent.width; height: parent.height; border-radius: 6px; background: transparent; border-width: control.has-focus ? 2px : 0px; border-color: root.light-mode ? #985955 : #d16b89; }
+            }
+        }
+        if root.source != "" : Text { text: root.source; font-size: 11px; overflow: elide; color: root.light-mode ? #716773 : #a1a5ae; }
+    }
+}
+
 export component AppWindow inherits Window {
     in property <bool> jam-available: false;
     in property <bool> jam-active: false;
@@ -1465,7 +1519,7 @@ export component AppWindow inherits Window {
     // Derive columns directly from the window, including navigation, padding,
     // queue and scrollbar. A deferred ListView width callback can retain the
     // previous screen's column count when navigating after a resize.
-    private property <length> browse-width: max(0px, min(LayoutMetrics.page-max-width, root.width - (root.compact-mode || root.width < 900px ? 120px : 152px) - (root.queue-open && root.width >= 1050px ? 340px : 0px)) - (root.compact-mode ? 36px : 56px) - 16px);
+    private property <length> browse-width: max(0px, (root.width - (root.compact-mode || root.width < 900px ? 120px : 152px) - (root.width >= 1050px ? (root.lyrics-open ? 384px : root.queue-open ? 340px : 0px) : 0px)) - (root.compact-mode ? 36px : 56px) - 16px);
     out property <int> home-columns: max(1, min(6, floor(root.browse-width / 164px)));
     in property <bool> account-connected;
     in property <bool> account-verified;
@@ -1476,6 +1530,16 @@ export component AppWindow inherits Window {
     in-out property <bool> library-open: false;
     in-out property <bool> home-open: true;
     in-out property <bool> queue-open: false;
+    in-out property <bool> lyrics-open: false;
+    in property <[LyricRow]> lyrics-lines;
+    in property <int> lyrics-active: -1;
+    in property <bool> lyrics-synced;
+    in property <string> lyrics-status: "Play a YouTube Music song to see its lyrics.";
+    in property <string> lyrics-source;
+    in-out property <string> lyrics-generation;
+    callback reload-lyrics;
+    callback seek-lyric(int);
+
     in-out property <bool> compact-mode: false;
     in property <bool> autoplay-enabled: false;
     callback toggle-compact();
@@ -1647,7 +1711,7 @@ export component AppWindow inherits Window {
     private property <bool> narrow-navigation: false;
     private property <bool> header-branding: true;
     private property <bool> advanced-open: false;
-    private property <bool> browsing-enabled: !root.settings-open && !root.account-open && !root.artist-picker-open && !root.jam-open && !(root.queue-open && !root.wide);
+    private property <bool> browsing-enabled: !root.settings-open && !root.account-open && !root.artist-picker-open && !root.jam-open && !((root.queue-open || root.lyrics-open) && !root.wide);
 
     title: "Tide";
     icon: @image-url("assets/tide-icon.png");
@@ -1672,8 +1736,9 @@ export component AppWindow inherits Window {
     }
     changed jam-open => { if root.jam-open { root.playlist-picker-open = false; root.settings-open = false; root.account-open = false; app-focus.focus(); } }
     changed playlist-picker-open => { if root.playlist-picker-open { root.settings-open = false; root.account-open = false; root.jam-open = false; root.artist-picker-open = false; app-focus.focus(); } }
-    changed queue-open => { if root.queue-open && !root.wide { app-focus.focus(); } }
-    changed wide => { if !root.wide && root.queue-open { app-focus.focus(); } }
+    changed queue-open => { if root.queue-open { root.lyrics-open = false; if !root.wide { app-focus.focus(); } } }
+    changed lyrics-open => { if root.lyrics-open { root.queue-open = false; if !root.wide { app-focus.focus(); } } }
+    changed wide => { if !root.wide && (root.queue-open || root.lyrics-open) { app-focus.focus(); } }
     changed light-mode => { Palette.color-scheme = root.light-mode ? light : dark; }
 
     // Windows may discard the software-rendered window contents on minimize
@@ -1716,6 +1781,7 @@ export component AppWindow inherits Window {
                 if root.jam-open { root.jam-open = false; return accept; }
                 if root.settings-open { root.settings-open = false; return accept; }
                 if root.account-open { root.account-open = false; return accept; }
+                if root.lyrics-open { root.lyrics-open = false; return accept; }
                 if root.queue-open { root.queue-open = false; return accept; }
             }
             return reject;
@@ -1771,8 +1837,8 @@ export component AppWindow inherits Window {
                     Rectangle {
                         horizontal-stretch: 1;
                         VerticalLayout {
-                            x: max(0px, (parent.width - LayoutMetrics.page-max-width) / 2);
-                            width: min(parent.width, LayoutMetrics.page-max-width);
+                            x: 0px;
+                            width: parent.width;
                             height: parent.height;
                             padding: root.compact-mode ? 18px : 28px;
                             spacing: 12px;
@@ -1868,13 +1934,13 @@ export component AppWindow inherits Window {
                                                 private property <int> item-index: group * root.library-columns + column;
                                                 if self.item-index < root.library-playlists.length && root.library-grid : PlaylistTile {
                                                     width: parent.width; height: parent.height;
-                                                    title: root.library-playlists[parent.item-index].title; subtitle: root.library-playlists[parent.item-index].subtitle; artwork: root.library-playlists[parent.item-index].artwork;
+                                                    cover-variant: root.library-playlists[parent.item-index].cover-variant; title: root.library-playlists[parent.item-index].title; subtitle: root.library-playlists[parent.item-index].subtitle; artwork: root.library-playlists[parent.item-index].artwork;
                                                     light-mode: root.light-mode; enabled: root.browsing-enabled && root.account-connected && !root.account-busy;
                                                     open => { root.select-library-playlist(parent.item-index); }
                                                 }
                                                 if self.item-index < root.library-playlists.length && !root.library-grid : LibraryEntry {
                                                     width: parent.width; height: parent.height;
-                                                    title: root.library-playlists[parent.item-index].title; subtitle: root.library-playlists[parent.item-index].subtitle; artwork: root.library-playlists[parent.item-index].artwork;
+                                                    cover-variant: root.library-playlists[parent.item-index].cover-variant; title: root.library-playlists[parent.item-index].title; subtitle: root.library-playlists[parent.item-index].subtitle; artwork: root.library-playlists[parent.item-index].artwork;
                                                     light-mode: root.light-mode; enabled: root.browsing-enabled && root.account-connected && !root.account-busy;
                                                     open => { root.select-library-playlist(parent.item-index); }
                                                 }
@@ -1949,6 +2015,12 @@ export component AppWindow inherits Window {
                             }
                         }
                     }
+                    if root.lyrics-open && root.wide : LyricsDrawer {
+                        width: 384px; light-mode: root.light-mode; lines: root.lyrics-lines; active: root.lyrics-active;
+                        synced: root.lyrics-synced; status: root.lyrics-status; source: root.lyrics-source;
+                        song: root.track-title; artist: root.track-artist; seek-enabled: !root.jam-guest;
+                        close => { root.lyrics-open = false; } retry => { root.reload-lyrics(); } seek-line(index) => { root.seek-lyric(index); }
+                    }
                     if root.queue-open && root.wide : QueueDrawer {
                         query <=> root.queue-filter;
                         matches: root.queue-matches;
@@ -1976,6 +2048,17 @@ export component AppWindow inherits Window {
                         toggle-repeat => { root.toggle-repeat(); }
                         shuffle => { root.shuffle-queue(); }
                         clear => { root.clear-queue(); }
+                    }
+                }
+                if root.lyrics-open && !root.wide : Rectangle {
+                    width: parent.width; height: parent.height;
+                    Rectangle { width: max(0px, parent.width - 384px); height: parent.height; background: #00000060; TouchArea { clicked => { root.lyrics-open = false; } } }
+                    LyricsDrawer {
+                        x: max(0px, parent.width - 384px); width: 384px; height: parent.height;
+                        light-mode: root.light-mode; lines: root.lyrics-lines; active: root.lyrics-active;
+                        synced: root.lyrics-synced; status: root.lyrics-status; source: root.lyrics-source;
+                        song: root.track-title; artist: root.track-artist; seek-enabled: !root.jam-guest;
+                        close => { root.lyrics-open = false; } retry => { root.reload-lyrics(); } seek-line(index) => { root.seek-lyric(index); }
                     }
                 }
                 if root.queue-open && !root.wide : Rectangle {
@@ -2241,6 +2324,8 @@ export component AppWindow inherits Window {
                 compact: root.compact-mode;
                 collapsed: root.collapsed;
                 queue-open: root.queue-open;
+                lyrics-open: root.lyrics-open;
+                toggle-lyrics => { root.lyrics-open = !root.lyrics-open; }
                 toggle-pause => { root.toggle-pause(); }
                 next-track => { root.next-track(); }
                 previous-track => { root.previous-track(); }
@@ -2273,6 +2358,7 @@ export component AppWindow inherits Window {
                         changed visible-height => { root.playlist-picker-artwork-height = self.visible-height; }
                         horizontal-scrollbar-policy: always-off;
                         for row[index] in root.playlist-choices : LibraryEntry {
+                            cover-variant: row.cover-variant;
                             light-mode: root.light-mode; add-target: true;
                             title: row.title; subtitle: row.subtitle; artwork: row.artwork;
                             enabled: root.collection-enabled && !root.collection-busy && !root.playlist-choices-busy;
