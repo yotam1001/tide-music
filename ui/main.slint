@@ -505,6 +505,7 @@ component NavigationButton inherits Rectangle {
 
 // Artwork is provided by the music source. An absent cover is a small music note.
 component Cover inherits Rectangle {
+    in property <bool> playlist: false;
     in property <image> artwork;
     in property <bool> light-mode;
     border-radius: 7px;
@@ -516,7 +517,11 @@ component Cover inherits Rectangle {
         source: root.artwork;
         image-fit: cover;
     }
-    if root.artwork.width == 0 || root.artwork.height == 0 : Path {
+    if (root.artwork.width == 0 || root.artwork.height == 0) && root.playlist : Image {
+        width: parent.width; height: parent.height;
+        source: @image-url("assets/playlist-default.svg"); image-fit: cover;
+    }
+    if (root.artwork.width == 0 || root.artwork.height == 0) && !root.playlist : Path {
         x: (parent.width - 22px) / 2;
         y: (parent.height - 22px) / 2;
         width: 22px;
@@ -531,6 +536,7 @@ component Cover inherits Rectangle {
 }
 
 component PlaylistTile inherits Rectangle {
+    in property <bool> playlist-cover: true;
     clip: true;
     in property <bool> featured: false;
     in property <image> artwork;
@@ -550,7 +556,7 @@ component PlaylistTile inherits Rectangle {
     }
     if root.featured && root.width >= 360px : HorizontalLayout {
         padding: 18px; spacing: 16px; cross-axis-alignment: center;
-        Cover { width: 132px; height: 132px; artwork: root.artwork; light-mode: root.light-mode; }
+        Cover { width: 132px; height: 132px; artwork: root.artwork; playlist: root.playlist-cover; light-mode: root.light-mode; }
         VerticalLayout {
             horizontal-stretch: 1; min-width: 0px; spacing: 8px; alignment: center;
             Rectangle { height: 56px; min-width: 0px; clip: true; Text { width: parent.width; height: parent.height; text: root.title; color: root.light-mode ? #392e33 : #f0eeef; font-size: 20px; font-weight: 650; wrap: word-wrap; overflow: elide; } }
@@ -560,7 +566,7 @@ component PlaylistTile inherits Rectangle {
     }
     if !root.featured || root.width < 360px : VerticalLayout {
         padding: root.featured ? 16px : 10px; spacing: 6px; alignment: start;
-        Rectangle { height: root.featured ? 112px : 132px; min-width: 0px; Cover { width: root.featured ? 112px : 132px; height: self.width; artwork: root.artwork; light-mode: root.light-mode; } }
+        Rectangle { height: root.featured ? 112px : 132px; min-width: 0px; Cover { width: root.featured ? 112px : 132px; height: self.width; artwork: root.artwork; playlist: root.playlist-cover; light-mode: root.light-mode; } }
         Text { height: 22px; text: root.title; color: root.light-mode ? #392e33 : #f0eeef; font-size: root.featured ? 18px : 14px; font-weight: 600; overflow: elide; }
         Text { height: 18px; text: root.subtitle; color: root.light-mode ? #716773 : #a1a5ae; font-size: 12px; overflow: elide; }
         if root.featured : Rectangle { height: 32px; min-width: 0px; LibraryButton { width: 112px; height: 32px; active: true; caption: "Open playlist"; light-mode: root.light-mode; enabled: root.enabled; clicked => { root.open(); } } }
@@ -848,6 +854,7 @@ component SongRow inherits Rectangle {
 }
 
 component LibraryEntry inherits Rectangle {
+    in property <bool> playlist-cover: true;
     in property <string> shortcut-icon;
     in property <bool> add-target: false;
     in property <image> artwork;
@@ -872,7 +879,7 @@ component LibraryEntry inherits Rectangle {
         padding: 10px;
         spacing: 10px;
         cross-axis-alignment: center;
-        if root.shortcut-icon == "" : Cover { width: 48px; height: 48px; artwork: root.artwork; light-mode: root.light-mode; }
+        if root.shortcut-icon == "" : Cover { width: 48px; height: 48px; artwork: root.artwork; playlist: root.playlist-cover; light-mode: root.light-mode; }
         if root.shortcut-icon != "" : Rectangle {
             width: 48px; height: 48px; border-radius: 9px; background: root.light-mode ? #e8d5cb : #30232e;
             Path { x: 12px; y: 12px; width: 24px; height: 24px; viewbox-width: 24; viewbox-height: 24; fill: transparent; stroke: root.light-mode ? #985955 : #e493ad; stroke-width: 1.7px; commands: root.shortcut-icon; }
@@ -924,12 +931,14 @@ component HomeCard inherits Rectangle {
         select => { root.select(root.source-index); } queue(next) => { root.queue(root.source-index, next); } radio => { root.radio(root.source-index); } artist => { root.artist(root.source-index); } add-playlist => { root.add-playlist(root.source-index); }
     }
     if root.item.kind != "song" && !root.quick : PlaylistTile {
+        playlist-cover: root.item.kind == "playlist";
         width: parent.width; height: parent.height; featured: root.featured;
         title: root.item.title; subtitle: (root.item.kind == "playlist" ? "Playlist · " : "Album unavailable · ") + root.item.subtitle; artwork: root.item.artwork;
         light-mode: root.light-mode; enabled: root.enabled && root.item.kind == "playlist";
         open => { root.select(root.source-index); }
     }
     if root.item.kind != "song" && root.quick : LibraryEntry {
+        playlist-cover: root.item.kind == "playlist";
         width: parent.width; height: parent.height; title: root.item.title; subtitle: (root.item.kind == "playlist" ? "Playlist · " : "Album · ") + root.item.subtitle; artwork: root.item.artwork;
         light-mode: root.light-mode; enabled: root.enabled && root.item.kind == "playlist"; navigable: root.item.kind == "playlist";
         open => { root.select(root.source-index); }
