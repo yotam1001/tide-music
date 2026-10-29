@@ -1,3 +1,7 @@
+import io
+import json
+from contextlib import redirect_stdout
+from unittest.mock import patch
 import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
@@ -43,6 +47,19 @@ class LyricsTests(unittest.TestCase):
         result = helper.lyrics(Client(RuntimeError("sensitive transport details")), "fixture0001")
         self.assertEqual(result, {"type": "error", "code": "lyrics_unavailable"})
         self.assertNotIn("sensitive", repr(result))
+
+    def test_failed_lyrics_keep_cookie_refresh_without_exposing_transport_errors(self):
+        headers = {"cookie": "__Secure-3PAPISID=fresh", "x-goog-authuser": "0"}
+        session = SimpleNamespace(_tide_refreshed_headers=headers, close=lambda: None)
+        client = Client(RuntimeError("sensitive transport details"))
+        request = io.TextIOWrapper(io.BytesIO(json.dumps({"action": "lyrics", "video_id": "fixture0001", "headers": {}}).encode()))
+        output = io.StringIO()
+        with patch.object(helper, "create_client", return_value=(client, session)), patch.object(helper.sys, "stdin", request), redirect_stdout(output):
+            helper.main()
+        result = json.loads(output.getvalue())
+        self.assertEqual(result["code"], "lyrics_unavailable")
+        self.assertEqual(result["refreshed_headers"], headers)
+        self.assertNotIn("sensitive", output.getvalue())
 
     def test_limits_bad_times_and_invalid_ids(self):
         client = Client(None)
