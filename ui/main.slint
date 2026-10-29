@@ -765,7 +765,9 @@ component SongRow inherits Rectangle {
         }
     }
     song-menu := ActionMenu {
-        x: max(0px, root.width - self.width - 10px); y: 52px;
+        // A tile is narrower than its menu. Let the popup extend to its left
+        // so actions on the last column stay inside the player window.
+        x: root.tile-mode ? root.width - self.width - 10px : max(0px, root.width - self.width - 10px); y: 52px;
         light-mode: root.light-mode;
         separator-after: root.shared-queue || (root.removable && !root.current) ? 0 : 1;
         items: root.shared-queue && root.playlist-removable ? [

@@ -129,22 +129,39 @@ fn cover_grid_and_list_preserve_song_and_playlist_actions() {
                 );
             }
             // The tile's action popup must remain usable despite cover clipping.
-            queued.set(None);
-            let menu_x = left + (available - 8.0 * (columns - 1) as f32) / columns as f32 - 27.0;
-            click(&ui, menu_x, 225.0);
-            render(&window, width, light, "home-menu");
-            for value in [Key::DownArrow, Key::Return] {
-                let text: slint::SharedString = value.into();
-                ui.window()
-                    .dispatch_event(WindowEvent::KeyPressed { text: text.clone() });
-                ui.window()
-                    .dispatch_event(WindowEvent::KeyReleased { text });
+            for column in [0, columns - 1] {
+                if column == 1 {
+                    continue;
+                } // This fixture's second tile is a playlist.
+                queued.set(None);
+                let menu_x = left
+                    + column as f32 * (available + 8.0) / columns as f32
+                    + (available - 8.0 * (columns - 1) as f32) / columns as f32
+                    - 27.0;
+                click(&ui, menu_x, 225.0);
+                render(
+                    &window,
+                    width,
+                    light,
+                    if column == 0 {
+                        "home-menu"
+                    } else {
+                        "home-menu-edge"
+                    },
+                );
+                for value in [Key::DownArrow, Key::Return] {
+                    let text: slint::SharedString = value.into();
+                    ui.window()
+                        .dispatch_event(WindowEvent::KeyPressed { text: text.clone() });
+                    ui.window()
+                        .dispatch_event(WindowEvent::KeyReleased { text });
+                }
+                assert_eq!(
+                    queued.get(),
+                    Some((column, true)),
+                    "Tile menu lost its queue source index"
+                );
             }
-            assert_eq!(
-                queued.get(),
-                Some((0, true)),
-                "Tile menu lost its queue source index"
-            );
             ui.set_library_open(true);
             render(&window, width, light, "library-grid");
             let columns = ui.get_library_columns();
