@@ -20,6 +20,7 @@ struct Runtime {
     worker: Option<Work>,
     lines: Vec<LyricLine>,
     attempted: bool,
+    external_after: Option<Instant>,
 }
 impl Runtime {
     fn accepts(&self, key: &Key, cancelled: bool) -> bool {
@@ -179,12 +180,30 @@ pub fn install(state: &Rc<RefCell<State>>, ui: &AppWindow) -> Lyrics {
                 if r.worker.as_ref().is_some_and(|w| w.handle.is_finished()) {
                     let work = r.worker.take().unwrap();
                     let _ = work.handle.join();
+                    let reply = work.receiver.try_recv();
+                    // Honor service cooldowns even when the user skipped the
+                    // song before its read completed.
+                    if let Ok(Ok(Response::Lyrics {
+                        retry_after_seconds,
+                        ..
+                    })) = &reply
+                    {
+                        if *retry_after_seconds > 0 {
+                            r.external_after = Some(
+                                Instant::now()
+                                    + Duration::from_secs(u64::from(
+                                        (*retry_after_seconds).min(86400),
+                                    )),
+                            );
+                        }
+                    }
                     if r.accepts(&work.key, work.cancel.load(Ordering::Acquire)) {
-                        match work.receiver.try_recv() {
+                        match reply {
                             Ok(Ok(Response::Lyrics {
                                 lines,
                                 synced,
                                 source,
+                                ..
                             })) if valid(&lines, synced, &source) => {
                                 ui.set_lyrics_synced(synced);
                                 ui.set_lyrics_source(source.into());
@@ -231,11 +250,16 @@ pub fn install(state: &Rc<RefCell<State>>, ui: &AppWindow) -> Lyrics {
                             let cancel = Arc::new(AtomicBool::new(false));
                             let flag = cancel.clone();
                             let video_id = key.video.clone();
+                            let allow_external =
+                                r.external_after.is_none_or(|until| Instant::now() >= until);
                             match std::thread::Builder::new()
                                 .name("tide-lyrics".into())
                                 .spawn(move || {
                                     let _ = tx.try_send(provider.execute(
-                                        tide_provider::Request::Lyrics { video_id },
+                                        tide_provider::Request::Lyrics {
+                                            video_id,
+                                            allow_external,
+                                        },
                                         flag,
                                     ));
                                 }) {
@@ -284,13 +308,17 @@ pub fn probe(video: String) -> Result<(), String> {
         return Err("Expected a YouTube video ID".into());
     }
     match tide_provider::Provider::new()?.execute(
-        tide_provider::Request::Lyrics { video_id: video },
+        tide_provider::Request::Lyrics {
+            video_id: video,
+            allow_external: true,
+        },
         Arc::new(AtomicBool::new(false)),
     )? {
         Response::Lyrics {
             lines,
             synced,
             source,
+            ..
         } if valid(&lines, synced, &source) => {
             println!("PASS lyrics read: {} lines, synced={}", lines.len(), synced);
             Ok(())

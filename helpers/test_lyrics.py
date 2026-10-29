@@ -59,7 +59,44 @@ class LyricsTests(unittest.TestCase):
         result = json.loads(output.getvalue())
         self.assertEqual(result["code"], "lyrics_unavailable")
         self.assertEqual(result["refreshed_headers"], headers)
+        self.assertEqual(session._tide_request_timeout, 5)
         self.assertNotIn("sensitive", output.getvalue())
+
+    def test_lrclib_uses_only_public_metadata_and_rejects_wrong_recordings(self):
+        watch = {"tracks": [{"videoId": "fixture0001", "title": "Example", "artists": [{"name": "Artist"}], "length": "3:07"}]}
+        record = {"trackName": "Example", "artistName": "Artist", "duration": 187, "syncedLyrics": "[00:01.20]First line\n[00:08.00]Next line"}
+        from unittest.mock import MagicMock
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps(record).encode()
+        with patch("urllib.request.urlopen", return_value=response) as read:
+            result = helper.lrclib_lyrics(watch, "fixture0001")
+        self.assertTrue(result["synced"])
+        self.assertEqual(result["lines"][0]["start_ms"], 1200)
+        request = read.call_args.args[0]
+        self.assertTrue(request.full_url.startswith("https://lrclib.net/api/get?"))
+        self.assertIsNone(request.get_header("Cookie"))
+        self.assertIsNone(request.get_header("Authorization"))
+        record["duration"] = 191
+        response.__enter__.return_value.read.return_value = json.dumps(record).encode()
+        with patch("urllib.request.urlopen", return_value=response):
+            self.assertIsNone(helper.lrclib_lyrics(watch, "fixture0001"))
+        self.assertIsNone(helper.lrc_lines("[offset:100]\n[00:00.00]A", 187))
+        self.assertIsNone(helper.lrc_lines("[99:00.00]A", 187))
+
+    def test_lrclib_rate_limit_is_returned_for_shared_cooldown(self):
+        from urllib.error import HTTPError
+        from email.message import Message
+        watch = {"tracks": [{"videoId": "fixture0001", "title": "Example", "artists": [{"name": "Artist"}], "length": "3:07"}]}
+        headers = Message()
+        headers["Retry-After"] = "120"
+        error = HTTPError("https://lrclib.net/api/get", 429, "Rate limited", headers, None)
+        with patch("urllib.request.urlopen", side_effect=error):
+            result = helper.lrclib_lyrics(watch, "fixture0001")
+        self.assertEqual(result["retry_after_seconds"], 120)
+        self.assertEqual(result["lines"], [])
+        with patch.object(helper, "lrclib_lyrics") as lookup:
+            helper.run(Client({"hasTimestamps": False, "lyrics": "Plain"}), {"action": "lyrics", "video_id": "fixture0001", "allow_external": False})
+            lookup.assert_not_called()
 
     def test_limits_bad_times_and_invalid_ids(self):
         client = Client(None)

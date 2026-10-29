@@ -166,6 +166,7 @@ pub enum Request {
     },
     Lyrics {
         video_id: String,
+        allow_external: bool,
     },
     Feedback {
         request: FeedbackRequest,
@@ -189,6 +190,8 @@ pub enum Response {
         lines: Vec<LyricLine>,
         synced: bool,
         source: String,
+        #[serde(default)]
+        retry_after_seconds: u32,
     },
     Artist {
         name: String,
@@ -946,7 +949,7 @@ impl Provider {
         }
         let switching = matches!(request, Request::SwitchAccount { .. });
         let timeout = if matches!(request, Request::Lyrics { .. }) {
-            Duration::from_secs(15)
+            Duration::from_secs(25)
         } else {
             Duration::from_secs(60)
         };

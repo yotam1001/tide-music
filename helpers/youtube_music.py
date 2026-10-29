@@ -276,13 +276,14 @@ def create_client(auth):
     import requests
     from functools import partial
     session = requests.Session()
+    session._tide_request_timeout = 20
     transport = session.request
 
     def contained_request(*args, **kwargs):
         # Session.get supplies allow_redirects=True itself, which would override
         # a partial's default. Enforce the boundary at the final request call.
         kwargs["allow_redirects"] = False
-        kwargs["timeout"] = 20
+        kwargs["timeout"] = session._tide_request_timeout
         return transport(*args, **kwargs)
 
     session.request = partial(contained_request, timeout=20)
@@ -670,7 +671,80 @@ def feedback(client, request):
         return {"type": "error", "code": "feedback_unavailable" if kind == "rating" else "feedback_unconfirmed"}
 
 
-def lyrics(client, video):
+def lrc_lines(raw, duration):
+    """Parse bounded timestamp text as data, never markup or executable input."""
+    if not isinstance(raw, str) or len(raw.encode("utf-8")) > 128_000:
+        return None
+    if re.search(r"\[offset:[+-]?[1-9]", raw, re.I):
+        return None
+    stamp = re.compile(r"\[(\d{1,3}):([0-5]\d)(?:[.:](\d{1,3}))?\]")
+    lines = []
+    for row in raw.splitlines()[:2000]:
+        times, position = [], 0
+        while match := stamp.match(row, position):
+            ms = (int(match[1]) * 60 + int(match[2])) * 1000 + int((match[3] or "0").ljust(3, "0"))
+            if ms > (duration + 5) * 1000:
+                return None
+            times.append(ms)
+            position = match.end()
+        text = clean(row[position:], 500).strip()
+        lines.extend({"text": text, "start_ms": ms, "end_ms": None} for ms in times)
+        if len(lines) > 1000:
+            return None
+    lines.sort(key=lambda line: line["start_ms"])
+    if sum(len(line["text"].encode("utf-8")) for line in lines) > 128_000:
+        return None
+    return lines or None
+
+
+def lrclib_lyrics(watch, video):
+    """Public metadata only: NEVER use the authenticated YouTube session here."""
+    from urllib.request import Request, urlopen
+    from urllib.error import HTTPError
+    from urllib.parse import urlencode
+    items = watch.get("tracks") if isinstance(watch, dict) else None
+    track = next((item for item in items[:50] if isinstance(item, dict) and item.get("videoId") == video), None) if isinstance(items, list) else None
+    if not track:
+        return None
+    title, artist = clean(track.get("title")), artist_names(track)
+    duration = duration_seconds({**track, "duration": track.get("duration") or track.get("length")})
+    if not title or not artist or not duration or not 1 <= duration <= 3600:
+        return None
+    request = Request("https://lrclib.net/api/get?" + urlencode({"track_name": title, "artist_name": artist, "duration": duration}), headers={"User-Agent": "Tide/0.4.10 (https://github.com/yotam1001/tide-music)"})
+    try:
+        # A separate standard-library request carries no Google cookies/headers.
+        with urlopen(request, timeout=3) as response:
+            raw = response.read(256_001)
+        if len(raw) > 256_000:
+            return None
+        record = json.loads(raw)
+        normalize = lambda value: "".join(c for c in value.casefold() if c.isalnum()) if isinstance(value, str) else ""
+        if not isinstance(record, dict) or normalize(record.get("trackName")) != normalize(title) or normalize(record.get("artistName")) != normalize(artist):
+            return None
+        recorded_duration = record.get("duration")
+        if type(recorded_duration) not in (int, float) or not abs(recorded_duration - duration) <= 2:
+            return None
+        lines = lrc_lines(record.get("syncedLyrics"), duration)
+        if lines:
+            return {"type": "lyrics", "lines": lines, "synced": True, "source": "Source: LRCLIB", "retry_after_seconds": 0}
+    except HTTPError as error:
+        if error.code in (429, 503):
+            value = error.headers.get("Retry-After", "60") if error.headers else "60"
+            try:
+                seconds = int(value)
+            except (ValueError, TypeError):
+                from email.utils import parsedate_to_datetime
+                try:
+                    seconds = int(parsedate_to_datetime(value).timestamp() - time.time())
+                except (ValueError, TypeError, OverflowError):
+                    seconds = 60
+            return {"type": "lyrics", "lines": [], "synced": False, "source": "", "retry_after_seconds": max(1, min(86400, seconds))}
+    except Exception:
+        pass
+    return None
+
+
+def lyrics(client, video, allow_external=True):
     """Read only this video's lyrics; never return credentials or raw errors."""
     empty = {"type": "lyrics", "lines": [], "synced": False, "source": ""}
     if not identifier(video, True):
@@ -680,9 +754,22 @@ def lyrics(client, video):
         browse = watch.get("lyrics") if isinstance(watch, dict) else None
         if not isinstance(browse, str) or not re.fullmatch(r"MPLYt[A-Za-z0-9_=\-]{1,500}", browse):
             return empty
-        data = client.get_lyrics(browse, timestamps=True)
+        data = None
+        failed = False
+        try:
+            data = client.get_lyrics(browse, timestamps=True)
+        except Exception:
+            try:
+                data = client.get_lyrics(browse, timestamps=False)
+            except Exception:
+                failed = True
+        fallback = None
+        if not isinstance(data, dict) or data.get("hasTimestamps") is not True:
+            fallback = lrclib_lyrics(watch, video) if allow_external else None
+            if fallback and fallback["lines"]:
+                return fallback
         if not isinstance(data, dict):
-            return empty
+            return fallback or ({"type": "error", "code": "lyrics_unavailable"} if failed else empty)
         synced = data.get("hasTimestamps") is True
         raw = data.get("lyrics")
         if synced and not isinstance(raw, list):
@@ -717,14 +804,15 @@ def lyrics(client, video):
                 return empty
             result.append({"text": text, "start_ms": start, "end_ms": end})
         return {"type": "lyrics", "lines": result, "synced": synced,
-                "source": clean(data.get("source"), 120) if isinstance(data.get("source"), str) else ""}
+                "source": clean(data.get("source"), 120) if isinstance(data.get("source"), str) else "",
+                "retry_after_seconds": (fallback or {}).get("retry_after_seconds", 0)}
     except Exception:
         return {"type": "error", "code": "lyrics_unavailable"}
 
 
 def run(client, request):
     if request.get("action") == "lyrics":
-        return lyrics(client, request.get("video_id"))
+        return lyrics(client, request.get("video_id"), request.get("allow_external", True) is True)
     action = request["action"]
     if action == "feedback":
         return feedback(client, request.get("request"))
@@ -904,6 +992,10 @@ def main():
             print(json.dumps(result, ensure_ascii=True))
             return
         client, session = create_client(request.pop("headers"))
+        if request.get("action") == "lyrics":
+            # Both reads can time out and still return refreshed cookies before
+            # the owning provider's 25-second overall deadline.
+            session._tide_request_timeout = 5
         try:
             try:
                 result = run(client, request)
