@@ -4,9 +4,17 @@ pub struct Group {
     pub start: usize,
     pub count: usize,
     pub title: String,
+    pub layout: Layout,
 }
 
-pub fn home_groups(labels: &[String], columns: usize) -> Vec<Group> {
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum Layout {
+    Spotlight,
+    Tiles,
+    Compact,
+}
+
+pub fn home_groups(labels: &[String], collections: &[bool], columns: usize) -> Vec<Group> {
     let columns = columns.clamp(1, 6);
     let mut groups = Vec::new();
     let mut section = 0;
@@ -15,16 +23,46 @@ pub fn home_groups(labels: &[String], columns: usize) -> Vec<Group> {
         while end < labels.len() && labels[end] == labels[section] {
             end += 1;
         }
-        for start in (section..end).step_by(columns) {
+        let mut start = section;
+        if section == 0 {
+            let count = (end - start).min(if columns >= 5 {
+                5
+            } else if columns >= 3 {
+                3
+            } else {
+                1
+            });
             groups.push(Group {
                 start,
-                count: (end - start).min(columns),
+                count,
+                title: labels[section].clone(),
+                layout: Layout::Spotlight,
+            });
+            start += count;
+        }
+        while start < end {
+            let collection = collections.get(start).copied().unwrap_or(false);
+            let mut run_end = start + 1;
+            while run_end < end && collections.get(run_end).copied().unwrap_or(false) == collection
+            {
+                run_end += 1;
+            }
+            let count = (run_end - start).min(if collection { columns } else { columns.min(2) });
+            groups.push(Group {
+                start,
+                count,
                 title: if start == section {
                     labels[section].clone()
                 } else {
                     String::new()
                 },
+                layout: if collection {
+                    Layout::Tiles
+                } else {
+                    Layout::Compact
+                },
             });
+            start += count;
         }
         section = end;
     }
@@ -48,15 +86,18 @@ mod tests {
         .map(str::to_owned)
         .collect();
         for columns in 1..=6 {
-            let groups = home_groups(&labels, columns);
+            let groups = home_groups(&labels, &[false, true, false, true, true, false], columns);
             let indices: Vec<_> = groups
                 .iter()
                 .flat_map(|g| g.start..g.start + g.count)
                 .collect();
             assert_eq!(indices, (0..labels.len()).collect::<Vec<_>>());
             assert_eq!(groups.iter().filter(|g| !g.title.is_empty()).count(), 3);
-            assert!(groups.iter().all(|g| g.count <= columns));
+            assert!(groups
+                .iter()
+                .all(|g| g.count <= columns || g.layout == Layout::Spotlight));
+            assert_eq!(groups[0].layout, Layout::Spotlight);
         }
-        assert!(home_groups(&[], 0).is_empty());
+        assert!(home_groups(&[], &[], 0).is_empty());
     }
 }

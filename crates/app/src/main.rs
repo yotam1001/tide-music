@@ -888,12 +888,24 @@ fn refresh_library_models(s: &State, u: &AppWindow) {
             }
         })
         .collect();
-    let home_groups = browse_layout::home_groups(&labels, u.get_home_columns().max(1) as usize);
+    let collections: Vec<bool> = s.recommendations.iter().map(|p| p.kind != "song").collect();
+    let home_groups =
+        browse_layout::home_groups(&labels, &collections, u.get_home_columns().max(1) as usize);
     let visible_groups = artwork_view::visible_range(
         u.get_home_artwork_y(),
         u.get_home_artwork_height(),
         home_groups.iter().map(|g| {
-            u.global::<LayoutMetrics>().get_library_tile_height()
+            (match g.layout {
+                browse_layout::Layout::Spotlight => {
+                    u.global::<LayoutMetrics>().get_home_spotlight_height()
+                }
+                browse_layout::Layout::Compact => {
+                    u.global::<LayoutMetrics>().get_home_compact_height()
+                }
+                browse_layout::Layout::Tiles => {
+                    u.global::<LayoutMetrics>().get_library_tile_height()
+                }
+            }) + u.global::<LayoutMetrics>().get_home_row_gap()
                 + if g.title.is_empty() {
                     0.0
                 } else {
@@ -910,6 +922,12 @@ fn refresh_library_models(s: &State, u: &AppWindow) {
                 start: g.start as i32,
                 count: g.count as i32,
                 title: g.title.clone().into(),
+                layout: match g.layout {
+                    browse_layout::Layout::Spotlight => "spotlight",
+                    browse_layout::Layout::Compact => "compact",
+                    browse_layout::Layout::Tiles => "tiles",
+                }
+                .into(),
             })
             .collect(),
     ));

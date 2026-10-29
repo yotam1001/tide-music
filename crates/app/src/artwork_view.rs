@@ -108,8 +108,8 @@ mod tests {
             let range = grid_visible_range(-2060.0, f32::MAX, 2000, columns, 206.0);
             assert!(range.len() <= MAX_VISIBLE_IMAGES);
         }
-        let groups = crate::browse_layout::home_groups(&vec!["Mixes".into(); 200], 6);
-        assert_eq!(group_image_range(&groups, 2..4), 12..24);
+        let groups = crate::browse_layout::home_groups(&vec!["Mixes".into(); 200], &[true; 200], 6);
+        assert_eq!(group_image_range(&groups, 2..4), 11..23);
         assert_eq!(group_image_range(&groups, 0..0), 0..0);
         assert_eq!(group_image_range(&groups, 0..30).len(), MAX_VISIBLE_IMAGES);
     }

@@ -122,12 +122,7 @@ fn native_ratings_remain_reachable_and_do_not_take_over_transport() {
     });
     draw(&window, 1140, 1400, "history-settings-off");
     assert!(!ui.get_history_feedback_enabled());
-    for y in (260..400).step_by(4) {
-        click(&ui, 1080.0, y as f32);
-        if *consent.borrow() {
-            break;
-        }
-    }
+    click(&ui, 920.0, 211.0);
     assert!(
         *consent.borrow(),
         "History consent is not reachable in Settings"

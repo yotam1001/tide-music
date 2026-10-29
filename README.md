@@ -60,7 +60,7 @@ companion without uninstalling Tide. [Installation help](docs/INSTALLATION.md)
 - Optionally send actual listening to YouTube Music history from Settings.
 - Shuffle playlists, queue songs next, and drag upcoming tracks into order.
 - Start song radio or enable Autoplay for related recommendations.
-- Switch between dark/light themes, compact sizing and a mini player.
+- Switch themes, resize the window or use a mini player.
 - Use Windows media controls and download updates inside Tide; restart when ready.
 - Optionally share the playing song with Discord.
 - Pin the Mini player above other windows and adjust its opacity.

@@ -5,6 +5,9 @@ export global LayoutMetrics {
     out property <length> browse-row-height: 72px;
     out property <length> library-tile-height: 206px;
     out property <length> home-heading-height: 44px;
+    out property <length> home-spotlight-height: 248px;
+    out property <length> home-compact-height: 84px;
+    out property <length> home-row-gap: 12px;
     out property <length> queue-row-height: 66px;
     out property <length> queue-heading-height: 28px;
 }
@@ -38,7 +41,7 @@ export struct RecommendationRow {
     kind: string,
     shelf: string,
 }
-export struct HomeBrowseRow { start: int, count: int, title: string }
+export struct HomeBrowseRow { start: int, count: int, title: string, layout: string }
 
 // Preferences are rows with independent labels, rather than a wall of buttons.
 component PreferenceRow inherits Rectangle {
@@ -529,26 +532,38 @@ component Cover inherits Rectangle {
 
 component PlaylistTile inherits Rectangle {
     clip: true;
+    in property <bool> featured: false;
     in property <image> artwork;
     in property <string> title;
     in property <string> subtitle;
     in property <bool> light-mode;
     in property <bool> enabled: true;
     callback open();
-    height: LayoutMetrics.library-tile-height;
+    height: root.featured ? LayoutMetrics.home-spotlight-height : LayoutMetrics.library-tile-height;
     border-radius: 10px;
-    background: hover.has-hover ? (root.light-mode ? #e9e0d6 : #20252d) : Colors.transparent;
+    background: hover.has-hover ? (root.light-mode ? #e9e0d6 : #20252d) : root.featured ? (root.light-mode ? #eee5db : #191c22) : Colors.transparent;
     border-width: action.has-focus ? 2px : 0px;
     border-color: root.light-mode ? #985955 : #d16b89;
     hover := TouchArea {
         width: parent.width; height: parent.height; enabled: root.enabled; mouse-cursor: pointer;
         action := Button { width: parent.width; height: parent.height; opacity: 0; text: ""; enabled: root.enabled; accessible-label: "Open playlist " + root.title; clicked => { root.open(); } }
     }
-    VerticalLayout {
-        padding: 10px; spacing: 6px; alignment: start;
+    if root.featured && root.width >= 360px : HorizontalLayout {
+        padding: 18px; spacing: 16px; cross-axis-alignment: center;
         Cover { width: 132px; height: 132px; artwork: root.artwork; light-mode: root.light-mode; }
-        Text { height: 20px; text: root.title; color: root.light-mode ? #392e33 : #f0eeef; font-size: 14px; font-weight: 600; overflow: elide; }
+        VerticalLayout {
+            horizontal-stretch: 1; min-width: 0px; spacing: 8px; alignment: center;
+            Text { max-height: 60px; text: root.title; color: root.light-mode ? #392e33 : #f0eeef; font-size: 20px; font-weight: 650; wrap: word-wrap; overflow: elide; }
+            Text { text: root.subtitle; color: root.light-mode ? #716773 : #a1a5ae; font-size: 12px; overflow: elide; }
+            LibraryButton { width: 112px; height: 32px; active: true; caption: "Open playlist"; light-mode: root.light-mode; enabled: root.enabled; clicked => { root.open(); } }
+        }
+    }
+    if !root.featured || root.width < 360px : VerticalLayout {
+        padding: root.featured ? 16px : 10px; spacing: 6px; alignment: start;
+        Cover { width: root.featured ? 112px : 132px; height: self.width; artwork: root.artwork; light-mode: root.light-mode; }
+        Text { height: 22px; text: root.title; color: root.light-mode ? #392e33 : #f0eeef; font-size: root.featured ? 18px : 14px; font-weight: 600; overflow: elide; }
         Text { height: 18px; text: root.subtitle; color: root.light-mode ? #716773 : #a1a5ae; font-size: 12px; overflow: elide; }
+        if root.featured : LibraryButton { width: 112px; height: 32px; active: true; caption: "Open playlist"; light-mode: root.light-mode; enabled: root.enabled; clicked => { root.open(); } }
     }
 }
 
@@ -665,6 +680,8 @@ component ArtistLink inherits Rectangle {
 
 component SongRow inherits Rectangle {
     in property <bool> tile-mode: false;
+    in property <bool> featured: false;
+    in property <bool> quick-mode: false;
     clip: root.tile-mode;
     in property <bool> collection-enabled: false;
     in property <bool> playlist-removable: false;
@@ -687,7 +704,7 @@ component SongRow inherits Rectangle {
     callback queue(bool);
     callback radio();
     callback artist();
-    height: root.tile-mode ? LayoutMetrics.library-tile-height : root.removable ? LayoutMetrics.queue-row-height : LayoutMetrics.browse-row-height;
+    height: root.featured ? LayoutMetrics.home-spotlight-height : root.tile-mode ? LayoutMetrics.library-tile-height : root.removable ? LayoutMetrics.queue-row-height : LayoutMetrics.browse-row-height;
     opacity: root.dragging ? 0.55 : 1;
     changed drag-in-progress => { if root.drag-in-progress { song-menu.close(); } }
     changed enabled => { if !root.enabled { song-menu.close(); } }
@@ -696,7 +713,7 @@ component SongRow inherits Rectangle {
     changed current => { song-menu.close(); }
     border-radius: 7px;
     background: root.current ? (root.light-mode ? #e8d5cb : #30232e)
-        : action.pressed || row-hover.has-hover ? (root.light-mode ? #e9e0d6 : #20252d) : Colors.transparent;
+        : action.pressed || row-hover.has-hover ? (root.light-mode ? #e9e0d6 : #20252d) : root.featured || root.quick-mode ? (root.light-mode ? #eee5db : #191c22) : Colors.transparent;
     border-width: action.has-focus ? 2px : 0px;
     border-color: root.light-mode ? #985955 : #d16b89;
     row-hover := TouchArea {
@@ -712,11 +729,22 @@ component SongRow inherits Rectangle {
             clicked => { root.select(); }
         }
     }
-    if root.tile-mode : VerticalLayout {
-        padding: 10px; spacing: 6px; alignment: start;
+    if root.featured && root.width >= 360px : HorizontalLayout {
+        padding: 18px; spacing: 16px; cross-axis-alignment: center;
         Cover { width: 132px; height: 132px; artwork: root.track.artwork; light-mode: root.light-mode; }
-        Text { height: 20px; min-width: 0px; text: root.track.title; color: root.light-mode ? #392e33 : #f0eeef; font-size: 14px; font-weight: 600; overflow: elide; }
+        VerticalLayout {
+            horizontal-stretch: 1; min-width: 0px; spacing: 8px; alignment: center;
+            Text { max-height: 60px; text: root.track.title; color: root.light-mode ? #392e33 : #f0eeef; font-size: 20px; font-weight: 650; wrap: word-wrap; overflow: elide; }
+            ArtistLink { height: 18px; artist: root.track.artist; enabled: root.enabled && root.track.artist-enabled; light-mode: root.light-mode; label-size: 13px; activated => { root.artist(); } }
+            LibraryButton { width: 100px; height: 32px; active: true; caption: root.shared-queue ? "Add to queue" : "Play song"; light-mode: root.light-mode; enabled: root.enabled; clicked => { root.select(); } }
+        }
+    }
+    if root.tile-mode && (!root.featured || root.width < 360px) : VerticalLayout {
+        padding: root.featured ? 16px : 10px; spacing: 6px; alignment: start;
+        Cover { width: root.featured ? 112px : 132px; height: self.width; artwork: root.track.artwork; light-mode: root.light-mode; }
+        Text { height: 22px; min-width: 0px; text: root.track.title; color: root.light-mode ? #392e33 : #f0eeef; font-size: root.featured ? 18px : 14px; font-weight: 600; overflow: elide; }
         ArtistLink { height: 18px; artist: root.track.artist; enabled: root.enabled && root.track.artist-enabled; light-mode: root.light-mode; label-size: 12px; activated => { root.artist(); } }
+        if root.featured : LibraryButton { width: 100px; height: 32px; active: true; caption: root.shared-queue ? "Add to queue" : "Play song"; light-mode: root.light-mode; enabled: root.enabled; clicked => { root.select(); } }
     }
     if root.tile-mode : LibraryButton { x: parent.width - 42px; y: 14px; width: 30px; height: 30px; quiet: false; show-tooltip: true; icon-kind: root.shared-queue ? "add" : "more"; label: root.shared-queue ? "Add to shared queue: " + root.track.title : "Actions for " + root.track.title; light-mode: root.light-mode; enabled: root.enabled; clicked => { if root.shared-queue { root.queue(false); } else { song-menu.show(); } } }
     if !root.tile-mode : VerticalLayout {
@@ -755,7 +783,7 @@ component SongRow inherits Rectangle {
                     width: parent.width;
                     height: parent.height;
                     spacing: 4px;
-                    Text { min-width: 0px; text: root.track.title; color: root.light-mode ? #392e33 : #f0eeef; font-size: root.removable ? 14px : 16px; font-weight: root.current ? 600 : 500; overflow: elide; }
+                    Text { min-width: 0px; text: root.track.title; color: root.light-mode ? #392e33 : #f0eeef; font-size: root.removable || root.quick-mode ? 14px : 16px; font-weight: root.current ? 600 : 500; overflow: elide; }
                     ArtistLink { height: root.removable ? 14px : 18px; artist: root.track.artist; enabled: root.enabled && !root.drag-in-progress && root.track.artist-enabled; light-mode: root.light-mode; label-size: root.removable ? 12px : 13px; activated => { root.artist(); } }
                 }
             }
@@ -810,7 +838,7 @@ component SongRow inherits Rectangle {
             }
         }
     }
-    if !root.current && !root.tile-mode : Rectangle {
+    if !root.current && !root.tile-mode && !root.quick-mode : Rectangle {
         x: root.removable ? 72px : 68px;
         y: parent.height - 1px;
         height: 1px;
@@ -869,6 +897,42 @@ component LibraryEntry inherits Rectangle {
         height: 1px;
         width: max(0px, parent.width - 78px);
         background: root.light-mode ? #e1d7ce : #242932;
+    }
+}
+
+component HomeCard inherits Rectangle {
+    in property <RecommendationRow> item;
+    in property <int> source-index;
+    in property <bool> featured: false;
+    in property <bool> quick: false;
+    in property <bool> light-mode;
+    in property <bool> enabled: true;
+    in property <bool> shared-queue: false;
+    in property <bool> collection-enabled: false;
+    callback select(int);
+    callback queue(int, bool);
+    callback radio(int);
+    callback artist(int);
+    callback add-playlist(int);
+    border-radius: 9px;
+    background: root.quick ? (root.light-mode ? #eee5db : #191c22) : transparent;
+    if root.item.kind == "song" : SongRow {
+        width: parent.width; height: parent.height; tile-mode: !root.quick; featured: root.featured; quick-mode: root.quick;
+        shared-queue: root.shared-queue; collection-enabled: root.collection-enabled;
+        track: { title: root.item.title, artist: root.item.subtitle, artist-enabled: root.item.subtitle != "", album: root.item.shelf, duration: "", artwork: root.item.artwork, recommended: false };
+        index: root.source-index; light-mode: root.light-mode; enabled: root.enabled;
+        select => { root.select(root.source-index); } queue(next) => { root.queue(root.source-index, next); } radio => { root.radio(root.source-index); } artist => { root.artist(root.source-index); } add-playlist => { root.add-playlist(root.source-index); }
+    }
+    if root.item.kind != "song" && !root.quick : PlaylistTile {
+        width: parent.width; height: parent.height; featured: root.featured;
+        title: root.item.title; subtitle: (root.item.kind == "playlist" ? "Playlist · " : "Album unavailable · ") + root.item.subtitle; artwork: root.item.artwork;
+        light-mode: root.light-mode; enabled: root.enabled && root.item.kind == "playlist";
+        open => { root.select(root.source-index); }
+    }
+    if root.item.kind != "song" && root.quick : LibraryEntry {
+        width: parent.width; height: parent.height; title: root.item.title; subtitle: "Playlist · " + root.item.subtitle; artwork: root.item.artwork;
+        light-mode: root.light-mode; enabled: root.enabled && root.item.kind == "playlist"; navigable: root.item.kind == "playlist";
+        open => { root.select(root.source-index); }
     }
 }
 
@@ -1809,27 +1873,46 @@ export component AppWindow inherits Window {
                                     vertical-stretch: 1;
                                     accessible-label: "Home recommendations";
                                     for group in root.home-browse-rows : VerticalLayout {
-                                        spacing: 0px;
+                                        spacing: 0px; padding-bottom: LayoutMetrics.home-row-gap;
                                         if group.title != "" : Rectangle {
                                             height: LayoutMetrics.home-heading-height;
                                             Text { x: 10px; y: 14px; width: max(0px, parent.width - 20px); height: 24px; text: group.title; color: root.foreground; font-size: 18px; font-weight: 600; overflow: elide; }
                                         }
-                                        HorizontalLayout {
-                                            height: LayoutMetrics.library-tile-height; spacing: 8px;
-                                            for column in root.home-columns : Rectangle {
+                                        if group.layout == "spotlight" : HorizontalLayout {
+                                            height: LayoutMetrics.home-spotlight-height; spacing: 12px;
+                                            HomeCard {
+                                                width: group.count > 1 ? parent.width * 0.44 : parent.width; height: LayoutMetrics.home-spotlight-height; featured: true;
+                                                item: root.recommendations[group.start]; source-index: group.start;
+                                                light-mode: root.light-mode; enabled: root.browsing-enabled && root.account-connected && !root.account-busy; shared-queue: root.jam-guest; collection-enabled: root.collection-enabled && !root.collection-busy;
+                                                select(index) => { root.select-recommendation(index); } queue(index, next) => { root.queue-recommendation(index, next); } radio(index) => { root.start-track-radio(3, index); } artist(index) => { root.open-artist(3, index); } add-playlist(index) => { root.add-to-playlist(3, index); }
+                                            }
+                                            if group.count > 1 : VerticalLayout {
+                                                horizontal-stretch: 1; spacing: 12px;
+                                                for lane in 2 : HorizontalLayout {
+                                                    height: (LayoutMetrics.home-spotlight-height - 12px) / 2; spacing: 12px;
+                                                    for slot in (group.count > 3 ? 2 : 1) : Rectangle {
+                                                        horizontal-stretch: 1; min-width: 0px;
+                                                        private property <int> item-index: group.start + 1 + lane * (group.count > 3 ? 2 : 1) + slot;
+                                                        if self.item-index < group.start + group.count : HomeCard {
+                                                            width: parent.width; height: parent.height; quick: true;
+                                                            item: root.recommendations[parent.item-index]; source-index: parent.item-index;
+                                                            light-mode: root.light-mode; enabled: root.browsing-enabled && root.account-connected && !root.account-busy; shared-queue: root.jam-guest; collection-enabled: root.collection-enabled && !root.collection-busy;
+                                                            select(index) => { root.select-recommendation(index); } queue(index, next) => { root.queue-recommendation(index, next); } radio(index) => { root.start-track-radio(3, index); } artist(index) => { root.open-artist(3, index); } add-playlist(index) => { root.add-to-playlist(3, index); }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        if group.layout != "spotlight" : HorizontalLayout {
+                                            height: group.layout == "compact" ? LayoutMetrics.home-compact-height : LayoutMetrics.library-tile-height; spacing: 12px;
+                                            for column in (group.layout == "compact" ? min(2, root.home-columns) : root.home-columns) : Rectangle {
                                                 horizontal-stretch: 1; min-width: 0px;
                                                 private property <int> item-index: group.start + column;
-                                                private property <RecommendationRow> item: root.recommendations[self.item-index];
-                                                if column < group.count && self.item.kind == "song" : SongRow {
-                                                    width: parent.width; tile-mode: true; shared-queue: root.jam-guest; collection-enabled: root.collection-enabled && !root.collection-busy;
-                                                    track: { title: parent.item.title, artist: parent.item.subtitle, artist-enabled: parent.item.subtitle != "", album: parent.item.shelf, duration: "", artwork: parent.item.artwork, recommended: false };
-                                                    index: parent.item-index; light-mode: root.light-mode; enabled: root.browsing-enabled && root.account-connected && !root.account-busy;
-                                                    select => { root.select-recommendation(parent.item-index); } queue(next) => { root.queue-recommendation(parent.item-index, next); } radio => { root.start-track-radio(3, parent.item-index); } artist => { root.open-artist(3, parent.item-index); } add-playlist => { root.add-to-playlist(3, parent.item-index); }
-                                                }
-                                                if column < group.count && self.item.kind != "song" : PlaylistTile {
-                                                    width: parent.width; title: parent.item.title; subtitle: (parent.item.kind == "playlist" ? "Playlist · " : "Album unavailable · ") + parent.item.subtitle; artwork: parent.item.artwork;
-                                                    light-mode: root.light-mode; enabled: root.browsing-enabled && root.account-connected && !root.account-busy && parent.item.kind == "playlist";
-                                                    open => { root.select-recommendation(parent.item-index); }
+                                                if column < group.count : HomeCard {
+                                                    width: parent.width; height: parent.height; quick: group.layout == "compact";
+                                                    item: root.recommendations[parent.item-index]; source-index: parent.item-index;
+                                                    light-mode: root.light-mode; enabled: root.browsing-enabled && root.account-connected && !root.account-busy; shared-queue: root.jam-guest; collection-enabled: root.collection-enabled && !root.collection-busy;
+                                                    select(index) => { root.select-recommendation(index); } queue(index, next) => { root.queue-recommendation(index, next); } radio(index) => { root.start-track-radio(3, index); } artist(index) => { root.open-artist(3, index); } add-playlist(index) => { root.add-to-playlist(3, index); }
                                                 }
                                             }
                                         }
@@ -1940,14 +2023,6 @@ export component AppWindow inherits Window {
                                 }
                                 if !root.settings-shortcuts-open && !root.settings-audio-open : VerticalLayout {
                                     spacing: 10px; alignment: start;
-                                    Text { height: 24px; text: "Appearance"; color: root.foreground; font-size: 17px; font-weight: 600; }
-                                    Text { height: 18px; text: "Window size"; color: root.secondary; font-size: 12px; }
-                                    HorizontalLayout {
-                                        height: 36px; spacing: 8px;
-                                        LibraryButton { horizontal-stretch: 1; height: 36px; quiet: false; caption: "Normal"; label: "Use normal window size"; light-mode: root.light-mode; active: !root.compact-mode; clicked => { if root.compact-mode { root.toggle-compact(); } } }
-                                        LibraryButton { horizontal-stretch: 1; height: 36px; quiet: false; caption: "Compact"; label: "Use compact window size"; light-mode: root.light-mode; active: root.compact-mode; clicked => { if !root.compact-mode { root.toggle-compact(); } } }
-                                    }
-                                    Rectangle { height: 1px; background: root.outline; }
                                     Text { height: 24px; text: "Listening"; color: root.foreground; font-size: 17px; font-weight: 600; }
                                     PreferenceRow { title: "Listening history"; detail: "Send played songs to YouTube Music for better recommendations."; checked: root.history-feedback-enabled; light-mode: root.light-mode; toggled => { root.toggle-history-feedback(); } }
                                     if root.history-feedback-status != "" : Text { text: root.history-feedback-status; color: root.secondary; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }

@@ -7,6 +7,8 @@ use slint::platform::{
 use slint::{ComponentHandle, LogicalPosition, ModelRc, PhysicalSize, Rgb8Pixel, VecModel};
 use std::{cell::Cell, rc::Rc};
 use tide_music::*;
+#[path = "../src/browse_layout.rs"]
+mod browse_layout;
 
 struct Platform(Rc<MinimalSoftwareWindow>);
 impl slint::platform::Platform for Platform {
@@ -103,47 +105,65 @@ fn cover_grid_and_list_preserve_song_and_playlist_actions() {
                 width < 1140 || columns >= 5,
                 "Home retained a narrow screen's column count after resize"
             );
+            let groups = browse_layout::home_groups(
+                &vec!["Listen again".into(); 12],
+                &(0..12).map(|i| i == 1).collect::<Vec<_>>(),
+                columns as usize,
+            );
+            let spotlight_count = groups[0].count as i32;
             ui.set_home_browse_rows(ModelRc::new(VecModel::from(
-                (0..((12 + columns - 1) / columns))
-                    .map(|r| HomeBrowseRow {
-                        start: r * columns,
-                        count: (12 - r * columns).min(columns),
-                        title: if r == 0 { "Listen again" } else { "" }.into(),
+                groups
+                    .iter()
+                    .map(|g| HomeBrowseRow {
+                        start: g.start as i32,
+                        count: g.count as i32,
+                        title: g.title.clone().into(),
+                        layout: match g.layout {
+                            browse_layout::Layout::Spotlight => "spotlight",
+                            browse_layout::Layout::Compact => "compact",
+                            browse_layout::Layout::Tiles => "tiles",
+                        }
+                        .into(),
                     })
                     .collect::<Vec<_>>(),
             )));
             render(&window, width, light, "home");
             let left = if width < 900 { 148.0 } else { 180.0 };
             let available = width as f32 - left - 28.0;
-            for column in 0..columns {
+            for index in 0..if spotlight_count > 1 { 2 } else { 1 } {
                 selected.set((-1, -1));
                 click(
                     &ui,
-                    left + column as f32 * (available + 8.0) / columns as f32 + 30.0,
+                    if index == 0 {
+                        left + 30.0
+                    } else {
+                        left + available * 0.44 + 42.0
+                    },
                     230.0,
                 );
                 assert_eq!(
                     selected.get(),
-                    (0, column),
+                    (0, index),
                     "Home tile action changed source index at width {width}"
                 );
             }
             // The tile's action popup must remain usable despite cover clipping.
-            for column in [0, columns - 1] {
-                if column == 1 {
+            for index in [0, spotlight_count - 1] {
+                if index == 1 {
                     continue;
-                } // This fixture's second tile is a playlist.
+                }
                 queued.set(None);
-                let menu_x = left
-                    + column as f32 * (available + 8.0) / columns as f32
-                    + (available - 8.0 * (columns - 1) as f32) / columns as f32
-                    - 27.0;
-                click(&ui, menu_x, 225.0);
+                let menu_x = if index == 0 {
+                    left + available * (if spotlight_count > 1 { 0.44 } else { 1.0 }) - 30.0
+                } else {
+                    left + available - 30.0
+                };
+                click(&ui, menu_x, if index == 0 { 225.0 } else { 385.0 });
                 render(
                     &window,
                     width,
                     light,
-                    if column == 0 {
+                    if index == 0 {
                         "home-menu"
                     } else {
                         "home-menu-edge"
@@ -158,7 +178,7 @@ fn cover_grid_and_list_preserve_song_and_playlist_actions() {
                 }
                 assert_eq!(
                     queued.get(),
-                    Some((column, true)),
+                    Some((index, true)),
                     "Tile menu lost its queue source index"
                 );
             }

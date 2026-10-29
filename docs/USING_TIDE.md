@@ -54,8 +54,8 @@ changing your saved login. Playback errors do not by themselves request a reconn
 
 ## Home and Library
 
-- **Home:** cover tiles grouped under your YouTube Music recommendation
-  sections. The layout preserves the provider's order; it does not change
+- **Home:** a featured selection, compact song cards and cover shelves grouped
+  under your YouTube Music recommendation sections. The layout preserves the provider's order; it does not change
   which music is recommended. Select a song to play it; its **…** menu offers
   queue, radio and playlist actions. Playlist tiles open their tracks.
 - **Library:** your playlists, My Supermix and Liked Songs. Use the view icon
@@ -124,7 +124,7 @@ quality depends on the song, account and extractor.
 ## Appearance and account
 
 - **Sun/moon:** change light/dark theme without changing window size.
-- **Settings → Window size:** choose Normal or Compact sizing.
+- **Window size:** drag the window edges; the layout adapts automatically.
 - **Mini:** reduce the player; its expand control returns to the full window.
 - **Account:** check the connected identity, get connection help or disconnect.
   Manual imports are under Advanced connection options.
