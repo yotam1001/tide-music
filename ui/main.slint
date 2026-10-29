@@ -54,7 +54,7 @@ component PreferenceRow inherits Rectangle {
     height: root.detail == "" ? 46px : 66px;
     // The label and description are part of the target, not just the tiny box.
     // The checkbox above this area retains native keyboard/accessibility input.
-    TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { root.toggled(); } }
+    TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { toggle.focus(); root.toggled(); } }
     HorizontalLayout {
         spacing: 16px; cross-axis-alignment: center;
         VerticalLayout {
@@ -70,7 +70,7 @@ component PreferenceRow inherits Rectangle {
             Rectangle { x: root.checked ? 19px : 3px; y: 3px; width: 18px; height: 18px; border-radius: 9px; background: #fff8f6; animate x { duration: 100ms; } }
             // Native checkbox semantics, focus and Space-key behavior under
             // Tide's visual switch; this does not install a custom key hook.
-            toggle := CheckBox { width: parent.width; height: parent.height; opacity: 0; checked: root.checked; accessible-label: root.title; toggled => { root.toggled(); } }
+            toggle := CheckBox { width: parent.width; height: parent.height; opacity: 0; checked: root.checked; accessible-label: root.title; toggled => { toggle.focus(); root.toggled(); } }
         }
     }
 }
