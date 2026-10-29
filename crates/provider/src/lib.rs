@@ -451,7 +451,7 @@ impl Provider {
             input.zeroize();
             return Err(SessionImportError::InvalidHeaders);
         }
-        let result = execute_helper(&input, cancel.clone(), timeout);
+        let result = execute_helper(&input, cancel.clone(), Duration::from_secs(60));
         input.zeroize();
         match result
             .map_err(|_| {
@@ -991,7 +991,7 @@ impl Provider {
             input.zeroize();
             return Err("Session headers exceed the helper input limit".into());
         }
-        let result = execute_helper(&input, cancel.clone(), Duration::from_secs(60));
+        let result = execute_helper(&input, cancel.clone(), timeout);
         input.zeroize();
         let mut reply = result?;
         let _session_lock = SessionWriteLock::acquire().map_err(str::to_string)?;

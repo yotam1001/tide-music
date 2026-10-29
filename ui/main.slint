@@ -1737,7 +1737,7 @@ export component AppWindow inherits Window {
     changed jam-open => { if root.jam-open { root.playlist-picker-open = false; root.settings-open = false; root.account-open = false; app-focus.focus(); } }
     changed playlist-picker-open => { if root.playlist-picker-open { root.settings-open = false; root.account-open = false; root.jam-open = false; root.artist-picker-open = false; app-focus.focus(); } }
     changed queue-open => { if root.queue-open { root.lyrics-open = false; if !root.wide { app-focus.focus(); } } }
-    changed lyrics-open => { if root.lyrics-open { root.queue-open = false; if !root.wide { app-focus.focus(); } } }
+    changed lyrics-open => { if root.lyrics-open { root.queue-open = false; root.settings-open = false; root.account-open = false; root.jam-open = false; root.artist-picker-open = false; root.playlist-picker-open = false; if !root.wide { app-focus.focus(); } } }
     changed wide => { if !root.wide && (root.queue-open || root.lyrics-open) { app-focus.focus(); } }
     changed light-mode => { Palette.color-scheme = root.light-mode ? light : dark; }
 
