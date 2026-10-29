@@ -198,6 +198,7 @@ pub fn install(state: &Rc<RefCell<State>>, ui: &AppWindow) -> Lyrics {
                         }
                     }
                     if r.accepts(&work.key, work.cancel.load(Ordering::Acquire)) {
+                        r.attempted = true;
                         match reply {
                             Ok(Ok(Response::Lyrics {
                                 lines,
