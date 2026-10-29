@@ -62,6 +62,12 @@ changing your saved login. Playback errors do not by themselves request a reconn
   beside the heading to switch between covers and a compact list. This choice
   saves automatically. Selecting a playlist opens its tracks; **Play** or
   **Shuffle** starts it.
+
+Playlists without an image use a small cover bundled with Tide. Source artwork
+replaces it as it loads; no additional download or per-playlist image file is
+needed for the fallback. The main browsing area keeps a readable width on large
+windows while adapting when you resize Tide. Preference switches support mouse,
+keyboard and screen-reader input.
 - **My Supermix:** always pinned beside Liked Songs in Library. Opening it finds
   your current account's mix and loads its songs, independent of Home's visible
   recommendations. If YouTube does not offer the mix, retry later; its absence

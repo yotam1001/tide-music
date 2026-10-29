@@ -67,4 +67,34 @@ fn changing_songs_clears_old_cover_until_the_selected_cover_arrives() {
         !pixels.contains(&blue),
         "Missing artwork retained the previous cover"
     );
+    ui.set_account_connected(true);
+    ui.set_library_open(true);
+    ui.set_library_playlists(ModelRc::new(VecModel::from(vec![PlaylistRow {
+        title: "Playlist without artwork".into(),
+        ..Default::default()
+    }])));
+    draw(&window, &mut pixels);
+    // Locate the opaque sleeve color in the rendered asset instead of coupling
+    // this artwork check to the library heading's current pixel coordinates.
+    let sleeve = Rgb8Pixel::new(208, 192, 189);
+    let sleeve_pixels: Vec<usize> = pixels
+        .iter()
+        .enumerate()
+        .filter_map(|(index, pixel)| (*pixel == sleeve).then_some(index))
+        .collect();
+    assert!(
+        sleeve_pixels.len() > 20,
+        "Missing playlist cover must render the bundled sleeve artwork"
+    );
+    let cover_probe = sleeve_pixels[sleeve_pixels.len() / 2];
+    ui.set_library_playlists(ModelRc::new(VecModel::from(vec![PlaylistRow {
+        title: "Playlist with source artwork".into(),
+        artwork: cover(blue),
+        ..Default::default()
+    }])));
+    draw(&window, &mut pixels);
+    assert_eq!(
+        pixels[cover_probe], blue,
+        "Source artwork must replace the shared default cover"
+    );
 }

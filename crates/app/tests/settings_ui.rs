@@ -80,6 +80,14 @@ fn shortcuts_capture_keys_cancel_and_clear_without_transport() {
         c.borrow_mut().push(i);
         weak.upgrade().unwrap().set_shortcut_toggle("".into());
     });
+    let switches = Rc::new(RefCell::new(0));
+    let c = switches.clone();
+    let weak = ui.as_weak();
+    ui.on_toggle_history_feedback(move || {
+        *c.borrow_mut() += 1;
+        let u = weak.upgrade().unwrap();
+        u.set_history_feedback_enabled(!u.get_history_feedback_enabled());
+    });
     ui.show().unwrap();
     ui.window()
         .dispatch_event(WindowEvent::WindowActiveChanged(true));
@@ -95,6 +103,22 @@ fn shortcuts_capture_keys_cancel_and_clear_without_transport() {
             } else {
                 "settings-simple-dark"
             },
+        );
+        let before = *switches.borrow();
+        click(&ui, 1100.0, 211.0);
+        assert_eq!(
+            *switches.borrow(),
+            before + 1,
+            "Switch target did not activate exactly once"
+        );
+        ui.window()
+            .dispatch_event(WindowEvent::KeyPressed { text: " ".into() });
+        ui.window()
+            .dispatch_event(WindowEvent::KeyReleased { text: " ".into() });
+        assert_eq!(
+            *switches.borrow(),
+            before + 2,
+            "Visual switch lost native Space-key support"
         );
         // The top-level panel opens shortcuts without revealing technical fields.
         click(&ui, 980.0, 406.0);
