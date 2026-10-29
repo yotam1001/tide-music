@@ -48,6 +48,9 @@ component PreferenceRow inherits Rectangle {
     in property <bool> light-mode;
     callback toggled();
     height: root.detail == "" ? 46px : 66px;
+    // The label and description are part of the target, not just the tiny box.
+    // The checkbox above this area retains native keyboard/accessibility input.
+    TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { root.toggled(); } }
     HorizontalLayout {
         spacing: 16px; cross-axis-alignment: center;
         VerticalLayout {
