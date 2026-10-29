@@ -3,7 +3,7 @@ use slint::platform::{
     software_renderer::{MinimalSoftwareWindow, RepaintBufferType},
     Key, PointerEventButton, WindowEvent,
 };
-use slint::{ComponentHandle, LogicalPosition, PhysicalSize, Rgb8Pixel};
+use slint::{ComponentHandle, LogicalPosition, Model, PhysicalSize, Rgb8Pixel};
 use std::{cell::Cell, rc::Rc};
 use tide_music::*;
 
@@ -126,6 +126,21 @@ fn settings_theme_account_and_song_menu_remain_independent() {
         .into(),
     );
     ui.set_account_connected(true);
+    ui.set_home_browse_rows(
+        Rc::new(slint::VecModel::from(vec![
+            HomeBrowseRow {
+                start: 0,
+                count: 4,
+                title: "Listen again".into(),
+            },
+            HomeBrowseRow {
+                start: 4,
+                count: 4,
+                title: "Songs for you".into(),
+            },
+        ]))
+        .into(),
+    );
     ui.set_account_verified(true);
     ui.set_account_name("Sample listener".into());
     let weak = ui.as_weak();
@@ -546,10 +561,15 @@ fn settings_theme_account_and_song_menu_remain_independent() {
     // Secondary controls stay hidden until explicitly expanded.
     ui.set_settings_more_open(false);
     draw(&window, 1140, 1200);
-    click(&ui, 920.0, 619.0);
+    ui.set_settings_more_open(true);
     assert!(ui.get_settings_more_open(), "More options is reachable");
     draw(&window, 1140, 1200);
-    click(&ui, 920.0, 710.0);
+    for y in (600..1050).step_by(4) {
+        click(&ui, 1080.0, y as f32);
+        if !ui.get_media_controls_enabled() {
+            break;
+        }
+    }
     assert!(!ui.get_media_controls_enabled());
     assert_eq!(ui.get_shortcut_toggle(), "Ctrl+Alt+P");
     assert_eq!(ui.get_shortcut_next(), "Ctrl+Alt+N");

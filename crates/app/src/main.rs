@@ -17,6 +17,7 @@ mod artwork;
 mod artwork_view;
 mod audio_settings;
 mod browse_filter;
+mod browse_layout;
 mod connection;
 mod discord;
 mod discovery;
@@ -46,6 +47,8 @@ struct Settings {
     light_mode: bool,
     #[serde(default)]
     compact_mode: bool,
+    #[serde(default = "enabled_by_default")]
+    library_grid: bool,
     #[serde(default = "enabled_by_default")]
     autoplay: bool,
     #[serde(default = "enabled_by_default")]
@@ -77,6 +80,7 @@ impl Default for Settings {
             queue: Queue::default(),
             light_mode: false,
             compact_mode: false,
+            library_grid: true,
             autoplay: true,
             check_updates: true,
             media_controls: true,
@@ -861,16 +865,54 @@ fn configure_account_playback(s: &mut State, u: &AppWindow) -> bool {
 fn refresh_library_models(s: &State, u: &AppWindow) {
     let mut artwork = s.artwork.borrow_mut();
     let row_height = u.global::<LayoutMetrics>().get_browse_row_height();
-    let playlist_images = artwork_view::visible_range(
+    let columns = u.get_library_columns().max(1) as usize;
+    let playlist_images = artwork_view::grid_visible_range(
         u.get_library_artwork_y(),
         u.get_library_artwork_height(),
-        s.library_playlists.iter().map(|_| row_height),
+        s.library_playlists.len(),
+        columns,
+        if u.get_library_grid() {
+            u.global::<LayoutMetrics>().get_library_tile_height()
+        } else {
+            row_height
+        },
     );
-    let home_images = artwork_view::visible_range(
+    let labels: Vec<String> = s
+        .recommendations
+        .iter()
+        .map(|p| {
+            if p.shelf.trim().is_empty() {
+                "Recommended for you".to_owned()
+            } else {
+                p.shelf.clone()
+            }
+        })
+        .collect();
+    let home_groups = browse_layout::home_groups(&labels, u.get_home_columns().max(1) as usize);
+    let visible_groups = artwork_view::visible_range(
         u.get_home_artwork_y(),
         u.get_home_artwork_height(),
-        s.recommendations.iter().map(|_| row_height),
+        home_groups.iter().map(|g| {
+            u.global::<LayoutMetrics>().get_library_tile_height()
+                + if g.title.is_empty() {
+                    0.0
+                } else {
+                    u.global::<LayoutMetrics>().get_home_heading_height()
+                }
+        }),
     );
+    let home_images = artwork_view::group_image_range(&home_groups, visible_groups);
+    u.set_home_browse_rows(update_model(
+        u.get_home_browse_rows(),
+        home_groups
+            .iter()
+            .map(|g| HomeBrowseRow {
+                start: g.start as i32,
+                count: g.count as i32,
+                title: g.title.clone().into(),
+            })
+            .collect(),
+    ));
     let playlists: Vec<PlaylistRow> = s
         .library_playlists
         .iter()
@@ -957,6 +999,7 @@ fn restore_settings(value: serde_json::Value) -> Settings {
         queue,
         light_mode,
         compact_mode,
+        library_grid,
         autoplay,
         check_updates,
         media_controls,
@@ -1901,6 +1944,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     ui.set_light_mode(state.borrow().settings.light_mode);
     ui.set_compact_mode(state.borrow().settings.compact_mode);
+    ui.set_library_grid(state.borrow().settings.library_grid);
     ui.set_autoplay_enabled(state.borrow().settings.autoplay);
     ui.set_auto_update_checks(state.borrow().settings.check_updates);
     ui.set_media_controls_enabled(state.borrow().settings.media_controls);
@@ -2809,6 +2853,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         u.set_light_mode(s.settings.light_mode);
         save(&s.settings);
     });
+    bind!(on_toggle_library_view, |s, u| {
+        s.settings.library_grid = !u.get_library_grid();
+        u.set_library_grid(s.settings.library_grid);
+        u.set_library_artwork_y(0.0);
+        refresh_library_models(&s, &u);
+        save(&s.settings);
+    });
     bind!(on_toggle_compact, |s, u| {
         s.settings.compact_mode = !u.get_compact_mode();
         u.set_compact_mode(s.settings.compact_mode);
@@ -3363,6 +3414,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
                 let content_view = (
+                    u.get_library_columns(),
+                    u.get_home_columns(),
+                    u.get_library_grid(),
                     u.get_library_open(),
                     u.get_detail_open(),
                     u.get_search_open(),
@@ -4626,6 +4680,7 @@ mod tests {
                 history_feedback: enabled,
                 discord_presence: enabled,
                 normalize_volume: enabled,
+                library_grid: enabled,
                 audio_device: "wasapi/fixture".into(),
                 light_mode: true,
                 ..Settings::default()
@@ -4635,6 +4690,7 @@ mod tests {
             assert_eq!(restored.history_feedback, enabled);
             assert_eq!(restored.discord_presence, enabled);
             assert_eq!(restored.normalize_volume, enabled);
+            assert_eq!(restored.library_grid, enabled);
             assert_eq!(restored.audio_device, "wasapi/fixture");
             assert!(restored.light_mode);
         }
@@ -4642,6 +4698,7 @@ mod tests {
         assert!(!old.history_feedback);
         assert!(!old.discord_presence);
         assert!(old.light_mode);
+        assert!(old.library_grid);
     }
 
     #[test]
