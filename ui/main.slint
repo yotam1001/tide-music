@@ -59,30 +59,6 @@ component PreferenceRow inherits Rectangle {
     }
 }
 
-component PlaylistTile inherits Rectangle {
-    in property <image> artwork;
-    in property <string> title;
-    in property <string> subtitle;
-    in property <bool> light-mode;
-    in property <bool> enabled: true;
-    callback open();
-    height: LayoutMetrics.library-tile-height;
-    border-radius: 10px;
-    background: hover.has-hover ? (root.light-mode ? #e9e0d6 : #20252d) : Colors.transparent;
-    border-width: action.has-focus ? 2px : 0px;
-    border-color: root.light-mode ? #985955 : #d16b89;
-    hover := TouchArea {
-        width: parent.width; height: parent.height; enabled: root.enabled; mouse-cursor: pointer;
-        action := Button { width: parent.width; height: parent.height; opacity: 0; text: ""; enabled: root.enabled; accessible-label: "Open playlist " + root.title; clicked => { root.open(); } }
-    }
-    VerticalLayout {
-        padding: 10px; spacing: 6px; alignment: start;
-        Cover { width: 132px; height: 132px; artwork: root.artwork; light-mode: root.light-mode; }
-        Text { height: 20px; text: root.title; color: root.light-mode ? #392e33 : #f0eeef; font-size: 14px; font-weight: 600; overflow: elide; }
-        Text { height: 18px; text: root.subtitle; color: root.light-mode ? #716773 : #a1a5ae; font-size: 12px; overflow: elide; }
-    }
-}
-
 component SearchMark inherits Path {
     in property <color> ink;
     width: 18px;
@@ -225,7 +201,7 @@ component TideButton inherits Rectangle {
     callback clicked;
     forward-focus: control;
 
-    private property <string> icon-kind:
+    in property <string> icon-kind:
         root.caption == "⏮" ? "previous" : root.caption == "⏭" ? "next"
         : root.caption == "▶" ? "play" : root.caption == "Ⅱ" ? "pause"
         : root.caption == "↻" ? "repeat" : root.caption == "⌄" ? "collapse"
@@ -527,6 +503,31 @@ component Cover inherits Rectangle {
     }
 }
 
+component PlaylistTile inherits Rectangle {
+    in property <image> artwork;
+    in property <string> title;
+    in property <string> subtitle;
+    in property <bool> light-mode;
+    in property <bool> enabled: true;
+    callback open();
+    height: LayoutMetrics.library-tile-height;
+    border-radius: 10px;
+    background: hover.has-hover ? (root.light-mode ? #e9e0d6 : #20252d) : Colors.transparent;
+    border-width: action.has-focus ? 2px : 0px;
+    border-color: root.light-mode ? #985955 : #d16b89;
+    hover := TouchArea {
+        width: parent.width; height: parent.height; enabled: root.enabled; mouse-cursor: pointer;
+        action := Button { width: parent.width; height: parent.height; opacity: 0; text: ""; enabled: root.enabled; accessible-label: "Open playlist " + root.title; clicked => { root.open(); } }
+    }
+    VerticalLayout {
+        padding: 10px; spacing: 6px; alignment: start;
+        Cover { width: 132px; height: 132px; artwork: root.artwork; light-mode: root.light-mode; }
+        Text { height: 20px; text: root.title; color: root.light-mode ? #392e33 : #f0eeef; font-size: 14px; font-weight: 600; overflow: elide; }
+        Text { height: 18px; text: root.subtitle; color: root.light-mode ? #716773 : #a1a5ae; font-size: 12px; overflow: elide; }
+    }
+}
+
+
 component EmptyState inherits Rectangle {
     in property <bool> light-mode;
     in property <string> heading;
@@ -791,6 +792,7 @@ component SongRow inherits Rectangle {
 }
 
 component LibraryEntry inherits Rectangle {
+    in property <string> shortcut-icon;
     in property <bool> add-target: false;
     in property <image> artwork;
     in property <string> title;
@@ -814,7 +816,11 @@ component LibraryEntry inherits Rectangle {
         padding: 10px;
         spacing: 10px;
         cross-axis-alignment: center;
-        Cover { width: 48px; height: 48px; artwork: root.artwork; light-mode: root.light-mode; }
+        if root.shortcut-icon == "" : Cover { width: 48px; height: 48px; artwork: root.artwork; light-mode: root.light-mode; }
+        if root.shortcut-icon != "" : Rectangle {
+            width: 48px; height: 48px; border-radius: 9px; background: root.light-mode ? #e8d5cb : #30232e;
+            Path { x: 12px; y: 12px; width: 24px; height: 24px; viewbox-width: 24; viewbox-height: 24; fill: transparent; stroke: root.light-mode ? #985955 : #e493ad; stroke-width: 1.7px; commands: root.shortcut-icon; }
+        }
         VerticalLayout {
             horizontal-stretch: 1;
             min-width: 0px;
@@ -1723,8 +1729,8 @@ export component AppWindow inherits Window {
                                 HorizontalLayout {
                                     height: LayoutMetrics.browse-row-height;
                                     spacing: 12px;
-                                    LibraryEntry { horizontal-stretch: 1; min-width: 0px; title: "My Supermix"; subtitle: "A mix across your music tastes"; light-mode: root.light-mode; enabled: root.browsing-enabled && root.account-connected && !root.account-busy; open => { root.open-supermix(); } }
-                                    LibraryEntry { horizontal-stretch: 1; min-width: 0px; title: "Liked Songs"; subtitle: "Your favorites in one place"; light-mode: root.light-mode; enabled: root.browsing-enabled && root.account-connected && !root.account-busy; open => { root.play-liked(); } }
+                                    LibraryEntry { horizontal-stretch: 1; min-width: 0px; title: "My Supermix"; subtitle: "Made for you"; shortcut-icon: "M 3 6 L 7 6 C 11 6 13 18 17 18 L 21 18 M 17 14 L 21 18 L 17 22 M 3 18 L 7 18 C 11 18 13 6 17 6 L 21 6 M 17 2 L 21 6 L 17 10"; light-mode: root.light-mode; enabled: root.browsing-enabled && root.account-connected && !root.account-busy; open => { root.open-supermix(); } }
+                                    LibraryEntry { horizontal-stretch: 1; min-width: 0px; title: "Liked Songs"; subtitle: "Your favorites"; shortcut-icon: "M 12 21 L 3 12 C -2 5 7 -1 12 6 C 17 -1 26 5 21 12 Z"; light-mode: root.light-mode; enabled: root.browsing-enabled && root.account-connected && !root.account-busy; open => { root.play-liked(); } }
                                 }
                                 Text { height: 26px; text: "Playlists · " + root.library-playlists.length; color: root.secondary; font-size: 13px; font-weight: 600; }
                                 if root.library-playlists.length > 0 : library-list := ListView {

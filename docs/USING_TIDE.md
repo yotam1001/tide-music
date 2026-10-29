@@ -8,7 +8,7 @@ open Tide from the Windows Start menu.
 Search for a song or paste a YouTube music link into the top bar. Select a song
 to play it. Or open **Library**, choose a playlist, then use **Play** or **Shuffle**.
 YouTube playback requires a verified account connection. Local audio works without
-one: choose **Settings → More options → Open audio file**.
+one: choose **Settings → Advanced → Open audio file**.
 
 The centered player buttons handle previous, pause/play and next. The bottom
 sliders control position and volume. Windows media controls are supported;
@@ -16,7 +16,7 @@ physical keyboard/Fn behavior while a game has focus still needs user validation
 
 ## Gaming controls (0.1.1 and later)
 
-In **Settings → More options**, Windows media keys can be switched off if
+In **Settings → Advanced**, Windows media keys can be switched off if
 another app should receive them. Laptop Fn behavior depends on its hardware and
 Windows settings; Tide does not remap Fn itself.
 
