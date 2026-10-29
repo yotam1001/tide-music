@@ -4,7 +4,7 @@ use slint::platform::{
     software_renderer::{MinimalSoftwareWindow, RepaintBufferType},
     Key, PointerEventButton, WindowEvent,
 };
-use slint::{ComponentHandle, LogicalPosition, ModelRc, PhysicalSize, Rgb8Pixel, VecModel};
+use slint::{ComponentHandle, LogicalPosition, Model, ModelRc, PhysicalSize, Rgb8Pixel, VecModel};
 use std::{cell::Cell, rc::Rc};
 use tide_music::*;
 #[path = "../src/browse_layout.rs"]
@@ -182,6 +182,21 @@ fn cover_grid_and_list_preserve_song_and_playlist_actions() {
                     "Tile menu lost its queue source index"
                 );
             }
+            let original = ui.get_recommendations();
+            let mut collections = (0..original.row_count())
+                .map(|i| original.row_data(i).unwrap())
+                .collect::<Vec<_>>();
+            collections[0].kind = "playlist".into();
+            ui.set_recommendations(ModelRc::new(VecModel::from(collections)));
+            render(&window, width, light, "featured-playlist");
+            selected.set((-1, -1));
+            click(&ui, left + 30.0, 230.0);
+            assert_eq!(
+                selected.get(),
+                (0, 0),
+                "Featured playlist must open its source, not play a different song"
+            );
+            ui.set_recommendations(original);
             ui.set_library_open(true);
             render(&window, width, light, "library-grid");
             let columns = ui.get_library_columns();

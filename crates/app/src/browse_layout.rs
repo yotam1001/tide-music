@@ -47,7 +47,14 @@ pub fn home_groups(labels: &[String], collections: &[bool], columns: usize) -> V
             {
                 run_end += 1;
             }
-            let count = (run_end - start).min(if collection { columns } else { columns.min(2) });
+            let tiles = collection && run_end - start > 1;
+            // Pair isolated playlists with neighbouring songs instead of
+            // wasting a whole cover shelf on a single item.
+            let count = if tiles {
+                (run_end - start).min(columns)
+            } else {
+                (end - start).min(columns.min(2))
+            };
             groups.push(Group {
                 start,
                 count,
@@ -56,7 +63,7 @@ pub fn home_groups(labels: &[String], collections: &[bool], columns: usize) -> V
                 } else {
                     String::new()
                 },
-                layout: if collection {
+                layout: if tiles {
                     Layout::Tiles
                 } else {
                     Layout::Compact
@@ -99,5 +106,23 @@ mod tests {
             assert_eq!(groups[0].layout, Layout::Spotlight);
         }
         assert!(home_groups(&[], &[], 0).is_empty());
+    }
+    #[test]
+    fn narrow_mixed_recommendations_use_compact_pairs() {
+        let groups = home_groups(
+            &vec!["Listen again".into(); 7],
+            &[true, false, true, false, false, false, false],
+            2,
+        );
+        assert_eq!(groups[0].count, 1);
+        assert_eq!(groups[1].layout, Layout::Compact);
+        assert_eq!(groups[1].count, 2);
+        assert_eq!(
+            groups
+                .iter()
+                .flat_map(|g| g.start..g.start + g.count)
+                .collect::<Vec<_>>(),
+            (0..7).collect::<Vec<_>>()
+        );
     }
 }

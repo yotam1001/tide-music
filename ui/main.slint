@@ -553,17 +553,17 @@ component PlaylistTile inherits Rectangle {
         Cover { width: 132px; height: 132px; artwork: root.artwork; light-mode: root.light-mode; }
         VerticalLayout {
             horizontal-stretch: 1; min-width: 0px; spacing: 8px; alignment: center;
-            Text { max-height: 60px; text: root.title; color: root.light-mode ? #392e33 : #f0eeef; font-size: 20px; font-weight: 650; wrap: word-wrap; overflow: elide; }
+            Rectangle { height: 56px; min-width: 0px; clip: true; Text { width: parent.width; height: parent.height; text: root.title; color: root.light-mode ? #392e33 : #f0eeef; font-size: 20px; font-weight: 650; wrap: word-wrap; overflow: elide; } }
             Text { text: root.subtitle; color: root.light-mode ? #716773 : #a1a5ae; font-size: 12px; overflow: elide; }
-            LibraryButton { width: 112px; height: 32px; active: true; caption: "Open playlist"; light-mode: root.light-mode; enabled: root.enabled; clicked => { root.open(); } }
+            Rectangle { height: 32px; min-width: 0px; LibraryButton { width: 112px; height: 32px; active: true; caption: "Open playlist"; light-mode: root.light-mode; enabled: root.enabled; clicked => { root.open(); } } }
         }
     }
     if !root.featured || root.width < 360px : VerticalLayout {
         padding: root.featured ? 16px : 10px; spacing: 6px; alignment: start;
-        Cover { width: root.featured ? 112px : 132px; height: self.width; artwork: root.artwork; light-mode: root.light-mode; }
+        Rectangle { height: root.featured ? 112px : 132px; min-width: 0px; Cover { width: root.featured ? 112px : 132px; height: self.width; artwork: root.artwork; light-mode: root.light-mode; } }
         Text { height: 22px; text: root.title; color: root.light-mode ? #392e33 : #f0eeef; font-size: root.featured ? 18px : 14px; font-weight: 600; overflow: elide; }
         Text { height: 18px; text: root.subtitle; color: root.light-mode ? #716773 : #a1a5ae; font-size: 12px; overflow: elide; }
-        if root.featured : LibraryButton { width: 112px; height: 32px; active: true; caption: "Open playlist"; light-mode: root.light-mode; enabled: root.enabled; clicked => { root.open(); } }
+        if root.featured : Rectangle { height: 32px; min-width: 0px; LibraryButton { width: 112px; height: 32px; active: true; caption: "Open playlist"; light-mode: root.light-mode; enabled: root.enabled; clicked => { root.open(); } } }
     }
 }
 
@@ -734,17 +734,17 @@ component SongRow inherits Rectangle {
         Cover { width: 132px; height: 132px; artwork: root.track.artwork; light-mode: root.light-mode; }
         VerticalLayout {
             horizontal-stretch: 1; min-width: 0px; spacing: 8px; alignment: center;
-            Text { max-height: 60px; text: root.track.title; color: root.light-mode ? #392e33 : #f0eeef; font-size: 20px; font-weight: 650; wrap: word-wrap; overflow: elide; }
+            Rectangle { height: 56px; min-width: 0px; clip: true; Text { width: parent.width; height: parent.height; text: root.track.title; color: root.light-mode ? #392e33 : #f0eeef; font-size: 20px; font-weight: 650; wrap: word-wrap; overflow: elide; } }
             ArtistLink { height: 18px; artist: root.track.artist; enabled: root.enabled && root.track.artist-enabled; light-mode: root.light-mode; label-size: 13px; activated => { root.artist(); } }
-            LibraryButton { width: 100px; height: 32px; active: true; caption: root.shared-queue ? "Add to queue" : "Play song"; light-mode: root.light-mode; enabled: root.enabled; clicked => { root.select(); } }
+            Rectangle { height: 32px; min-width: 0px; LibraryButton { width: 100px; height: 32px; active: true; caption: root.shared-queue ? "Add to queue" : "Play song"; light-mode: root.light-mode; enabled: root.enabled; clicked => { root.select(); } } }
         }
     }
     if root.tile-mode && (!root.featured || root.width < 360px) : VerticalLayout {
         padding: root.featured ? 16px : 10px; spacing: 6px; alignment: start;
-        Cover { width: root.featured ? 112px : 132px; height: self.width; artwork: root.track.artwork; light-mode: root.light-mode; }
+        Rectangle { height: root.featured ? 112px : 132px; min-width: 0px; Cover { width: root.featured ? 112px : 132px; height: self.width; artwork: root.track.artwork; light-mode: root.light-mode; } }
         Text { height: 22px; min-width: 0px; text: root.track.title; color: root.light-mode ? #392e33 : #f0eeef; font-size: root.featured ? 18px : 14px; font-weight: 600; overflow: elide; }
         ArtistLink { height: 18px; artist: root.track.artist; enabled: root.enabled && root.track.artist-enabled; light-mode: root.light-mode; label-size: 12px; activated => { root.artist(); } }
-        if root.featured : LibraryButton { width: 100px; height: 32px; active: true; caption: root.shared-queue ? "Add to queue" : "Play song"; light-mode: root.light-mode; enabled: root.enabled; clicked => { root.select(); } }
+        if root.featured : Rectangle { height: 32px; min-width: 0px; LibraryButton { width: 100px; height: 32px; active: true; caption: root.shared-queue ? "Add to queue" : "Play song"; light-mode: root.light-mode; enabled: root.enabled; clicked => { root.select(); } } }
     }
     if root.tile-mode : LibraryButton { x: parent.width - 42px; y: 14px; width: 30px; height: 30px; quiet: false; show-tooltip: true; icon-kind: root.shared-queue ? "add" : "more"; label: root.shared-queue ? "Add to shared queue: " + root.track.title : "Actions for " + root.track.title; light-mode: root.light-mode; enabled: root.enabled; clicked => { if root.shared-queue { root.queue(false); } else { song-menu.show(); } } }
     if !root.tile-mode : VerticalLayout {
@@ -930,7 +930,7 @@ component HomeCard inherits Rectangle {
         open => { root.select(root.source-index); }
     }
     if root.item.kind != "song" && root.quick : LibraryEntry {
-        width: parent.width; height: parent.height; title: root.item.title; subtitle: "Playlist · " + root.item.subtitle; artwork: root.item.artwork;
+        width: parent.width; height: parent.height; title: root.item.title; subtitle: (root.item.kind == "playlist" ? "Playlist · " : "Album · ") + root.item.subtitle; artwork: root.item.artwork;
         light-mode: root.light-mode; enabled: root.enabled && root.item.kind == "playlist"; navigable: root.item.kind == "playlist";
         open => { root.select(root.source-index); }
     }
