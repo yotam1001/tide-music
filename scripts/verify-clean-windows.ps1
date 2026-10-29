@@ -11,7 +11,8 @@ in RUNNER_TEMP even after a failure. Never run this on a personal Windows machin
 #>
 [CmdletBinding()]
 param([Parameter(Mandatory = $true)][string]$PackageRoot,
-      [Parameter(Mandatory = $true)][string]$SetupExecutable)
+      [Parameter(Mandatory = $true)][string]$SetupExecutable,
+      [string]$PreviousPackageRoot)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
@@ -179,11 +180,21 @@ function Assert-CleanInstallation([string]$Version) {
 }
 
 try {
-    $installArgs = @('-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $taskInstaller,
+    $taskBaselineInstaller = $taskInstaller
+    $taskBaselineVersion = '0.1.0-clean-probe'
+    if ($PreviousPackageRoot) {
+        $taskBaselinePackage = [IO.Path]::GetFullPath($PreviousPackageRoot)
+        Assert-TidePlainPath $taskBaselinePackage
+        Get-TideVerifiedPayload $taskBaselinePackage | Out-Null
+        $taskBaselineInstaller = Join-Path $taskBaselinePackage 'scripts/install-windows.ps1'
+        $taskBaselineVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $taskBaselinePackage 'tide-music.exe')).ProductVersion
+        if ($taskBaselineVersion -notmatch '^\d+\.\d+\.\d+$') { throw 'Baseline has no stable product version.' }
+    }
+    $installArgs = @('-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $taskBaselineInstaller,
         '-Mode', 'Install', '-InstallRoot', $taskInstallRoot, '-Browser', 'Chrome', '-ChromiumExtensionId', $taskExtensionId,
-        '-AppVersion', '0.1.0-clean-probe')
+        '-AppVersion', $taskBaselineVersion)
     Invoke-CleanChild $taskPowerShell $installArgs 'fresh-install' | Out-Null
-    $taskFirstRelease = Assert-CleanInstallation '0.1.0-clean-probe'
+    $taskFirstRelease = Assert-CleanInstallation $taskBaselineVersion
     Invoke-CleanChild (Join-Path $taskFirstRelease 'tools/mpv.exe') @('--version') 'mpv-version' 30 | Out-Null
     Invoke-CleanChild (Join-Path $taskFirstRelease 'tools/yt-dlp.exe') @('--version') 'yt-dlp-version' 30 | Out-Null
     Invoke-CleanChild (Join-Path $taskFirstRelease 'tools/deno.exe') @('--version') 'deno-version' 30 | Out-Null
@@ -198,6 +209,8 @@ try {
     if ($null -eq $taskVersionStream) { throw 'Setup has no embedded app version.' }
     $taskVersionReader = [IO.StreamReader]::new($taskVersionStream)
     try { $taskUpdatedVersion = $taskVersionReader.ReadToEnd().Trim() } finally { $taskVersionReader.Dispose() }
+    if ($PreviousPackageRoot -and [version]$taskUpdatedVersion -le [version]$taskBaselineVersion) { throw 'Upgrade candidate must be newer than the public stable baseline.' }
+    Write-Host ('Upgrade under test: ' + $taskBaselineVersion + ' -> ' + $taskUpdatedVersion)
     # Reproduce the three-field conflict seen in a real in-app update. A
     # removed Tide release is still named by the registered old icon/uninstall
     # command, while the active installation is newer and valid. Setup must

@@ -147,10 +147,29 @@ jobs:
           $setup = Start-Process -FilePath (Join-Path $PWD '.local/clean-installer-artifact/TideSetup.exe') -ArgumentList '--verify-payload' -WindowStyle Hidden -Wait -PassThru
           if ($setup.ExitCode -ne 0) { throw 'Actual setup embedded-payload verification failed' }
           Expand-Archive -LiteralPath .local/clean-installer-artifact/tide-windows-preview.zip -DestinationPath .local/clean-payload
+      - name: Fetch the actual previous stable player for upgrade validation
+        shell: pwsh
+        run: |
+          $candidate = [Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $PWD '.local/clean-payload/tide-music.exe')).ProductVersion
+          if ($candidate -notmatch '^\d+\.\d+\.\d+$') { throw 'Invalid upgrade candidate version' }
+          $releases = Invoke-RestMethod 'https://api.github.com/repos/yotam1001/tide-music/releases?per_page=100'
+          $release = $releases | Where-Object { !$_.draft -and !$_.prerelease -and $_.tag_name -match '^v\d+\.\d+\.\d+$' -and [version]$_.tag_name.Substring(1) -lt [version]$candidate } | Sort-Object { [version]$_.tag_name.Substring(1) } -Descending | Select-Object -First 1
+          if (!$release) { throw 'No previous public stable upgrade baseline found' }
+          $asset = @($release.assets | Where-Object name -eq 'tide-windows-preview.zip')
+          if ($asset.Count -ne 1 -or $asset[0].digest -notmatch '^sha256:[0-9a-f]{64}$') { throw 'Baseline must have a server SHA256 digest' }
+          $expectedUrl = 'https://github.com/yotam1001/tide-music/releases/download/' + $release.tag_name + '/tide-windows-preview.zip'
+          if ($asset[0].browser_download_url -cne $expectedUrl -or $asset[0].size -gt 200MB) { throw 'Invalid baseline asset' }
+          Invoke-WebRequest $expectedUrl -OutFile .local/upgrade-baseline.zip
+          $hash = (Get-FileHash .local/upgrade-baseline.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ('sha256:' + $hash -cne $asset[0].digest) { throw 'Baseline archive digest mismatch' }
+          python scripts/check-preview-package.py .local/upgrade-baseline.zip --with-browser-host
+          if ($LASTEXITCODE -ne 0) { throw 'Baseline package verification failed' }
+          Expand-Archive -LiteralPath .local/upgrade-baseline.zip -DestinationPath .local/upgrade-baseline
+          Write-Host ('Verified previous public stable baseline: ' + $release.tag_name + ' SHA256 ' + $hash)
       - name: Exercise real per-user install, Chrome host, update and removal
         id: clean-install
         shell: pwsh
-        run: ./scripts/verify-clean-windows.ps1 -PackageRoot .local/clean-payload -SetupExecutable .local/clean-installer-artifact/TideSetup.exe
+        run: ./scripts/verify-clean-windows.ps1 -PackageRoot .local/clean-payload -SetupExecutable .local/clean-installer-artifact/TideSetup.exe -PreviousPackageRoot .local/upgrade-baseline
       - uses: actions/upload-artifact@v4
         if: ${{ always() && steps.clean-install.outputs.evidence-directory != '' }}
         with:

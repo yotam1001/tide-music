@@ -8,7 +8,7 @@ open Tide from the Windows Start menu.
 Search for a song or paste a YouTube music link into the top bar. Select a song
 to play it. Or open **Library**, choose a playlist, then use **Play** or **Shuffle**.
 YouTube playback requires a verified account connection. Local audio works without
-one: choose **Settings → More options → Open audio file**.
+one: choose **Settings → Advanced → Open audio file**.
 
 The centered player buttons handle previous, pause/play and next. The bottom
 sliders control position and volume. Windows media controls are supported;
@@ -16,7 +16,7 @@ physical keyboard/Fn behavior while a game has focus still needs user validation
 
 ## Gaming controls (0.1.1 and later)
 
-In **Settings → More options**, Windows media keys can be switched off if
+In **Settings → Advanced**, Windows media keys can be switched off if
 another app should receive them. Laptop Fn behavior depends on its hardware and
 Windows settings; Tide does not remap Fn itself.
 
@@ -54,12 +54,14 @@ changing your saved login. Playback errors do not by themselves request a reconn
 
 ## Home and Library
 
-- **Home:** recommendations from your YouTube Music account. Preview 2
-  restores the leading rows and their original order, with limited refresh
-  variety near those recommendations. Preview 1 rotates more aggressively;
-  small upstream pools can repeat in either version.
-- **Library:** your playlists and Liked Songs. Selecting a playlist opens its
-  tracks; **Play** or **Shuffle** starts it.
+- **Home:** a featured selection, compact song cards and cover shelves grouped
+  under your YouTube Music recommendation sections. The layout preserves the provider's order; it does not change
+  which music is recommended. Select a song to play it; its **…** menu offers
+  queue, radio and playlist actions. Playlist tiles open their tracks.
+- **Library:** your playlists, My Supermix and Liked Songs. Use the view icon
+  beside the heading to switch between covers and a compact list. This choice
+  saves automatically. Selecting a playlist opens its tracks; **Play** or
+  **Shuffle** starts it.
 - **My Supermix:** always pinned beside Liked Songs in Library. Opening it finds
   your current account's mix and loads its songs, independent of Home's visible
   recommendations. If YouTube does not offer the mix, retry later; its absence
@@ -70,6 +72,11 @@ changing your saved login. Playback errors do not by themselves request a reconn
   All words must match; playback order and duplicate entries are preserved.
 - **Search queue:** use the magnifying glass in Queue. Clear the search before
   dragging to reorder; filtering never changes your queue.
+
+Both cover grids adjust to the available width. Only thumbnails near the
+visible rows are requested, with at most 40 image references per browsing
+model and the existing 48-entry, 96-pixel thumbnail cache. Scrolling releases
+offscreen references; no artwork disk cache or embedded browser is added.
 
 Tide reads your existing library without downloading your whole collection.
 The thumbs beside the player like or dislike the current song on YouTube Music;
@@ -117,11 +124,11 @@ quality depends on the song, account and extractor.
 ## Appearance and account
 
 - **Sun/moon:** change light/dark theme without changing window size.
-- **Settings → Window size:** choose Normal or Compact sizing.
+- **Window size:** drag the window edges; the layout adapts automatically.
 - **Mini:** reduce the player; its expand control returns to the full window.
 - **Account:** check the connected identity, get connection help or disconnect.
   Manual imports are under Advanced connection options.
-- **Settings:** check for a stable release. Startup checks are under More options.
+- **Settings:** check for a stable release. Startup checks are under Advanced.
   Preview updates still need the newer installer.
 
 [Troubleshooting](TROUBLESHOOTING.md) · [Privacy](../PRIVACY.md)
