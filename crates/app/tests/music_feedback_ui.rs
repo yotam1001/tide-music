@@ -71,7 +71,7 @@ fn native_ratings_remain_reachable_and_do_not_take_over_transport() {
         ui.set_light_mode(light);
         ui.set_current_rating(0);
         draw(&window, width, height, &format!("ratings-{width}"));
-        let x = width as f32 - 174.0;
+        let x = width as f32 - ui.global::<LayoutMetrics>().get_footer_actions_width() - 2.0;
         let y = height as f32 - 74.0;
         let start = ratings.borrow().len();
         for position in [x, x, x + 40.0, x + 40.0] {

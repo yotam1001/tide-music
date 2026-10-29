@@ -2,6 +2,7 @@ import { AboutSlint, Button, CheckBox, ComboBox, LineEdit, ListView, Palette, Sc
 
 // Artwork viewport calculations read these same logical dimensions from Rust.
 export global LayoutMetrics {
+    out property <length> footer-actions-width: 216px;
     out property <length> browse-row-height: 72px;
     out property <length> library-tile-height: 206px;
     out property <length> home-heading-height: 44px;
@@ -1400,7 +1401,7 @@ component PlayerBar inherits Rectangle {
             HorizontalLayout {
                 x: parent.width - self.width;
                 y: 8px;
-                width: root.collapsed ? 150px : 216px;
+                width: root.collapsed ? 150px : LayoutMetrics.footer-actions-width;
                 height: 36px;
                 spacing: root.collapsed ? 4px : 8px;
                 RatingButton { width: 32px; height: 36px; enabled: root.rating-enabled && !root.rating-busy; light-mode: root.light-mode; active: root.rating == 1; label: root.rating == 1 ? "Remove like" : "Like this song on YouTube Music"; clicked => { root.rate(root.rating == 1 ? 0 : 1); } }
