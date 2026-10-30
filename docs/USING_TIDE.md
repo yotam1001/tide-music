@@ -156,3 +156,9 @@ pausing and automatic retries. Otherwise it shows the audio format reported by
 mpv when available, for example **Opus · ~160 kbps · 48 kHz**. The bitrate is an
 approximate packet measurement that can vary during a song; it does not certify
 Premium membership or a fixed source quality. Missing values are omitted.
+
+### Synced lyrics
+
+Use the lyrics icon beside Queue to open the full-page lyrics view. Lyrics are fetched for the current song only while the full-page view is visible. Tide first asks YouTube Music; if timed lyrics are unavailable, it can match LRCLIB by title, artist and duration. That separate lookup sends only public song metadata, never your Google cookies or session headers. Source attribution appears below the lyrics. Available timed lyrics highlight line by line and follow actual playback; click a timed line to seek. Guests in a Jam follow their own playback timing and cannot seek the room through the lyrics panel. Use Following to pause/resume auto-scroll and Back or Escape to return to browsing.
+
+Some songs provide plain lyrics or none. Retry is local to lyrics and does not disconnect your account. Leaving the lyrics view or switching songs discards stale lyrics. One bounded read may finish to preserve refreshed session cookies; lyrics are not saved to disk. Missing playlist covers use four small bundled illustrations chosen consistently by playlist ID.

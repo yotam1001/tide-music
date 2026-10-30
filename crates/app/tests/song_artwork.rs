@@ -97,4 +97,37 @@ fn changing_songs_clears_old_cover_until_the_selected_cover_arrives() {
         pixels[cover_probe], blue,
         "Source artwork must replace the shared default cover"
     );
+    let mut fallback_hashes = Vec::new();
+    let mut source_hashes = Vec::new();
+    for variant in 0..4 {
+        for real in [false, true] {
+            ui.set_library_playlists(ModelRc::new(VecModel::from(vec![PlaylistRow {
+                title: "Shared cover variants".into(),
+                cover_variant: variant,
+                artwork: if real { cover(blue) } else { Image::default() },
+                ..Default::default()
+            }])));
+            draw(&window, &mut pixels);
+            let hash = pixels.iter().fold(0u64, |hash, p| {
+                hash.wrapping_mul(31)
+                    .wrapping_add(u64::from(p.r) + (u64::from(p.g) << 8) + (u64::from(p.b) << 16))
+            });
+            if real {
+                source_hashes.push(hash);
+            } else {
+                fallback_hashes.push(hash);
+            }
+        }
+    }
+    fallback_hashes.sort_unstable();
+    fallback_hashes.dedup();
+    assert_eq!(
+        fallback_hashes.len(),
+        4,
+        "Fallback illustrations must differ"
+    );
+    assert!(
+        source_hashes.iter().all(|hash| *hash == source_hashes[0]),
+        "Real artwork must override every fallback variant"
+    );
 }

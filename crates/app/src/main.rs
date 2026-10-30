@@ -27,6 +27,7 @@ mod jam;
 #[cfg(feature = "experimental-jams")]
 mod jam_session;
 mod listening;
+mod lyrics;
 mod metadata;
 mod music_feedback;
 #[cfg(any(windows, test))]
@@ -937,6 +938,7 @@ fn refresh_library_models(s: &State, u: &AppWindow) {
         .enumerate()
         .map(|(index, p)| PlaylistRow {
             id: p.id.clone().into(),
+            cover_variant: artwork::fallback_variant(&p.id),
             title: p.title.clone().into(),
             subtitle: p.subtitle.clone().into(),
             artwork: p
@@ -959,6 +961,7 @@ fn refresh_library_models(s: &State, u: &AppWindow) {
         .enumerate()
         .map(|(index, p)| RecommendationRow {
             id: p.id.clone().into(),
+            cover_variant: artwork::fallback_variant(&p.id),
             title: p.title.clone().into(),
             subtitle: p.subtitle.clone().into(),
             kind: p.kind.clone().into(),
@@ -1239,6 +1242,22 @@ fn queue_choice(s: &mut State, u: &AppWindow, track: Track, play_next: bool) {
 }
 
 fn refresh(ui: &AppWindow, state: &State) {
+    let generation = state.generation.to_string();
+    if ui.get_lyrics_generation().as_str() != generation {
+        ui.set_lyrics_generation(generation.into());
+        ui.set_lyrics_lines(ModelRc::new(VecModel::<LyricRow>::default()));
+        ui.set_lyrics_active(-1);
+        ui.set_lyrics_source("".into());
+        ui.set_lyrics_synced(false);
+        ui.set_lyrics_status(
+            if state.active_playback {
+                "Loading lyrics…"
+            } else {
+                "Play a YouTube Music song to see its lyrics."
+            }
+            .into(),
+        );
+    }
     let mut artwork = state.artwork.borrow_mut();
     let current = state.settings.queue.current.unwrap_or(0);
     let metrics = ui.global::<LayoutMetrics>();
@@ -1727,6 +1746,12 @@ fn search(query: String, cancel: Arc<AtomicBool>) -> Result<Vec<Track>, String> 
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if std::env::args().nth(1).as_deref() == Some("--probe-lyrics") {
+        let video = std::env::args()
+            .nth(2)
+            .ok_or("Expected a YouTube video ID")?;
+        return lyrics::probe(video).map_err(Into::into);
+    }
     if std::env::args().nth(1).as_deref() == Some("--verify-update-files") {
         let paths: Vec<_> = std::env::args_os().skip(2).collect();
         if paths.len() != 2 {
@@ -2004,6 +2029,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (tx, rx) = mpsc::sync_channel(2);
     let (library_tx, library_rx) = mpsc::sync_channel::<LibraryResult>(2);
     music_feedback::install(&state, &ui, &library_tx);
+    let _lyrics = lyrics::install(&state, &ui);
     {
         let state = state.clone();
         let weak = ui.as_weak();
@@ -3717,7 +3743,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             );
                             u.set_account_status(error.into());
                         }
-                        Ok(tide_provider::Response::Session { .. } | tide_provider::Response::Feedback { .. }) | Err(_) => {
+                        Ok(tide_provider::Response::Session { .. } | tide_provider::Response::Feedback { .. } | tide_provider::Response::Lyrics { .. }) | Err(_) => {
                             library_failure(&mut s, &u, false);
                         }
                     }

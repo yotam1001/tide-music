@@ -366,6 +366,7 @@ pub fn update_choices(s: &State, u: &AppWindow) {
         .enumerate()
         .map(|(index, p)| PlaylistRow {
             id: p.id.clone().into(),
+            cover_variant: artwork::fallback_variant(&p.id),
             title: p.title.clone().into(),
             subtitle: p.subtitle.clone().into(),
             artwork: p
