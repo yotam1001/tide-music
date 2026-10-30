@@ -835,6 +835,19 @@ pub(super) fn wire(ui: &super::AppWindow, enabled: bool) -> Rc<RefCell<Updater>>
     owner
 }
 
+/// Release gate: inspect the actual installed player's UI eligibility, without
+/// showing a window, checking the network, or touching playback/account data.
+pub(super) fn verify_installed_updates() -> Result<(), String> {
+    let ui =
+        super::AppWindow::new().map_err(|_| "Could not initialize the updater verification")?;
+    let owner = wire(&ui, false);
+    if !owner.borrow().installable() || !ui.get_update_installable() {
+        return Err("The installed player did not enable automatic updates".into());
+    }
+    println!("PASS: installed player enables automatic update actions");
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

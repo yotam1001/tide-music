@@ -1746,6 +1746,9 @@ fn search(query: String, cancel: Arc<AtomicBool>) -> Result<Vec<Track>, String> 
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if std::env::args().nth(1).as_deref() == Some("--verify-installed-updater") {
+        return updater::verify_installed_updates().map_err(Into::into);
+    }
     if std::env::args().nth(1).as_deref() == Some("--probe-lyrics") {
         let video = std::env::args()
             .nth(2)
