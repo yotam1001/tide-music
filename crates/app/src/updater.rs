@@ -497,7 +497,15 @@ fn installed_player(base: &Path, executable: &Path) -> bool {
     record["Product"] == "org.tidemusic.windows.preview"
         && release.len() == 32
         && release.bytes().all(|b| b.is_ascii_hexdigit())
-        && executable == root.join("releases").join(release).join("tide-music.exe")
+        && {
+            let expected = root.join("releases").join(release).join("tide-music.exe");
+            plain(&expected).is_ok()
+                && (executable == expected
+                    || fs::canonicalize(executable)
+                        .ok()
+                        .zip(fs::canonicalize(&expected).ok())
+                        .is_some_and(|(actual, registered)| actual == registered))
+        }
 }
 
 fn verified_installer(path: &Path, release: &Release) -> Result<File, String> {
@@ -548,11 +556,24 @@ pub(super) struct Updater {
     receiver: Option<mpsc::Receiver<Completion>>,
     available: Option<Release>,
     base: Option<PathBuf>,
+    executable: Option<PathBuf>,
     transfer: Option<Arc<Transfer>>,
     ready: Option<PathBuf>,
     handoff: Option<handoff::Pending>,
 }
 impl Updater {
+    fn installable(&self) -> bool {
+        cfg!(windows)
+            && self
+                .base
+                .as_deref()
+                .zip(self.executable.as_deref())
+                .is_some_and(|(base, executable)| installed_player(base, executable))
+    }
+    fn refresh_installability(&self, ui: &super::AppWindow) {
+        ui.set_update_installable(self.installable());
+    }
+
     fn restart_failed(&mut self, ui: &super::AppWindow, error: LaunchFailure) {
         if !error.keep_ready {
             self.ready = None;
@@ -563,6 +584,7 @@ impl Updater {
     }
     fn start(owner: &Rc<RefCell<Self>>, ui: &super::AppWindow, install: bool) {
         let mut state = owner.borrow_mut();
+        state.refresh_installability(ui);
         if state.receiver.is_some() || state.handoff.is_some() {
             return;
         }
@@ -677,6 +699,7 @@ impl Updater {
         }
         match result {
             Completion::Checked(Ok((candidate, cached))) => {
+                self.refresh_installability(ui);
                 self.ready = cached;
                 ui.set_update_phase(if self.ready.is_some() { 2 } else { 0 });
                 ui.set_update_progress(if self.ready.is_some() { 100.0 } else { 0.0 });
@@ -707,16 +730,19 @@ pub(super) fn wire(ui: &super::AppWindow, enabled: bool) -> Rc<RefCell<Updater>>
     let base = std::env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
         .filter(|p| p.is_absolute());
+    let executable = std::env::current_exe().ok();
     let installable = cfg!(windows)
-        && base.as_ref().is_some_and(|base| {
-            std::env::current_exe().is_ok_and(|exe| installed_player(base, &exe))
-        });
+        && base
+            .as_deref()
+            .zip(executable.as_deref())
+            .is_some_and(|(base, exe)| installed_player(base, exe));
     ui.set_update_installable(installable);
     let owner = Rc::new(RefCell::new(Updater {
         timer: slint::Timer::default(),
         receiver: None,
         available: None,
         base,
+        executable,
         transfer: None,
         ready: None,
         handoff: None,
@@ -732,10 +758,12 @@ pub(super) fn wire(ui: &super::AppWindow, enabled: bool) -> Rc<RefCell<Updater>>
     let weak = ui.as_weak();
     ui.on_install_update(move || {
         if let Some(ui) = weak.upgrade() {
+            let mut updater = state.borrow_mut();
+            updater.refresh_installability(&ui);
             if !ui.get_update_installable() {
+                ui.set_update_status("Automatic update is unavailable for this copy. Install TideSetup.exe from the latest release.".into());
                 return;
             }
-            let mut updater = state.borrow_mut();
             if updater.receiver.is_some() || updater.handoff.is_some() {
                 return;
             }
@@ -794,18 +822,31 @@ pub(super) fn wire(ui: &super::AppWindow, enabled: bool) -> Rc<RefCell<Updater>>
             }
         }
     });
-    if enabled && installable && ui.get_auto_update_checks() {
+    if enabled && cfg!(windows) && ui.get_auto_update_checks() {
         let state = Rc::downgrade(&owner);
         let weak = ui.as_weak();
         slint::Timer::single_shot(Duration::from_secs(15), move || {
             if let (Some(state), Some(ui)) = (state.upgrade(), weak.upgrade()) {
-                if ui.get_auto_update_checks() {
+                if ui.get_auto_update_checks() && state.borrow().installable() {
                     Updater::start(&state, &ui, false);
                 }
             }
         });
     }
     owner
+}
+
+/// Release gate: inspect the actual installed player's UI eligibility, without
+/// showing a window, checking the network, or touching playback/account data.
+pub(super) fn verify_installed_updates() -> Result<(), String> {
+    let ui =
+        super::AppWindow::new().map_err(|_| "Could not initialize the updater verification")?;
+    let owner = wire(&ui, false);
+    if !owner.borrow().installable() || !ui.get_update_installable() {
+        return Err("The installed player did not enable automatic updates".into());
+    }
+    println!("PASS: installed player enables automatic update actions");
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1041,6 +1082,7 @@ mod tests {
             receiver: Some(receiver),
             available: Some(release),
             base: Some(base.path().to_owned()),
+            executable: None,
             transfer: Some(Arc::new(Transfer::default())),
             ready: None,
             handoff: None,
@@ -1081,6 +1123,42 @@ mod tests {
         assert!(updater.ready.is_none());
         assert_eq!(ui.get_update_phase(), 0);
     }
+    #[cfg(windows)]
+    #[test]
+    fn installation_record_can_become_ready_after_player_startup() {
+        let base = tempfile::tempdir().unwrap();
+        let root = base.path().join("Programs/Tide");
+        let id = "abcdef0123456789abcdef0123456789";
+        let executable = root.join("releases").join(id).join("tide-music.exe");
+        fs::create_dir_all(executable.parent().unwrap()).unwrap();
+        fs::write(&executable, b"fixture").unwrap();
+        let updater = Updater {
+            timer: slint::Timer::default(),
+            receiver: None,
+            available: None,
+            base: Some(base.path().to_owned()),
+            executable: Some(executable),
+            transfer: None,
+            ready: None,
+            handoff: None,
+        };
+        assert!(!updater.installable());
+        fs::write(
+            root.join(".tide-install.json"),
+            json!({"Product":"org.tidemusic.windows.preview", "Release":id}).to_string(),
+        )
+        .unwrap();
+        assert!(
+            updater.installable(),
+            "A startup miss must not disable updates for the life of the app"
+        );
+        fs::write(root.join(".tide-install.json"), json!({"Product":"org.tidemusic.windows.preview", "Release":"11111111111111111111111111111111"}).to_string()).unwrap();
+        assert!(
+            !updater.installable(),
+            "The active release ownership guard must remain enforced"
+        );
+    }
+
     #[test]
     fn automatic_installation_is_confined_to_the_active_owned_install() {
         let base = tempfile::tempdir().unwrap();
@@ -1105,6 +1183,39 @@ mod tests {
         )
         .unwrap();
         assert!(!installed_player(base.path(), &exe));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn canonical_equivalence_does_not_accept_a_linked_registered_release() {
+        let base = tempfile::tempdir().unwrap();
+        let root = base.path().join("Programs/Tide");
+        let foreign = base.path().join("foreign");
+        let id = "abcdef0123456789abcdef0123456789";
+        fs::create_dir_all(root.join("releases")).unwrap();
+        fs::create_dir_all(&foreign).unwrap();
+        let executable = foreign.join("tide-music.exe");
+        fs::write(&executable, b"fixture").unwrap();
+        fs::write(
+            root.join(".tide-install.json"),
+            json!({"Product":"org.tidemusic.windows.preview", "Release":id}).to_string(),
+        )
+        .unwrap();
+        // Directory junctions need no symlink privilege on the Windows runner.
+        let result = std::process::Command::new("powershell.exe")
+            .args(["-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference='Stop'; New-Item -ItemType Junction -Path $env:TIDE_TEST_LINK -Target $env:TIDE_TEST_TARGET | Out-Null"])
+            .env("TIDE_TEST_LINK", root.join("releases").join(id))
+            .env("TIDE_TEST_TARGET", &foreign)
+            .status().unwrap();
+        assert!(result.success());
+        assert_eq!(
+            fs::canonicalize(&executable).unwrap(),
+            fs::canonicalize(root.join("releases").join(id).join("tide-music.exe")).unwrap()
+        );
+        assert!(
+            !installed_player(base.path(), &executable),
+            "Canonical matching must not bypass the registered path's link guard"
+        );
     }
 
     #[cfg(windows)]
