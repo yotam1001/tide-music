@@ -499,11 +499,12 @@ fn installed_player(base: &Path, executable: &Path) -> bool {
         && release.bytes().all(|b| b.is_ascii_hexdigit())
         && {
             let expected = root.join("releases").join(release).join("tide-music.exe");
-            executable == expected
-                || fs::canonicalize(executable)
-                    .ok()
-                    .zip(fs::canonicalize(&expected).ok())
-                    .is_some_and(|(actual, registered)| actual == registered)
+            plain(&expected).is_ok()
+                && (executable == expected
+                    || fs::canonicalize(executable)
+                        .ok()
+                        .zip(fs::canonicalize(&expected).ok())
+                        .is_some_and(|(actual, registered)| actual == registered))
         }
 }
 
@@ -1182,6 +1183,39 @@ mod tests {
         )
         .unwrap();
         assert!(!installed_player(base.path(), &exe));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn canonical_equivalence_does_not_accept_a_linked_registered_release() {
+        let base = tempfile::tempdir().unwrap();
+        let root = base.path().join("Programs/Tide");
+        let foreign = base.path().join("foreign");
+        let id = "abcdef0123456789abcdef0123456789";
+        fs::create_dir_all(root.join("releases")).unwrap();
+        fs::create_dir_all(&foreign).unwrap();
+        let executable = foreign.join("tide-music.exe");
+        fs::write(&executable, b"fixture").unwrap();
+        fs::write(
+            root.join(".tide-install.json"),
+            json!({"Product":"org.tidemusic.windows.preview", "Release":id}).to_string(),
+        )
+        .unwrap();
+        // Directory junctions need no symlink privilege on the Windows runner.
+        let result = std::process::Command::new("powershell.exe")
+            .args(["-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference='Stop'; New-Item -ItemType Junction -Path $env:TIDE_TEST_LINK -Target $env:TIDE_TEST_TARGET | Out-Null"])
+            .env("TIDE_TEST_LINK", root.join("releases").join(id))
+            .env("TIDE_TEST_TARGET", &foreign)
+            .status().unwrap();
+        assert!(result.success());
+        assert_eq!(
+            fs::canonicalize(&executable).unwrap(),
+            fs::canonicalize(root.join("releases").join(id).join("tide-music.exe")).unwrap()
+        );
+        assert!(
+            !installed_player(base.path(), &executable),
+            "Canonical matching must not bypass the registered path's link guard"
+        );
     }
 
     #[cfg(windows)]
