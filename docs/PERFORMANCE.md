@@ -37,3 +37,27 @@ Use hosted CI for builds; follow `AGENTS.md` and the local disk budget when
 developing. Running the existing installed executable with
 `--smoke-performance <new-report.json> <local-three-second.wav>` is opt-in and
 does not compile Rust. Reports must use a new filename.
+
+## Immersive lyrics lifetime
+
+The lyrics screen animates its line emphasis and scroll position, and can move a
+soft album-colour backdrop. It uses the existing native software renderer rather
+than an embedded browser. The background is blurred once from the already loaded
+cover into a 64 by 64 RGBA bitmap (16 KiB of raw pixels), not a full-window blur
+computed on every frame. This raw bitmap size is not a claim about total RAM.
+
+The screen's Motion toggle disables its transitions and ambient motion. Ambient
+motion also stops while playback is paused. Leaving lyrics, entering Mini,
+minimizing, or opening a covering panel removes the lyrics component, clears its
+UI image/model owners, releases the controller's lyric vector capacity and
+backdrop, and signals the bounded provider worker to cancel. Hidden native
+windows receive the same cleanup from the controller's visibility check. The
+ordinary player's existing cover cache is independent and remains bounded.
+
+`lyrics_effects` integration tests exercise the real native software renderer
+through repeated close/Mini/minimize/settings cycles. They check that no lyrics
+image/model owners or active animations remain, that Motion off and paused
+playback stop ambient movement, and that closed-state Windows private bytes stay
+within a bounded growth allowance after warm-up. They do not establish total app
+working set, peak usage, gaming FPS, or a universal memory guarantee. Allocators
+and the OS may retain freed pages temporarily.

@@ -60,6 +60,8 @@ fn lyrics_follow_seek_and_close_in_both_themes_and_window_sizes() {
     let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
     slint::platform::set_platform(Box::new(Platform(window.clone()))).unwrap();
     let ui = AppWindow::new().unwrap();
+    // Functional hit tests use settled geometry; motion is tested separately.
+    ui.set_lyrics_motion_enabled(false);
     ui.set_track_title("A long song title for the lyrics panel".into());
     ui.set_track_artist("Artist name".into());
     ui.set_lyrics_lines(ModelRc::new(VecModel::from(
