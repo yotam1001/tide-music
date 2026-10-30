@@ -1436,6 +1436,12 @@ component LyricsPage inherits Rectangle {
     in property <string> source;
     in property <string> song;
     in property <string> artist;
+    in property <image> artwork;
+    in property <image> backdrop;
+    in property <bool> effects-active;
+    in property <bool> motion-enabled;
+    in property <bool> playing;
+    private property <float> phase: 0;
     private property <bool> following: true;
     private property <bool> short: root.height < 420px;
     callback close;
@@ -1447,6 +1453,26 @@ component LyricsPage inherits Rectangle {
         }
     }
     background: root.light-mode ? #f4eee6 : #111318;
+    clip: true;
+    callback toggle-motion;
+    // The component itself is destroyed on close, Mini or minimize. No global
+    // animation-tick binding or full-window blur cache survives this surface.
+    Timer {
+        interval: 50ms;
+        running: root.effects-active && root.motion-enabled && root.playing;
+        triggered => { root.phase = mod(root.phase + 0.002, 1); }
+    }
+    if root.effects-active && root.backdrop.width > 0 : Image {
+        x: -40px + sin(root.phase * 360deg) * 24px;
+        y: -40px + cos(root.phase * 360deg) * 20px;
+        width: parent.width + 80px; height: parent.height + 80px;
+        source: root.backdrop; image-fit: cover;
+        opacity: root.light-mode ? 0.20 : 0.30;
+    }
+    Rectangle {
+        width: parent.width; height: parent.height;
+        background: root.light-mode ? @linear-gradient(135deg, #f4eee6b0, #f4eee6e0) : @linear-gradient(135deg, #11131870, #111318d9);
+    }
     changed active => { root.follow-current(); }
     VerticalLayout {
         x: max(0px, (parent.width - 1140px) / 2);
@@ -1456,23 +1482,42 @@ component LyricsPage inherits Rectangle {
             height: root.short ? 32px : 40px; spacing: 8px; cross-axis-alignment: center;
             LibraryButton { width: 84px; height: 32px; light-mode: root.light-mode; caption: "Back"; leading-icon: "M 20 12 L 4 12 M 10 6 L 4 12 L 10 18"; label: "Back from lyrics"; clicked => { root.close(); } }
             Text { horizontal-stretch: 1; text: "Lyrics"; font-size: 22px; font-weight: 650; color: root.light-mode ? #392e33 : #f0eeef; }
+            LibraryButton { width: 86px; height: 30px; caption: root.motion-enabled ? "Motion on" : "Motion off"; active: root.motion-enabled; label: "Toggle lyrics animation"; light-mode: root.light-mode; clicked => { root.toggle-motion(); } }
             if root.synced && root.lines.length > 0 : LibraryButton { width: 82px; height: 30px; caption: root.following ? "Following" : "Follow"; active: root.following; label: root.following ? "Pause lyrics auto-scroll" : "Follow current lyric line"; light-mode: root.light-mode; clicked => { root.following = !root.following; root.follow-current(); } }
             LibraryButton { width: 32px; height: 32px; show-tooltip: true; light-mode: root.light-mode; icon-path: "M 20 7 L 20 3 M 20 7 L 16 7 M 20 7 A 9 9 0 1 0 21 14"; label: "Retry lyrics"; clicked => { root.retry(); } }
         }
-        Text { height: root.short ? 24px : 28px; text: root.song; font-size: root.short ? 16px : 20px; horizontal-alignment: center; font-weight: 600; overflow: elide; color: root.light-mode ? #392e33 : #f0eeef; }
-        if !root.short : Text { text: root.artist; font-size: 14px; horizontal-alignment: center; overflow: elide; color: root.light-mode ? #716773 : #a1a5ae; }
+        HorizontalLayout {
+            height: root.short ? 28px : 72px; spacing: 16px; cross-axis-alignment: center;
+            if !root.short && root.artwork.width > 0 : Image { width: 64px; height: 64px; source: root.artwork; image-fit: contain; }
+            VerticalLayout {
+                spacing: 4px;
+                Text { height: root.short ? 24px : 28px; text: root.song; font-size: root.short ? 16px : 20px; horizontal-alignment: center; font-weight: 600; overflow: elide; color: root.light-mode ? #392e33 : #f0eeef; }
+                if !root.short : Text { text: root.artist; font-size: 14px; horizontal-alignment: center; overflow: elide; color: root.light-mode ? #716773 : #c0c1c6; }
+            }
+        }
         if !root.short && root.lines.length > 0 : Text { text: root.status; font-size: 12px; horizontal-alignment: center; wrap: word-wrap; color: root.light-mode ? #716773 : #a1a5ae; }
         Rectangle { height: 1px; background: root.light-mode ? #ded0c4 : #292e37; }
         if root.lines.length == 0 : EmptyState { vertical-stretch: 1; light-mode: root.light-mode; heading: root.status; detail: ""; }
         lyric-list := ListView {
             visible: root.lines.length > 0;
             vertical-stretch: 1; accessible-label: "Song lyrics";
+            animate content-y { duration: root.motion-enabled ? 420ms : 0ms; easing: ease-out; }
             changed visible-height => { root.follow-current(); }
             for line[index] in root.lines : Rectangle {
                 height: 108px;
                 background: index == root.active ? (root.light-mode ? #eee2d9 : #30232e) : transparent;
                 border-radius: 8px;
-                Text { x: 20px; y: 10px; width: max(0px, parent.width - 40px); height: 88px; text: line.text; wrap: word-wrap; overflow: elide; horizontal-alignment: center; vertical-alignment: center; font-size: root.width < 780px ? (index == root.active ? 26px : 22px) : (index == root.active ? 32px : 28px); font-weight: index == root.active ? 650 : 400; color: index == root.active ? (root.light-mode ? #88463e : #edb5c6) : (root.light-mode ? #716773 : #a1a5ae); }
+                animate background { duration: root.motion-enabled ? 300ms : 0ms; }
+                Text {
+                    x: 20px; y: 10px; width: max(0px, parent.width - 40px); height: 88px;
+                    text: line.text; wrap: word-wrap; overflow: elide;
+                    horizontal-alignment: center; vertical-alignment: center;
+                    font-size: root.width < 780px ? (index == root.active ? 26px : 22px) : (index == root.active ? 32px : 28px);
+                    font-weight: 650;
+                    color: index == root.active ? (root.light-mode ? #88463e : #fff1f6) : (root.light-mode ? #716773 : #bbb6c4);
+                    opacity: !root.synced || root.active < 0 || index == root.active ? 1 : (abs(index - root.active) <= 1 ? 0.65 : 0.36);
+                    animate color, opacity, font-size { duration: root.motion-enabled ? 300ms : 0ms; easing: ease-out; }
+                }
                 control := Button { width: parent.width; height: parent.height; opacity: 0; enabled: root.synced && root.seek-enabled; accessible-label: "Seek to lyric: " + line.text; clicked => { root.seek-line(index); } }
                 Rectangle { width: parent.width; height: parent.height; border-radius: 8px; background: transparent; border-width: control.has-focus ? 2px : 0px; border-color: root.light-mode ? #985955 : #d16b89; }
             }
@@ -1541,6 +1586,14 @@ export component AppWindow inherits Window {
     in-out property <bool> home-open: true;
     in-out property <bool> queue-open: false;
     in-out property <bool> lyrics-open: false;
+    out property <bool> lyrics-presented: root.lyrics-open && !root.collapsed && !root.minimized
+        && !root.settings-open && !root.account-open && !root.jam-open
+        && !root.artist-picker-open && !root.playlist-picker-open;
+    in property <bool> lyrics-effects-active: false;
+    in property <image> lyrics-backdrop;
+    in-out property <bool> lyrics-motion-enabled: true;
+    callback lyrics-visibility-changed(bool);
+    changed lyrics-presented => { root.lyrics-visibility-changed(root.lyrics-presented); }
     in property <[LyricRow]> lyrics-lines;
     in property <int> lyrics-active: -1;
     in property <bool> lyrics-synced;
@@ -2057,11 +2110,14 @@ export component AppWindow inherits Window {
                     }
                 }
 
-                if root.lyrics-open : LyricsPage {
+                if root.lyrics-presented : LyricsPage {
                     width: parent.width; height: parent.height;
                     light-mode: root.light-mode; lines: root.lyrics-lines; active: root.lyrics-active;
                     synced: root.lyrics-synced; status: root.lyrics-status; source: root.lyrics-source;
                     song: root.track-title; artist: root.track-artist; seek-enabled: !root.jam-guest;
+                    effects-active: root.lyrics-effects-active; motion-enabled: root.lyrics-motion-enabled;
+                    playing: !root.paused; artwork: root.track-artwork; backdrop: root.lyrics-backdrop;
+                    toggle-motion => { root.lyrics-motion-enabled = !root.lyrics-motion-enabled; }
                     close => { root.lyrics-open = false; } retry => { root.reload-lyrics(); } seek-line(index) => { root.seek-lyric(index); }
                 }
                 if root.queue-open && !root.wide : Rectangle {

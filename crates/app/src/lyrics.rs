@@ -21,10 +21,21 @@ struct Runtime {
     lines: Vec<LyricLine>,
     attempted: bool,
     external_after: Option<Instant>,
+    backdrop: tide_music::lyrics_effects::Backdrop,
 }
 impl Runtime {
     fn accepts(&self, key: &Key, cancelled: bool) -> bool {
         !cancelled && self.key.as_ref() == Some(key)
+    }
+
+    fn release_view(&mut self) {
+        if let Some(work) = &self.worker {
+            work.cancel.store(true, Ordering::Release);
+        }
+        self.key = None;
+        self.lines = Vec::new();
+        self.attempted = false;
+        self.backdrop.clear();
     }
 }
 
@@ -78,10 +89,7 @@ fn active_line(lines: &[LyricLine], position: f64) -> i32 {
 }
 
 fn clear(ui: &AppWindow) {
-    ui.set_lyrics_lines(ModelRc::new(VecModel::<LyricRow>::default()));
-    ui.set_lyrics_active(-1);
-    ui.set_lyrics_synced(false);
-    ui.set_lyrics_source("".into());
+    tide_music::lyrics_effects::release_ui(ui);
 }
 
 pub fn install(state: &Rc<RefCell<State>>, ui: &AppWindow) -> Lyrics {
@@ -89,11 +97,23 @@ pub fn install(state: &Rc<RefCell<State>>, ui: &AppWindow) -> Lyrics {
     {
         let runtime = runtime.clone();
         let weak = ui.as_weak();
+        ui.on_lyrics_visibility_changed(move |visible| {
+            if !visible {
+                runtime.borrow_mut().release_view();
+                if let Some(ui) = weak.upgrade() {
+                    clear(&ui);
+                }
+            }
+        });
+    }
+    {
+        let runtime = runtime.clone();
+        let weak = ui.as_weak();
         ui.on_reload_lyrics(move || {
             let mut r = runtime.borrow_mut();
             if r.worker.is_none() {
                 r.attempted = false;
-                r.lines.clear();
+                r.lines = Vec::new();
                 if let Some(ui) = weak.upgrade() {
                     clear(&ui);
                 }
@@ -145,28 +165,26 @@ pub fn install(state: &Rc<RefCell<State>>, ui: &AppWindow) -> Lyrics {
                     return;
                 };
                 let s = state.borrow();
+                let key =
+                    if ui.get_lyrics_presented() && ui.window().is_visible() && s.active_playback {
+                        current_video_id(&s).zip(s.saved_connection.clone()).map(
+                            |(video, connection)| Key {
+                                generation: s.generation,
+                                video,
+                                connection,
+                            },
+                        )
+                    } else {
+                        None
+                    };
+                // Visibility can dispatch its release callback. Evaluate it
+                // before borrowing the controller for this polling pass.
                 let mut r = runtime.borrow_mut();
-                let key = if ui.get_lyrics_open()
-                    && !ui.get_collapsed()
-                    && !ui.window().is_minimized()
-                    && s.active_playback
-                {
-                    current_video_id(&s).zip(s.saved_connection.clone()).map(
-                        |(video, connection)| Key {
-                            generation: s.generation,
-                            video,
-                            connection,
-                        },
-                    )
-                } else {
-                    None
-                };
                 if key != r.key {
-                    // Finish the bounded read to preserve refreshed cookies;
-                    // the generation/account key rejects its stale UI result.
+                    // Cancellation is nonblocking. Keep at most this one worker
+                    // until it exits; its stale/cancelled result is rejected.
+                    r.release_view();
                     r.key = key.clone();
-                    r.attempted = false;
-                    r.lines.clear();
                     clear(&ui);
                     ui.set_lyrics_status(
                         if key.is_some() {
@@ -176,6 +194,10 @@ pub fn install(state: &Rc<RefCell<State>>, ui: &AppWindow) -> Lyrics {
                         }
                         .into(),
                     );
+                }
+                if key.is_some() {
+                    ui.set_lyrics_backdrop(r.backdrop.update(ui.get_track_artwork()));
+                    ui.set_lyrics_effects_active(true);
                 }
                 if r.worker.as_ref().is_some_and(|w| w.handle.is_finished()) {
                     let work = r.worker.take().unwrap();
@@ -337,6 +359,50 @@ mod tests {
             start_ms: time,
             end_ms: None,
         }
+    }
+    #[test]
+    fn leaving_releases_lyrics_capacity_and_cancels_inflight_work() {
+        let flag = Arc::new(AtomicBool::new(false));
+        let worker_flag = flag.clone();
+        let (tx, receiver) = mpsc::channel();
+        let handle = std::thread::spawn(move || {
+            while !worker_flag.load(Ordering::Acquire) {
+                std::thread::yield_now();
+            }
+            let _ = tx.send(Err("cancelled".into()));
+        });
+        let key = Key {
+            generation: 1,
+            video: "fixture0001".into(),
+            connection: SavedConnection {
+                revision: None,
+                account_index: 0,
+                page_id: None,
+            },
+        };
+        let mut r = Runtime {
+            key: Some(key.clone()),
+            lines: vec![line(Some(0), &"x".repeat(400)); 1000],
+            worker: Some(Work {
+                key: key.clone(),
+                cancel: flag.clone(),
+                handle,
+                receiver,
+            }),
+            ..Default::default()
+        };
+        r.backdrop
+            .update(slint::Image::from_rgba8(slint::SharedPixelBuffer::new(
+                96, 96,
+            )));
+        assert!(r.backdrop.allocated_bytes() > 0);
+        r.release_view();
+        assert!(flag.load(Ordering::Acquire));
+        assert_eq!(r.lines.capacity(), 0);
+        assert_eq!(r.backdrop.allocated_bytes(), 0);
+        assert!(!r.accepts(&key, false));
+        // The UI thread does not wait for a helper. Teardown can join later.
+        r.worker.take().unwrap().handle.join().unwrap();
     }
     #[test]
     fn stale_songs_accounts_and_cancelled_results_are_never_accepted() {
