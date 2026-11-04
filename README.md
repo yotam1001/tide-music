@@ -48,6 +48,9 @@ companion without uninstalling Tide. [Installation help](docs/INSTALLATION.md)
 
 ## What you can do
 
+- Open synced lyrics with smooth scrolling, animated line emphasis and an album-colour backdrop.
+  Motion can be switched off; leaving lyrics, entering Mini or minimizing releases its extra view resources.
+
 - Play songs, playlists and local audio with native playback.
 - Search within playlists and the queue by title, artist or album.
 - Choose Tide’s audio output and optionally smooth volume between songs.
