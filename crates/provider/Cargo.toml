@@ -4,6 +4,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+native-login = ["dep:tide-windows"]
+native-login-probe = ["native-login"]
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -12,4 +16,14 @@ tide-playback = { path = "../playback" }
 zeroize = "1"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Security_Cryptography", "Win32_System_Threading"] }
+tide-windows = { path = "../windows", optional = true, features = ["native-login"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Security_Cryptography", "Win32_System_Threading", "Win32_Storage_FileSystem"] }
+
+[[example]]
+name = "native_login"
+required-features = ["native-login-probe"]
+
+[[bin]]
+name = "tide-login"
+path = "src/bin/tide-login.rs"
+required-features = ["native-login"]

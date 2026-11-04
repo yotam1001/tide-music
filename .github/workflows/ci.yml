@@ -36,7 +36,7 @@ jobs:
       - run: cargo fmt --all -- --check
       # Stable defaults already enable Jams. Check the full workspace and its
       # native UI once, then reuse these compiled outputs for isolation probes.
-      - run: cargo test --workspace --locked --features tide-music/experimental-jams
+      - run: cargo test --workspace --locked --features tide-music/experimental-jams,tide-provider/native-login
         env:
           TIDE_UI_REVIEW_DIR: .local/ui-review
           TIDE_JAM_LAYOUT_DIR: ${{ github.workspace }}/.local/jam-ui-layouts
@@ -52,7 +52,7 @@ jobs:
             .local/player-indicators/*.png
           if-no-files-found: ignore
           retention-days: 7
-      - run: cargo clippy --workspace --all-targets --locked --features tide-music/experimental-jams -- -D warnings
+      - run: cargo clippy --workspace --all-targets --locked --features tide-music/experimental-jams,tide-provider/native-login -- -D warnings
       - name: Reject private pipe input without blocking guest cancellation
         shell: pwsh
         run: |
@@ -90,22 +90,22 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Build preview with remapped development paths
         shell: pwsh
-        run: ./scripts/build-preview.ps1 -StaticMsvcRuntime -IncludeBrowserHost
+        run: ./scripts/build-preview.ps1 -StaticMsvcRuntime -IncludeBrowserHost -IncludeNativeLogin
       - name: Generate dependency notices
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force .local | Out-Null
-          cargo metadata --locked --filter-platform x86_64-pc-windows-msvc --format-version 1 | Set-Content .local/windows-metadata.json -Encoding utf8
+          cargo metadata --locked --features tide-provider/native-login --filter-platform x86_64-pc-windows-msvc --format-version 1 | Set-Content .local/windows-metadata.json -Encoding utf8
           if ($LASTEXITCODE -ne 0) { throw 'Cargo metadata failed' }
           python scripts/generate-dependency-notices.py .local/windows-metadata.json .local/DEPENDENCIES.md
           if ($LASTEXITCODE -ne 0) { throw 'Dependency notices failed' }
       - name: Package and verify preview
         shell: pwsh
         run: |
-          ./scripts/package-preview.ps1 -Executable target/x86_64-pc-windows-msvc/release/tide-music.exe -BrowserHostExecutable target/x86_64-pc-windows-msvc/release/tide-session-host.exe -DependenciesNotice .local/DEPENDENCIES.md -StartHere docs/START_HERE.md -Destination dist/tide-windows-preview
-          python scripts/check-preview-package.py dist/tide-windows-preview.zip --with-browser-host
+          ./scripts/package-preview.ps1 -Executable target/x86_64-pc-windows-msvc/release/tide-music.exe -BrowserHostExecutable target/x86_64-pc-windows-msvc/release/tide-session-host.exe -NativeLoginExecutable target/x86_64-pc-windows-msvc/release/tide-login.exe -DependenciesNotice .local/DEPENDENCIES.md -StartHere docs/START_HERE.md -Destination dist/tide-windows-preview
+          python scripts/check-preview-package.py dist/tide-windows-preview.zip --with-browser-host --with-native-login
           if ($LASTEXITCODE -ne 0) { throw 'Package validation failed' }
-          ./scripts/build-installer.ps1 -Package dist/tide-windows-preview.zip -Destination dist/TideSetup.exe
+          ./scripts/build-installer.ps1 -Package dist/tide-windows-preview.zip -Destination dist/TideSetup.exe -IncludeNativeLogin
           python scripts/package-browser-companion.py --family firefox
           if ($LASTEXITCODE -ne 0) { throw 'Firefox companion packaging failed' }
           python scripts/package-browser-companion.py --family chromium
@@ -142,7 +142,7 @@ jobs:
       - name: Verify actual setup and unpack matching preview
         shell: pwsh
         run: |
-          python scripts/check-preview-package.py .local/clean-installer-artifact/tide-windows-preview.zip --with-browser-host
+          python scripts/check-preview-package.py .local/clean-installer-artifact/tide-windows-preview.zip --with-browser-host --with-native-login
           if ($LASTEXITCODE -ne 0) { throw 'Preview verification failed' }
           $setup = Start-Process -FilePath (Join-Path $PWD '.local/clean-installer-artifact/TideSetup.exe') -ArgumentList '--verify-payload' -WindowStyle Hidden -Wait -PassThru
           if ($setup.ExitCode -ne 0) { throw 'Actual setup embedded-payload verification failed' }

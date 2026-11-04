@@ -24,6 +24,9 @@ MAX_HOME_SHELVES = 3
 MAX_HOME_ITEMS_PER_SHELF = 40
 MAX_HOME_CARDS = MAX_HOME_SHELVES * MAX_HOME_ITEMS_PER_SHELF
 MAX_SUPERMIX_SHELVES = 20
+MAX_LIBRARY_CARDS = 200
+MAX_SEARCH_CARDS = 40
+ARTWORK_SIDE = 160  # Match the bounded native thumbnail cache, not full-size artwork.
 ARTWORK_HOSTS = ("ytimg.com", "ggpht.com", "googleusercontent.com")
 LOGIN_SECONDS = 8 * 60
 LOGIN_RETRY_SECONDS = 15
@@ -512,7 +515,7 @@ def artwork_url(item):
         width, height = thumbnail.get("width"), thumbnail.get("height")
         size = max(width, height) if (type(width) is int and type(height) is int
                                      and 0 < width <= 8192 and 0 < height <= 8192) else 8192
-        candidates.append((abs(size - 120), size, url))
+        candidates.append((abs(size - ARTWORK_SIDE), size, url))
     return min(candidates)[2] if candidates else None
 
 
@@ -582,6 +585,32 @@ def tracks(items, limit=MAX_TRACKS, exclude=(), deduplicate=False):
         if len(result) >= limit:
             break
     return result
+
+
+def browse_cards(items, kind, shelf):
+    """Normalize read-only library/history data; never return opaque API tokens."""
+    cards = []
+    seen = set()
+    for item in items[:MAX_LIBRARY_CARDS + 1] if isinstance(items, list) else []:
+        if not isinstance(item, dict) or item.get("isAvailable") is False:
+            continue
+        item_id = identifier(item.get("videoId"), True) if kind == "song" else identifier(item.get("browseId"))
+        if kind == "artist" and not re.fullmatch(r"UC[A-Za-z0-9_-]{22}", item_id):
+            continue
+        if kind == "album" and not re.fullmatch(r"MPRE[A-Za-z0-9_-]{4,156}", item_id):
+            continue
+        title = clean(item.get("artist") if kind == "artist" else item.get("title"))
+        if not item_id or not title or (kind != "song" and item_id in seen):
+            continue
+        seen.add(item_id)
+        cards.append({"id": item_id, "title": title,
+                      "subtitle": artist_names(item), "artists": artist_links(item),
+                      "kind": kind, "shelf": (clean(item.get("played")) or shelf) if kind == "song" else shelf,
+                      "artwork_url": artwork_url(item),
+                      "duration_seconds": duration_seconds(item) if kind == "song" else None})
+        if len(cards) == MAX_LIBRARY_CARDS:
+            break
+    return cards
 
 
 def playlist_entry(value):
@@ -816,6 +845,62 @@ def run(client, request):
     action = request["action"]
     if action == "feedback":
         return feedback(client, request.get("request"))
+    if action == "search":
+        kind, query = request.get("kind"), request.get("query")
+        kinds = {"songs": "song", "albums": "album", "artists": "artist", "playlists": "playlist"}
+        if (not isinstance(kind, str) or kind not in kinds or not isinstance(query, str) or not query.strip()
+                or len(query.encode("utf-8")) > 512 or any(ord(c) < 32 for c in query)):
+            return {"type": "error", "code": "search_unavailable"}
+        items = client.search(query.strip(), filter=kind, limit=MAX_SEARCH_CARDS)
+        normalized = []
+        for item in items[:MAX_SEARCH_CARDS] if isinstance(items, list) else []:
+            if not isinstance(item, dict) or item.get("resultType") != kinds[kind]:
+                continue
+            item = dict(item)
+            if kind == "playlists" and isinstance(item.get("browseId"), str):
+                item["browseId"] = item["browseId"].removeprefix("VL")
+            if not item.get("artists"):
+                author = item.get("artist") if kind == "albums" else item.get("author")
+                if isinstance(author, str):
+                    item["artists"] = [{"name": author}]
+            normalized.append(item)
+        return {"type": "search", "kind": kind,
+                "cards": browse_cards(normalized, kinds[kind], "Search results")[:MAX_SEARCH_CARDS]}
+    if action in ("libraryalbums", "libraryartists", "history"):
+        if action == "libraryalbums":
+            items = client.get_library_albums(limit=MAX_LIBRARY_CARDS + 1)
+            kind, shelf = "album", "Saved albums"
+        elif action == "libraryartists":
+            items = client.get_library_artists(limit=MAX_LIBRARY_CARDS + 1)
+            kind, shelf = "artist", "Your artists"
+        else:
+            # This reads account history; it never records or removes a listen.
+            items = client.get_history()
+            kind, shelf = "song", "Listening history"
+        return {"type": "browse", "section": {"libraryalbums": "albums", "libraryartists": "artists", "history": "history"}[action],
+                "cards": browse_cards(items, kind, shelf),
+                "truncated": isinstance(items, list) and len(items) > MAX_LIBRARY_CARDS}
+    if action == "album":
+        album = identifier(request.get("id"))
+        if not re.fullmatch(r"MPRE[A-Za-z0-9_-]{4,156}", album):
+            return {"type": "error", "code": "album_unavailable"}
+        data = client.get_album(album)
+        if not isinstance(data, dict) or not clean(data.get("title")):
+            return {"type": "error", "code": "album_unavailable"}
+        items = data.get("tracks")
+        items = items if isinstance(items, list) else []
+        normalized = []
+        for item in items[:MAX_TRACKS]:
+            if not isinstance(item, dict):
+                continue
+            item = dict(item)
+            item["album"] = {"name": clean(data["title"])}
+            if not artist_names(item):
+                item["artists"] = data.get("artists")
+            if not item.get("thumbnails"):
+                item["thumbnails"] = data.get("thumbnails")
+            normalized.append(item)
+        return {"type": "tracks", "tracks": tracks(normalized), "truncated": len(items) > MAX_TRACKS}
     if action == "artists":
         video = identifier(request.get("video_id"), True)
         if not video:

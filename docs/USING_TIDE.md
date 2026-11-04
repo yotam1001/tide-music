@@ -14,6 +14,32 @@ The centered player buttons handle previous, pause/play and next. The bottom
 sliders control position and volume. Windows media controls are supported;
 physical keyboard/Fn behavior while a game has focus still needs user validation.
 
+## Desktop navigation (0.4.13)
+
+The navigation rail provides **Home**, **Library**, and **Jams**. Taller windows
+also show **Liked** and **Supermix**. Open saved playlists from Library; use the
+single top-right profile icon to open Account. Home offers **Resume** and **Lyrics**
+for the current song, with an up-next preview when space allows. These reuse the
+existing queue and artwork.
+
+The player keeps **Like**, a labeled **Lyrics** microphone button and **Queue**
+visible. **More (…)** contains **Dislike** and **Open mini player**. Mini mode keeps
+its direct rating, pin and expand controls. The queue remains a vertical list with
+drag-to-reorder controls.
+
+Use **Ctrl+K** to focus search and **Ctrl+L** to open or close lyrics. **Esc** closes
+lyrics. While recording a custom keyboard shortcut, these combinations are recorded
+instead of triggering navigation.
+
+Windows taskbar previews offer previous, play/pause and next. The Tide tray icon
+opens the player; its context menu also offers transport, **Minimize to tray** and
+**Quit Tide**. Closing the main window still exits Tide normally. Turning off Windows
+media controls also removes the tray and taskbar controls. Jam transport permissions
+are the same whether a command comes from the player or Windows.
+Windows media controls also reuse the current cover from Tide's thumbnail cache.
+This is a small memory-only image; it does not add another artwork download or
+save a cover file to disk.
+
 ## Gaming controls (0.1.1 and later)
 
 In **Settings → Advanced**, Windows media keys can be switched off if
@@ -58,10 +84,13 @@ changing your saved login. Playback errors do not by themselves request a reconn
   under your YouTube Music recommendation sections. The layout preserves the provider's order; it does not change
   which music is recommended. Select a song to play it; its **…** menu offers
   queue, radio and playlist actions. Playlist tiles open their tracks.
-- **Library:** your playlists, My Supermix and Liked Songs. Use the view icon
-  beside the heading to switch between covers and a compact list. This choice
-  saves automatically. Selecting a playlist opens its tracks; **Play** or
-  **Shuffle** starts it.
+- **Library:** switch between **Playlists**, **Albums**, **Artists**, and **History**.
+  My Supermix and Liked Songs stay pinned in Playlists. Use the view icon beside
+  the heading to switch collections between covers and a compact list; this choice
+  saves automatically. History remains in listening order, including repeats.
+  Short windows use lists automatically. Selecting a playlist or album opens its
+  tracks; **Play** or **Shuffle** starts it. Select an artist to open their page.
+  Refresh reloads the selected tab; each new section shows up to 200 items.
 
 Playlists without an image use a small cover bundled with Tide. Source artwork
 replaces it as it loads; no additional download or per-playlist image file is
@@ -74,6 +103,9 @@ keyboard and screen-reader input.
   does not mean your account needs reconnecting.
 - **Search:** stays separate from the queue until you select or queue a song.
   Small covers load on demand using the existing bounded thumbnail cache.
+  Use **Songs**, **Albums**, **Artists**, and **Playlists** to change category.
+  Signed-in Music search returns up to 40 results; the unconnected songs-only
+  fallback returns up to 20. Opening a collection shows its tracks or artist page.
 - **Search this list:** filters playlist/artist tracks by title, artist or album.
   All words must match; playback order and duplicate entries are preserved.
 - **Search queue:** use the magnifying glass in Queue. Clear the search before
@@ -81,7 +113,7 @@ keyboard and screen-reader input.
 
 Both cover grids adjust to the available width. Only thumbnails near the
 visible rows are requested, with at most 40 image references per browsing
-model and the existing 48-entry, 96-pixel thumbnail cache. Scrolling releases
+model and the bounded 48-entry, 160-pixel thumbnail cache. Scrolling releases
 offscreen references; no artwork disk cache or embedded browser is added.
 
 Tide reads your existing library without downloading your whole collection.

@@ -1,6 +1,6 @@
 # Tide privacy notice
 
-Last updated: 2026-10-22
+Last updated: 2026-11-04
 
 
 This notice covers the Tide Windows player, its optional session companion
@@ -15,6 +15,16 @@ advertising SDK, analytics service or automatic crash-report uploader in this
 version. Tide does not send your session to the project maintainers or a Tide
 server, sell it, or use it for advertisements, profiling or unrelated purposes.
 Google/YouTube and download providers have their own data practices.
+
+Native sign-in opens Google's pages in a separate WebView2 helper with a fresh,
+private temporary browser profile. Google receives the information you enter;
+Tide does not capture password fields or expose a general page-to-native bridge.
+After you select **Connect this profile**, the helper reads scoped Music session
+cookies and allowlisted account-selection metadata, verifies them, and commits
+the verified session to the encrypted local store. The helper's browser processes
+are stopped and its temporary profile is removed after normal completion. Failed
+cleanup after a crash is retried by the ownership-checked stale-profile sweep.
+The player does not keep WebView2 running during ordinary playback.
 
 Installed Windows players check the public Tide GitHub release endpoint once
 after startup for newer stable versions. Disable startup checks in Settings;

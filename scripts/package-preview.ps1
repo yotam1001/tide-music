@@ -20,6 +20,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$StartHere,
     [string]$BrowserHostExecutable,
+    [string]$NativeLoginExecutable,
     [string]$Destination
 )
 
@@ -93,6 +94,10 @@ if (-not [string]::IsNullOrWhiteSpace($BrowserHostExecutable)) {
 }
 
 # Validate the complete input set before creating any package output.
+if (-not [string]::IsNullOrWhiteSpace($NativeLoginExecutable)) {
+    $taskFiles += @{ Source = $NativeLoginExecutable; Relative = 'tide-login.exe' }
+    $taskFiles = $taskFiles | Sort-Object -Property Relative
+}
 foreach ($taskFile in $taskFiles) {
     $taskFile.Source = Get-ProjectPath $taskFile.Source
     if (-not (Test-Path -LiteralPath $taskFile.Source -PathType Leaf)) {

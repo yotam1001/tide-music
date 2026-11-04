@@ -31,3 +31,10 @@ for those particular builds. See [installation details](docs/INSTALLATION.md).
 
 
 The thumbnail fetcher also uses ureq, url and the image crate (JPEG/WebP enabled); Windows icon embedding uses winresource. Their dependency licenses and those of transitive packages are retained in Cargo package metadata and the installed crates. These crates are obtained through Cargo rather than vendored here.
+
+The optional native sign-in helper uses the MIT-licensed
+[webview2-com](https://github.com/wravery/webview2-rs) bindings and the installed
+Microsoft Edge WebView2 Runtime. The runtime is a separate Microsoft component;
+it is not embedded in Tide's source or loaded into the player for normal listening.
+The helper also uses the windows, url, serde_json and zeroize crates; include their
+transitive license metadata when distributing a helper-enabled build.

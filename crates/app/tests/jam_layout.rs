@@ -187,7 +187,8 @@ fn guest_mini_keeps_leave_and_volume_reachable_and_blocks_transport() {
         "Settings is clipped at minimum width"
     );
     ui.set_settings_open(false);
-    click(&ui, 60.0, 198.0);
+    // Jams follows Home and Library in the labeled rail; exercise its visible hitbox.
+    click(&ui, 44.0, 258.0);
     assert!(ui.get_jam_open(), "Jam is inaccessible at minimum width");
     ui.set_jam_open(false);
     ui.set_jam_guest(true);

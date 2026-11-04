@@ -23,12 +23,17 @@ internal static class PayloadTests {
             if (mutation == "duplicate") zip.CreateEntry("LICENSE");
             if (mutation == "case") zip.CreateEntry("license");
             if (mutation == "partial") manifest.Clear();
-            if (mutation == "host") {
+            if (mutation == "host" || mutation == "host-native") {
                 foreach (var name in new string[] { "tide-session-host.exe", "scripts/setup-browser-companion.ps1", "docs/BROWSER_COMPANION.md" }) {
                     var data = Encoding.UTF8.GetBytes("public fixture");
                     using (var stream = zip.CreateEntry(name).Open()) stream.Write(data, 0, data.Length);
                     using (var stream = new MemoryStream(data)) manifest.Append(Payload.Hash(stream)).Append("  ").Append(name).Append('\n');
                 }
+            }
+            if (mutation == "native" || mutation == "host-native") {
+                var data = Encoding.UTF8.GetBytes("public fixture, never executed");
+                using (var stream = zip.CreateEntry("tide-login.exe").Open()) stream.Write(data, 0, data.Length);
+                using (var stream = new MemoryStream(data)) manifest.Append(Payload.Hash(stream)).Append("  tide-login.exe\n");
             }
             using (var writer = new StreamWriter(zip.CreateEntry("SHA256SUMS.txt").Open())) writer.Write(manifest);
         }
@@ -197,12 +202,12 @@ internal static class PayloadTests {
             Environment.SetEnvironmentVariable("PSModulePath", previousModules);
             File.Delete(Path.Combine(scratch, "fixture.ps1")); Directory.Delete(scratch);
         }
-        foreach (var mutation in new string[] { "good", "host", "missing", "traversal", "duplicate", "case", "checksum", "partial" }) {
+        foreach (var mutation in new string[] { "good", "host", "native", "host-native", "missing", "traversal", "duplicate", "case", "checksum", "partial" }) {
             bool valid = true;
             using (var stream = Fixture(mutation)) using (var zip = new ZipArchive(stream, ZipArchiveMode.Read)) {
                 try { Payload.Validate(zip); } catch (InvalidDataException) { valid = false; }
             }
-            if (valid != (mutation == "good" || mutation == "host")) throw new Exception("Payload gate regression: " + mutation);
+            if (valid != (mutation == "good" || mutation == "host" || mutation == "native" || mutation == "host-native")) throw new Exception("Payload gate regression: " + mutation);
         }
         var unsafePath = Path.Combine(Path.GetTempPath(), "unowned-directory");
         try { Payload.Remove(unsafePath); throw new Exception("Unowned removal was allowed"); } catch (IOException) { }

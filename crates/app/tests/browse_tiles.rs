@@ -113,6 +113,7 @@ fn cover_grid_and_list_preserve_song_and_playlist_actions() {
                 columns as usize,
             );
             let spotlight_count = groups[0].count as i32;
+            let shelf = groups[0].layout == browse_layout::Layout::Tiles;
             ui.set_home_browse_rows(ModelRc::new(VecModel::from(
                 groups
                     .iter()
@@ -130,7 +131,11 @@ fn cover_grid_and_list_preserve_song_and_playlist_actions() {
                     .collect::<Vec<_>>(),
             )));
             render(&window, width, light, "home");
-            let nav = if width < 900 { 120.0 } else { 152.0 };
+            let nav = if width < 900 {
+                ui.global::<LayoutMetrics>().get_navigation_narrow()
+            } else {
+                ui.global::<LayoutMetrics>().get_navigation_wide()
+            };
             let page = width as f32 - nav;
             let left = nav + (width as f32 - nav - page) / 2.0 + 28.0;
             let available = page - 56.0;
@@ -141,7 +146,11 @@ fn cover_grid_and_list_preserve_song_and_playlist_actions() {
                     if index == 0 {
                         left + 30.0
                     } else {
-                        left + available * 0.48 + 42.0
+                        if shelf {
+                            left + (available + 12.0) / columns as f32 + 30.0
+                        } else {
+                            left + available * 0.48 + 42.0
+                        }
                     },
                     230.0,
                 );
@@ -157,7 +166,9 @@ fn cover_grid_and_list_preserve_song_and_playlist_actions() {
                     continue;
                 }
                 queued.set(None);
-                let menu_x = if index == 0 {
+                let menu_x = if shelf {
+                    left + (available + 12.0) / columns as f32 * (index + 1) as f32 - 42.0
+                } else if index == 0 {
                     left + available * (if spotlight_count > 1 { 0.48 } else { 1.0 }) - 30.0
                 } else {
                     left + available - 30.0
@@ -166,7 +177,7 @@ fn cover_grid_and_list_preserve_song_and_playlist_actions() {
                 click(
                     &ui,
                     menu_x,
-                    if index == 0 {
+                    if shelf || index == 0 {
                         225.0
                     } else {
                         196.0 + lane + 12.0 + lane / 2.0
@@ -196,19 +207,22 @@ fn cover_grid_and_list_preserve_song_and_playlist_actions() {
                 );
             }
             let original = ui.get_recommendations();
-            let mut collections = (0..original.row_count())
+            let collections = (0..original.row_count())
                 .map(|i| original.row_data(i).unwrap())
                 .collect::<Vec<_>>();
-            collections[0].kind = "playlist".into();
-            ui.set_recommendations(ModelRc::new(VecModel::from(collections)));
-            render(&window, width, light, "featured-playlist");
-            selected.set((-1, -1));
-            click(&ui, left + 30.0, 230.0);
-            assert_eq!(
-                selected.get(),
-                (0, 0),
-                "Featured playlist must open its source, not play a different song"
-            );
+            for kind in ["playlist", "album", "artist"] {
+                let mut items = collections.clone();
+                items[0].kind = kind.into();
+                ui.set_recommendations(ModelRc::new(VecModel::from(items)));
+                render(&window, width, light, &format!("featured-{kind}"));
+                selected.set((-1, -1));
+                click(&ui, left + 30.0, 230.0);
+                assert_eq!(
+                    selected.get(),
+                    (0, 0),
+                    "{kind} must open its source at width {width}"
+                );
+            }
             ui.set_recommendations(original);
             ui.set_library_open(true);
             render(&window, width, light, "library-grid");

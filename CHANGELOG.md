@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 0.4.13 — 2026-11-04
+
+- Redesign navigation and the player bar while retaining Tide's logo and colors.
+- Add temporary native Google sign-in with explicit Music profile selection,
+  encrypted session storage and browser-companion fallback.
+- Browse saved albums, artists and listening history directly in Library.
+- Search songs, albums, artists and playlists using YouTube Music results.
+- Add taskbar preview transport, tray controls and memory-only Windows media artwork.
+- Keep the queue vertical and move secondary footer actions into More.
+
 ## 0.3.0 — 2026-10-22
 
 - Add Like/Dislike controls, including clearing a rating, for the selected account.

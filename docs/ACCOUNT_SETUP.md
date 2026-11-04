@@ -2,9 +2,25 @@
 
 Connecting lets Tide read your playlists, Liked Songs and recommendations and use
 your signed-in session for native playback. Keep your existing Google account.
-Tide does not ask for your password or require an API key.
+Google handles sign-in; Tide does not capture your password or require an API key.
 
-## Use the Chrome companion
+## Sign in inside Tide
+
+1. Open the profile icon at the top right, then **Sign in with Google**.
+2. Complete sign-in on Google's page in the temporary window.
+3. In YouTube Music, choose the profile that owns your playlists. Open **Library**.
+4. Choose **Connect this profile** at the bottom of the window.
+
+Tide verifies the connection and saves the session encrypted for your Windows user.
+The temporary browser closes and its private profile is removed. You do not need
+to keep a browser open while listening. A cancelled or failed verification keeps
+your existing saved connection. If the window cannot open, use the companion below.
+
+The native window requires the Microsoft Edge WebView2 Runtime, included on many
+Windows installations. Google handles your password and any two-step verification;
+Tide does not capture form fields or log your credentials.
+
+## Browser companion fallback
 
 Follow the [Chrome connection guide](https://github.com/yotam1001/tide-music/blob/main/docs/BROWSER_COMPANION_BETA.md):
 
@@ -15,7 +31,7 @@ Follow the [Chrome connection guide](https://github.com/yotam1001/tide-music/blo
 4. Wait for **Session imported**, then open Tide and confirm your account under
    **Account**, beside Settings.
 
-Already installed? Rerun setup to enable the companion. **Connect YouTube Music**
+Already installed? Rerun setup to enable the companion. **Use browser companion instead**
 in Tide opens the instructions; the explicit Chrome import completes connection.
 **Check local connection** checks the helper, not your Google sign-in.
 
@@ -27,7 +43,8 @@ Edge and Firefox are not recommended setup paths yet.
 
 Open **Account** in Tide and read the displayed name and connection state.
 Check that **Library** shows the expected playlists. For the wrong profile,
-select the intended YouTube Music identity in Chrome and import that tab again.
+use **Reconnect YouTube Music** and choose the intended Music profile, or select
+that identity in Chrome and import the tab again.
 A successful explicit import replaces Tide's saved session.
 
 The browser is used for connection while Tide handles playback natively. It is
@@ -52,8 +69,8 @@ does not provide Premium or implement ad blocking.
 
 ## Reconnect or disconnect
 
-- **Reconnect:** sign in to the intended Music profile in Chrome and repeat the
-  companion import. Refresh Library, or close and reopen Tide if needed.
+- **Reconnect:** use **Account → Reconnect YouTube Music** and choose the intended
+  profile. The browser companion import remains an alternative.
 - **Disconnect:** use **Account → Disconnect account**. This removes Tide's saved
   session; your Google browser sign-in is separate.
 - **Other methods:** Zen profile and local session-file imports are under

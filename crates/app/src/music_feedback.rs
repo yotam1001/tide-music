@@ -177,6 +177,7 @@ pub fn install(
                 .get(index)
                 .filter(|c| c.kind == "song")
                 .map(recommendation_track),
+            5 => library_browse::song(&s, index),
             _ => None,
         });
         let Some(track) = track else {

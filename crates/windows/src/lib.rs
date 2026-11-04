@@ -134,6 +134,8 @@ pub enum MediaAction {
 #[cfg(windows)]
 mod native;
 #[cfg(windows)]
+mod taskbar;
+#[cfg(windows)]
 pub use native::MediaSession;
 
 #[cfg(windows)]
@@ -157,6 +159,10 @@ pub fn start(
 
 #[cfg(not(windows))]
 impl MediaSession {
+    pub fn set_thumbnail(&mut self, _png: Option<&[u8]>) -> Result<(), String> {
+        Err("System artwork is currently supported on Windows only.".into())
+    }
+
     pub fn update(
         &mut self,
         _title: &str,
@@ -172,4 +178,6 @@ impl MediaSession {
 
 #[cfg(windows)]
 pub mod discord_pipe;
+#[cfg(all(windows, feature = "native-login"))]
+pub mod login;
 pub mod mini;

@@ -30,8 +30,10 @@ BINARY_PATTERNS = [
 ]
 
 
-def check(path, with_browser_host=False):
+def check(path, with_browser_host=False, with_native_login=False):
     expected_payload = PAYLOAD | (BROWSER_HOST_PAYLOAD if with_browser_host else set())
+    if with_native_login:
+        expected_payload |= {"tide-login.exe"}
     with zipfile.ZipFile(path) as archive:
         names = archive.namelist()
         if len(names) != len(set(names)) or set(names) != expected_payload | {"SHA256SUMS.txt"}:
@@ -59,9 +61,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("archive")
     parser.add_argument("--with-browser-host", action="store_true")
+    parser.add_argument("--with-native-login", action="store_true")
     args = parser.parse_args()
     try:
-        check(args.archive, args.with_browser_host)
+        check(args.archive, args.with_browser_host, args.with_native_login)
     except (ValueError, zipfile.BadZipFile, OSError) as error:
         parser.exit(1, f"{error}\n")
 

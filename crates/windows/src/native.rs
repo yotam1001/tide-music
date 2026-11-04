@@ -133,6 +133,7 @@ pub struct MediaSession {
     metadata_cache: Option<Metadata>,
     status_cache: Option<MediaPlaybackStatus>,
     timeline_cache: Option<Timeline>,
+    taskbar: Option<crate::taskbar::Taskbar>,
     // Last: release COM objects before uninitializing the apartment.
     _apartment: Apartment,
 }
@@ -180,6 +181,7 @@ pub(super) fn start(
         metadata_cache: None,
         status_cache: None,
         timeline_cache: None,
+        taskbar: None,
         _apartment: apartment,
     };
     session
@@ -246,6 +248,9 @@ pub(super) fn start(
                 .map_err(media_error)?,
         );
     }
+    let callbacks = session.callbacks.clone();
+    session.taskbar =
+        crate::taskbar::Taskbar::attach(hwnd, move |action| callbacks.dispatch(action), true).ok();
     session.controls.SetIsEnabled(true).map_err(media_error)?;
     Ok(session)
 }
@@ -266,6 +271,42 @@ fn button_action(button: SystemMediaTransportControlsButton) -> Option<MediaActi
 }
 
 impl MediaSession {
+    /// Publish a bounded, already decoded/re-encoded PNG. No URL, file, or network access.
+    pub fn set_thumbnail(&mut self, png: Option<&[u8]>) -> Result<(), String> {
+        use windows::Storage::Streams::{IRandomAccessStream, RandomAccessStreamReference};
+        use windows::Win32::{
+            System::WinRT::{CreateRandomAccessStreamOverStream, BSOS_DEFAULT},
+            UI::Shell::SHCreateMemStream,
+        };
+        let reference = if let Some(png) = png {
+            if png.len() < 33
+                || png.len() > 128 * 1024
+                || !png.starts_with(b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR")
+                || ![16..20, 20..24].into_iter().all(|range| {
+                    let side =
+                        u32::from_be_bytes(png[range].try_into().expect("header size checked"));
+                    (1..=160).contains(&side)
+                })
+            {
+                return Err("System artwork must be a small PNG thumbnail".into());
+            }
+            // SHCreateMemStream copies the bytes; the COM reference owns that copy.
+            // Wrap synchronously to avoid blocking the UI on an async stream write.
+            let stream = unsafe { SHCreateMemStream(Some(png)) }
+                .ok_or("System artwork stream unavailable")?;
+            let random: IRandomAccessStream =
+                unsafe { CreateRandomAccessStreamOverStream(&stream, BSOS_DEFAULT) }
+                    .map_err(media_error)?;
+            Some(RandomAccessStreamReference::CreateFromStream(&random).map_err(media_error)?)
+        } else {
+            None
+        };
+        self.display
+            .SetThumbnail(reference.as_ref())
+            .map_err(media_error)?;
+        self.display.Update().map_err(media_error)
+    }
+
     pub fn update(
         &mut self,
         title: &str,
@@ -276,6 +317,9 @@ impl MediaSession {
         duration: f64,
     ) -> Result<(), String> {
         let timeline_values = Timeline::from_seconds(position, duration, playing)?;
+        if let Some(taskbar) = &self.taskbar {
+            taskbar.update(playing, true);
+        }
         let metadata_changed = self.metadata_cache.as_ref().is_none_or(|cached| {
             cached.title != title || cached.artist != artist || cached.album != album
         });
@@ -348,6 +392,7 @@ impl MediaSession {
 impl Drop for MediaSession {
     fn drop(&mut self) {
         self.callbacks.deactivate();
+        self.taskbar.take();
         if let Some(token) = self.button_token.take() {
             let _ = self.controls.RemoveButtonPressed(token);
         }
@@ -366,6 +411,11 @@ impl Drop for MediaSession {
 #[cfg(test)]
 mod tests {
     use super::*;
+    const THUMBNAIL_FIXTURE: &[u8] = &[
+        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 2,
+        0, 0, 0, 144, 119, 83, 222, 0, 0, 0, 12, 73, 68, 65, 84, 120, 156, 99, 248, 207, 192, 0, 0,
+        3, 1, 1, 0, 201, 254, 146, 239, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+    ];
 
     #[test]
     fn rejects_invalid_window_without_creating_a_session() {
@@ -419,6 +469,18 @@ mod tests {
             session.controls.PlaybackStatus().unwrap(),
             MediaPlaybackStatus::Playing
         );
+        // A memory-only reference must survive the source buffer's lifetime.
+        let png = THUMBNAIL_FIXTURE;
+        session.set_thumbnail(Some(png)).unwrap();
+        assert!(session.display.Thumbnail().is_ok());
+        assert!(session
+            .set_thumbnail(Some(&vec![0; 128 * 1024 + 1]))
+            .is_err());
+        assert!(session
+            .set_thumbnail(Some(b"https://example.test/art"))
+            .is_err());
+        session.set_thumbnail(None).unwrap();
+        assert!(session.display.Thumbnail().is_err());
         assert_eq!(
             session
                 .display

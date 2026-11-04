@@ -37,9 +37,9 @@ impl Discovery {
             .into_iter()
             .take(MAX_CANDIDATES)
             .filter_map(|card| {
-                // The native Home view currently opens songs and playlists.
-                // Keep unsupported/unnamed cards out of both display and history.
-                if !matches!(card.kind.as_str(), "song" | "playlist")
+                // Keep supported collections in provider order alongside songs.
+                // Opening validates their canonical API identity separately.
+                if !matches!(card.kind.as_str(), "song" | "playlist" | "album" | "artist")
                     || card.id.trim().is_empty()
                     || card.title.trim().is_empty()
                 {
@@ -261,7 +261,7 @@ mod tests {
 
     #[test]
     fn unsupported_or_unnamed_cards_never_enter_display_or_history() {
-        let mut cards: Vec<_> = ["album", "artist", "unknown", "", "Song"]
+        let mut cards: Vec<_> = ["podcast", "video-channel", "unknown", "", "Song"]
             .into_iter()
             .enumerate()
             .map(|(index, kind)| {
@@ -286,9 +286,24 @@ mod tests {
         assert_eq!(discovery.recent.len(), 2);
         assert_eq!(discovery.last_display.len(), 2);
         let mut unsupported = card(202);
-        unsupported.kind = "album".into();
+        unsupported.kind = "podcast".into();
         assert!(discovery.select(vec![unsupported]).is_empty());
         assert_eq!(discovery.recent.len(), 2);
+    }
+
+    #[test]
+    fn albums_and_artists_keep_their_original_recommendation_rank() {
+        let mut cards = pool(4);
+        cards[1].kind = "album".into();
+        cards[1].id = "MPREb_fixture".into();
+        cards[2].kind = "artist".into();
+        cards[2].id = "UC1234567890123456789012".into();
+        let expected = order(&cards)
+            .into_iter()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        let selected = Discovery::default().select(cards);
+        assert_eq!(order(&selected), expected);
     }
 
     #[test]
