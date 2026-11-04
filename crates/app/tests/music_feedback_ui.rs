@@ -74,8 +74,19 @@ fn native_ratings_remain_reachable_and_do_not_take_over_transport() {
         let x = width as f32 - ui.global::<LayoutMetrics>().get_footer_actions_width() - 2.0;
         let y = height as f32 - 74.0;
         let start = ratings.borrow().len();
-        for position in [x, x, x + 40.0, x + 40.0] {
-            click(&ui, position, y);
+        click(&ui, x, y);
+        click(&ui, x, y);
+        // Dislike remains available in More, leaving the routine player uncluttered.
+        for _ in 0..2 {
+            click(&ui, width as f32 - 36.0, y);
+            let down: slint::SharedString = slint::platform::Key::DownArrow.into();
+            let enter: slint::SharedString = slint::platform::Key::Return.into();
+            for text in [down, enter] {
+                ui.window()
+                    .dispatch_event(WindowEvent::KeyPressed { text: text.clone() });
+                ui.window()
+                    .dispatch_event(WindowEvent::KeyReleased { text });
+            }
         }
         assert_eq!(
             ratings.borrow().len(),
@@ -244,7 +255,7 @@ fn native_ratings_remain_reachable_and_do_not_take_over_transport() {
     for (guest, down_count) in [(false, 4), (true, 2)] {
         ui.set_jam_guest(guest);
         draw(&window, 1140, 800, "playlist-menu-before");
-        click(&ui, 1087.0, 185.0);
+        click(&ui, 1087.0, 229.0);
         draw(
             &window,
             1140,

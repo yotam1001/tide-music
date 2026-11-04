@@ -18,6 +18,7 @@ mod artwork_view;
 mod audio_settings;
 mod browse_filter;
 mod browse_layout;
+mod card_navigation;
 mod connection;
 mod discord;
 mod discovery;
@@ -26,18 +27,22 @@ mod history_feedback;
 mod jam;
 #[cfg(feature = "experimental-jams")]
 mod jam_session;
+mod library_browse;
 mod listening;
 mod lyrics;
 mod metadata;
 mod music_feedback;
+mod native_login;
 #[cfg(any(windows, test))]
 mod output_recovery;
 mod performance;
 mod playback_feedback;
 mod radio;
+mod search_results;
 mod settings_location;
 mod settings_store;
 mod shortcut_capture;
+mod system_artwork;
 mod updater;
 use tide_music::*;
 
@@ -167,11 +172,14 @@ struct State {
     library_worker: Option<std::thread::JoinHandle<()>>,
     library_cancel: Arc<AtomicBool>,
     library_playlists: Vec<tide_provider::Playlist>,
+    library_browse: library_browse::Browse,
     recommendations: Vec<tide_provider::Card>,
     discovery: discovery::Discovery,
     detail_tracks: Vec<Track>,
     artist_origin: Option<artists::Origin>,
     search_tracks: Vec<Track>,
+    search_cards: Vec<tide_provider::Card>,
+    search_query: String,
     account_error: bool,
     account_verified: bool,
     library_action: LibraryAction,
@@ -290,8 +298,12 @@ fn request_library(
         && !matches!(
             &request,
             tide_provider::Request::Library
+                | tide_provider::Request::LibraryAlbums
+                | tide_provider::Request::LibraryArtists
+                | tide_provider::Request::History
                 | tide_provider::Request::Home
                 | tide_provider::Request::Playlist { .. }
+                | tide_provider::Request::Album { .. }
                 | tide_provider::Request::Liked
                 | tide_provider::Request::Supermix
                 | tide_provider::Request::Artist { .. }
@@ -326,6 +338,7 @@ fn request_library(
                 .or_else(|| {
                     s.recommendations
                         .iter()
+                        .chain(s.search_cards.iter())
                         .find(|p| p.id == *id)
                         .map(|p| p.title.clone())
                 })
@@ -333,6 +346,16 @@ fn request_library(
         },
         tide_provider::Request::Liked => LibraryAction::Preview {
             title: "Liked Songs".into(),
+        },
+        tide_provider::Request::Album { id } => LibraryAction::Preview {
+            title: s
+                .recommendations
+                .iter()
+                .chain(s.library_browse.cards.iter())
+                .chain(s.search_cards.iter())
+                .find(|card| card.id == *id)
+                .map(|card| card.title.clone())
+                .unwrap_or_else(|| "Album".into()),
         },
         tide_provider::Request::Supermix => LibraryAction::Preview {
             title: "My Supermix".into(),
@@ -527,6 +550,15 @@ fn content_failure_message(request: Option<&tide_provider::Request>) -> &'static
         Some(tide_provider::Request::Library) => {
             "Couldn't refresh your Library. Retry to refresh it."
         }
+        Some(tide_provider::Request::LibraryAlbums) => {
+            "Couldn't load saved albums. Retry to refresh them."
+        }
+        Some(tide_provider::Request::LibraryArtists) => {
+            "Couldn't load your artists. Retry to refresh them."
+        }
+        Some(tide_provider::Request::History) => {
+            "Couldn't load listening history. Retry to refresh it."
+        }
         Some(
             tide_provider::Request::Playlist { .. }
             | tide_provider::Request::Liked
@@ -535,6 +567,9 @@ fn content_failure_message(request: Option<&tide_provider::Request>) -> &'static
         Some(tide_provider::Request::Artist { .. } | tide_provider::Request::Artists { .. }) => {
             "Couldn't load this artist page. Retry to load it."
         }
+        Some(tide_provider::Request::Album { .. }) => {
+            "Couldn't load this album. Retry to load its songs."
+        }
         _ => "Couldn't refresh this music view. Check your connection and retry.",
     }
 }
@@ -542,8 +577,12 @@ fn content_failure_message(request: Option<&tide_provider::Request>) -> &'static
 fn content_retry_request(request: &tide_provider::Request) -> Option<tide_provider::Request> {
     match request {
         tide_provider::Request::Library
+        | tide_provider::Request::LibraryAlbums
+        | tide_provider::Request::LibraryArtists
+        | tide_provider::Request::History
         | tide_provider::Request::Home
         | tide_provider::Request::Playlist { .. }
+        | tide_provider::Request::Album { .. }
         | tide_provider::Request::Supermix
         | tide_provider::Request::Liked
         | tide_provider::Request::Artist { .. }
@@ -629,6 +668,8 @@ fn stage_saved_connection(
     s.pending_cookie_updates.clear();
     s.radio_requests.reset();
     s.library_playlists.clear();
+    library_browse::reset(s, u);
+    search_results::invalidate(s, u);
     s.recommendations.clear();
     s.discovery.clear();
     s.detail_tracks.clear();
@@ -872,7 +913,7 @@ fn refresh_library_models(s: &State, u: &AppWindow) {
         u.get_library_artwork_height(),
         s.library_playlists.len(),
         columns,
-        if u.get_library_grid() {
+        if u.get_library_tiles() {
             u.global::<LayoutMetrics>().get_library_tile_height()
         } else {
             row_height
@@ -947,6 +988,7 @@ fn refresh_library_models(s: &State, u: &AppWindow) {
                 .filter(|_| {
                     playlist_images.contains(&index)
                         && u.get_library_open()
+                        && u.get_library_section() == 0
                         && !u.get_detail_open()
                         && !u.get_search_open()
                 })
@@ -980,6 +1022,45 @@ fn refresh_library_models(s: &State, u: &AppWindow) {
         })
         .collect();
     u.set_recommendations(update_model(u.get_recommendations(), cards));
+    let columns = u.get_library_browse_columns().max(1) as usize;
+    let images = artwork_view::grid_visible_range(
+        u.get_library_artwork_y(),
+        u.get_library_artwork_height(),
+        s.library_browse.cards.len(),
+        columns,
+        if u.get_library_tiles() && u.get_library_section() != 3 {
+            u.global::<LayoutMetrics>().get_library_tile_height()
+        } else {
+            row_height
+        },
+    );
+    let cards = s
+        .library_browse
+        .cards
+        .iter()
+        .enumerate()
+        .map(|(index, card)| RecommendationRow {
+            id: card.id.clone().into(),
+            title: card.title.clone().into(),
+            subtitle: card.subtitle.clone().into(),
+            shelf: card.shelf.clone().into(),
+            kind: card.kind.clone().into(),
+            cover_variant: artwork::fallback_variant(&card.id),
+            artwork: card
+                .artwork_url
+                .as_deref()
+                .filter(|_| {
+                    images.contains(&index)
+                        && u.get_library_open()
+                        && u.get_library_section() > 0
+                        && !u.get_detail_open()
+                        && !u.get_search_open()
+                })
+                .map(|url| artwork.get_or_request(url))
+                .unwrap_or_default(),
+        })
+        .collect();
+    u.set_library_cards(update_model(u.get_library_cards(), cards));
 }
 
 // Keep the model object stable while artwork arrives or its viewport moves.
@@ -1019,7 +1100,6 @@ fn restore_settings(value: serde_json::Value) -> Settings {
     restore!(
         queue,
         light_mode,
-        compact_mode,
         library_grid,
         autoplay,
         check_updates,
@@ -1035,6 +1115,8 @@ fn restore_settings(value: serde_json::Value) -> Settings {
         audio_device,
         repeat,
     );
+    // The size preset was retired. An old saved value must not lock out the
+    // responsive navigation now that users resize the window directly.
     settings
 }
 fn save(settings: &Settings) {
@@ -1130,6 +1212,7 @@ fn content_rows(
         .collect()
 }
 fn refresh_content_models(s: &State, u: &AppWindow) {
+    search_results::refresh(s, u);
     let selected = browse_filter::matching(&s.detail_tracks, 0, &u.get_detail_filter());
     u.set_detail_matches(update_model(
         u.get_detail_matches(),
@@ -1170,6 +1253,35 @@ fn recommendation_track(card: &tide_provider::Card) -> Track {
         duration_seconds: card.duration_seconds,
         artwork_url: card.artwork_url.clone(),
         recommended: false,
+    }
+}
+fn open_provider_card(
+    s: &mut State,
+    u: &AppWindow,
+    tx: &mpsc::SyncSender<LibraryResult>,
+    card: tide_provider::Card,
+) {
+    match card_navigation::action(&card) {
+        Some(card_navigation::Action::Song) => {
+            start_tracks(s, u, vec![recommendation_track(&card)], 0, false);
+        }
+        Some(card_navigation::Action::Playlist) => {
+            request_library(s, u, tx, tide_provider::Request::Playlist { id: card.id });
+        }
+        Some(card_navigation::Action::Album) => {
+            request_library(s, u, tx, tide_provider::Request::Album { id: card.id });
+        }
+        Some(card_navigation::Action::Artist) => {
+            let mut track = recommendation_track(&card);
+            track.source.clear();
+            track.artist = card.title.clone();
+            track.artists = vec![tide_core::Artist {
+                id: card.id,
+                name: card.title,
+            }];
+            artists::open(s, u, tx, track);
+        }
+        None => {}
     }
 }
 fn start_tracks(
@@ -1656,7 +1768,7 @@ fn search(query: String, cancel: Arc<AtomicBool>) -> Result<Vec<Track>, String> 
         "--skip-download",
         "--no-warnings",
     ])
-    .arg(format!("ytsearch8:{query}"))
+    .arg(format!("ytsearch20:{query}"))
     .stdout(Stdio::piped())
     .stderr(Stdio::piped());
     if let Some(dir) = exe.parent().filter(|p| !p.as_os_str().is_empty()) {
@@ -1721,7 +1833,7 @@ fn search(query: String, cancel: Arc<AtomicBool>) -> Result<Vec<Track>, String> 
     let entries = json["entries"].as_array().ok_or("No search results")?;
     Ok(entries
         .iter()
-        .take(8)
+        .take(20)
         .filter_map(|e| {
             let id = e["id"].as_str()?;
             if id.len() != 11
@@ -1953,11 +2065,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         library_worker: None,
         library_cancel: Arc::new(AtomicBool::new(false)),
         library_playlists: Vec::new(),
+        library_browse: library_browse::Browse::default(),
         recommendations: Vec::new(),
         discovery: discovery::Discovery::default(),
         detail_tracks: Vec::new(),
         artist_origin: None,
         search_tracks: Vec::new(),
+        search_cards: Vec::new(),
+        search_query: String::new(),
         account_error: false,
         account_verified: false,
         library_action: LibraryAction::default(),
@@ -2137,10 +2252,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         });
     }
-    if std::env::args().any(|a| a == "--connect-account") && !test_mode {
-        ui.set_account_open(true);
-        connect_picker(&picker_busy, state.clone(), &ui, library_tx.clone());
-    }
     {
         let state = state.clone();
         let weak = ui.as_weak();
@@ -2229,7 +2340,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         return;
                     }
                 }
-                request_library(&mut s, &u, &tx, tide_provider::Request::Library);
+                library_browse::refresh(&mut s, &u, &tx);
             }
         });
     }
@@ -2312,22 +2423,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .and_then(|i| s.recommendations.get(i))
                     .cloned()
                 {
-                    if card.kind == "song"
-                        && card.id.len() == 11
-                        && card
-                            .id
-                            .bytes()
-                            .all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
-                    {
-                        start_tracks(&mut s, &u, vec![recommendation_track(&card)], 0, false);
-                    } else if card.kind == "playlist" {
-                        request_library(
-                            &mut s,
-                            &u,
-                            &tx,
-                            tide_provider::Request::Playlist { id: card.id },
-                        );
-                    }
+                    open_provider_card(&mut s, &u, &tx, card);
                 }
             }
         });
@@ -2355,6 +2451,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Ok(()) => {
                         configure_account_playback(&mut s, &u);
                         s.library_playlists.clear();
+                        library_browse::reset(&mut s, &u);
                         s.recommendations.clear();
                         s.discovery.clear();
                         refresh_library_models(&s, &u);
@@ -2522,6 +2619,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .current
                     .and_then(|i| s.settings.queue.tracks.get(i))
                     .cloned(),
+                5 => i.and_then(|index| library_browse::song(&s, index)),
                 _ => None,
             };
             if let Some(track) = track {
@@ -2604,8 +2702,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     {
         let weak = ui.as_weak();
+        let state = state.clone();
         ui.on_close_search(move || {
             if let Some(u) = weak.upgrade() {
+                state.borrow().search_cancel.store(true, Ordering::Release);
                 u.set_search_open(false);
             }
         });
@@ -2677,6 +2777,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .get(i)
                         .filter(|c| c.kind == "song")
                         .map(recommendation_track),
+                    5 => library_browse::song(&s, i),
                     _ => None,
                 });
                 if let Some(track) = track {
@@ -2729,6 +2830,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let state = state.clone();
         let weak = ui.as_weak();
+        let tx = tx.clone();
         ui.on_add_source(move |input| {
             let Some(ui) = weak.upgrade() else {
                 return;
@@ -2757,27 +2859,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             } else if input.contains("://") {
                 ui.set_status_text("Only http/https links and local files are supported".into());
             } else {
-                if state.search_worker.is_some() {
-                    ui.set_status_text("A search is already running. Please wait.".into());
-                    return;
-                }
-                state.search_generation += 1;
-                let generation = state.search_generation;
-                let query = input.to_string();
-                let tx = tx.clone();
-                state.search_cancel.store(false, Ordering::Release);
-                let cancel = state.search_cancel.clone();
-                ui.set_search_artwork_y(0.0);
-                ui.set_search_open(true);
-                ui.set_detail_open(false);
-                ui.set_search_busy(true);
-                state.search_tracks.clear();
-                ui.set_search_rows(ModelRc::new(VecModel::default()));
-                ui.set_error_message("".into());
-                ui.set_status_text("Searching YouTube…".into());
-                state.search_worker = Some(std::thread::spawn(move || {
-                    let _ = tx.try_send((generation, search(query, cancel)));
-                }));
+                search_results::start(&mut state, &ui, &tx, input.to_owned(), ui.get_search_kind());
             }
         });
     }
@@ -3192,6 +3274,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Err(error) => ui.set_shortcut_status(error.into()),
         }
     }
+    library_browse::wire(&ui, state.clone(), library_tx.clone());
+    search_results::wire(&ui, state.clone(), tx.clone(), library_tx.clone());
+    let _native_login = native_login::wire(&ui, state.clone());
     #[cfg(windows)]
     shortcut_capture::wire(&ui, state.clone(), shortcuts.clone());
     let output_timer = slint::Timer::default();
@@ -3386,6 +3471,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let weak = ui.as_weak();
         let media = media.clone();
         let mut registration_attempts = 0;
+        let mut system_artwork = system_artwork::Publisher::default();
         media_timer.start(
             slint::TimerMode::Repeated,
             Duration::from_millis(100),
@@ -3395,6 +3481,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 };
                 if !u.get_media_controls_enabled() {
                     media.borrow_mut().take();
+                    system_artwork.reset();
                     registration_attempts = 0;
                     return;
                 }
@@ -3430,6 +3517,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         playing,
                         position,
                         duration,
+                    );
+                    let track = s
+                        .settings
+                        .queue
+                        .current
+                        .and_then(|i| s.settings.queue.tracks.get(i));
+                    system_artwork.update(
+                        session,
+                        track.map(|track| track.source.as_str()).unwrap_or(""),
+                        track
+                            .and_then(|track| track.artwork_url.as_deref())
+                            .unwrap_or(""),
+                        &u.get_track_artwork(),
                     );
                 }
             },
@@ -3574,6 +3674,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                             }
                             request_library(&mut s, &u, &library_tx, tide_provider::Request::Home);
+                        }
+                        Ok(tide_provider::Response::Browse { section, cards, truncated }) => {
+                            library_browse::receive(&mut s, &u, section, cards, truncated);
                         }
                         Ok(tide_provider::Response::Home { cards }) => {
                             let selected = s.discovery.select(cards);
@@ -3746,7 +3849,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             );
                             u.set_account_status(error.into());
                         }
-                        Ok(tide_provider::Response::Session { .. } | tide_provider::Response::Feedback { .. } | tide_provider::Response::Lyrics { .. }) | Err(_) => {
+                        Ok(tide_provider::Response::Session { .. } | tide_provider::Response::Feedback { .. } | tide_provider::Response::Lyrics { .. } | tide_provider::Response::Search { .. }) | Err(_) => {
                             library_failure(&mut s, &u, false);
                         }
                     }
@@ -3775,18 +3878,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         continue;
                     }
                     match result {
-                        Ok(tracks) => {
+                        Ok(search_results::Results::Songs(tracks)) => {
                             let count = tracks.len();
                             s.search_tracks = tracks;
                             u.set_search_busy(false);
                             refresh_content_models(&s, &u);
                             u.set_status_text(format!("{count} results").into());
                         }
+                        Ok(search_results::Results::Collections(cards)) => {
+                            s.search_cards = cards;
+                            u.set_search_busy(false);
+                            refresh_content_models(&s, &u);
+                        }
                         Err(e) => {
                             u.set_search_busy(false);
-                            s.account_error = false;
-                            u.set_error_is_account(false);
-                            report_error(&mut s, &u, e);
+                            u.set_search_note(e.into());
                         }
                     }
                 }
@@ -4746,6 +4852,16 @@ mod tests {
         assert!(!old.discord_presence);
         assert!(old.light_mode);
         assert!(old.library_grid);
+    }
+
+    #[test]
+    fn retired_compact_preset_does_not_hide_navigation_after_upgrade() {
+        let restored = restore_settings(
+            serde_json::json!({"compact_mode":true,"light_mode":true,"volume":53.0}),
+        );
+        assert!(!restored.compact_mode);
+        assert!(restored.light_mode);
+        assert_eq!(restored.volume, Some(53.0));
     }
 
     #[test]

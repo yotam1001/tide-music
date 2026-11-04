@@ -1,5 +1,5 @@
 # Build distributable executables without embedding private development paths.
-param([switch]$StaticMsvcRuntime, [switch]$IncludeBrowserHost)
+param([switch]$StaticMsvcRuntime, [switch]$IncludeBrowserHost, [switch]$IncludeNativeLogin)
 $ErrorActionPreference = 'Stop'
 $taskRoot = (Resolve-Path -LiteralPath (Split-Path -Parent $PSScriptRoot)).Path
 $taskPreviousFlags = $env:CARGO_ENCODED_RUSTFLAGS
@@ -15,7 +15,8 @@ if ($taskLocalCargo) {
     $taskFlags += '-Clink-self-contained=yes'
 }
 $taskBuildArgs = @('build', '--release', '-p', 'tide-music', '--locked')
-if ($IncludeBrowserHost) { $taskBuildArgs += @('-p', 'tide-provider', '--bins') }
+if ($IncludeBrowserHost -or $IncludeNativeLogin) { $taskBuildArgs += @('-p', 'tide-provider', '--bins') }
+if ($IncludeNativeLogin) { $taskBuildArgs += @('--features', 'tide-provider/native-login') }
 if ($StaticMsvcRuntime) {
     # Explicit target keeps CRT flags off host proc-macro/build-script binaries.
     # This output lives under target/<triple>/release; packaging must select it.

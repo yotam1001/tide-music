@@ -10,14 +10,13 @@ unattended installation, with the same payload validation as the graphical setup
 
 Download [TideSetup.exe](https://github.com/yotam1001/tide-music/releases/latest/download/TideSetup.exe)
 from the [Windows release](https://github.com/yotam1001/tide-music/releases/latest).
-For YouTube Music, get its matching **tide-browser-chromium.zip** too.
+The matching **tide-browser-chromium.zip** is an optional sign-in fallback.
 
 ## Install and open
 
-For YouTube Music, begin with the
-[Chrome connection guide](https://github.com/yotam1001/tide-music/blob/main/docs/BROWSER_COMPANION_BETA.md).
-Loading the companion before opening setup lets you enable its connection during
-the first installation. For local files only, follow the steps below directly.
+Install Tide first, then connect your Music profile from the app's profile icon.
+You do not need an extension for native sign-in. The
+[Chrome companion guide](BROWSER_COMPANION_BETA.md) covers the alternative route.
 
 1. Open the release and expand **Assets** if needed.
 2. Download **TideSetup.exe**, rather than **Source code (zip)**.
@@ -30,11 +29,13 @@ download warning. Verify that it came from this repository before deciding to
 continue. If a device policy blocks it, follow your administrator's rules and
 report the exact message rather than disabling protections.
 
-For YouTube Music, follow the
-[Chrome connection guide](https://github.com/yotam1001/tide-music/blob/main/docs/BROWSER_COMPANION_BETA.md).
-It explains **Enable Chrome companion connection** and the extension ID. For
-local audio only, leave that checkbox off and use **Settings → More options → Open audio file**.
-Rerun setup if you want to enable the companion later.
+After installation, open Tide's profile icon and choose **Sign in with Google**.
+Select your YouTube Music profile, open Library, and choose **Connect this profile**.
+The temporary browser closes after connection. See [account setup](ACCOUNT_SETUP.md).
+
+The Chrome companion checkbox is optional. Use the
+[companion guide](BROWSER_COMPANION_BETA.md) if native sign-in is unavailable, or
+leave it off for native sign-in and local audio. Rerun setup to enable it later.
 
 ## Update Tide
 

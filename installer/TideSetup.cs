@@ -41,6 +41,7 @@ namespace TideSetup {
             if (zip.GetEntry("tide-session-host.exe") != null) {
                 expected.Add("tide-session-host.exe"); expected.Add("scripts/setup-browser-companion.ps1"); expected.Add("docs/BROWSER_COMPANION.md");
             }
+            if (zip.GetEntry("tide-login.exe") != null) expected.Add("tide-login.exe");
             expected.Add("SHA256SUMS.txt");
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             long size = 0;

@@ -13,8 +13,10 @@ spec.loader.exec_module(preview)
 
 
 class PreviewPackageTests(unittest.TestCase):
-    def archive(self, directory, overrides=None, extra=None, wrong_hash=False, with_browser_host=False):
+    def archive(self, directory, overrides=None, extra=None, wrong_hash=False, with_browser_host=False, with_native_login=False):
         names = preview.PAYLOAD | (preview.BROWSER_HOST_PAYLOAD if with_browser_host else set())
+        if with_native_login:
+            names |= {"tide-login.exe"}
         payload = {name: b"public preview content\n" for name in names}
         payload.update(overrides or {})
         manifest = "\n".join(
@@ -27,6 +29,19 @@ class PreviewPackageTests(unittest.TestCase):
             for name, data in payload.items():
                 archive.writestr(name, data)
         return path
+
+    def test_native_login_requires_explicit_exact_payload_and_is_privacy_scanned(self):
+        for browser in (False, True):
+            with tempfile.TemporaryDirectory() as directory:
+                path = self.archive(directory, with_browser_host=browser, with_native_login=True)
+                preview.check(path, with_browser_host=browser, with_native_login=True)
+                with self.assertRaisesRegex(ValueError, "unexpected"):
+                    preview.check(path, with_browser_host=browser)
+            with tempfile.TemporaryDirectory() as directory:
+                path = self.archive(directory, overrides={"tide-login.exe": b"sk-" + b"fixture" * 8},
+                                    with_browser_host=browser, with_native_login=True)
+                with self.assertRaisesRegex(ValueError, "privacy check failed"):
+                    preview.check(path, with_browser_host=browser, with_native_login=True)
 
     def test_static_binary_literals_are_accepted(self):
         with tempfile.TemporaryDirectory() as directory:

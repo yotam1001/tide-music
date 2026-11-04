@@ -8,7 +8,7 @@ Large or third-party media is not committed. Put these files in place before you
 
 | Path | What it is |
 |---|---|
-| `assets/fonts/segoeui.ttf`, `seguisb.ttf`, `segoeuib.ttf`, `seguibl.ttf` | Segoe UI, copied from `C:\Windows\Fonts` (Microsoft-licensed, not redistributable) |
+| `assets/fonts/segoeui.ttf`, `seguisb.ttf`, `segoeuib.ttf`, `seguibl.ttf` | Segoe UI, copied from `%WINDIR%\Fonts` (Microsoft-licensed, not redistributable) |
 | `assets/ui/{playlist,transport,radio,queue,mini}.mp4` | Screen recordings of Tide (dark theme, 1140×800 window, 60 fps) |
 | `assets/game/s1-night.mp4`, `s6-day.mp4` | Gameplay footage, 1920×1080 at 60 fps |
 | `assets/audio/bed.wav` | Edit of Lensko – "Let's Go!" [NCS Release]. The cut points are in `assets/audio/bed.json`; see below |

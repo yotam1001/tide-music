@@ -238,18 +238,19 @@ function Read-TideJson([string]$Path) {
     if ((Get-Item -LiteralPath $Path).Length -gt 4194304) { throw 'Installation record is too large.' }
     return Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
 }
-function Get-TidePayloadNames([switch]$BrowserHost) {
+function Get-TidePayloadNames([switch]$BrowserHost, [switch]$NativeLogin) {
     $names = @('tide-music.exe','LICENSE','THIRD_PARTY_NOTICES.md','DEPENDENCIES.md','START_HERE.md',
         'Install Tide.cmd','Uninstall Tide.cmd','docs/ACCOUNT_SETUP.md','docs/INSTALLATION.md',
         'scripts/install-windows.ps1','scripts/install-common.ps1','scripts/setup-runtime.ps1',
         'scripts/setup-provider.ps1','helpers/youtube_music.py','helpers/requirements.txt')
     if ($BrowserHost) { $names += @('tide-session-host.exe','scripts/setup-browser-companion.ps1','docs/BROWSER_COMPANION.md') }
+    if ($NativeLogin) { $names += 'tide-login.exe' }
     return $names
 }
 function Get-TideVerifiedPayload([string]$PackageRoot) {
     Assert-TidePlainPath $PackageRoot
     $manifest = Get-TideChild $PackageRoot 'SHA256SUMS.txt'
-    $expected = @(Get-TidePayloadNames -BrowserHost:(Test-Path -LiteralPath (Join-Path $PackageRoot 'tide-session-host.exe')))
+    $expected = @(Get-TidePayloadNames -BrowserHost:(Test-Path -LiteralPath (Join-Path $PackageRoot 'tide-session-host.exe')) -NativeLogin:(Test-Path -LiteralPath (Join-Path $PackageRoot 'tide-login.exe')))
     $seen = @{}
     foreach ($line in Get-Content -LiteralPath $manifest) {
         if ($line -notmatch '^([a-f0-9]{64})  (.+)$') { throw 'Invalid package checksum manifest.' }

@@ -288,12 +288,12 @@ fn settings_theme_account_and_song_menu_remain_independent() {
     ui.set_light_mode(false);
     ui.set_search_open(true);
     let before = draw(&window, 1140, 800);
-    click(&ui, 1087.0, 185.0);
+    click(&ui, 1087.0, 229.0);
     let menu = draw(&window, 1140, 800);
     export("song-menu-dark", 1140, 800, &menu);
     assert_ne!(menu, before, "song action did not display a menu");
     assert_eq!(
-        menu[220 * 1140 + 900],
+        menu[264 * 1140 + 900],
         Rgb8Pixel {
             r: 25,
             g: 28,
@@ -305,7 +305,7 @@ fn settings_theme_account_and_song_menu_remain_independent() {
     let light_menu = draw(&window, 1140, 800);
     export("song-menu-light", 1140, 800, &light_menu);
     assert_eq!(
-        light_menu[220 * 1140 + 900],
+        light_menu[264 * 1140 + 900],
         Rgb8Pixel {
             r: 249,
             g: 244,
@@ -317,7 +317,7 @@ fn settings_theme_account_and_song_menu_remain_independent() {
     draw(&window, 1140, 800);
 
     // Opening actions must not move the next song or grow the original row.
-    for y in 225..280 {
+    for y in 269..324 {
         let range = y * 1140 + 190..y * 1140 + 600;
         assert_eq!(
             &menu[range.clone()],
@@ -331,11 +331,11 @@ fn settings_theme_account_and_song_menu_remain_independent() {
         queue_action.get().is_none(),
         "dismissal must not queue a track"
     );
-    click(&ui, 1087.0, 185.0);
+    click(&ui, 1087.0, 229.0);
     draw(&window, 1140, 800);
     click(&ui, 400.0, 420.0);
     let dismissed = draw(&window, 1140, 800);
-    for y in 225..280 {
+    for y in 269..324 {
         let range = y * 1140 + 850..y * 1140 + 1020;
         assert_eq!(
             &dismissed[range.clone()],
@@ -344,7 +344,7 @@ fn settings_theme_account_and_song_menu_remain_independent() {
         );
     }
     assert!(queue_action.get().is_none());
-    click(&ui, 1087.0, 185.0);
+    click(&ui, 1087.0, 229.0);
     draw(&window, 1140, 800);
     key(&ui, Key::DownArrow);
     key(&ui, Key::Return);
@@ -357,7 +357,7 @@ fn settings_theme_account_and_song_menu_remain_independent() {
     for light in [false, true] {
         ui.set_light_mode(light);
         draw(&window, 1140, 800);
-        click(&ui, 1087.0, 185.0);
+        click(&ui, 1087.0, 229.0);
         draw(&window, 1140, 800);
         key(&ui, Key::DownArrow);
         key(&ui, Key::DownArrow);
@@ -368,7 +368,7 @@ fn settings_theme_account_and_song_menu_remain_independent() {
             Some((0, false)),
             "Add to queue must target this search row"
         );
-        click(&ui, 1087.0, 185.0);
+        click(&ui, 1087.0, 229.0);
         draw(&window, 1140, 800);
         // Radio is the third item; playlist saving now follows it.
         key(&ui, Key::DownArrow);
@@ -468,8 +468,12 @@ fn settings_theme_account_and_song_menu_remain_independent() {
     let capture = playlist_action.clone();
     ui.on_refresh_detail_playlist(move || capture.set(Some("refresh")));
     export("playlist-detail", 1140, 800, &draw(&window, 1140, 800));
-    for (x, action) in [(198.0, "play"), (242.0, "shuffle"), (286.0, "refresh")] {
-        click(&ui, x, 170.0);
+    for (offset, action) in [(46.0, "play"), (90.0, "shuffle"), (134.0, "refresh")] {
+        click(
+            &ui,
+            ui.global::<LayoutMetrics>().get_navigation_wide() + offset,
+            170.0,
+        );
         assert_eq!(
             playlist_action.get(),
             Some(action),
@@ -498,7 +502,11 @@ fn settings_theme_account_and_song_menu_remain_independent() {
     ui.on_select_detail_track(move |index| capture.set(Some(index)));
     export("artist-before-click", 1140, 800, &draw(&window, 1140, 800));
     // The artist page's source note adds a line above the list.
-    click(&ui, 300.0, 277.0);
+    click(
+        &ui,
+        ui.global::<LayoutMetrics>().get_navigation_wide() + 130.0,
+        277.0,
+    );
     assert_eq!(
         artist_action.get(),
         Some((1, 0)),
@@ -584,4 +592,30 @@ fn settings_theme_account_and_song_menu_remain_independent() {
     export("collapsed", 700, 132, &draw(&window, 700, 132));
     ui.set_collapsed(false);
     export("restored", 1140, 800, &draw(&window, 1140, 800));
+    ui.set_native_login_available(true);
+    ui.set_account_verified(true);
+    ui.set_account_status("".into());
+    ui.set_account_open(true);
+    let login_calls = Rc::new(Cell::new(0));
+    let n = login_calls.clone();
+    ui.on_native_sign_in(move || n.set(n.get() + 1));
+    let cancelled = Rc::new(Cell::new(false));
+    let n = cancelled.clone();
+    ui.on_cancel_native_sign_in(move || n.set(true));
+    export("account-native-login", 1140, 800, &draw(&window, 1140, 800));
+    click(&ui, 920.0, 247.0);
+    assert_eq!(
+        login_calls.get(),
+        1,
+        "Native sign-in must use its own callback"
+    );
+    ui.set_native_login_busy(true);
+    draw(&window, 1140, 800);
+    click(&ui, 920.0, 247.0);
+    assert_eq!(login_calls.get(), 1, "Do not launch a second login helper");
+    click(&ui, 920.0, 352.0);
+    assert!(
+        cancelled.get(),
+        "Temporary native sign-in must have a cancel action"
+    );
 }

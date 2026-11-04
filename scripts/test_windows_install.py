@@ -542,7 +542,7 @@ class WindowsInstallTests(unittest.TestCase):
     def test_actual_package_integrates_installer_allowlist(self):
         with tempfile.TemporaryDirectory(prefix="tide-package-test-") as temporary:
             source = Path(temporary).resolve()
-            for name in PAYLOAD:
+            for name in [*PAYLOAD, "tide-login.exe"]:
                 path = source / name
                 path.parent.mkdir(parents=True, exist_ok=True)
                 original = ROOT / name
@@ -557,12 +557,21 @@ class WindowsInstallTests(unittest.TestCase):
                 ["pwsh", "-NoProfile", "-File", str(source / "scripts/package-preview.ps1"),
                  "-DependenciesNotice", "DEPENDENCIES.md", "-StartHere", "START_HERE.md",
                  "-Executable", "tide-music.exe", "-BrowserHostExecutable", "tide-session-host.exe",
+                 "-NativeLoginExecutable", "tide-login.exe",
                  "-Destination", "dist/fixture-package"], capture_output=True, timeout=30, check=False)
             self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
             spec = importlib.util.spec_from_file_location("package_gate", ROOT / "scripts/check-preview-package.py")
             gate = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(gate)
-            gate.check(source / "dist/fixture-package.zip", with_browser_host=True)
+            gate.check(source / "dist/fixture-package.zip", with_browser_host=True, with_native_login=True)
+            environment = dict(os.environ, TIDE_TEST_COMMON=str(COMMON),
+                               TIDE_TEST_PACKAGE=str(source / "dist/fixture-package"))
+            result = subprocess.run(["pwsh", "-NoProfile", "-NonInteractive", "-Command",
+                                     "$ErrorActionPreference='Stop'; . $env:TIDE_TEST_COMMON; "
+                                     "$files=@(Get-TideVerifiedPayload $env:TIDE_TEST_PACKAGE); "
+                                     "if ('tide-login.exe' -notin $files) { throw 'Native helper not verified' }"],
+                                    env=environment, capture_output=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
             self.assertEqual(set(PAYLOAD), gate.PAYLOAD | gate.BROWSER_HOST_PAYLOAD)
 
     @unittest.skipUnless(shutil.which("powershell.exe"), "requires built-in Windows PowerShell 5.1")

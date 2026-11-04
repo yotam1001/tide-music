@@ -25,18 +25,17 @@ pub fn home_groups(labels: &[String], collections: &[bool], columns: usize) -> V
         }
         let mut start = section;
         if section == 0 {
-            let count = (end - start).min(if columns >= 5 {
-                5
-            } else if columns >= 3 {
-                3
-            } else {
-                1
-            });
+            // Artwork-led shelves on desktop; one compact spotlight on narrow windows.
+            let count = (end - start).min(if columns >= 3 { columns } else { 1 });
             groups.push(Group {
                 start,
                 count,
                 title: labels[section].clone(),
-                layout: Layout::Spotlight,
+                layout: if columns >= 3 {
+                    Layout::Tiles
+                } else {
+                    Layout::Spotlight
+                },
             });
             start += count;
         }
@@ -103,7 +102,14 @@ mod tests {
             assert!(groups
                 .iter()
                 .all(|g| g.count <= columns || g.layout == Layout::Spotlight));
-            assert_eq!(groups[0].layout, Layout::Spotlight);
+            assert_eq!(
+                groups[0].layout,
+                if columns >= 3 {
+                    Layout::Tiles
+                } else {
+                    Layout::Spotlight
+                }
+            );
         }
         assert!(home_groups(&[], &[], 0).is_empty());
     }

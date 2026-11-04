@@ -14,6 +14,8 @@ use std::{
 use tide_core::Track;
 use zeroize::Zeroize;
 mod feedback;
+#[cfg(feature = "native-login")]
+pub mod native_login;
 pub use feedback::{FeedbackOperation, FeedbackRequest, FeedbackResult, PlaylistDetails, Rating};
 
 const MAX_SESSION: usize = 65536;
@@ -149,6 +151,16 @@ pub enum Request {
         index: u32,
     },
     Library,
+    LibraryAlbums,
+    LibraryArtists,
+    History,
+    Search {
+        query: String,
+        kind: SearchKind,
+    },
+    Album {
+        id: String,
+    },
     Playlist {
         id: String,
     },
@@ -180,6 +192,23 @@ pub struct LyricLine {
     pub start_ms: Option<u64>,
     #[serde(default)]
     pub end_ms: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum BrowseSection {
+    Albums,
+    Artists,
+    History,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum SearchKind {
+    Songs,
+    Albums,
+    Artists,
+    Playlists,
 }
 
 #[derive(Deserialize)]
@@ -219,6 +248,15 @@ pub enum Response {
         result: FeedbackResult,
     },
     Home {
+        cards: Vec<Card>,
+    },
+    Browse {
+        section: BrowseSection,
+        cards: Vec<Card>,
+        truncated: bool,
+    },
+    Search {
+        kind: SearchKind,
         cards: Vec<Card>,
     },
     Error {
@@ -270,6 +308,8 @@ fn decode_helper_reply(bytes: &[u8]) -> Result<HelperReply, &'static str> {
         Response::Library { .. }
             | Response::Tracks { .. }
             | Response::Home { .. }
+            | Response::Browse { .. }
+            | Response::Search { .. }
             | Response::Artist { .. }
             | Response::Artists { .. }
             | Response::Lyrics { .. }
@@ -317,24 +357,35 @@ impl Drop for CookieLease {
     }
 }
 
-#[cfg(test)]
-struct LoginDirectory {
+/// An isolated private login profile. Drop only after its owned browser process
+/// tree has exited; a failed cleanup is retried by the normal stale-lease sweep.
+pub struct LoginDirectory {
     path: PathBuf,
     parent: PathBuf,
 }
-#[cfg(test)]
+impl LoginDirectory {
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
 impl Drop for LoginDirectory {
     fn drop(&mut self) {
         remove_private_login_directory(&self.path, &self.parent);
     }
 }
 fn remove_private_login_directory(path: &Path, parent: &Path) {
+    if directory_is_linked(path) || directory_is_linked(parent) {
+        return;
+    }
     // Resolve both before any recursive deletion. Reject links outside the
     // designated account directory and remove only Tide's own login root.
     let (Ok(target), Ok(root)) = (path.canonicalize(), parent.canonicalize()) else {
         return;
     };
-    if target.parent() != Some(root.as_path())
+    if !target
+        .parent()
+        .is_some_and(|parent| same_directory(parent, &root))
         || !target
             .file_name()
             .is_some_and(|n| n.to_string_lossy().starts_with("login-"))
@@ -346,6 +397,54 @@ fn remove_private_login_directory(path: &Path, parent: &Path) {
             break;
         }
         std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+// Windows canonical strings can retain different casing/aliases. Compare actual
+// directory identities instead of weakening containment to a string prefix.
+#[cfg(windows)]
+fn same_directory(left: &Path, right: &Path) -> bool {
+    use std::os::windows::{fs::OpenOptionsExt, io::AsRawHandle};
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS,
+    };
+    let identity = |path: &Path| {
+        let file = fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+            .open(path)
+            .ok()?;
+        let mut info = BY_HANDLE_FILE_INFORMATION::default();
+        if unsafe { GetFileInformationByHandle(file.as_raw_handle().cast(), &mut info) } == 0 {
+            return None;
+        }
+        Some((
+            info.dwVolumeSerialNumber,
+            info.nFileIndexHigh,
+            info.nFileIndexLow,
+        ))
+    };
+    identity(left)
+        .zip(identity(right))
+        .is_some_and(|(left, right)| left == right)
+}
+#[cfg(not(windows))]
+fn same_directory(left: &Path, right: &Path) -> bool {
+    left == right
+}
+
+fn directory_is_linked(path: &Path) -> bool {
+    let Ok(metadata) = fs::symlink_metadata(path) else {
+        return true;
+    };
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        !metadata.is_dir() || metadata.file_attributes() & 0x400 != 0
+    }
+    #[cfg(not(windows))]
+    {
+        !metadata.is_dir() || metadata.file_type().is_symlink()
     }
 }
 
@@ -361,6 +460,54 @@ impl Provider {
     }
     pub fn is_connected(&self) -> bool {
         self.directory.join("session.dpapi").is_file()
+    }
+    #[cfg(windows)]
+    pub fn owns_login_directory(&self, path: &Path) -> bool {
+        if directory_is_linked(path) || directory_is_linked(&self.directory) {
+            return false;
+        }
+        let Ok(target) = path.canonicalize() else {
+            return false;
+        };
+        target
+            .parent()
+            .is_some_and(|parent| same_directory(parent, &self.directory))
+            && target
+                .file_name()
+                .and_then(|name| name.to_str())
+                .and_then(|name| name.strip_prefix("login-"))
+                .and_then(|name| name.split_once('-'))
+                .is_some_and(|(pid, counter)| {
+                    pid.parse::<u32>().is_ok_and(|pid| pid != 0) && counter.parse::<u64>().is_ok()
+                })
+    }
+    /// Allocate a fresh profile underneath the existing private account store.
+    /// The caller owns its lifetime, never a user-selected browser directory.
+    #[cfg(windows)]
+    pub fn new_login_directory(&self) -> Result<LoginDirectory, String> {
+        if directory_is_linked(&self.directory) {
+            return Err("Login profile storage must be an ordinary private directory".into());
+        }
+        for _ in 0..16 {
+            let path = self.directory.join(format!(
+                "login-{}-{}",
+                std::process::id(),
+                LEASE_COUNTER.fetch_add(1, Ordering::Relaxed)
+            ));
+            match fs::create_dir(&path) {
+                Ok(()) => {
+                    let directory = LoginDirectory {
+                        path,
+                        parent: self.directory.clone(),
+                    };
+                    private_directory(directory.path())?;
+                    return Ok(directory);
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(_) => break,
+            }
+        }
+        Err("Could not create an isolated login profile".into())
     }
     pub fn account_index(&self) -> u32 {
         let Ok(mut headers) = self.headers() else {
@@ -1400,7 +1547,7 @@ fn execute_helper(
             Err("Sign-in was found in a Zen container. Tide currently needs YouTube Music signed in on a tab outside that container.".into())
         }
         Response::Error { code }
-            if code == "session" || code == "request" || code == "supermix_unavailable" || code == "artist_unavailable" =>
+            if code == "session" || code == "request" || code == "supermix_unavailable" || code == "artist_unavailable" || code == "album_unavailable" =>
         {
             Ok(Response::Error { code })
         }
@@ -1564,11 +1711,119 @@ fn unprotect(_: &[u8]) -> Result<Vec<u8>, &'static str> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn read_only_browse_contract_has_distinct_sections_and_retains_cookie_refresh() {
+        for (request, action, section) in [
+            (
+                Request::LibraryAlbums,
+                "libraryalbums",
+                BrowseSection::Albums,
+            ),
+            (
+                Request::LibraryArtists,
+                "libraryartists",
+                BrowseSection::Artists,
+            ),
+            (Request::History, "history", BrowseSection::History),
+        ] {
+            assert_eq!(
+                serde_json::to_value(request).unwrap(),
+                serde_json::json!({"action":action})
+            );
+            let payload = serde_json::json!({
+                "type":"browse", "section": section_name(section), "cards":[], "truncated":false,
+                "refreshed_headers":{"cookie":"__Secure-3PAPISID=fresh", "x-goog-authuser":"1"},
+            });
+            let reply = decode_helper_reply(&serde_json::to_vec(&payload).unwrap()).unwrap();
+            assert!(
+                matches!(reply.response, Response::Browse { section: actual, cards, truncated: false } if actual == section && cards.is_empty())
+            );
+            assert!(reply.refreshed.0.is_some());
+        }
+        assert!(decode_helper_reply(
+            br#"{"type":"browse","section":"unknown","cards":[],"truncated":false}"#
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn typed_search_contract_retains_cookie_refresh_and_rejects_unknown_kind() {
+        let request = Request::Search {
+            query: "Band".into(),
+            kind: SearchKind::Albums,
+        };
+        assert_eq!(
+            serde_json::to_value(request).unwrap(),
+            serde_json::json!({"action":"search","query":"Band","kind":"albums"})
+        );
+        let reply = decode_helper_reply(
+            br#"{
+            "type": "search", "kind": "albums", "cards": [],
+            "refreshed_headers": {"cookie": "__Secure-3PAPISID=fresh", "x-goog-authuser": "1"}
+        }"#,
+        )
+        .unwrap();
+        assert!(
+            matches!(reply.response, Response::Search {kind: SearchKind::Albums, cards} if cards.is_empty())
+        );
+        assert!(reply.refreshed.0.is_some());
+        assert!(decode_helper_reply(br#"{"type":"search","kind":"unknown","cards":[]}"#).is_err());
+    }
+
+    fn section_name(section: BrowseSection) -> &'static str {
+        match section {
+            BrowseSection::Albums => "albums",
+            BrowseSection::Artists => "artists",
+            BrowseSection::History => "history",
+        }
+    }
     // These fixtures intentionally use the production machine-wide Windows mutex.
     // Serialize fixture owners while keeping each test's real cross-thread locking.
     #[cfg(windows)]
     static SESSION_FIXTURES: std::sync::Mutex<()> = std::sync::Mutex::new(());
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn native_login_profiles_are_unique_and_drop_only_the_owned_profile() {
+        let _fixture = SESSION_FIXTURES.lock().unwrap_or_else(|e| e.into_inner());
+        let directory = std::env::temp_dir().join(format!(
+            "tide-login-profile-{}-{}",
+            std::process::id(),
+            LEASE_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        private_directory(&directory).unwrap();
+        let provider = Provider {
+            directory: directory.clone(),
+        };
+        let first = provider.new_login_directory().unwrap();
+        let second = provider.new_login_directory().unwrap();
+        assert_ne!(first.path(), second.path());
+        assert_eq!(first.path().parent(), Some(directory.as_path()));
+        let first_path = first.path().to_owned();
+        let second_path = second.path().to_owned();
+        fs::write(first_path.join("fixture"), b"nonsecret fixture").unwrap();
+        fs::write(second_path.join("fixture"), b"another fixture").unwrap();
+        drop(first);
+        assert!(!first_path.exists());
+        assert!(second_path.join("fixture").is_file());
+        drop(second);
+        assert!(!second_path.exists());
+        assert!(directory.is_dir());
+        let alias = Provider {
+            directory: PathBuf::from(directory.to_string_lossy().to_ascii_uppercase()),
+        };
+        let profile = alias.new_login_directory().unwrap();
+        let profile_path = profile.path().to_owned();
+        assert!(
+            provider.owns_login_directory(&profile_path),
+            "physical parent must match across Windows path casing"
+        );
+        assert!(!provider.owns_login_directory(&directory));
+        drop(profile);
+        assert!(!profile_path.exists());
+        fs::remove_dir(directory).unwrap();
+    }
 
     #[cfg(windows)]
     #[test]

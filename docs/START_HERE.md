@@ -5,10 +5,8 @@ is unsigned. You need Windows x64 and internet access. No Rust, Python installat
 
 ## 1. Install and open
 
-Want YouTube Music? Begin with the
-[Chrome connection guide](https://github.com/yotam1001/tide-music/blob/main/docs/BROWSER_COMPANION_BETA.md)
-before opening setup. Load its companion first so you can enable its connection
-during the first installation. For local files only, go straight to the installer.
+Download the installer from the latest release. You can connect YouTube Music
+after installation; the browser companion is an optional fallback.
 
 Open **TideSetup.exe**, choose **Install Tide**, and wait for setup to finish.
 Choose **Open Tide**, or find **Tide** in the Windows Start menu.
@@ -19,14 +17,15 @@ Advanced users can instead run the ZIP's **Install Tide.cmd**.
 
 ## 2. Connect YouTube Music
 
-Follow the [Chrome connection guide](https://github.com/yotam1001/tide-music/blob/main/docs/BROWSER_COMPANION_BETA.md).
-It shows how to load the companion, enable its connection in setup, and import
-your selected YouTube Music tab. Sign in to Google in Chrome, not in Tide.
-No request-header copying is needed for that path.
+Open the profile icon at the top right and choose **Sign in with Google**.
+Complete sign-in in the temporary window, select your YouTube Music profile,
+open **Library**, then choose **Connect this profile**. The window closes after
+verification. No browser needs to remain open while music plays.
 
-The extension is currently loaded manually, not from the Chrome Web Store.
-Other browser connection paths are not ready for recommendation. Keep the
-companion files in a stable folder.
+If native sign-in cannot open, choose **Use browser companion instead** and follow
+the [Chrome connection guide](https://github.com/yotam1001/tide-music/blob/main/docs/BROWSER_COMPANION_BETA.md).
+The companion is loaded manually rather than from the Chrome Web Store.
+See [account setup](https://github.com/yotam1001/tide-music/blob/main/docs/ACCOUNT_SETUP.md).
 
 To try Tide without an account, skip this step and play a local audio file.
 
@@ -36,7 +35,7 @@ To try Tide without an account, skip this step and play a local audio file.
   pick a **Home** recommendation.
 - Open **Queue** to see upcoming tracks. Drag an upcoming song's handle to reorder.
 - Use **Settings → Advanced → Open audio file** for music on your PC.
-- The sun/moon button changes theme. **Mini** makes the player smaller.
+- The sun/moon button changes theme. **More (…) → Open mini player** makes the player smaller.
 
 ## Updates and help
 

@@ -1,14 +1,26 @@
-param([Parameter(ValueFromRemainingArguments = $true)][string[]]$CargoArgs)
+param(
+    [Parameter(ValueFromRemainingArguments = $true)][string[]]$CargoArgs,
+    [string]$ToolchainRoot,
+    # Explicit per-invocation choice for a reviewed existing cache; default stays lean.
+    [ValidateRange(1, 64)][int]$BuildBudgetGiB = 8
+)
 $ErrorActionPreference = 'Stop'
 $taskRoot = Split-Path -Parent $PSScriptRoot
-$taskCargo = Join-Path $taskRoot '.tools\cargo\bin\cargo.exe'
 . (Join-Path $PSScriptRoot 'build-budget.ps1')
+if ([string]::IsNullOrWhiteSpace($ToolchainRoot)) {
+    $ToolchainRoot = Join-Path $taskRoot '.tools'
+} elseif (!(Test-Path -LiteralPath (Join-Path $ToolchainRoot 'cargo\bin\cargo.exe') -PathType Leaf)) {
+    throw 'The selected toolchain root does not contain cargo/bin/cargo.exe.'
+}
+# Worktrees may reuse a toolchain, but always run THIS checkout's disk guard.
+# Do not invoke an older checkout's wrapper just to find its .tools directory.
+$taskCargo = Join-Path $ToolchainRoot 'cargo\bin\cargo.exe'
 if (Test-Path -LiteralPath $taskCargo) {
-    $env:CARGO_HOME = Join-Path $taskRoot '.tools\cargo'
-    $env:RUSTUP_HOME = Join-Path $taskRoot '.tools\rustup'
-    $taskCompiler = Get-ChildItem (Join-Path $taskRoot '.tools\compiler') -Directory | Select-Object -First 1
+    $env:CARGO_HOME = Join-Path $ToolchainRoot 'cargo'
+    $env:RUSTUP_HOME = Join-Path $ToolchainRoot 'rustup'
+    $taskCompiler = Get-ChildItem (Join-Path $ToolchainRoot 'compiler') -Directory | Select-Object -First 1
     $taskCompilerBin = Join-Path $taskCompiler.FullName 'bin'
-    $env:PATH = "$taskCompilerBin;$(Join-Path $taskRoot '.tools\cargo\bin');$env:PATH"
+    $env:PATH = "$taskCompilerBin;$(Join-Path $ToolchainRoot 'cargo\bin');$env:PATH"
     $env:CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER = Join-Path $taskCompilerBin 'x86_64-w64-mingw32-gcc.exe'
     $env:CC_x86_64_pc_windows_gnu = Join-Path $taskCompilerBin 'x86_64-w64-mingw32-clang.exe'
     $env:AR_x86_64_pc_windows_gnu = Join-Path $taskCompilerBin 'llvm-ar.exe'
@@ -44,7 +56,7 @@ if ($taskBuild) {
         if ([string]::IsNullOrWhiteSpace($taskExplicitTarget)) { throw 'Empty --target-dir' }
         $taskTarget = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($taskExplicitTarget)
     }
-    Assert-TideBuildBudget -TargetDirectory $taskTarget
+    Assert-TideBuildBudget -TargetDirectory $taskTarget -MaximumBytes ([long]$BuildBudgetGiB * 1GB)
     $env:CARGO_INCREMENTAL = '0'
 }
 & $taskCargo @CargoArgs
@@ -52,6 +64,6 @@ $taskResult = $LASTEXITCODE
 if ($taskBuild -and $taskResult -eq 0) {
     # Also catch a successful build that grew past the budget; the next build is
     # blocked until the developer reviews its generated files.
-    Assert-TideBuildBudget -TargetDirectory $taskTarget
+    Assert-TideBuildBudget -TargetDirectory $taskTarget -MaximumBytes ([long]$BuildBudgetGiB * 1GB)
 }
 exit $taskResult

@@ -304,6 +304,11 @@ try {
     }
     Assert-CleanSentinel
     Write-Host 'PASS actual graphical setup waited, installed, retained Chrome and restarted Tide'
+    $taskLoginHelper = Join-Path $taskUpdatedRelease 'tide-login.exe'
+    if (!(Test-Path -LiteralPath $taskLoginHelper -PathType Leaf)) { throw 'Updated package is missing its native sign-in helper.' }
+    $taskLoginOutput = Invoke-CleanChild $taskLoginHelper @('--probe') 'installed-native-login' 90
+    if ($taskLoginOutput -notmatch 'Native login offline probe completed;') { throw 'Installed sign-in helper failed its isolated lifecycle probe.' }
+    Assert-CleanSentinel
     # Exercise the exact installed production binary, not a separate feature
     # build, before claiming that the stable installer actually includes Jams.
     Invoke-CleanChild (Join-Path $taskUpdatedRelease 'tide-music.exe') @('--verify-installed-updater') 'installed-update-eligibility' 60 | Out-Null

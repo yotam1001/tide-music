@@ -1,6 +1,7 @@
 # Build one self-contained Windows setup EXE from a validated public preview ZIP.
 [CmdletBinding()]
 param([Parameter(Mandatory)][string]$Package, [string]$Destination = 'dist/TideSetup.exe',
+    [switch]$IncludeNativeLogin,
     [ValidatePattern('^[0-9][A-Za-z0-9.+-]{0,63}$')][string]$AppVersion)
 $ErrorActionPreference = 'Stop'
 $taskRoot = [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
@@ -11,7 +12,9 @@ if (!$taskOutput.StartsWith((Join-Path $taskRoot 'dist') + '\', [StringCompariso
 Assert-TidePlainPath $taskPackage
 Assert-TidePlainPath $taskOutput
 if (Test-Path -LiteralPath $taskOutput) { throw 'Refusing to overwrite an installer output.' }
-& python (Join-Path $PSScriptRoot 'check-preview-package.py') $taskPackage --with-browser-host
+$taskPackageArgs = @((Join-Path $PSScriptRoot 'check-preview-package.py'), $taskPackage, '--with-browser-host')
+if ($IncludeNativeLogin) { $taskPackageArgs += '--with-native-login' }
+& python @taskPackageArgs
 if ($LASTEXITCODE -ne 0) { throw 'Package validation failed.' }
 $taskCompiler = Join-Path $env:SystemRoot 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
 if (!(Test-Path -LiteralPath $taskCompiler)) { throw 'The Windows .NET Framework compiler is required to build setup.' }

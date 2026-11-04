@@ -15,36 +15,29 @@ than keeping an embedded browser running.
 
 **Windows release:** [Download TideSetup.exe](https://github.com/yotam1001/tide-music/releases/latest/download/TideSetup.exe)
 from [the latest stable release](https://github.com/yotam1001/tide-music/releases/latest).
-For YouTube Music, also download the matching
+Sign in from Tide's top-right profile icon after installation. The
 [Chrome companion](https://github.com/yotam1001/tide-music/releases/latest/download/tide-browser-chromium.zip)
-and follow the connection guide below. The Windows installer is currently unsigned.
+remains available as a fallback. The Windows installer is currently unsigned.
 
 ![Tide's dark interface](docs/screenshots/full.png)
 
-[Light theme](docs/screenshots/light.png) · [Queue](docs/screenshots/queue.png)
+[Light theme](docs/screenshots/light.png)
 
-Screenshots use sample music metadata.
+Native search previews with fetched YouTube Music catalogue artwork.
 
 ## Get started
 
-You need **Windows x64** and internet access. Chrome is the supported
-connection path for YouTube Music. The installer requires no Rust, Python or
-API keys.
+You need **Windows x64** and internet access. No Rust, Python installation or
+API key is needed with the installer.
 
-1. **Get the downloads.** On the Releases page, choose **TideSetup.exe** under
-   **Assets**. For YouTube Music, also get **tide-browser-chromium.zip** from the
-   same release. GitHub's **Source code** downloads are for developers.
-2. **Install and connect.** Follow the [Chrome connection guide](docs/BROWSER_COMPANION_BETA.md):
-   load the companion first, enter its ID in Tide setup, then import your selected
-   Music tab. Sign in to your existing Google account in Chrome; Tide does not
-   ask for your password. The companion is loaded manually, not from the Chrome
-   Web Store. For local files only, just open the EXE and choose **Install Tide**.
-3. **Play something.** Open Tide from Start. After connecting, search in the top
-   bar, choose a playlist in **Library**, or pick a **Home** recommendation.
-   To play a file without an account, use **Settings → Advanced → Open audio file**.
+1. Download **TideSetup.exe** from the latest release and install Tide.
+2. Open the profile icon → **Sign in with Google**. Choose your Music profile,
+   open Library in the temporary window, then **Connect this profile**.
+3. Search for music, open your Library, or choose a Home recommendation.
 
-Setup adds Tide to Start. Already installed? Rerunning setup can enable the
-companion without uninstalling Tide. [Installation help](docs/INSTALLATION.md)
+The login browser closes after connection. If native sign-in is unavailable,
+choose **Use browser companion instead**. [Account setup](docs/ACCOUNT_SETUP.md) ·
+[Installation](docs/INSTALLATION.md) · [Controls](docs/USING_TIDE.md).
 
 ## What you can do
 
@@ -52,6 +45,7 @@ companion without uninstalling Tide. [Installation help](docs/INSTALLATION.md)
   Motion can be switched off; leaving lyrics, entering Mini or minimizing releases its extra view resources.
 
 - Play songs, playlists and local audio with native playback.
+- Search songs, albums, artists and playlists; browse saved albums and listening history.
 - Search within playlists and the queue by title, artist or album.
 - Choose Tide’s audio output and optionally smooth volume between songs.
 - See small cover images in search, loaded through a bounded memory cache.
@@ -85,10 +79,9 @@ your original queue paused.
 
 ## Connection and privacy
 
-**YouTube integration is unofficial.** Service changes can affect playback and
-sign-in. Chrome import has worked in a local test, but fresh-user onboarding and
-long-term session reliability still need validation. Zen's native connection is
-unresolved; Edge and Firefox are not recommended setup paths yet. Jams are included in Tide 0.2.0 and start only when you host or join.
+Native sign-in uses a separate temporary browser and stores the verified session
+encrypted for your Windows user. The browser companion remains available as a
+fallback. Jams contact a relay only when you host or join.
 
 **Your existing account is used.** Tide reads your library; it does not move it
 to another service or download your whole collection. Premium availability

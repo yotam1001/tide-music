@@ -15,7 +15,8 @@ use std::{
 
 const CACHE_CAPACITY: usize = 48;
 const PENDING_CAPACITY: usize = 32;
-const SIDE: u32 = 96;
+// Fits the artwork-led shelves without retaining full-resolution source images.
+const SIDE: u32 = 160;
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 const MAX_SOURCE_PIXELS: u64 = 1_000_000;
 const MAX_URL_BYTES: usize = 4096;
@@ -358,7 +359,7 @@ fn decode_thumbnail(bytes: &[u8]) -> Option<Vec<u8>> {
     }
     let image = reader().decode().ok()?;
     // Crop before resizing: resize_to_fill on a 4096×1 input would first
-    // allocate a 393216×96 intermediate image despite the source pixel cap.
+    // allocate a huge intermediate image despite the source pixel cap.
     let edge = width.min(height);
     // Borrow the crop instead of copying up to a million source pixels. Match
     // the source format so filtering retains its original channel precision.
