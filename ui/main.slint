@@ -2882,6 +2882,7 @@ export component AppWindow inherits Window {
                     HorizontalLayout {
                         height: 28px; spacing: 8px; cross-axis-alignment: center;
                         Text { horizontal-stretch: 1; text: root.update-phase == 2 ? "Ready to restart" : "Tide updates"; color: root.foreground; font-weight: 650; font-size: 17px; }
+                        Text { text: "Tide " + root.app-version; color: root.secondary; font-size: 11px; }
                         LibraryButton { width: 54px; height: 28px; light-mode: root.light-mode; caption: "Later"; label: "Close updates and keep listening"; clicked => { root.update-panel-open = false; } }
                     }
                     Text { height: 42px; text: root.update-available && !root.update-installable ? root.update-status + ". Use TideSetup.exe from GitHub to update this copy." : root.update-status; color: root.secondary; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
@@ -2889,7 +2890,6 @@ export component AppWindow inherits Window {
                         height: 36px; spacing: 8px; cross-axis-alignment: center;
                         if root.update-installable && (root.update-available || root.update-phase > 0) : UpdateAction { horizontal-stretch: 1; height: 36px; light-mode: root.light-mode; busy: root.update-busy; phase: root.update-phase; progress: root.update-progress; activate => { root.install-update(); } cancel => { root.cancel-update(); } }
                         if !root.update-installable || (!root.update-available && root.update-phase == 0) : LibraryButton { width: 150px; height: 36px; quiet: false; caption: root.update-busy ? "Checking…" : "Check for updates"; label: "Check GitHub for a newer stable Tide release"; light-mode: root.light-mode; enabled: !root.update-busy; clicked => { root.check-updates(); } }
-                        Text { text: "Tide " + root.app-version; color: root.secondary; font-size: 11px; }
                     }
                 }
             }

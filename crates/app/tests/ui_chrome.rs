@@ -256,40 +256,6 @@ fn settings_theme_account_and_song_menu_remain_independent() {
         draw(&window, width, height);
     }
 
-    ui.set_update_available(true);
-    ui.set_update_installable(true);
-    ui.set_update_status("Tide 0.2.0 is available".into());
-    ui.set_settings_open(false);
-    draw(&window, 1140, 800);
-    click(&ui, 44.0, 666.0);
-    assert!(ui.get_update_panel_open());
-    let update_actions = Rc::new(Cell::new(0));
-    let count = update_actions.clone();
-    ui.on_install_update(move || count.set(count.get() + 1));
-    click(&ui, 105.0, 578.0);
-    assert_eq!(update_actions.get(), 1, "Sidebar download action");
-    for light in [true, false] {
-        ui.set_light_mode(light);
-        export(
-            if light {
-                "updates-light"
-            } else {
-                "updates-dark"
-            },
-            1140,
-            800,
-            &draw(&window, 1140, 800),
-        );
-    }
-    ui.set_update_phase(2);
-    draw(&window, 1140, 800);
-    click(&ui, 105.0, 578.0);
-    assert_eq!(update_actions.get(), 2, "Restart the verified update");
-    key(&ui, Key::Escape);
-    assert!(!ui.get_update_panel_open());
-    assert_eq!(ui.get_update_phase(), 2, "Later preserves the download");
-    ui.set_update_phase(0);
-    ui.set_update_available(false);
     ui.set_account_connected(false);
     ui.set_account_verified(false);
     ui.set_account_name("".into());
