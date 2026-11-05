@@ -65,6 +65,7 @@ struct Settings {
     #[serde(default = "enabled_by_default")]
     autoplay: bool,
     skip_disliked: bool,
+    saved_dislikes: music_feedback::SavedDislikes,
     #[serde(default = "enabled_by_default")]
     check_updates: bool,
     #[serde(default = "enabled_by_default")]
@@ -98,6 +99,7 @@ impl Default for Settings {
             library_grid: true,
             autoplay: true,
             skip_disliked: true,
+            saved_dislikes: Default::default(),
             check_updates: true,
             media_controls: true,
             history_feedback: false,
@@ -1199,6 +1201,7 @@ fn restore_settings(value: serde_json::Value) -> Settings {
         library_grid,
         autoplay,
         skip_disliked,
+        saved_dislikes,
         check_updates,
         media_controls,
         history_feedback,
@@ -1212,6 +1215,7 @@ fn restore_settings(value: serde_json::Value) -> Settings {
         audio_device,
         repeat,
     );
+    settings.saved_dislikes.sanitize();
     if saved_position(&settings).is_none() {
         settings.playback_bookmark = None;
     }
@@ -2633,6 +2637,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 match result {
                     Ok(()) => {
                         configure_account_playback(&mut s, &u);
+                        s.settings.saved_dislikes = Default::default();
+                        save(&s.settings);
                         s.library_playlists.clear();
                         library_browse::reset(&mut s, &u);
                         s.recommendations.clear();
@@ -3946,6 +3952,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 {
                                     continue;
                                 }
+                                let mut tracks = tracks;
+                                tracks.retain(|track| !skip_disliked(&s, track));
                                 if tracks.is_empty() {
                                     library_failure(&mut s, &u, false);
                                     continue;
