@@ -25,6 +25,20 @@ fn helper_path(executable: &Path) -> Option<PathBuf> {
     (metadata.is_file() && !metadata.file_type().is_symlink()).then_some(helper)
 }
 
+#[cfg(windows)]
+fn outcome_message(code: i32) -> &'static str {
+    match code {
+        0 => "Connection saved. Tide is checking your library.",
+        2 => "Sign-in canceled. Your previous connection was kept.",
+        3 => "YouTube Music rejected this session. Reopen sign-in and select the profile you use for music.",
+        4 => "YouTube Music couldn’t verify your session. Check your connection and try again.",
+        5 => "Your saved connection changed during sign-in. Check which profile is connected and retry if needed.",
+        6 => "Tide couldn’t save the verified session in Windows. Try again from your usual Windows account.",
+        7 => "Sign-in timed out. Reopen the window when you’re ready to finish.",
+        _ => "Sign-in could not finish. Retry or use the browser companion below.",
+    }
+}
+
 pub(super) fn wire(ui: &AppWindow, state: Rc<RefCell<State>>) -> Rc<Login> {
     let login = Rc::new(Login {
         #[cfg(windows)]
@@ -51,7 +65,7 @@ pub(super) fn wire(ui: &AppWindow, state: Rc<RefCell<State>>) -> Rc<Login> {
             match tide_playback::OwnedProcess::spawn(&mut command) {
                 Ok(process) => {
                     *login.process.borrow_mut() = Some(process);
-                    login.deadline.set(Some(Instant::now() + Duration::from_secs(10 * 60)));
+                    login.deadline.set(Some(Instant::now() + Duration::from_secs(10 * 60 + 10)));
                     ui.set_native_login_busy(true);
                     ui.set_native_login_status("Finish signing in in the separate window, choose your Music profile, then Connect.".into());
                     let weak = ui.as_weak();
@@ -64,17 +78,13 @@ pub(super) fn wire(ui: &AppWindow, state: Rc<RefCell<State>>) -> Rc<Login> {
                             match process.try_wait() {
                                 Ok(Some(status)) => Some(status.code().unwrap_or(1)),
                                 Err(_) => Some(1),
-                                Ok(None) if login.deadline.get().is_some_and(|deadline| Instant::now() >= deadline) => Some(1),
+                                Ok(None) if login.deadline.get().is_some_and(|deadline| Instant::now() >= deadline) => Some(7),
                                 Ok(None) => None,
                             }
                         };
                         if let Some(code) = outcome {
                             login.stop(&ui);
-                            ui.set_native_login_status(match code {
-                                0 => "Connection saved. Tide is checking your library.",
-                                2 => "Sign-in cancelled. Your previous connection was kept.",
-                                _ => "Sign-in could not finish. Retry or use the browser companion below.",
-                            }.into());
+                            ui.set_native_login_status(outcome_message(code).into());
                         }
                     });
                 }
