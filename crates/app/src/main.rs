@@ -3998,7 +3998,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             );
                             u.set_account_status(error.into());
                         }
-                        Ok(tide_provider::Response::Session { .. } | tide_provider::Response::Feedback { .. } | tide_provider::Response::Lyrics { .. } | tide_provider::Response::Search { .. }) | Err(_) => {
+                        Ok(tide_provider::Response::Session { .. } | tide_provider::Response::Feedback { .. } | tide_provider::Response::Lyrics { .. } | tide_provider::Response::Search { .. } | tide_provider::Response::Suggestions { .. }) | Err(_) => {
                             library_failure(&mut s, &u, false);
                         }
                     }
