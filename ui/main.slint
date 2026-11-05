@@ -1157,6 +1157,12 @@ component QueueDrawer inherits Rectangle {
     private property <bool> filtering: root.query != "";
     changed query => { root.cancel-drag(); root.artwork-scroll-y = 0px; }
 
+    in-out property <bool> related-open: false;
+    in property <bool> related-enabled: false;
+    in property <[TrackRow]> related-rows;
+    in property <string> related-note;
+    callback load-related();
+    callback add-related(int);
     in property <bool> collection-enabled: false;
     callback add-playlist(int);
     in-out property <length> artwork-scroll-y;
@@ -1227,20 +1233,34 @@ component QueueDrawer inherits Rectangle {
             height: 34px;
             spacing: 7px;
             cross-axis-alignment: center;
-            Text { horizontal-stretch: 1; text: "Queue"; color: root.light-mode ? #392e33 : #f0eeef; font-size: 20px; font-weight: 600; }
-            LibraryButton { width: 30px; height: 30px; show-tooltip: true; light-mode: root.light-mode; active: root.filter-open || root.filtering; icon-path: "M 16 10 A 6 6 0 1 0 4 10 A 6 6 0 1 0 16 10 M 14 14 L 21 21"; label: "Search queue"; clicked => { root.filter-open = !root.filter-open; if !root.filter-open { root.query = ""; root.filter-changed(); } } }
-            LibraryButton { width: 30px; height: 30px; enabled: root.enabled; caption: "..."; label: "More queue actions"; light-mode: root.light-mode; clicked => { queue-menu.show(); } }
+            Text { horizontal-stretch: 1; text: root.related-open ? "Related" : "Queue"; color: root.light-mode ? #392e33 : #f0eeef; font-size: 20px; font-weight: 600; }
+            LibraryButton { width: 66px; height: 30px; light-mode: root.light-mode; caption: root.related-open ? "Queue" : "Related"; label: root.related-open ? "Back to the queue" : "See songs related to the current track"; enabled: root.related-enabled && root.enabled; active: root.related-open; clicked => { root.cancel-drag(); root.related-open = !root.related-open; if root.related-open { root.load-related(); } } }
+            if !root.related-open : LibraryButton { width: 30px; height: 30px; show-tooltip: true; light-mode: root.light-mode; active: root.filter-open || root.filtering; icon-path: "M 16 10 A 6 6 0 1 0 4 10 A 6 6 0 1 0 16 10 M 14 14 L 21 21"; label: "Search queue"; clicked => { root.filter-open = !root.filter-open; if !root.filter-open { root.query = ""; root.filter-changed(); } } }
+            if !root.related-open : LibraryButton { width: 30px; height: 30px; enabled: root.enabled; caption: "..."; label: "More queue actions"; light-mode: root.light-mode; clicked => { queue-menu.show(); } }
             LibraryButton { width: 30px; height: 30px; enabled: root.enabled; caption: "×"; label: "Close queue drawer"; light-mode: root.light-mode; clicked => { root.cancel-drag(); root.close(); } }
         }
-        if root.filter-open || root.filtering : HorizontalLayout {
+        if !root.related-open && (root.filter-open || root.filtering) : HorizontalLayout {
             height: 34px; spacing: 6px;
             LineEdit { horizontal-stretch: 1; text <=> root.query; edited => { root.filter-changed(); } placeholder-text: "Search queue"; accessible-label: "Filter queue by title, artist or album"; }
             if root.filtering : LibraryButton { width: 30px; height: 30px; caption: "×"; label: "Clear queue search"; light-mode: root.light-mode; clicked => { root.query = ""; root.filter-changed(); } }
         }
-        if root.filtering : Text { height: 16px; text: "Clear search to reorder songs"; color: root.light-mode ? #716773 : #a1a5ae; font-size: 11px; }
-        if root.filtering && root.matches.length == 0 : EmptyState { vertical-stretch: 1; light-mode: root.light-mode; heading: "No matching songs"; detail: "Try another title, artist or album."; }
+        if !root.related-open && root.filtering : Text { height: 16px; text: "Clear search to reorder songs"; color: root.light-mode ? #716773 : #a1a5ae; font-size: 11px; }
+        if !root.related-open && root.filtering && root.matches.length == 0 : EmptyState { vertical-stretch: 1; light-mode: root.light-mode; heading: "No matching songs"; detail: "Try another title, artist or album."; }
+        if root.related-open : Text { text: root.related-note; wrap: word-wrap; color: root.light-mode ? #716773 : #a1a5ae; font-size: 12px; accessible-live-region: polite; }
+        if root.related-open : ListView {
+            vertical-stretch: 1; accessible-label: "Related songs";
+            for track[index] in root.related-rows : HorizontalLayout {
+                height: 50px; spacing: 8px; cross-axis-alignment: center;
+                VerticalLayout {
+                    horizontal-stretch: 1; min-width: 0px; alignment: center;
+                    Text { text: track.title; overflow: elide; color: root.light-mode ? #392e33 : #f0eeef; font-size: 14px; }
+                    Text { text: track.artist; overflow: elide; color: root.light-mode ? #716773 : #a1a5ae; font-size: 12px; }
+                }
+                LibraryButton { width: 36px; height: 34px; light-mode: root.light-mode; caption: "+"; label: "Add " + track.title + " to the queue"; enabled: root.enabled; clicked => { root.add-related(index); } }
+            }
+        }
         // The fixed rail owns pointer capture while ListView recycles song rows.
-        if root.rows.length > 0 && (!root.filtering || root.matches.length > 0) : queue-area := Rectangle {
+        if !root.related-open && root.rows.length > 0 && (!root.filtering || root.matches.length > 0) : queue-area := Rectangle {
             vertical-stretch: 1;
             private property <bool> drag-in-list: root.drag-x >= self.absolute-position.x && root.drag-x < self.absolute-position.x + queue-list.visible-width
                 && root.drag-y >= self.absolute-position.y && root.drag-y < self.absolute-position.y + queue-list.visible-height;
@@ -1348,8 +1368,8 @@ component QueueDrawer inherits Rectangle {
                 }
             }
         }
-        if root.rows.length == 0 : EmptyState { vertical-stretch: 1; light-mode: root.light-mode; heading: "Queue is empty"; detail: "Choose a song or playlist to start listening."; }
-        PreferenceRow { title: "Autoplay"; checked: root.autoplay-enabled; enabled: root.enabled; light-mode: root.light-mode; toggled => { root.toggle-autoplay(); } }
+        if !root.related-open && root.rows.length == 0 : EmptyState { vertical-stretch: 1; light-mode: root.light-mode; heading: "Queue is empty"; detail: "Choose a song or playlist to start listening."; }
+        if !root.related-open : PreferenceRow { title: "Autoplay"; checked: root.autoplay-enabled; enabled: root.enabled; light-mode: root.light-mode; toggled => { root.toggle-autoplay(); } }
     }
 }
 
@@ -1758,6 +1778,13 @@ export component AppWindow inherits Window {
     callback toggle-compact();
     callback toggle-autoplay();
     callback shuffle-playlist(int);
+    in-out property <bool> related-open: false;
+    in property <[TrackRow]> related-rows;
+    in property <string> related-note;
+    callback load-related();
+    callback queue-related(int);
+    changed lyrics-generation => { root.related-open = false; }
+    changed account-verified => { root.related-open = false; }
     callback play-radio();
     callback remove-queue-track(int);
     callback import-account();
@@ -1997,7 +2024,7 @@ export component AppWindow inherits Window {
     }
     changed jam-open => { if root.jam-open { root.suggestions-open = false; root.playlist-picker-open = false; root.settings-open = false; root.account-open = false; app-focus.focus(); } }
     changed playlist-picker-open => { if root.playlist-picker-open { root.settings-open = false; root.account-open = false; root.jam-open = false; root.artist-picker-open = false; app-focus.focus(); } }
-    changed queue-open => { if root.queue-open { root.lyrics-open = false; if !root.wide { app-focus.focus(); } } }
+    changed queue-open => { if !root.queue-open { root.related-open = false; } if root.queue-open { root.lyrics-open = false; if !root.wide { app-focus.focus(); } } }
     changed lyrics-open => { if root.lyrics-open { root.suggestions-open = false; root.update-panel-open = false; root.queue-open = false; root.settings-open = false; root.account-open = false; root.jam-open = false; root.artist-picker-open = false; root.playlist-picker-open = false; app-focus.focus(); } }
     changed wide => { if !root.wide && (root.queue-open || root.lyrics-open) { app-focus.focus(); } }
     changed light-mode => { Palette.color-scheme = root.light-mode ? light : dark; }
@@ -2501,6 +2528,11 @@ export component AppWindow inherits Window {
                     }
 
                     if root.queue-open && root.wide : QueueDrawer {
+                        related-open <=> root.related-open;
+                        related-enabled: root.account-verified && root.current-index >= 0;
+                        related-rows: root.related-rows; related-note: root.related-note;
+                        load-related => { root.load-related(); }
+                        add-related(index) => { root.queue-related(index); }
                         query <=> root.queue-filter;
                         matches: root.queue-matches;
                         filter-changed => { root.filter-queue(); }
@@ -2545,6 +2577,11 @@ export component AppWindow inherits Window {
                     height: parent.height;
                     Rectangle { x: 0px; y: 0px; width: max(0px, parent.width - 340px); height: parent.height; background: #00000060; TouchArea { clicked => { root.queue-open = false; } } }
                     QueueDrawer {
+                        related-open <=> root.related-open;
+                        related-enabled: root.account-verified && root.current-index >= 0;
+                        related-rows: root.related-rows; related-note: root.related-note;
+                        load-related => { root.load-related(); }
+                        add-related(index) => { root.queue-related(index); }
                         query <=> root.queue-filter;
                         matches: root.queue-matches;
                         filter-changed => { root.filter-queue(); }

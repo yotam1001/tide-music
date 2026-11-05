@@ -137,6 +137,9 @@ enum LibraryAction {
     Preview {
         title: String,
     },
+    Related {
+        generation: u64,
+    },
     Radio {
         seed: String,
         generation: u64,
@@ -190,6 +193,7 @@ struct State {
     recommendations: Vec<tide_provider::Card>,
     discovery: discovery::Discovery,
     detail_tracks: Vec<Track>,
+    related_tracks: Vec<Track>,
     detail_cover_url: Option<String>,
     artist_origin: Option<artists::Origin>,
     search_tracks: Vec<Track>,
@@ -2260,6 +2264,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         recommendations: Vec::new(),
         discovery: discovery::Discovery::default(),
         detail_tracks: Vec::new(),
+        related_tracks: Vec::new(),
         detail_cover_url: None,
         artist_origin: None,
         search_tracks: Vec::new(),
@@ -2342,6 +2347,65 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (library_tx, library_rx) = mpsc::sync_channel::<LibraryResult>(2);
     music_feedback::install(&state, &ui, &library_tx);
     let _lyrics = lyrics::install(&state, &ui);
+    {
+        let state = state.clone();
+        let weak = ui.as_weak();
+        let tx = library_tx.clone();
+        ui.on_load_related(move || {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            let mut s = state.borrow_mut();
+            s.related_tracks.clear();
+            ui.set_related_rows(ModelRc::default());
+            if s.library_worker.is_some() || !s.account_verified || !local_controls_allowed(&s) {
+                ui.set_related_note("Wait for the current request, then reopen Related.".into());
+                return;
+            }
+            let Some(video_id) = current_video_id(&s) else {
+                ui.set_related_note("Play a YouTube Music song to see related tracks.".into());
+                return;
+            };
+            request_library(&mut s, &ui, &tx, tide_provider::Request::Radio { video_id });
+            if s.library_worker.is_some() {
+                s.library_action = LibraryAction::Related {
+                    generation: s.generation,
+                };
+                ui.set_related_note("Finding related songs…".into());
+            } else {
+                ui.set_related_note("Connect YouTube Music to see related tracks.".into());
+            }
+        });
+    }
+    {
+        let state = state.clone();
+        let weak = ui.as_weak();
+        ui.on_queue_related(move |index| {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            let mut s = state.borrow_mut();
+            if !ui.get_related_open() || !s.account_verified || !local_controls_allowed(&s) {
+                return;
+            }
+            if let Some(track) = usize::try_from(index)
+                .ok()
+                .and_then(|index| s.related_tracks.get(index))
+                .cloned()
+            {
+                let before = s.settings.queue.tracks.len();
+                queue_choice(&mut s, &ui, track, false);
+                ui.set_related_note(
+                    if s.settings.queue.tracks.len() > before {
+                        "Added to your queue."
+                    } else {
+                        "Your queue is full."
+                    }
+                    .into(),
+                );
+            }
+        });
+    }
     {
         let state = state.clone();
         let weak = ui.as_weak();
@@ -3868,6 +3932,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 u.set_account_status("Account data loaded; playback session update will be retried on the next refresh.".into());
                             }
                         }
+                    }
+                    if let LibraryAction::Related { generation } = s.library_action {
+                        if generation == s.generation && u.get_related_open() && s.account_verified {
+                            if let Ok(tide_provider::Response::Tracks { tracks, .. }) = result {
+                                s.related_tracks = tracks.into_iter().take(25)
+                                    .filter(|track| source_video_id(&track.source).is_some() && !skip_disliked(&s, track))
+                                    .collect();
+                                u.set_related_rows(ModelRc::new(VecModel::from(s.related_tracks.iter()
+                                    .map(|track| TrackRow { title: track.title.clone().into(), artist: track.artist.clone().into(), ..Default::default() })
+                                    .collect::<Vec<_>>())));
+                                u.set_related_note(if s.related_tracks.is_empty() { "No related songs were returned." } else { "Add songs without changing what’s playing." }.into());
+                            } else {
+                                u.set_related_note("Related songs couldn’t load. Close and reopen Related to retry.".into());
+                            }
+                        }
+                        continue;
                     }
                     match result {
                         Ok(tide_provider::Response::Connected) => {
