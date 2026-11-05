@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 from youtube_music import (LOGIN_SECONDS, MAX_RADIO_TRACKS, MAX_SUPERMIX_SHELVES, MAX_HOME_CARDS, MAX_HOME_ITEMS_PER_SHELF,
                           MAX_HOME_SHELVES, MUSIC_URL, artwork_url, featured_artwork_url, connect, connect_existing, create_client, main,
                           music_cookies, cookie_matches_music, read_cookie_database, CookieReadError, CookieSelectionError,
-                          read_music_cookies, remove_login_profile, run,
+                          read_music_cookies, remove_login_profile, radio_tracks, run,
                           selected_zen_database, session_headers, switch_account, tracks,
                           validate_session, wait_for_login, zen_executable, request_failure, verified_request_failure)
 
@@ -182,6 +182,19 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(result["tracks"][1]["album"], "")
         self.assertEqual(result["tracks"][0]["source"], "https://www.youtube.com/watch?v=00000000002")
         self.assertFalse(result["truncated"])
+
+    def test_radio_prefers_verified_album_counterpart_without_duplicates(self):
+        album_track = {"videoId": "00000000002", "title": "Studio version",
+                       "videoType": "MUSIC_VIDEO_TYPE_ATV", "length": "3:01"}
+        music_video = {"videoId": "00000000001", "title": "Video with intro",
+                       "videoType": "MUSIC_VIDEO_TYPE_OMV", "length": "4:23",
+                       "counterpart": album_track}
+        podcast = {"videoId": "00000000003", "videoType": "MUSIC_VIDEO_TYPE_PODCAST_EPISODE"}
+        result = radio_tracks([music_video, album_track, podcast], "K4DyBUG242c")
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["source"], "https://www.youtube.com/watch?v=00000000002")
+        self.assertEqual(result[0]["duration_seconds"], 181)
+        self.assertEqual(radio_tracks([music_video, album_track], "00000000002"), [])
 
     def test_radio_caps_api_overshoot_and_only_uses_read_endpoint(self):
         client = SimpleNamespace(get_watch_playlist=MagicMock(return_value={"tracks": [

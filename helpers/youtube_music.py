@@ -608,6 +608,39 @@ def tracks(items, limit=MAX_TRACKS, exclude=(), deduplicate=False):
     return result
 
 
+def radio_tracks(items, seed):
+    """Keep the service's ranking and prefer an explicitly identified album track."""
+    excluded = {seed}
+    candidates = []
+    for item in items[:MAX_TRACKS]:
+        if not isinstance(item, dict):
+            continue
+        video = identifier(item.get("videoId"), True)
+        if not video:
+            continue
+        counterpart = item.get("counterpart")
+        counterpart = counterpart if isinstance(counterpart, dict) else {}
+        alternate = identifier(counterpart.get("videoId"), True)
+        if (seed in (video, alternate) or item.get("likeStatus") == "DISLIKE"
+                or counterpart.get("likeStatus") == "DISLIKE"):
+            excluded.update((video, alternate))
+        if item.get("isAvailable") is False or item.get("videoType") == "MUSIC_VIDEO_TYPE_PODCAST_EPISODE":
+            continue
+        if (alternate and counterpart.get("videoType") == "MUSIC_VIDEO_TYPE_ATV"
+                and counterpart.get("isAvailable") is not False
+                and item.get("videoType") != "MUSIC_VIDEO_TYPE_ATV"):
+            chosen = {**counterpart}
+            if not artwork_url(chosen):
+                chosen["thumbnail"] = item.get("thumbnail")
+                chosen["thumbnails"] = item.get("thumbnails")
+        else:
+            chosen = {**item}
+        chosen["duration"] = chosen.get("duration") or chosen.get("length")
+        candidates.append((video, chosen))
+    return tracks([item for original, item in candidates if original not in excluded],
+                  MAX_RADIO_TRACKS, excluded, True)
+
+
 def browse_cards(items, kind, shelf):
     """Normalize read-only library/history data; never return opaque API tokens."""
     cards = []
@@ -1203,16 +1236,7 @@ def run(client, request):
             items = data.get("tracks", []) if isinstance(data, dict) else []
             if not isinstance(items, list):
                 return empty
-            excluded = {video}
-            for item in items[:MAX_TRACKS]:
-                if not isinstance(item, dict):
-                    continue
-                if item.get("videoId") == video or item.get("likeStatus") == "DISLIKE":
-                    excluded.add(identifier(item.get("videoId"), True))
-                    counterpart = item.get("counterpart")
-                    if isinstance(counterpart, dict):
-                        excluded.add(identifier(counterpart.get("videoId"), True))
-            return {"type": "tracks", "tracks": tracks(items, MAX_RADIO_TRACKS, excluded, True),
+            return {"type": "tracks", "tracks": radio_tracks(items, video),
                     "truncated": len(items) > MAX_RADIO_TRACKS}
         except Exception as error:
             return verified_request_failure(error, client)
