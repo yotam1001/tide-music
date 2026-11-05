@@ -61,6 +61,19 @@ fn valid(lines: &[LyricLine], synced: bool, source: &str) -> bool {
         && lines.iter().all(|l| {
             l.text.chars().count() <= 500
                 && !l.text.chars().any(char::is_control)
+                && l.words.len() <= 100
+                && l.words.iter().all(|word| {
+                    l.start_ms.is_some_and(|start| {
+                        (start..=l.end_ms.unwrap_or(86_400_000)).contains(&word.start_ms)
+                    }) && word.end_byte > 0
+                        && l.text.is_char_boundary(word.end_byte)
+                })
+                && l.words.windows(2).all(|pair| {
+                    pair[0].start_ms <= pair[1].start_ms && pair[0].end_byte < pair[1].end_byte
+                })
+                && l.words
+                    .last()
+                    .is_none_or(|word| word.end_byte == l.text.len())
                 && if synced {
                     l.start_ms.is_some_and(|t| {
                         t <= 86_400_000 && l.end_ms.is_none_or(|end| end >= t && end <= 86_400_000)
@@ -86,6 +99,16 @@ fn active_line(lines: &[LyricLine], position: f64) -> i32 {
                     .is_none_or(|end| position * 1000.0 < end as f64)
         })
         .map_or(-1, |i| i as i32)
+}
+
+fn sung_prefix(line: &LyricLine, position: f64) -> &str {
+    let count = line
+        .words
+        .partition_point(|word| word.start_ms as f64 <= position * 1000.0);
+    count
+        .checked_sub(1)
+        .and_then(|index| line.text.get(..line.words[index].end_byte))
+        .unwrap_or("")
 }
 
 fn clear(ui: &AppWindow) {
@@ -233,6 +256,8 @@ pub fn install(state: &Rc<RefCell<State>>, ui: &AppWindow) -> Lyrics {
                                 ui.set_lyrics_status(
                                     if lines.is_empty() {
                                         "Lyrics aren’t available for this song."
+                                    } else if lines.iter().any(|line| !line.words.is_empty()) {
+                                        "Karaoke lyrics"
                                     } else if synced {
                                         "Synced lyrics"
                                     } else {
@@ -245,6 +270,7 @@ pub fn install(state: &Rc<RefCell<State>>, ui: &AppWindow) -> Lyrics {
                                         .iter()
                                         .map(|l| LyricRow {
                                             text: l.text.clone().into(),
+                                            word_timed: !l.words.is_empty(),
                                         })
                                         .collect::<Vec<_>>(),
                                 )));
@@ -311,6 +337,13 @@ pub fn install(state: &Rc<RefCell<State>>, ui: &AppWindow) -> Lyrics {
                         .filter(|p| p.generation == key.generation && !p.loading)
                         .map_or(f64::NAN, |p| p.position);
                     let active = active_line(&r.lines, position);
+                    let prefix = usize::try_from(active)
+                        .ok()
+                        .and_then(|index| r.lines.get(index))
+                        .map_or("", |line| sung_prefix(line, position));
+                    if ui.get_lyrics_sung_prefix().as_str() != prefix {
+                        ui.set_lyrics_sung_prefix(prefix.into());
+                    }
                     if ui.get_lyrics_active() != active {
                         ui.set_lyrics_active(active);
                     }
@@ -358,6 +391,7 @@ mod tests {
             text: text.into(),
             start_ms: time,
             end_ms: None,
+            words: Vec::new(),
         }
     }
     #[test]
@@ -449,6 +483,7 @@ mod tests {
             text: "Finished line".into(),
             start_ms: Some(1000),
             end_ms: Some(1500),
+            words: Vec::new(),
         };
         assert_eq!(active_line(&[ended], 1.6), -1);
         assert_eq!(active_line(&lines, f64::NAN), -1);

@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import MagicMock, patch
 from youtube_music import (LOGIN_SECONDS, MAX_RADIO_TRACKS, MAX_SUPERMIX_SHELVES, MAX_HOME_CARDS, MAX_HOME_ITEMS_PER_SHELF,
-                          MAX_HOME_SHELVES, MUSIC_URL, artwork_url, connect, connect_existing, create_client, main,
+                          MAX_HOME_SHELVES, MUSIC_URL, artwork_url, featured_artwork_url, connect, connect_existing, create_client, main,
                           music_cookies, cookie_matches_music, read_cookie_database, CookieReadError, CookieSelectionError,
                           read_music_cookies, remove_login_profile, run,
                           selected_zen_database, session_headers, switch_account, tracks,
@@ -156,7 +156,9 @@ class ProviderTests(unittest.TestCase):
     def test_radio_filters_seed_duplicates_malformed_and_unavailable_tracks(self):
         client = FakeClient()
         items = [None, "unsupported", {}, {"videoId": "bad/id"}, {"videoId": 12345678901},
-                 {"videoId": "K4DyBUG242c", "title": "Seed"},
+                 {"videoId": "K4DyBUG242c", "title": "Seed", "counterpart": {"videoId": "00000000004"}},
+                 {"videoId": "00000000004", "title": "Seed music video"},
+                 {"videoId": "00000000005", "title": "Disliked", "likeStatus": "DISLIKE"},
                  {"videoId": "00000000001", "title": "Unavailable", "isAvailable": False},
                  {"videoId": "00000000002", "title": "First", "artists": [None, {}, {"name": "Artist"}]},
                  {"videoId": "00000000002", "title": "Duplicate"},
@@ -219,6 +221,15 @@ class ProviderTests(unittest.TestCase):
         client.get_home = lambda limit: [{"contents": [{"videoId": "K4DyBUG242c", "thumbnails": candidates}]}]
         self.assertEqual(run(client, {"action": "library"})["playlists"][0]["artwork_url"], "https://yt3.ggpht.com/exact")
         self.assertEqual(run(client, {"action": "home"})["cards"][0]["artwork_url"], "https://yt3.ggpht.com/exact")
+
+    def test_featured_cover_uses_public_size_variant_without_changing_small_cover(self):
+        small = "https://yt3.googleusercontent.com/example=w120-h120-l90-rj"
+        item = {"thumbnails": [{"url": small, "width": 120, "height": 120}]}
+        self.assertEqual(artwork_url(item), small)
+        self.assertEqual(featured_artwork_url(item, small),
+                         "https://yt3.googleusercontent.com/example=w320-h320-l90-rj")
+        self.assertIsNone(featured_artwork_url({}, small + "?signed=fixture"))
+        self.assertIsNone(featured_artwork_url({}, small.replace("googleusercontent.com", "ytimg.com")))
 
     def test_artwork_rejects_unsafe_urls_and_malformed_thumbnails(self):
         for url in ["http://i.ytimg.com/a", "https://i.ytimg.com.evil.test/a", "https://evilytimg.com/a",

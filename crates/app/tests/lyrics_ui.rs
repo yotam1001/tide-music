@@ -68,6 +68,7 @@ fn lyrics_follow_seek_and_close_in_both_themes_and_window_sizes() {
         (0..40)
             .map(|i| LyricRow {
                 text: format!("Lyric line {i}: some words to follow").into(),
+                word_timed: true,
             })
             .collect::<Vec<_>>(),
     )));
@@ -85,20 +86,31 @@ fn lyrics_follow_seek_and_close_in_both_themes_and_window_sizes() {
             ui.set_lyrics_active(0);
             draw(&window, width, height, "initial");
             ui.set_lyrics_active(25);
+            ui.set_lyrics_sung_prefix("".into());
+            let unlit = draw(&window, width, height, "before-word");
+            ui.set_lyrics_sung_prefix("Lyric line 25:".into());
             let pixels = draw(&window, width, height, if light { "light" } else { "dark" });
+            assert!(
+                pixels != unlit,
+                "The timed prefix must change the rendered lyric"
+            );
             // The active line must have been scrolled into view, not left below
             // the viewport. Restrict the probe to the full-page lyrics surface.
             let background = if light {
-                Rgb8Pixel::new(238, 226, 217)
+                Rgb8Pixel::new(105, 49, 67)
             } else {
-                Rgb8Pixel::new(48, 35, 46)
+                Rgb8Pixel::new(255, 247, 250)
             };
-            let x = ((width as usize).saturating_sub(1140) / 2) + 30;
-            let y = (60..height as usize - 110)
-                .find(|y| pixels[y * width as usize + x] == background)
+            let left = ((width as usize).saturating_sub(1140) / 2) + 30;
+            let (x, y) = (110..height as usize - 110)
+                .find_map(|y| {
+                    (left..left + 140)
+                        .find(|x| pixels[y * width as usize + x] == background)
+                        .map(|x| (x, y))
+                })
                 .expect("Current lyric did not scroll into view");
             selected.set(-1);
-            click(&ui, x as f32 + 30.0, y as f32 + 30.0);
+            click(&ui, x as f32, y as f32);
             assert_eq!(
                 selected.get(),
                 25,
@@ -107,7 +119,7 @@ fn lyrics_follow_seek_and_close_in_both_themes_and_window_sizes() {
             ui.set_jam_guest(true);
             draw(&window, width, height, "guest");
             selected.set(-1);
-            click(&ui, x as f32 + 30.0, y as f32 + 30.0);
+            click(&ui, x as f32, y as f32);
             assert_eq!(
                 selected.get(),
                 -1,

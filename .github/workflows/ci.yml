@@ -18,7 +18,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: python -m pip install cryptography==50.0.0
+      - run: python -m pip install cryptography==50.0.0 -r helpers/requirements.txt
       - run: python scripts/check_public_files.py
       - run: python -m unittest discover -s helpers -p "test_*.py"
       - run: python -m unittest discover -s scripts -p "test_*.py"
@@ -57,7 +57,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force .local | Out-Null
-          cargo test -p tide-music --locked --features experimental-jams --bin tide-music --no-run --message-format=json | Set-Content .local/jam-pipe-build.jsonl -Encoding utf8
+          cargo test --workspace --locked --features tide-music/experimental-jams,tide-provider/native-login --no-run --message-format=json | Set-Content .local/jam-pipe-build.jsonl -Encoding utf8
           if ($LASTEXITCODE -ne 0) { throw 'Private file probe build failed' }
           python experiments/jam/check-private-pipe.py --cargo-artifacts .local/jam-pipe-build.jsonl
           if ($LASTEXITCODE -ne 0) { throw 'Private file cancellation probe failed' }
@@ -162,7 +162,9 @@ jobs:
           Invoke-WebRequest $expectedUrl -OutFile .local/upgrade-baseline.zip
           $hash = (Get-FileHash .local/upgrade-baseline.zip -Algorithm SHA256).Hash.ToLowerInvariant()
           if ('sha256:' + $hash -cne $asset[0].digest) { throw 'Baseline archive digest mismatch' }
-          python scripts/check-preview-package.py .local/upgrade-baseline.zip --with-browser-host
+          $baselineArgs = @('.local/upgrade-baseline.zip', '--with-browser-host')
+          if ([version]$release.tag_name.Substring(1) -ge [version]'0.4.13') { $baselineArgs += '--with-native-login' }
+          python scripts/check-preview-package.py @baselineArgs
           if ($LASTEXITCODE -ne 0) { throw 'Baseline package verification failed' }
           Expand-Archive -LiteralPath .local/upgrade-baseline.zip -DestinationPath .local/upgrade-baseline
           Write-Host ('Verified previous public stable baseline: ' + $release.tag_name + ' SHA256 ' + $hash)

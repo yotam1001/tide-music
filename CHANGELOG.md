@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.4.14 - 2026-11-05
+
+- Refresh Home and playlist layouts with larger covers and more legible track rows.
+- Improve discovery and playlist management.
+- Add full-screen karaoke with word timing where available and improve timed lyric lookup.
+- Seed autoplay from the last manually queued song and filter disliked radio tracks.
+
 ## 0.4.13 — 2026-11-04
 
 - Redesign navigation and the player bar while retaining Tide's logo and colors.

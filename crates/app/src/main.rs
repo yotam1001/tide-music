@@ -176,6 +176,7 @@ struct State {
     recommendations: Vec<tide_provider::Card>,
     discovery: discovery::Discovery,
     detail_tracks: Vec<Track>,
+    detail_cover_url: Option<String>,
     artist_origin: Option<artists::Origin>,
     search_tracks: Vec<Track>,
     search_cards: Vec<tide_provider::Card>,
@@ -301,6 +302,8 @@ fn request_library(
                 | tide_provider::Request::LibraryAlbums
                 | tide_provider::Request::LibraryArtists
                 | tide_provider::Request::History
+                | tide_provider::Request::Explore
+                | tide_provider::Request::Mood { .. }
                 | tide_provider::Request::Home
                 | tide_provider::Request::Playlist { .. }
                 | tide_provider::Request::Album { .. }
@@ -339,6 +342,7 @@ fn request_library(
                     s.recommendations
                         .iter()
                         .chain(s.search_cards.iter())
+                        .chain(s.library_browse.cards.iter())
                         .find(|p| p.id == *id)
                         .map(|p| p.title.clone())
                 })
@@ -375,6 +379,38 @@ fn request_library(
     };
     s.library_cancel.store(false, Ordering::Release);
     if let LibraryAction::Preview { title } = &action {
+        u.set_detail_navigation(
+            match &request {
+                tide_provider::Request::Liked => "liked",
+                tide_provider::Request::Supermix => "supermix",
+                _ => "",
+            }
+            .into(),
+        );
+        let cover_id = match &request {
+            tide_provider::Request::Playlist { id } | tide_provider::Request::Album { id } => {
+                Some(id.as_str())
+            }
+            tide_provider::Request::Supermix => Some("supermix"),
+            _ => None,
+        };
+        s.detail_cover_url = cover_id.and_then(|id| {
+            s.library_playlists
+                .iter()
+                .find(|item| item.id == id)
+                .and_then(|item| item.artwork_url.clone())
+                .or_else(|| {
+                    s.recommendations
+                        .iter()
+                        .chain(&s.library_browse.cards)
+                        .chain(&s.search_cards)
+                        .find(|item| item.id == id)
+                        .and_then(|item| item.artwork_url.clone())
+                })
+        });
+        u.set_detail_has_cover(cover_id.is_some());
+        u.set_detail_cover_variant(artwork::fallback_variant(cover_id.unwrap_or_default()));
+        u.set_detail_cover(slint::Image::default());
         music_feedback::set_playlist(s, u, None, None);
         s.artist_origin = None;
         u.set_detail_is_artist(false);
@@ -384,7 +420,7 @@ fn request_library(
         u.set_detail_artwork_y(0.0);
         u.set_detail_open(true);
         u.set_detail_busy(true);
-        u.set_search_open(false);
+        // Keep search underneath collection details so Back restores its results.
         u.set_detail_rows(ModelRc::new(VecModel::default()));
     }
     if matches!(action, LibraryAction::Artist) {
@@ -447,8 +483,12 @@ fn request_radio(s: &mut State, u: &AppWindow, tx: &mpsc::SyncSender<LibraryResu
     let Some(index) = s.settings.queue.current else {
         return;
     };
+    let Some(upcoming) = s.settings.queue.tracks.get(index.saturating_add(1)..) else {
+        return;
+    };
     if !force
-        && (s.settings.queue.tracks.len().saturating_sub(index + 1) > 2
+        && (upcoming.len() > 2
+            || upcoming.iter().any(|track| !track.recommended)
             || !s.radio_requests.ready(s.generation, Instant::now()))
     {
         return;
@@ -471,6 +511,23 @@ fn request_radio(s: &mut State, u: &AppWindow, tx: &mpsc::SyncSender<LibraryResu
     }
 }
 
+fn require_reconnect(s: &mut State, u: &AppWindow) {
+    s.library_retry = None;
+    s.account_verified = false;
+    s.radio_resume_when_ready = false;
+    s.account_error = true;
+    u.set_account_verified(false);
+    u.set_error_is_account(true);
+    u.set_error_retryable(false);
+    u.set_playback_error_action("".into());
+    u.set_error_message("Reconnect your YouTube Music account".into());
+    u.set_account_status(if u.get_native_login_available() {
+        "Your session was rejected. Use Sign in with Google to reconnect the same Music profile."
+    } else {
+        "Your session was rejected. Reconnect using the browser companion and the same Music profile."
+    }.into());
+}
+
 fn library_failure(s: &mut State, u: &AppWindow, authentication: bool) {
     u.set_playback_error_action("".into());
     if !s.library_action.accepts_response(
@@ -489,14 +546,7 @@ fn library_failure(s: &mut State, u: &AppWindow, authentication: bool) {
         return;
     }
     if authentication {
-        s.library_retry = None;
-        s.account_verified = false;
-        u.set_account_verified(false);
-        s.radio_resume_when_ready = false;
-        s.account_error = true;
-        u.set_error_is_account(true);
-        u.set_error_message("Reconnect your YouTube Music account".into());
-        u.set_account_status("YouTube rejected this session. Reconnect using your signed-in YouTube Music browser tab and selected account.".into());
+        require_reconnect(s, u);
         return;
     }
     if let LibraryAction::Radio { generation, .. } = &s.library_action {
@@ -556,6 +606,9 @@ fn content_failure_message(request: Option<&tide_provider::Request>) -> &'static
         Some(tide_provider::Request::LibraryArtists) => {
             "Couldn't load your artists. Retry to refresh them."
         }
+        Some(tide_provider::Request::Explore | tide_provider::Request::Mood { .. }) => {
+            "Couldn't load Explore. Retry to refresh this selection."
+        }
         Some(tide_provider::Request::History) => {
             "Couldn't load listening history. Retry to refresh it."
         }
@@ -580,6 +633,8 @@ fn content_retry_request(request: &tide_provider::Request) -> Option<tide_provid
         | tide_provider::Request::LibraryAlbums
         | tide_provider::Request::LibraryArtists
         | tide_provider::Request::History
+        | tide_provider::Request::Explore
+        | tide_provider::Request::Mood { .. }
         | tide_provider::Request::Home
         | tide_provider::Request::Playlist { .. }
         | tide_provider::Request::Album { .. }
@@ -673,6 +728,8 @@ fn stage_saved_connection(
     s.recommendations.clear();
     s.discovery.clear();
     s.detail_tracks.clear();
+    s.detail_cover_url = None;
+    u.set_forward_collection(false);
     s.artist_origin = None;
     u.set_artist_picker_open(false);
     u.set_artist_choices(ModelRc::new(VecModel::default()));
@@ -729,6 +786,41 @@ fn stage_current_saved_connection(s: &mut State, u: &AppWindow) {
     };
     stage_saved_connection(s, u, saved);
 }
+fn remember_connection_resume(s: &mut State, engine_replaced: bool) {
+    let Some(track) = s
+        .settings
+        .queue
+        .current
+        .and_then(|index| s.settings.queue.tracks.get(index))
+    else {
+        s.connection_resume = None;
+        return;
+    };
+    // A second import can arrive while the replacement account is being
+    // verified. Preserve any newer pause/seek intent recorded in that gap.
+    if s.connection_resume
+        .as_ref()
+        .is_some_and(|(generation, source, _, _)| {
+            *generation == s.generation && *source == track.source
+        })
+    {
+        return;
+    }
+    s.connection_resume = s
+        .engine
+        .as_ref()
+        .map(|engine| engine.snapshot())
+        .filter(|snapshot| snapshot.error.is_some() || (engine_replaced && s.active_playback))
+        .map(|snapshot| {
+            (
+                s.generation,
+                track.source.clone(),
+                snapshot.position,
+                snapshot.paused,
+            )
+        });
+}
+
 fn adopt_saved_connection(s: &mut State, u: &AppWindow, tx: &mpsc::SyncSender<LibraryResult>) {
     if !s.connection_retry.ready() {
         return;
@@ -767,50 +859,14 @@ fn adopt_saved_connection(s: &mut State, u: &AppWindow, tx: &mpsc::SyncSender<Li
         }
         if let Some(engine) = &s.engine {
             let _ = engine.prepare_next(None);
-            let snapshot = engine.snapshot();
-            if snapshot.error.is_some() {
-                s.connection_resume = s
-                    .settings
-                    .queue
-                    .current
-                    .and_then(|index| s.settings.queue.tracks.get(index))
-                    .map(|track| {
-                        (
-                            s.generation,
-                            track.source.clone(),
-                            snapshot.position,
-                            snapshot.paused,
-                        )
-                    });
-            }
         }
+        remember_connection_resume(s, false);
         s.saved_connection = saved.clone();
         s.account_error = false;
         u.set_error_is_account(false);
         u.set_error_message("".into());
     } else {
-        let resume = s
-            .engine
-            .as_ref()
-            .map(|engine| engine.snapshot())
-            .filter(|snapshot| s.active_playback || snapshot.error.is_some())
-            .and_then(|snapshot| {
-                s.settings
-                    .queue
-                    .current
-                    .and_then(|index| s.settings.queue.tracks.get(index))
-                    .map(|track| {
-                        (
-                            s.generation,
-                            track.source.clone(),
-                            snapshot.position,
-                            snapshot.paused,
-                        )
-                    })
-            });
-        if resume.is_some() {
-            s.connection_resume = resume;
-        }
+        remember_connection_resume(s, true);
         if saved.is_none() {
             s.connection_resume = None;
         }
@@ -867,6 +923,8 @@ fn configure_account_playback(s: &mut State, u: &AppWindow) -> bool {
     s.radio_resume_when_ready = false;
     s.radio_requests.reset();
     s.detail_tracks.clear();
+    s.detail_cover_url = None;
+    u.set_forward_collection(false);
     s.artist_origin = None;
     u.set_artist_picker_open(false);
     u.set_artist_choices(ModelRc::new(VecModel::default()));
@@ -941,6 +999,9 @@ fn refresh_library_models(s: &State, u: &AppWindow) {
                 browse_layout::Layout::Spotlight => {
                     u.global::<LayoutMetrics>().get_home_spotlight_height()
                 }
+                browse_layout::Layout::Editorial => {
+                    u.global::<LayoutMetrics>().get_home_editorial_height()
+                }
                 browse_layout::Layout::Compact => {
                     u.global::<LayoutMetrics>().get_home_compact_height()
                 }
@@ -955,6 +1016,11 @@ fn refresh_library_models(s: &State, u: &AppWindow) {
                 }
         }),
     );
+    let featured = home_groups
+        .first()
+        .filter(|group| group.layout == browse_layout::Layout::Editorial)
+        .map(|group| group.start..group.start + group.count)
+        .unwrap_or_default();
     let home_images = artwork_view::group_image_range(&home_groups, visible_groups);
     u.set_home_browse_rows(update_model(
         u.get_home_browse_rows(),
@@ -966,6 +1032,7 @@ fn refresh_library_models(s: &State, u: &AppWindow) {
                 title: g.title.clone().into(),
                 layout: match g.layout {
                     browse_layout::Layout::Spotlight => "spotlight",
+                    browse_layout::Layout::Editorial => "editorial",
                     browse_layout::Layout::Compact => "compact",
                     browse_layout::Layout::Tiles => "tiles",
                 }
@@ -1008,17 +1075,24 @@ fn refresh_library_models(s: &State, u: &AppWindow) {
             subtitle: p.subtitle.clone().into(),
             kind: p.kind.clone().into(),
             shelf: p.shelf.clone().into(),
-            artwork: p
-                .artwork_url
-                .as_deref()
-                .filter(|_| {
-                    home_images.contains(&index)
-                        && !u.get_library_open()
-                        && !u.get_detail_open()
-                        && !u.get_search_open()
-                })
-                .map(|url| artwork.get_or_request(url))
-                .unwrap_or_default(),
+            artwork: if home_images.contains(&index) && u.get_home_artwork_visible() {
+                let large = p
+                    .featured_artwork_url
+                    .as_deref()
+                    .filter(|_| featured.contains(&index))
+                    .map(|url| artwork.get_or_request_feature(url))
+                    .unwrap_or_default();
+                if large.size().width > 0 {
+                    large
+                } else {
+                    p.artwork_url
+                        .as_deref()
+                        .map(|url| artwork.get_or_request(url))
+                        .unwrap_or_default()
+                }
+            } else {
+                slint::Image::default()
+            },
         })
         .collect();
     u.set_recommendations(update_model(u.get_recommendations(), cards));
@@ -1212,6 +1286,13 @@ fn content_rows(
         .collect()
 }
 fn refresh_content_models(s: &State, u: &AppWindow) {
+    let cover = s
+        .detail_cover_url
+        .as_deref()
+        .filter(|_| u.get_detail_open() && u.get_detail_has_cover() && !u.get_detail_is_artist())
+        .map(|url| s.artwork.borrow_mut().get_or_request(url))
+        .unwrap_or_default();
+    u.set_detail_cover(cover);
     search_results::refresh(s, u);
     let selected = browse_filter::matching(&s.detail_tracks, 0, &u.get_detail_filter());
     u.set_detail_matches(update_model(
@@ -1226,7 +1307,7 @@ fn refresh_content_models(s: &State, u: &AppWindow) {
             u.get_detail_open(),
             u.get_detail_artwork_y(),
             u.get_detail_artwork_height(),
-            u.global::<LayoutMetrics>().get_browse_row_height(),
+            u.get_detail_row_height(),
             &selected,
         ),
     ));
@@ -1235,7 +1316,7 @@ fn refresh_content_models(s: &State, u: &AppWindow) {
         content_rows(
             &s.search_tracks,
             s,
-            u.get_search_open(),
+            u.get_search_open() && !u.get_detail_open(),
             u.get_search_artwork_y(),
             u.get_search_artwork_height(),
             u.global::<LayoutMetrics>().get_browse_row_height(),
@@ -1403,6 +1484,16 @@ fn refresh(ui: &AppWindow, state: &State) {
         .take(queue_images.len())
         .copied()
         .collect();
+    let jam_images = artwork_view::visible_range(
+        ui.get_jam_queue_y(),
+        ui.get_jam_queue_height(),
+        state
+            .settings
+            .queue
+            .tracks
+            .iter()
+            .map(|_| ui.global::<LayoutMetrics>().get_jam_row_height()),
+    );
     let current_art = state
         .settings
         .queue
@@ -1429,6 +1520,9 @@ fn refresh(ui: &AppWindow, state: &State) {
                 .as_deref()
                 .filter(|_| {
                     index == current
+                        || (ui.get_home_next_artwork_visible()
+                            && current.checked_add(1) == Some(index))
+                        || (ui.get_jam_queue_visible() && jam_images.contains(&index))
                         || (ui.get_queue_open()
                             && index >= current
                             && queue_images.contains(&index))
@@ -2069,6 +2163,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         recommendations: Vec::new(),
         discovery: discovery::Discovery::default(),
         detail_tracks: Vec::new(),
+        detail_cover_url: None,
         artist_origin: None,
         search_tracks: Vec::new(),
         search_cards: Vec::new(),
@@ -2676,6 +2771,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let state = state.clone();
         ui.on_close_detail(move || {
             if let Some(u) = weak.upgrade() {
+                if u.get_detail_open() {
+                    u.set_forward_collection(!u.get_detail_is_artist() && !u.get_detail_busy());
+                    u.set_playlist_manage_mode(0);
+                }
                 u.set_detail_open(false);
                 u.set_artist_picker_open(false);
                 state.borrow_mut().artist_origin = None;
@@ -2705,7 +2804,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let state = state.clone();
         ui.on_close_search(move || {
             if let Some(u) = weak.upgrade() {
-                state.borrow().search_cancel.store(true, Ordering::Release);
+                let mut s = state.borrow_mut();
+                s.search_cancel.store(true, Ordering::Release);
+                s.search_generation = s.search_generation.wrapping_add(1);
+                u.set_search_busy(false);
                 u.set_search_open(false);
             }
         });
@@ -3564,15 +3666,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     u.get_library_columns(),
                     u.get_home_columns(),
                     u.get_library_grid(),
+                    u.get_home_next_artwork_visible(),
                     u.get_library_open(),
                     u.get_detail_open(),
                     u.get_search_open(),
                     u.get_queue_open(),
+                    u.get_jam_queue_visible(),
+                    u.get_home_artwork_visible(),
                     u.get_playlist_picker_open(),
                     [
                         (u.get_library_artwork_y(), u.get_library_artwork_height()),
                         (u.get_home_artwork_y(), u.get_home_artwork_height()),
                         (u.get_queue_artwork_y(), u.get_queue_artwork_height()),
+                        (u.get_jam_queue_y(), u.get_jam_queue_height()),
                         (u.get_detail_artwork_y(), u.get_detail_artwork_height()),
                         (u.get_search_artwork_y(), u.get_search_artwork_height()),
                         (u.get_playlist_picker_artwork_y(), u.get_playlist_picker_artwork_height()),
@@ -3620,6 +3726,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         Ok(tide_provider::Response::Library { .. }
                             | tide_provider::Response::Tracks { .. }
                             | tide_provider::Response::Home { .. }
+                            | tide_provider::Response::Explore { .. }
+                            | tide_provider::Response::Mood { .. }
+                            | tide_provider::Response::Browse { .. }
                             | tide_provider::Response::Artist { .. }
                             | tide_provider::Response::Artists { .. })
                     ) {
@@ -3674,6 +3783,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                             }
                             request_library(&mut s, &u, &library_tx, tide_provider::Request::Home);
+                        }
+                        Ok(tide_provider::Response::Explore { cards, categories, categories_available, truncated }) => {
+                            library_browse::receive_explore(&mut s, &u, cards, categories, categories_available, truncated);
+                        }
+                        Ok(tide_provider::Response::Mood { cards, truncated }) => {
+                            library_browse::receive(&mut s, &u, tide_provider::BrowseSection::Explore, cards, truncated);
                         }
                         Ok(tide_provider::Response::Browse { section, cards, truncated }) => {
                             library_browse::receive(&mut s, &u, section, cards, truncated);
@@ -3890,9 +4005,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             u.set_search_busy(false);
                             refresh_content_models(&s, &u);
                         }
-                        Err(e) => {
+                        Err(search_results::Failure::Session) => {
                             u.set_search_busy(false);
-                            u.set_search_note(e.into());
+                            let same_connection = s.pending_saved_connection.is_none()
+                                && s.saved_connection.is_some()
+                                && s.provider.as_ref().and_then(|p| p.saved_connection().ok()).flatten()
+                                    == s.saved_connection;
+                            if same_connection {
+                                require_reconnect(&mut s, &u);
+                                u.set_search_note("Reconnect in Account to continue searching YouTube Music.".into());
+                            }
+                        }
+                        Err(search_results::Failure::Message(message)) => {
+                            u.set_search_busy(false);
+                            u.set_search_note(message.into());
                         }
                     }
                 }
@@ -4128,6 +4254,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 tide_provider::Card {
                     artists: Vec::new(),
                     duration_seconds: None,
+                    featured_artwork_url: None,
                     artwork_url: None,
                     id: "fixture0001".into(),
                     title: "A Quiet Sun".into(),
@@ -4138,6 +4265,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 tide_provider::Card {
                     artists: Vec::new(),
                     duration_seconds: None,
+                    featured_artwork_url: None,
                     artwork_url: None,
                     id: "PLfixture".into(),
                     title: "Your evening mix".into(),
@@ -4148,6 +4276,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 tide_provider::Card {
                     artists: Vec::new(),
                     duration_seconds: None,
+                    featured_artwork_url: None,
                     artwork_url: None,
                     id: "MPREfixture".into(),
                     title: "Midnight Geometry".into(),

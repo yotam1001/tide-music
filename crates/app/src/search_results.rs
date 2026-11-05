@@ -5,7 +5,11 @@ pub(super) enum Results {
     Songs(Vec<Track>),
     Collections(Vec<Card>),
 }
-pub(super) type Sender = mpsc::SyncSender<(u64, Result<Results, String>)>;
+pub(super) enum Failure {
+    Session,
+    Message(String),
+}
+pub(super) type Sender = mpsc::SyncSender<(u64, Result<Results, Failure>)>;
 
 fn kind(index: i32) -> Option<SearchKind> {
     match index {
@@ -33,15 +37,17 @@ fn fetch(
     kind: SearchKind,
     provider: Option<tide_provider::Provider>,
     cancel: Arc<AtomicBool>,
-) -> Result<Results, String> {
+) -> Result<Results, Failure> {
     let Some(provider) = provider else {
         return if kind == SearchKind::Songs {
-            search(query, cancel).map(Results::Songs)
+            search(query, cancel)
+                .map(Results::Songs)
+                .map_err(Failure::Message)
         } else {
-            Err(
+            Err(Failure::Message(
                 "Connect your YouTube Music account to search albums, artists and playlists."
                     .into(),
-            )
+            ))
         };
     };
     match provider.execute(Request::Search { query, kind }, cancel) {
@@ -60,10 +66,10 @@ fn fetch(
                 Results::Collections(cards)
             })
         }
-        _ => Err(
-            "YouTube Music search could not finish. Retry, or check your connection in Account."
-                .into(),
-        ),
+        Ok(Response::Error { code }) if code == "session" => Err(Failure::Session),
+        _ => Err(Failure::Message(
+            "YouTube Music search could not finish. Retry in a moment.".into(),
+        )),
     }
 }
 pub(super) fn start(s: &mut State, ui: &AppWindow, tx: &Sender, query: String, index: i32) {
@@ -73,6 +79,7 @@ pub(super) fn start(s: &mut State, ui: &AppWindow, tx: &Sender, query: String, i
     if s.search_worker.is_some() {
         return;
     }
+    ui.set_forward_collection(false);
     if query.trim().is_empty() || query.len() > 512 || query.chars().any(char::is_control) {
         ui.set_search_open(true);
         ui.set_detail_open(false);
@@ -186,6 +193,7 @@ mod tests {
             subtitle: String::new(),
             shelf: String::new(),
             artists: Vec::new(),
+            featured_artwork_url: None,
             artwork_url: None,
             duration_seconds: None,
         };

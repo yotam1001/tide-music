@@ -126,6 +126,7 @@ fn repeated_open_mini_minimize_and_close_release_view_resources() {
             (0..1000)
                 .map(|i| LyricRow {
                     text: format!("Synthetic line {i} for lifecycle testing").into(),
+                    word_timed: false,
                 })
                 .collect::<Vec<_>>(),
         )));

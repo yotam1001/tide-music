@@ -14,7 +14,9 @@ import subprocess
 import sys
 import tempfile
 import time
+import unicodedata
 import warnings
+from itertools import islice
 from urllib.parse import urlsplit
 
 MAX_INPUT = 65536
@@ -26,6 +28,7 @@ MAX_HOME_CARDS = MAX_HOME_SHELVES * MAX_HOME_ITEMS_PER_SHELF
 MAX_SUPERMIX_SHELVES = 20
 MAX_LIBRARY_CARDS = 200
 MAX_SEARCH_CARDS = 40
+MAX_EXPLORE_CATEGORIES = 128
 ARTWORK_SIDE = 160  # Match the bounded native thumbnail cache, not full-size artwork.
 ARTWORK_HOSTS = ("ytimg.com", "ggpht.com", "googleusercontent.com")
 LOGIN_SECONDS = 8 * 60
@@ -490,7 +493,7 @@ def identifier(value, video=False):
     return value if re.fullmatch(pattern, value) else ""
 
 
-def artwork_url(item):
+def artwork_url(item, side=ARTWORK_SIDE, minimum=0):
     """Choose a small public image without forwarding any account headers."""
     thumbnails = item.get("thumbnails") or item.get("thumbnail") or []
     if not isinstance(thumbnails, list):
@@ -515,8 +518,26 @@ def artwork_url(item):
         width, height = thumbnail.get("width"), thumbnail.get("height")
         size = max(width, height) if (type(width) is int and type(height) is int
                                      and 0 < width <= 8192 and 0 < height <= 8192) else 8192
-        candidates.append((abs(size - ARTWORK_SIDE), size, url))
+        if not minimum or minimum <= size <= 1000:
+            candidates.append((abs(size - side), size, url))
     return min(candidates)[2] if candidates else None
+
+
+def featured_artwork_url(item, small):
+    large = artwork_url(item, side=320, minimum=240)
+    if large or not small:
+        return large
+    # YouTube Music often returns only 60px and 120px variants. Its public
+    # Google artwork URLs encode the dimensions in a final path suffix.
+    parsed = urlsplit(small)
+    host = parsed.hostname or ""
+    if parsed.query or parsed.fragment or not any(
+            host == domain or host.endswith("." + domain)
+            for domain in ("googleusercontent.com", "ggpht.com")):
+        return None
+    larger, count = re.subn(r"=w[0-9]{1,4}-h[0-9]{1,4}(-l[0-9]{1,3}-rj)$",
+                           lambda match: "=w320-h320" + match.group(1), small)
+    return larger if count and larger != small else None
 
 
 def artist_names(item):
@@ -626,6 +647,43 @@ def playlist_context(playlist, data):
     return {"id": playlist, "editable": data.get("owned") is True, "entries": entries}
 
 
+def valid_playlist_title(title):
+    return (isinstance(title, str) and bool(title.strip()) and len(title) <= 100
+            and not any(ord(c) < 32 or 127 <= ord(c) <= 159 or c in "<>" for c in title))
+
+
+def manage_playlist(client, request, kind):
+    fields = {"kind"}
+    if kind != "playlistcreate":
+        fields.add("playlist_id")
+    if kind != "playlistdelete":
+        fields.add("title")
+    title = request.get("title")
+    playlist = identifier(request.get("playlist_id"))
+    if (set(request) != fields or ("title" in fields and not valid_playlist_title(title))
+            or ("playlist_id" in fields and not (playlist.startswith("PL") and len(playlist) > 2))):
+        return {"type": "error", "code": "feedback_invalid"}
+    try:
+        if kind == "playlistcreate":
+            playlist = identifier(client.create_playlist(title.strip(), "", privacy_status="PRIVATE"))
+            confirmed = playlist.startswith("PL") and len(playlist) > 2
+        else:
+            data = client.get_playlist(playlist, limit=1)
+            if not isinstance(data, dict) or data.get("owned") is not True:
+                return {"type": "error", "code": "feedback_readonly"}
+            response = (client.edit_playlist(playlist, title=title.strip()) if kind == "playlistrename"
+                        else client.delete_playlist(playlist))
+            status = response.get("status") if isinstance(response, dict) else response
+            confirmed = status == "STATUS_SUCCEEDED"
+        if confirmed:
+            return {"type": "feedback", "result": {"operation": kind, "video_id": "",
+                    "playlist_id": playlist, "rating": None, "entry_id": None}}
+    except Exception:
+        # A timed-out write may have taken effect. Never retry it automatically.
+        pass
+    return {"type": "error", "code": "feedback_unconfirmed"}
+
+
 def feedback(client, request):
     """Never replay a collection write, or serialize the provider's raw reply."""
     fields = {
@@ -638,6 +696,8 @@ def feedback(client, request):
     if not isinstance(request, dict):
         return {"type": "error", "code": "feedback_invalid"}
     kind = request.get("kind")
+    if kind in ("playlistcreate", "playlistrename", "playlistdelete"):
+        return manage_playlist(client, request, kind)
     video = identifier(request.get("video_id"), True)
     if not isinstance(kind, str) or kind not in fields or set(request) != fields[kind] or not video:
         return {"type": "error", "code": "feedback_invalid"}
@@ -726,6 +786,63 @@ def lrc_lines(raw, duration):
     return lines or None
 
 
+def word_timed_lines(raw, duration):
+    """Read bounded Lyricsfile data without YAML tags, anchors or aliases."""
+    if not isinstance(raw, str) or len(raw.encode("utf-8")) > 128_000:
+        return None
+    try:
+        from ruamel.yaml import YAML
+        from ruamel.yaml.tokens import AliasToken, AnchorToken, TagToken
+        parser = YAML(typ="safe", pure=True)
+        parser.max_depth = 12
+        if any(isinstance(token, (AliasToken, AnchorToken, TagToken)) for token in parser.scan(raw)):
+            return None
+        document = parser.load(raw)
+    except Exception:
+        return None
+
+    rows = document.get("lines") if isinstance(document, dict) else None
+    if not isinstance(rows, list) or not 1 <= len(rows) <= 1000:
+        return None
+    result, previous = [], -1
+    limit = (duration + 5) * 1000
+    for row in rows:
+        if not isinstance(row, dict):
+            return None
+        text, start, end = row.get("text"), row.get("start_ms"), row.get("end_ms")
+        if (not isinstance(text, str) or len(text) > 500 or clean(text, 500) != text
+                or type(start) is not int or not max(previous, 0) <= start <= limit
+                or end is not None and (type(end) is not int or not start <= end <= limit)):
+            return None
+        previous = start
+        words = row.get("words", [])
+        if not isinstance(words, list) or len(words) > 100:
+            return None
+        ends, pieces, last = [], [], start
+        for word in words:
+            if not isinstance(word, dict):
+                return None
+            piece, at = word.get("text"), word.get("start_ms")
+            if not isinstance(piece, str) or not piece or type(at) is not int or not last <= at <= (end if end is not None else limit):
+                return None
+            pieces.append(piece)
+            ends.append(at)
+            last = at
+        line = {"text": text, "start_ms": start, "end_ms": end}
+        # The desktop highlight clips a left-to-right text run. Mixed-direction
+        # lyrics retain whole-line highlighting.
+        if (ends and "".join(pieces) == text
+                and not any(unicodedata.bidirectional(char) in ("R", "AL", "AN") for char in text)):
+            boundary = 0
+            line["words"] = []
+            for piece, at in zip(pieces, ends):
+                boundary += len(piece.encode("utf-8"))
+                line["words"].append({"start_ms": at, "end_byte": boundary})
+            has_words = True
+        result.append(line)
+    return result
+
+
 def lrclib_lyrics(watch, video):
     """Public metadata only: NEVER use the authenticated YouTube session here."""
     from urllib.request import Request, urlopen
@@ -739,21 +856,48 @@ def lrclib_lyrics(watch, video):
     duration = duration_seconds({**track, "duration": track.get("duration") or track.get("length")})
     if not title or not artist or not duration or not 1 <= duration <= 3600:
         return None
-    request = Request("https://lrclib.net/api/get?" + urlencode({"track_name": title, "artist_name": artist, "duration": duration}), headers={"User-Agent": "Tide/0.4.10 (https://github.com/yotam1001/tide-music)"})
-    try:
+    def lookup(endpoint, params):
+        request = Request("https://lrclib.net/api/" + endpoint + "?" + urlencode(params),
+                          headers={"User-Agent": "Tide/0.4.10 (https://github.com/yotam1001/tide-music)"})
         # A separate standard-library request carries no Google cookies/headers.
         with urlopen(request, timeout=3) as response:
             raw = response.read(256_001)
-        if len(raw) > 256_000:
-            return None
-        record = json.loads(raw)
-        normalize = lambda value: "".join(c for c in value.casefold() if c.isalnum()) if isinstance(value, str) else ""
-        if not isinstance(record, dict) or normalize(record.get("trackName")) != normalize(title) or normalize(record.get("artistName")) != normalize(artist):
-            return None
-        recorded_duration = record.get("duration")
-        if type(recorded_duration) not in (int, float) or not abs(recorded_duration - duration) <= 2:
-            return None
-        lines = lrc_lines(record.get("syncedLyrics"), duration)
+        return json.loads(raw) if len(raw) <= 256_000 else None
+
+    def normalize(value):
+        return "".join(c for c in value.casefold() if c.isalnum()) if isinstance(value, str) else ""
+
+    params = {"track_name": title, "artist_name": artist}
+    try:
+        try:
+            record = lookup("get", {**params, "duration": duration})
+        except HTTPError as error:
+            if error.code != 404:
+                raise
+            record = None
+
+        def matched_lines(candidate):
+            if not isinstance(candidate, dict):
+                return None
+            if (normalize(candidate.get("trackName")) != normalize(title)
+                    or normalize(candidate.get("artistName")) != normalize(artist)):
+                return None
+            recorded_duration = candidate.get("duration")
+            if type(recorded_duration) not in (int, float) or not abs(recorded_duration - duration) <= 2:
+                return None
+            lines = (word_timed_lines(candidate.get("lyricsfile"), duration)
+                     if candidate.get("hasWordSync") is True else None)
+            lines = lines or lrc_lines(candidate.get("syncedLyrics"), duration)
+            return lines if lines and any(line["text"] for line in lines) else None
+
+        lines = matched_lines(record)
+        if not lines:
+            candidates = lookup("search", params)
+            if isinstance(candidates, list):
+                for candidate in candidates[:20]:
+                    lines = matched_lines(candidate)
+                    if lines:
+                        break
         if lines:
             return {"type": "lyrics", "lines": lines, "synced": True, "source": "Source: LRCLIB", "retry_after_seconds": 0}
     except HTTPError as error:
@@ -781,22 +925,21 @@ def lyrics(client, video, allow_external=True):
     try:
         watch = client.get_watch_playlist(videoId=video, limit=1)
         browse = watch.get("lyrics") if isinstance(watch, dict) else None
-        if not isinstance(browse, str) or not re.fullmatch(r"MPLYt[A-Za-z0-9_=\-]{1,500}", browse):
-            return empty
         data = None
         failed = False
-        try:
-            data = client.get_lyrics(browse, timestamps=True)
-        except Exception:
+        if isinstance(browse, str) and re.fullmatch(r"MPLYt[A-Za-z0-9_=\-]{1,500}", browse):
             try:
-                data = client.get_lyrics(browse, timestamps=False)
+                data = client.get_lyrics(browse, timestamps=True)
             except Exception:
-                failed = True
-        fallback = None
-        if not isinstance(data, dict) or data.get("hasTimestamps") is not True:
-            fallback = lrclib_lyrics(watch, video) if allow_external else None
-            if fallback and fallback["lines"]:
-                return fallback
+                try:
+                    data = client.get_lyrics(browse, timestamps=False)
+                except Exception:
+                    failed = True
+        native_synced = isinstance(data, dict) and data.get("hasTimestamps") is True
+        fallback = lrclib_lyrics(watch, video) if allow_external else None
+        if fallback and fallback["lines"] and (
+                not native_synced or any(line.get("words") for line in fallback["lines"])):
+            return fallback
         if not isinstance(data, dict):
             return fallback or ({"type": "error", "code": "lyrics_unavailable"} if failed else empty)
         synced = data.get("hasTimestamps") is True
@@ -839,10 +982,73 @@ def lyrics(client, video, allow_external=True):
         return {"type": "error", "code": "lyrics_unavailable"}
 
 
+def mood_params(value):
+    """Public opaque browse parameters, never a URL or filesystem destination."""
+    return isinstance(value, str) and 1 <= len(value) <= 2048 and all(33 <= ord(c) < 127 for c in value)
+
+
 def run(client, request):
     if request.get("action") == "lyrics":
         return lyrics(client, request.get("video_id"), request.get("allow_external", True) is True)
     action = request["action"]
+    if action == "explore":
+        data = client.get_explore()
+        data = data if isinstance(data, dict) else {}
+        cards = []
+        truncated = False
+        for key, kind, title in [("new_releases", "album", "New releases"),
+                                 ("top_songs", "song", "Top songs"),
+                                 ("trending", "song", "Trending")]:
+            items = data.get(key, [])
+            if isinstance(items, dict):
+                items = items.get("items", [])
+            items = items if isinstance(items, list) else []
+            truncated |= len(items) > MAX_SEARCH_CARDS
+            music = [item for item in items[:MAX_SEARCH_CARDS]
+                     if isinstance(item, dict) and not item.get("podcast")
+                     and item.get("resultType") not in ("podcast", "episode")
+                     and item.get("videoType") != "MUSIC_VIDEO_TYPE_PODCAST_EPISODE"]
+            cards.extend(browse_cards(music, kind, title))
+        try:
+            category_data = client.get_mood_categories()
+            categories_available = isinstance(category_data, dict)
+        except Exception:
+            # A category/parser failure must not discard otherwise valid charts.
+            category_data, categories_available = {}, False
+        categories, seen = [], set()
+        for group, items in islice(category_data.items() if isinstance(category_data, dict) else [], 8):
+            if not isinstance(group, str) or not isinstance(items, list):
+                continue
+            for item in items[:MAX_EXPLORE_CATEGORIES + 1]:
+                if not isinstance(item, dict) or not mood_params(item.get("params")):
+                    continue
+                title, params = clean(item.get("title"), 80), item["params"]
+                if not title or params in seen:
+                    continue
+                seen.add(params)
+                if len(categories) == MAX_EXPLORE_CATEGORIES:
+                    truncated = True
+                    break
+                categories.append({"title": title, "group": clean(group, 80), "params": params})
+        return {"type": "explore", "cards": cards, "categories": categories,
+                "categories_available": categories_available, "truncated": truncated}
+    if action == "mood":
+        params = request.get("params")
+        if not mood_params(params):
+            return {"type": "error", "code": "explore_unavailable"}
+        items = client.get_mood_playlists(params)
+        normalized = []
+        for item in items[:MAX_LIBRARY_CARDS] if isinstance(items, list) else []:
+            if not isinstance(item, dict):
+                continue
+            item = dict(item)
+            identity = item.get("playlistId") or item.get("browseId")
+            item["browseId"] = identity.removeprefix("VL") if isinstance(identity, str) else ""
+            if isinstance(item.get("author"), dict):
+                item["author"] = [item["author"]]
+            normalized.append(item)
+        return {"type": "mood", "cards": browse_cards(normalized, "playlist", ""),
+                "truncated": isinstance(items, list) and len(items) > MAX_LIBRARY_CARDS}
     if action == "feedback":
         return feedback(client, request.get("request"))
     if action == "search":
@@ -988,7 +1194,16 @@ def run(client, request):
             items = data.get("tracks", []) if isinstance(data, dict) else []
             if not isinstance(items, list):
                 return empty
-            return {"type": "tracks", "tracks": tracks(items, MAX_RADIO_TRACKS, (video,), True),
+            excluded = {video}
+            for item in items[:MAX_TRACKS]:
+                if not isinstance(item, dict):
+                    continue
+                if item.get("videoId") == video or item.get("likeStatus") == "DISLIKE":
+                    excluded.add(identifier(item.get("videoId"), True))
+                    counterpart = item.get("counterpart")
+                    if isinstance(counterpart, dict):
+                        excluded.add(identifier(counterpart.get("videoId"), True))
+            return {"type": "tracks", "tracks": tracks(items, MAX_RADIO_TRACKS, excluded, True),
                     "truncated": len(items) > MAX_RADIO_TRACKS}
         except Exception as error:
             return verified_request_failure(error, client)
@@ -1039,10 +1254,12 @@ def run(client, request):
                 if not item_id or key in seen:
                     continue
                 seen.add(key)
+                thumbnail = artwork_url(item)
                 cards.append({"id": item_id, "title": clean(item.get("title")),
                               "subtitle": artist_names(item), "artists": artist_links(item),
                               "kind": kind, "shelf": clean(shelf.get("title")),
-                              "artwork_url": artwork_url(item),
+                              "artwork_url": thumbnail,
+                              "featured_artwork_url": featured_artwork_url(item, thumbnail),
                               "duration_seconds": duration_seconds(item)})
                 if len(cards) >= MAX_HOME_CARDS:
                     return {"type": "home", "cards": cards}

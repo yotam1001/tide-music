@@ -197,9 +197,9 @@ fn guest_mini_keeps_leave_and_volume_reachable_and_blocks_transport() {
     ui.set_jam_open(true);
     let opened = draw(&window, 1140, 800);
     assert_eq!(
-        closed[250 * 1140 + 500],
-        opened[250 * 1140 + 500],
-        "Jam controls darkened the player background"
+        closed[550 * 1140 + 1000],
+        opened[550 * 1140 + 1000],
+        "Jam page changed the base canvas instead of using the native player surface"
     );
     ui.set_jam_open(false);
     ui.set_source_input("".into());

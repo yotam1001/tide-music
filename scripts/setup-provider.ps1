@@ -30,6 +30,7 @@ Expand-TideArchive $taskPythonZip $taskInterpreter
 $taskPackages = Join-Path $taskInterpreter 'site-packages'
 [IO.Directory]::CreateDirectory($taskPackages) | Out-Null
 $taskWheelHashes = @{
+    'ruamel_yaml-0.19.1-py3-none-any.whl'='27592957fedf6e0b62f281e96effd28043345e0e66001f97683aa9a40c667c93'
     'ytmusicapi-1.12.3-py3-none-any.whl'='f65db840907a43ca23b29bd563951a1e390fbe2089d7aa4ddbe2043824b2acd9'
     'requests-2.34.2-py3-none-any.whl'='2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0'
     'charset_normalizer-3.5.2-py3-none-any.whl'='b6b751274acb69d77b3323d6b7dbaa3c7fdfc1eb829b7eb61d262f32e1af9685'
@@ -38,7 +39,7 @@ $taskWheelHashes = @{
     'certifi-2026.7.22-py3-none-any.whl'='62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775'
 }
 foreach ($taskRequirement in Get-Content -LiteralPath (Join-Path $taskRoot 'helpers/requirements.txt')) {
-    if ($taskRequirement -notmatch '^([a-zA-Z0-9_-]+)==([0-9.]+)$') { throw 'Only exact pinned helper requirements are supported.' }
+    if ($taskRequirement -notmatch '^([a-zA-Z0-9_.-]+)==([0-9.]+)$') { throw 'Only exact pinned helper requirements are supported.' }
     $taskName = $Matches[1]; $taskVersion = $Matches[2]
     $taskMetadata = Invoke-RestMethod -Uri "https://pypi.org/pypi/$taskName/$taskVersion/json" -TimeoutSec 30
     $taskWheels = @($taskMetadata.urls | Where-Object { $_.packagetype -eq 'bdist_wheel' -and $_.filename -match '-(?:py3|py2\.py3)-none-any\.whl$' -and !$_.yanked })
@@ -51,6 +52,6 @@ foreach ($taskRequirement in Get-Content -LiteralPath (Join-Path $taskRoot 'help
     Expand-TideArchive $taskWheelPath $taskPackages
 }
 [IO.File]::WriteAllText((Join-Path $taskInterpreter 'python314._pth'), "python314.zip`n.`nsite-packages`n", [Text.UTF8Encoding]::new($false))
-& (Join-Path $taskInterpreter 'python.exe') -I -c 'import ytmusicapi, requests, certifi; assert callable(ytmusicapi.YTMusic)'
+& (Join-Path $taskInterpreter 'python.exe') -I -c 'import ytmusicapi, requests, certifi, ruamel.yaml; assert callable(ytmusicapi.YTMusic)'
 if ($LASTEXITCODE -ne 0) { throw 'Managed Python dependency verification failed.' }
 Write-Output 'Private account-helper runtime ready. No system Python installation is required.'

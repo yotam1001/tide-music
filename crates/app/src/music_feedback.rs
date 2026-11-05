@@ -105,6 +105,87 @@ pub fn install(
     ui.set_history_feedback_status(
         "Only real playback is counted. Automated tests never update history.".into(),
     );
+    let create_state = state.clone();
+    let weak = ui.as_weak();
+    ui.on_create_playlist(move |title| {
+        let Some(u) = weak.upgrade() else {
+            return;
+        };
+        let mut s = create_state.borrow_mut();
+        let request = FeedbackRequest::PlaylistCreate {
+            title: title.trim().into(),
+        };
+        if !request.valid() {
+            notice(
+                &mut s,
+                &u,
+                "Enter a playlist name of up to 100 characters without < or >.",
+            );
+        } else if begin(&mut s, request) {
+            u.set_playlist_create_open(false);
+            u.set_playlist_create_title("".into());
+            u.set_collection_busy(true);
+            u.set_rating_busy(true);
+            notice(&mut s, &u, "Creating private playlist…");
+        } else {
+            notice(
+                &mut s,
+                &u,
+                "Wait for the current account action, then try again.",
+            );
+        }
+    });
+    let manage_state = state.clone();
+    let weak = ui.as_weak();
+    ui.on_manage_playlist(move |mode, title| {
+        let Some(u) = weak.upgrade() else {
+            return;
+        };
+        let mut s = manage_state.borrow_mut();
+        if !u.get_detail_open() || u.get_detail_busy() || mode != u.get_playlist_manage_mode() {
+            return;
+        }
+        let Some(playlist) = s.music_feedback.playlist.as_ref().filter(|playlist| {
+            playlist.editable && tide_provider::custom_playlist_id(&playlist.id)
+        }) else {
+            return;
+        };
+        let playlist_id = playlist.id.clone();
+        let request = match mode {
+            1 => FeedbackRequest::PlaylistRename {
+                playlist_id,
+                title: title.trim().into(),
+            },
+            2 => FeedbackRequest::PlaylistDelete { playlist_id },
+            _ => return,
+        };
+        if !request.valid() {
+            notice(
+                &mut s,
+                &u,
+                "Enter a playlist name of up to 100 characters without < or >.",
+            );
+        } else if begin(&mut s, request) {
+            u.set_playlist_manage_mode(0);
+            u.set_collection_busy(true);
+            u.set_rating_busy(true);
+            notice(
+                &mut s,
+                &u,
+                if mode == 1 {
+                    "Renaming playlist…"
+                } else {
+                    "Deleting playlist…"
+                },
+            );
+        } else {
+            notice(
+                &mut s,
+                &u,
+                "Wait for the current account action, then try again.",
+            );
+        }
+    });
     let history_state = state.clone();
     let weak = ui.as_weak();
     ui.on_toggle_history_feedback(move || {
@@ -407,6 +488,14 @@ pub fn set_playlist(
         .as_ref()
         .is_some_and(|p| p.editable);
     u.set_detail_editable(editable);
+    u.set_detail_manageable(
+        s.music_feedback
+            .playlist
+            .as_ref()
+            .is_some_and(|p| p.editable && tide_provider::custom_playlist_id(&p.id)),
+    );
+    u.set_playlist_manage_mode(0);
+    u.set_playlist_manage_title("".into());
     u.set_detail_playlist_known(s.music_feedback.playlist.is_some());
     let entries: Vec<bool> = s
         .music_feedback
@@ -439,6 +528,8 @@ pub fn tick(s: &mut State, u: &AppWindow) {
         s.music_feedback.inspected = false;
         s.music_feedback.picker = None;
         u.set_playlist_picker_open(false);
+        u.set_playlist_create_open(false);
+        u.set_playlist_create_title("".into());
         set_playlist(s, u, None, None);
         u.set_current_rating(0);
         u.set_history_feedback_status(
@@ -500,6 +591,101 @@ pub fn tick(s: &mut State, u: &AppWindow) {
                         }
                     },
                 );
+            }
+            if let FeedbackRequest::PlaylistCreate { title } = &work.request {
+                if let Some(id) = result.and_then(|reply| reply.playlist_id.as_ref()) {
+                    s.library_playlists.retain(|playlist| &playlist.id != id);
+                    s.library_playlists.insert(
+                        0,
+                        tide_provider::Playlist {
+                            id: id.clone(),
+                            title: title.clone(),
+                            subtitle: "Private playlist".into(),
+                            artwork_url: None,
+                            owned: true,
+                        },
+                    );
+                    s.library_playlists.truncate(200);
+                    refresh_library_models(s, u);
+                    notice(s, u, "Private playlist created.");
+                } else {
+                    notice(
+                        s,
+                        u,
+                        "Playlist creation was not confirmed. Refresh Library before trying again.",
+                    );
+                }
+            }
+            match &work.request {
+                FeedbackRequest::PlaylistRename { playlist_id, title } => {
+                    if confirmed {
+                        for playlist in s
+                            .library_playlists
+                            .iter_mut()
+                            .filter(|p| &p.id == playlist_id)
+                        {
+                            playlist.title.clone_from(title);
+                        }
+                        for card in s
+                            .recommendations
+                            .iter_mut()
+                            .chain(&mut s.search_cards)
+                            .chain(&mut s.library_browse.cards)
+                            .filter(|card| card.kind == "playlist" && &card.id == playlist_id)
+                        {
+                            card.title.clone_from(title);
+                        }
+                        if s.music_feedback.detail_revision == work.detail_revision {
+                            u.set_detail_title(title.clone().into());
+                        }
+                        refresh_library_models(s, u);
+                        refresh_content_models(s, u);
+                        notice(s, u, "Playlist renamed.");
+                    } else {
+                        notice(
+                            s,
+                            u,
+                            if error_code == Some("feedback_readonly") {
+                                playlist_error(error_code)
+                            } else {
+                                "The change was not confirmed. Refresh Library before trying again."
+                            },
+                        );
+                    }
+                }
+                FeedbackRequest::PlaylistDelete { playlist_id } => {
+                    if confirmed {
+                        s.library_playlists
+                            .retain(|playlist| &playlist.id != playlist_id);
+                        let keep_card = |card: &tide_provider::Card| {
+                            card.kind != "playlist" || &card.id != playlist_id
+                        };
+                        s.recommendations.retain(keep_card);
+                        s.search_cards.retain(keep_card);
+                        s.library_browse.cards.retain(keep_card);
+                        if s.music_feedback.detail_revision == work.detail_revision {
+                            u.set_forward_collection(false);
+                            u.set_detail_open(false);
+                            set_playlist(s, u, None, None);
+                            s.detail_tracks.clear();
+                            s.detail_cover_url = None;
+                        }
+                        refresh_library_models(s, u);
+                        refresh_content_models(s, u);
+                        notice(s, u, "Playlist deleted. Your playback queue is unchanged.");
+                    } else {
+                        notice(
+                            s,
+                            u,
+                            if error_code == Some("feedback_readonly") {
+                                playlist_error(error_code)
+                            } else {
+                                "The change was not confirmed. Refresh Library before trying again."
+                            },
+                        );
+                    }
+                }
+                _ => {}
             }
             if let FeedbackRequest::PlaylistAdd { .. } = &work.request {
                 notice(

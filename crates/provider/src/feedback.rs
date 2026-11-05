@@ -18,6 +18,16 @@ pub enum FeedbackRequest {
         video_id: String,
         rating: Rating,
     },
+    PlaylistCreate {
+        title: String,
+    },
+    PlaylistRename {
+        playlist_id: String,
+        title: String,
+    },
+    PlaylistDelete {
+        playlist_id: String,
+    },
     PlaylistAdd {
         video_id: String,
         playlist_id: String,
@@ -40,9 +50,24 @@ pub fn valid_identifier(value: &str, maximum: usize) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
 }
 
+fn valid_playlist_title(title: &str) -> bool {
+    !title.trim().is_empty()
+        && title.chars().count() <= 100
+        && !title
+            .chars()
+            .any(|c| c.is_control() || matches!(c, '<' | '>'))
+}
+
+pub fn custom_playlist_id(id: &str) -> bool {
+    id.starts_with("PL") && id.len() > 2 && valid_identifier(id, 160)
+}
+
 impl FeedbackRequest {
     pub fn video_id(&self) -> &str {
         match self {
+            Self::PlaylistCreate { .. }
+            | Self::PlaylistRename { .. }
+            | Self::PlaylistDelete { .. } => "",
             Self::Rating { video_id }
             | Self::Rate { video_id, .. }
             | Self::PlaylistAdd { video_id, .. }
@@ -52,13 +77,22 @@ impl FeedbackRequest {
     }
     pub fn playlist_id(&self) -> Option<&str> {
         match self {
-            Self::PlaylistAdd { playlist_id, .. } | Self::PlaylistRemove { playlist_id, .. } => {
-                Some(playlist_id)
-            }
+            Self::PlaylistAdd { playlist_id, .. }
+            | Self::PlaylistRemove { playlist_id, .. }
+            | Self::PlaylistRename { playlist_id, .. }
+            | Self::PlaylistDelete { playlist_id } => Some(playlist_id),
             _ => None,
         }
     }
     pub fn valid(&self) -> bool {
+        match self {
+            Self::PlaylistCreate { title } => return valid_playlist_title(title),
+            Self::PlaylistRename { playlist_id, title } => {
+                return custom_playlist_id(playlist_id) && valid_playlist_title(title)
+            }
+            Self::PlaylistDelete { playlist_id } => return custom_playlist_id(playlist_id),
+            _ => {}
+        }
         self.video_id().len() == 11
             && valid_identifier(self.video_id(), 11)
             && self
@@ -70,6 +104,17 @@ impl FeedbackRequest {
             }
     }
     pub fn accepts(&self, result: &FeedbackResult) -> bool {
+        if matches!(self, Self::PlaylistCreate { .. }) {
+            return self.valid()
+                && result.operation == FeedbackOperation::PlaylistCreate
+                && result.video_id.is_empty()
+                && result.rating.is_none()
+                && result.entry_id.is_none()
+                && result
+                    .playlist_id
+                    .as_deref()
+                    .is_some_and(custom_playlist_id);
+        }
         if !self.valid()
             || self.video_id() != result.video_id
             || self.playlist_id() != result.playlist_id.as_deref()
@@ -77,6 +122,17 @@ impl FeedbackRequest {
             return false;
         }
         match self {
+            Self::PlaylistCreate { .. } => false,
+            Self::PlaylistRename { .. } => {
+                result.operation == FeedbackOperation::PlaylistRename
+                    && result.rating.is_none()
+                    && result.entry_id.is_none()
+            }
+            Self::PlaylistDelete { .. } => {
+                result.operation == FeedbackOperation::PlaylistDelete
+                    && result.rating.is_none()
+                    && result.entry_id.is_none()
+            }
             Self::Rating { .. } => result.operation == FeedbackOperation::Rating,
             Self::Rate { rating, .. } => {
                 result.operation == FeedbackOperation::Rate && result.rating == Some(*rating)
@@ -96,6 +152,9 @@ impl FeedbackRequest {
 pub enum FeedbackOperation {
     Rating,
     Rate,
+    PlaylistCreate,
+    PlaylistRename,
+    PlaylistDelete,
     PlaylistAdd,
     PlaylistRemove,
     History,
@@ -161,6 +220,30 @@ mod tests {
         assert!(!request.accepts(&result));
         assert!(serde_json::from_str::<FeedbackResult>(r#"{"operation":"rate","video_id":"K4DyBUG242c","rating":"LIKE","cookies":"unexpected"}"#).is_err());
     }
+    #[test]
+    fn delete_requires_confirmation_for_the_exact_custom_playlist() {
+        let request = FeedbackRequest::PlaylistDelete {
+            playlist_id: "PLowned".into(),
+        };
+        let mut reply = FeedbackResult {
+            operation: FeedbackOperation::PlaylistDelete,
+            video_id: String::new(),
+            playlist_id: Some("PLowned".into()),
+            rating: None,
+            entry_id: None,
+        };
+        assert!(request.accepts(&reply));
+        reply.playlist_id = Some("PLother".into());
+        assert!(!request.accepts(&reply));
+        reply.playlist_id = Some("PLowned".into());
+        reply.operation = FeedbackOperation::PlaylistRename;
+        assert!(!request.accepts(&reply));
+        assert!(!FeedbackRequest::PlaylistDelete {
+            playlist_id: "LM".into()
+        }
+        .valid());
+    }
+
     #[test]
     fn playlist_metadata_cannot_authorize_a_different_or_misaligned_list() {
         let mut details = PlaylistDetails {

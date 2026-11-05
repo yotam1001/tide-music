@@ -44,6 +44,61 @@ class FeedbackTests(unittest.TestCase):
         for name in vars(client):
             getattr(client, name).assert_not_called()
 
+    def test_create_playlist_is_private_and_requires_a_confirmed_new_id(self):
+        client = SimpleNamespace(create_playlist=MagicMock(return_value="PLnewfixture"))
+        request = {"kind": "playlistcreate", "title": "  Evening mix  "}
+        reply = feedback(client, request)
+        self.assertEqual(reply["result"]["playlist_id"], "PLnewfixture")
+        client.create_playlist.assert_called_once_with("Evening mix", "", privacy_status="PRIVATE")
+        for response in (None, {}, "STATUS_SUCCEEDED", "https://example.test/PLfake"):
+            client = SimpleNamespace(create_playlist=MagicMock(return_value=response))
+            self.assertEqual(feedback(client, request)["code"], "feedback_unconfirmed")
+            client.create_playlist.assert_called_once()
+        client = SimpleNamespace(create_playlist=MagicMock(side_effect=TimeoutError("private response")))
+        self.assertEqual(feedback(client, request), {"type": "error", "code": "feedback_unconfirmed"})
+        client.create_playlist.assert_called_once()
+
+    def test_create_playlist_rejects_unexpected_fields_and_invalid_titles(self):
+        client = SimpleNamespace(create_playlist=MagicMock())
+        for title in ("", "   ", "a" * 101, "bad\nname", "<title>"):
+            request = {"kind": "playlistcreate", "title": title}
+            self.assertEqual(feedback(client, request)["code"], "feedback_invalid")
+        self.assertEqual(feedback(client, {
+            "kind": "playlistcreate", "title": "Test", "privacy_status": "PUBLIC"
+        })["code"], "feedback_invalid")
+        client.create_playlist.assert_not_called()
+
+    def test_rename_and_delete_only_mutate_owned_custom_playlists(self):
+        for kind, method, extra in (
+            ("playlistrename", "edit_playlist", {"title": " Evening mix "}),
+            ("playlistdelete", "delete_playlist", {}),
+        ):
+            request = {"kind": kind, "playlist_id": "PLfixture", **extra}
+            client = SimpleNamespace(
+                get_playlist=MagicMock(return_value={"owned": False}),
+                edit_playlist=MagicMock(return_value={"status": "STATUS_SUCCEEDED"}),
+                delete_playlist=MagicMock(return_value="STATUS_SUCCEEDED"),
+            )
+            self.assertEqual(feedback(client, request)["code"], "feedback_readonly")
+            getattr(client, method).assert_not_called()
+            self.assertEqual(feedback(client, dict(request, playlist_id="LM"))["code"], "feedback_invalid")
+            client.get_playlist.assert_called_once_with("PLfixture", limit=1)
+            client.get_playlist.return_value = {"owned": True}
+            reply = feedback(client, request)
+            self.assertEqual(reply["result"]["operation"], kind)
+            self.assertEqual(reply["result"]["playlist_id"], "PLfixture")
+            args = {"title": "Evening mix"} if extra else {}
+            getattr(client, method).assert_called_once_with("PLfixture", **args)
+
+    def test_unconfirmed_delete_is_not_replayed(self):
+        client = SimpleNamespace(
+            get_playlist=MagicMock(return_value={"owned": True}),
+            delete_playlist=MagicMock(side_effect=TimeoutError("private response")),
+        )
+        result = feedback(client, {"kind": "playlistdelete", "playlist_id": "PLfixture"})
+        self.assertEqual(result, {"type": "error", "code": "feedback_unconfirmed"})
+        client.delete_playlist.assert_called_once_with("PLfixture")
+
     def test_rating_is_explicit_and_returns_no_provider_data(self):
         for rating in ("LIKE", "DISLIKE", "INDIFFERENT"):
             client = self.client()

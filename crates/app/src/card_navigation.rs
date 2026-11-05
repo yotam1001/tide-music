@@ -60,6 +60,7 @@ mod tests {
                 subtitle: String::new(),
                 shelf: String::new(),
                 artists: Vec::new(),
+                featured_artwork_url: None,
                 artwork_url: None,
                 duration_seconds: None,
             };

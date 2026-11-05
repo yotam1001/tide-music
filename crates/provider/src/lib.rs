@@ -16,7 +16,9 @@ use zeroize::Zeroize;
 mod feedback;
 #[cfg(feature = "native-login")]
 pub mod native_login;
-pub use feedback::{FeedbackOperation, FeedbackRequest, FeedbackResult, PlaylistDetails, Rating};
+pub use feedback::{
+    custom_playlist_id, FeedbackOperation, FeedbackRequest, FeedbackResult, PlaylistDetails, Rating,
+};
 
 const MAX_SESSION: usize = 65536;
 // Local encrypted metadata, removed before any headers reach a helper or HTTP.
@@ -139,6 +141,8 @@ pub struct Card {
     pub artists: Vec<tide_core::Artist>,
     #[serde(default)]
     pub artwork_url: Option<String>,
+    #[serde(default)]
+    pub featured_artwork_url: Option<String>,
 }
 #[derive(Clone, Serialize)]
 #[serde(tag = "action", rename_all = "lowercase")]
@@ -154,6 +158,10 @@ pub enum Request {
     LibraryAlbums,
     LibraryArtists,
     History,
+    Explore,
+    Mood {
+        params: String,
+    },
     Search {
         query: String,
         kind: SearchKind,
@@ -192,6 +200,14 @@ pub struct LyricLine {
     pub start_ms: Option<u64>,
     #[serde(default)]
     pub end_ms: Option<u64>,
+    #[serde(default)]
+    pub words: Vec<LyricWord>,
+}
+
+#[derive(Clone, Deserialize, Debug, PartialEq)]
+pub struct LyricWord {
+    pub start_ms: u64,
+    pub end_byte: usize,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
@@ -200,6 +216,7 @@ pub enum BrowseSection {
     Albums,
     Artists,
     History,
+    Explore,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -209,6 +226,13 @@ pub enum SearchKind {
     Albums,
     Artists,
     Playlists,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct ExploreCategory {
+    pub title: String,
+    pub group: String,
+    pub params: String,
 }
 
 #[derive(Deserialize)]
@@ -258,6 +282,16 @@ pub enum Response {
     Search {
         kind: SearchKind,
         cards: Vec<Card>,
+    },
+    Explore {
+        cards: Vec<Card>,
+        categories: Vec<ExploreCategory>,
+        categories_available: bool,
+        truncated: bool,
+    },
+    Mood {
+        cards: Vec<Card>,
+        truncated: bool,
     },
     Error {
         code: String,
@@ -310,6 +344,8 @@ fn decode_helper_reply(bytes: &[u8]) -> Result<HelperReply, &'static str> {
             | Response::Home { .. }
             | Response::Browse { .. }
             | Response::Search { .. }
+            | Response::Explore { .. }
+            | Response::Mood { .. }
             | Response::Artist { .. }
             | Response::Artists { .. }
             | Response::Lyrics { .. }
@@ -1155,6 +1191,20 @@ impl Provider {
             }
             return Err("Saved account changed or request cancelled; refresh to retry".into());
         }
+        // A concurrent successful request may have renewed authentication
+        // after this request took its snapshot. Its old rejection is inconclusive.
+        if !switching && matches!(&reply.response, Response::Error { code } if code == "session") {
+            let current = RefreshedHeaders(Some(self.headers()?));
+            let current_cookie = current
+                .0
+                .as_ref()
+                .and_then(|headers| headers.get("cookie"))
+                .map(String::as_str)
+                .unwrap_or_default();
+            if !same_authentication_cookies(&expected_cookie, current_cookie) {
+                return Err("Session changed while checking the account; refresh to retry".into());
+            }
+        }
         if !switching {
             self.persist_refreshed_headers(
                 &reply.refreshed,
@@ -1370,6 +1420,24 @@ impl Drop for ScopedCookies {
         }
     }
 }
+#[cfg(any(windows, test))]
+fn same_authentication_cookies(before: &str, current: &str) -> bool {
+    let (Ok(before), Ok(current)) = (
+        scoped_header_cookies(before),
+        scoped_header_cookies(current),
+    ) else {
+        return false;
+    };
+    before
+        .0
+        .iter()
+        .filter(|(name, _)| authentication_cookie(name))
+        .eq(current
+            .0
+            .iter()
+            .filter(|(name, _)| authentication_cookie(name)))
+}
+
 fn authentication_cookie(name: &str) -> bool {
     name.starts_with("__Secure-")
         || matches!(
@@ -1712,6 +1780,19 @@ fn unprotect(_: &[u8]) -> Result<Vec<u8>, &'static str> {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn auth_rejection_is_stale_after_cookie_renewal() {
+        let old = "__Secure-3PAPISID=old; VISITOR_INFO1_LIVE=old";
+        assert!(same_authentication_cookies(
+            old,
+            "__Secure-3PAPISID=old; VISITOR_INFO1_LIVE=new"
+        ));
+        assert!(!same_authentication_cookies(
+            old,
+            "__Secure-3PAPISID=new; VISITOR_INFO1_LIVE=old"
+        ));
+    }
+
+    #[test]
     fn read_only_browse_contract_has_distinct_sections_and_retains_cookie_refresh() {
         for (request, action, section) in [
             (
@@ -1775,6 +1856,7 @@ mod tests {
             BrowseSection::Albums => "albums",
             BrowseSection::Artists => "artists",
             BrowseSection::History => "history",
+            BrowseSection::Explore => "explore",
         }
     }
     // These fixtures intentionally use the production machine-wide Windows mutex.

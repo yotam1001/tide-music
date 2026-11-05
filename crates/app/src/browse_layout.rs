@@ -10,6 +10,7 @@ pub struct Group {
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Layout {
     Spotlight,
+    Editorial,
     Tiles,
     Compact,
 }
@@ -26,13 +27,13 @@ pub fn home_groups(labels: &[String], collections: &[bool], columns: usize) -> V
         let mut start = section;
         if section == 0 {
             // Artwork-led shelves on desktop; one compact spotlight on narrow windows.
-            let count = (end - start).min(if columns >= 3 { columns } else { 1 });
+            let count = (end - start).min(if columns >= 3 { columns.min(4) } else { 1 });
             groups.push(Group {
                 start,
                 count,
                 title: labels[section].clone(),
                 layout: if columns >= 3 {
-                    Layout::Tiles
+                    Layout::Editorial
                 } else {
                     Layout::Spotlight
                 },
@@ -105,7 +106,7 @@ mod tests {
             assert_eq!(
                 groups[0].layout,
                 if columns >= 3 {
-                    Layout::Tiles
+                    Layout::Editorial
                 } else {
                     Layout::Spotlight
                 }

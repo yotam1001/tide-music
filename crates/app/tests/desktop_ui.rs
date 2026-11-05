@@ -138,9 +138,13 @@ fn sidebar_home_transport_and_keyboard_shortcuts_keep_their_actions() {
         assert!(ui.get_library_open(), "Library is reachable from the rail");
         click(&ui, 44.0, 114.0);
         assert!(!ui.get_library_open(), "Home is reachable from the rail");
+        click(&ui, 1020.0, 140.0);
+        assert!(ui.get_queue_open(), "Up Next opens the queue");
+        ui.set_queue_open(false);
+        draw(&window, 1140, 800);
         let before = pauses.get();
-        click(&ui, 295.0, 265.0);
-        assert_eq!(pauses.get(), before + 1, "Home current-song action");
+        click(&ui, 570.0, 724.0);
+        assert_eq!(pauses.get(), before + 1, "Play and pause in the footer");
         let before = shuffle.get();
         click(&ui, 468.0, 724.0);
         assert_eq!(shuffle.get(), before + 1, "Shuffle beside transport");
@@ -150,7 +154,7 @@ fn sidebar_home_transport_and_keyboard_shortcuts_keep_their_actions() {
         ui.set_jam_guest(true);
         draw(&window, 1140, 800);
         let before = (pauses.get(), shuffle.get(), repeats.get());
-        click(&ui, 295.0, 265.0);
+        click(&ui, 570.0, 724.0);
         click(&ui, 468.0, 724.0);
         click(&ui, 672.0, 724.0);
         assert_eq!(
