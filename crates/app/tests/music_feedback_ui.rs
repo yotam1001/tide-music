@@ -71,23 +71,19 @@ fn native_ratings_remain_reachable_and_do_not_take_over_transport() {
         ui.set_light_mode(light);
         ui.set_current_rating(0);
         draw(&window, width, height, &format!("ratings-{width}"));
-        let x = width as f32 - ui.global::<LayoutMetrics>().get_footer_actions_width() - 2.0;
+        let actions = if width >= 900 {
+            ui.global::<LayoutMetrics>().get_footer_actions_width()
+        } else {
+            204.0
+        };
+        let x = width as f32 - actions - 2.0;
         let y = height as f32 - 74.0;
         let start = ratings.borrow().len();
         click(&ui, x, y);
         click(&ui, x, y);
-        // Dislike remains available in More, leaving the routine player uncluttered.
-        for _ in 0..2 {
-            click(&ui, width as f32 - 36.0, y);
-            let down: slint::SharedString = slint::platform::Key::DownArrow.into();
-            let enter: slint::SharedString = slint::platform::Key::Return.into();
-            for text in [down, enter] {
-                ui.window()
-                    .dispatch_event(WindowEvent::KeyPressed { text: text.clone() });
-                ui.window()
-                    .dispatch_event(WindowEvent::KeyReleased { text });
-            }
-        }
+        // Like and Dislike are adjacent; both remain direct reversible actions.
+        click(&ui, x + 40.0, y);
+        click(&ui, x + 40.0, y);
         assert_eq!(
             ratings.borrow().len(),
             start + 4,

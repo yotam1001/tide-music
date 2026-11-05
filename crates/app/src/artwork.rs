@@ -17,6 +17,8 @@ const CACHE_CAPACITY: usize = 48;
 const PENDING_CAPACITY: usize = 32;
 // Fits the artwork-led shelves without retaining full-resolution source images.
 const SIDE: u32 = 160;
+const FEATURE_SIDE: u32 = 320;
+const FEATURE_CAPACITY: usize = 4;
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 const MAX_SOURCE_PIXELS: u64 = 1_000_000;
 const MAX_URL_BYTES: usize = 4096;
@@ -24,6 +26,7 @@ const NEGATIVE_TTL: Duration = Duration::from_secs(60);
 
 struct Request {
     url: String,
+    side: u32,
     generation: u64,
 }
 
@@ -37,7 +40,10 @@ struct RequestQueue {
 impl RequestQueue {
     fn enqueue(&self, request: Request, priority: bool) -> bool {
         let mut items = self.items.lock().unwrap();
-        if let Some(index) = items.iter().position(|item| item.url == request.url) {
+        if let Some(index) = items
+            .iter()
+            .position(|item| item.url == request.url && item.side == request.side)
+        {
             if priority {
                 let existing = items.remove(index).unwrap();
                 items.push_front(existing);
@@ -73,12 +79,14 @@ impl RequestQueue {
 
 struct Completion {
     url: String,
+    side: u32,
     generation: u64,
     pixels: Option<Vec<u8>>,
 }
 
 struct Entry {
     url: String,
+    side: u32,
     image: Option<Image>,
     stored: Instant,
 }
@@ -89,7 +97,7 @@ struct Entry {
 /// their pixel storage; model rows should also be bounded by the caller.
 pub struct ArtworkCache {
     entries: VecDeque<Entry>,
-    pending: HashSet<String>,
+    pending: HashSet<(String, u32)>,
     requests: Option<Arc<RequestQueue>>,
     results: Receiver<Completion>,
     generation: Arc<AtomicU64>,
@@ -137,16 +145,24 @@ impl ArtworkCache {
     /// Return a shared thumbnail or an empty image (the UI draws its placeholder).
     /// Missing entries enqueue work without blocking, and duplicate requests coalesce.
     pub fn get_or_request(&mut self, url: &str) -> Image {
-        self.request(url, false)
+        self.request(url, SIDE, false)
     }
 
     pub fn get_or_request_current(&mut self, url: &str) -> Image {
-        self.request(url, true)
+        self.request(url, SIDE, true)
     }
 
-    fn request(&mut self, url: &str, priority: bool) -> Image {
+    pub fn get_or_request_feature(&mut self, url: &str) -> Image {
+        self.request(url, FEATURE_SIDE, false)
+    }
+
+    fn request(&mut self, url: &str, side: u32, priority: bool) -> Image {
         // Check the cache before reparsing already validated URLs on every refresh.
-        if let Some(index) = self.entries.iter().position(|entry| entry.url == url) {
+        if let Some(index) = self
+            .entries
+            .iter()
+            .position(|entry| entry.url == url && entry.side == side)
+        {
             let entry = self.entries.remove(index).unwrap();
             if entry.image.is_some() || entry.stored.elapsed() < NEGATIVE_TTL {
                 let image = entry.image.clone().unwrap_or_default();
@@ -154,10 +170,17 @@ impl ArtworkCache {
                 return image;
             }
         }
-        if priority && self.pending.contains(url) {
+        let pending = self
+            .pending
+            .iter()
+            .any(|(key, size)| key == url && *size == side);
+        if priority && pending {
             if let Some(requests) = &self.requests {
                 let mut items = requests.items.lock().unwrap();
-                if let Some(index) = items.iter().position(|item| item.url == url) {
+                if let Some(index) = items
+                    .iter()
+                    .position(|item| item.url == url && item.side == side)
+                {
                     let request = items.remove(index).unwrap();
                     items.push_front(request);
                 }
@@ -165,13 +188,24 @@ impl ArtworkCache {
             return Image::default();
         }
         if !allowed_url(url)
-            || (!priority && (self.pending.len() >= PENDING_CAPACITY || self.pending.contains(url)))
-            || (priority && self.pending.len() > PENDING_CAPACITY && !self.pending.contains(url))
+            || (!priority && (self.pending.len() >= PENDING_CAPACITY || pending))
+            || (priority && self.pending.len() > PENDING_CAPACITY && !pending)
+        {
+            return Image::default();
+        }
+        if side == FEATURE_SIDE
+            && self
+                .pending
+                .iter()
+                .filter(|(_, size)| *size == FEATURE_SIDE)
+                .count()
+                >= FEATURE_CAPACITY
         {
             return Image::default();
         }
         let request = Request {
             url: url.to_owned(),
+            side,
             generation: self.generation.load(Ordering::Acquire),
         };
         if self
@@ -179,7 +213,7 @@ impl ArtworkCache {
             .as_ref()
             .is_some_and(|sender| sender.enqueue(request, priority))
         {
-            self.pending.insert(url.to_owned());
+            self.pending.insert((url.to_owned(), side));
         }
         Image::default()
     }
@@ -190,14 +224,16 @@ impl ArtworkCache {
             if result.generation != self.generation.load(Ordering::Acquire) {
                 continue;
             }
-            self.pending.remove(&result.url);
+            self.pending.remove(&(result.url.clone(), result.side));
             let image = result.pixels.map(|pixels| {
                 Image::from_rgb8(SharedPixelBuffer::<Rgb8Pixel>::clone_from_slice(
-                    &pixels, SIDE, SIDE,
+                    &pixels,
+                    result.side,
+                    result.side,
                 ))
             });
             changed = true;
-            self.insert(result.url, image);
+            self.insert(result.url, result.side, image);
         }
         changed
     }
@@ -213,15 +249,36 @@ impl ArtworkCache {
         while self.results.try_recv().is_ok() {}
     }
 
-    fn insert(&mut self, url: String, image: Option<Image>) {
-        if let Some(index) = self.entries.iter().position(|entry| entry.url == url) {
+    fn insert(&mut self, url: String, side: u32, image: Option<Image>) {
+        if let Some(index) = self
+            .entries
+            .iter()
+            .position(|entry| entry.url == url && entry.side == side)
+        {
             self.entries.remove(index);
+        }
+        if side == FEATURE_SIDE
+            && self
+                .entries
+                .iter()
+                .filter(|entry| entry.side == FEATURE_SIDE)
+                .count()
+                >= FEATURE_CAPACITY
+        {
+            if let Some(index) = self
+                .entries
+                .iter()
+                .position(|entry| entry.side == FEATURE_SIDE)
+            {
+                self.entries.remove(index);
+            }
         }
         if self.entries.len() == CACHE_CAPACITY {
             self.entries.pop_front();
         }
         self.entries.push_back(Entry {
             url,
+            side,
             image,
             stored: Instant::now(),
         });
@@ -287,7 +344,7 @@ fn worker(
         if request.generation != generation.load(Ordering::Acquire) {
             continue;
         }
-        let pixels = fetch(&agent, &request.url);
+        let pixels = fetch(&agent, &request.url, request.side);
         if stopped.load(Ordering::Acquire) {
             break;
         }
@@ -297,6 +354,7 @@ fn worker(
         if results
             .send(Completion {
                 url: request.url,
+                side: request.side,
                 generation: request.generation,
                 pixels,
             })
@@ -307,7 +365,7 @@ fn worker(
     }
 }
 
-fn fetch(agent: &ureq::Agent, url: &str) -> Option<Vec<u8>> {
+fn fetch(agent: &ureq::Agent, url: &str, side: u32) -> Option<Vec<u8>> {
     // No cookies, account authorization, Referer, or custom private headers.
     if !allowed_url(url) {
         return None;
@@ -329,10 +387,10 @@ fn fetch(agent: &ureq::Agent, url: &str) -> Option<Vec<u8>> {
         .limit(MAX_RESPONSE_BYTES as u64)
         .read_to_vec()
         .ok()?;
-    decode_thumbnail(&bytes)
+    decode_thumbnail(&bytes, side)
 }
 
-fn decode_thumbnail(bytes: &[u8]) -> Option<Vec<u8>> {
+fn decode_thumbnail(bytes: &[u8], side: u32) -> Option<Vec<u8>> {
     if bytes.len() > MAX_RESPONSE_BYTES {
         return None;
     }
@@ -374,8 +432,8 @@ fn decode_thumbnail(bytes: &[u8]) -> Option<Vec<u8>> {
             );
             image::DynamicImage::$variant(image::imageops::resize(
                 &*view,
-                SIDE,
-                SIDE,
+                side,
+                side,
                 FilterType::Triangle,
             ))
             .into_rgb8()
@@ -441,8 +499,8 @@ mod tests {
         let mut bytes = Cursor::new(Vec::new());
         source.write_to(&mut bytes, ImageFormat::Png).unwrap();
         assert!(bytes.get_ref().len() < MAX_RESPONSE_BYTES);
-        assert!(decode_thumbnail(bytes.get_ref()).is_none());
-        assert!(decode_thumbnail(&vec![0; MAX_RESPONSE_BYTES + 1]).is_none());
+        assert!(decode_thumbnail(bytes.get_ref(), SIDE).is_none());
+        assert!(decode_thumbnail(&vec![0; MAX_RESPONSE_BYTES + 1], SIDE).is_none());
     }
 
     #[test]
@@ -451,10 +509,10 @@ mod tests {
             let source = image::RgbImage::new(width, height);
             let mut bytes = Cursor::new(Vec::new());
             source.write_to(&mut bytes, ImageFormat::Png).unwrap();
-            let pixels = decode_thumbnail(bytes.get_ref()).unwrap();
+            let pixels = decode_thumbnail(bytes.get_ref(), SIDE).unwrap();
             assert_eq!(pixels.len(), (SIDE * SIDE * 3) as usize);
         }
-        assert!(decode_thumbnail(b"not an image").is_none());
+        assert!(decode_thumbnail(b"not an image", SIDE).is_none());
     }
 
     #[test]
@@ -476,7 +534,7 @@ mod tests {
                 .resize_exact(SIDE, SIDE, FilterType::Triangle)
                 .to_rgb8()
                 .into_raw();
-            assert_eq!(decode_thumbnail(bytes.get_ref()).unwrap(), expected);
+            assert_eq!(decode_thumbnail(bytes.get_ref(), SIDE).unwrap(), expected);
         };
         for (width, height) in [(137, 211), (211, 137), (96, 96), (4096, 1)] {
             let value = |x, y| ((x * 123 + y * 456) % 65536) as u16;
@@ -528,10 +586,10 @@ mod tests {
     fn failure_cache_is_bounded_and_recent_entries_survive_eviction() {
         let mut cache = offline_cache();
         for index in 0..CACHE_CAPACITY {
-            cache.insert(format!("https://i.ytimg.com/{index}"), None);
+            cache.insert(format!("https://i.ytimg.com/{index}"), SIDE, None);
         }
         cache.get_or_request("https://i.ytimg.com/0");
-        cache.insert("https://i.ytimg.com/new".into(), None);
+        cache.insert("https://i.ytimg.com/new".into(), SIDE, None);
         assert_eq!(cache.entries.len(), CACHE_CAPACITY);
         assert!(cache.entries.iter().any(|entry| entry.url.ends_with("/0")));
         assert!(!cache.entries.iter().any(|entry| entry.url.ends_with("/1")));
@@ -553,7 +611,7 @@ mod tests {
         }
         assert_eq!(cache.pending.len(), PENDING_CAPACITY);
         assert_eq!(requests.items.lock().unwrap().len(), PENDING_CAPACITY);
-        cache.insert("https://i.ytimg.com/failure".into(), None);
+        cache.insert("https://i.ytimg.com/failure".into(), SIDE, None);
         cache.pending.clear();
         cache.get_or_request("https://i.ytimg.com/failure");
         assert_eq!(requests.items.lock().unwrap().len(), PENDING_CAPACITY);
@@ -586,6 +644,51 @@ mod tests {
     }
 
     #[test]
+    fn featured_artwork_stays_bounded_and_separate_from_normal_thumbnails() {
+        let mut cache = offline_cache();
+        let queue = Arc::new(RequestQueue::default());
+        cache.requests = Some(queue.clone());
+        let url = "https://i.ytimg.com/same";
+        cache.get_or_request(url);
+        cache.get_or_request_feature(url);
+        for index in 0..8 {
+            let other = format!("https://i.ytimg.com/feature-{index}");
+            cache.get_or_request_feature(&other);
+            cache.insert(other, FEATURE_SIDE, None);
+        }
+        let queued = queue.items.lock().unwrap();
+        assert_eq!(
+            queued
+                .iter()
+                .filter(|request| request.side == FEATURE_SIDE)
+                .count(),
+            FEATURE_CAPACITY
+        );
+        assert_eq!(
+            queued.iter().filter(|request| request.url == url).count(),
+            2
+        );
+        assert_eq!(
+            cache
+                .entries
+                .iter()
+                .filter(|entry| entry.side == FEATURE_SIDE)
+                .count(),
+            FEATURE_CAPACITY
+        );
+
+        let pixels = image::RgbImage::new(400, 400);
+        let mut bytes = Cursor::new(Vec::new());
+        pixels.write_to(&mut bytes, ImageFormat::Png).unwrap();
+        assert_eq!(
+            decode_thumbnail(bytes.get_ref(), FEATURE_SIDE)
+                .unwrap()
+                .len(),
+            (FEATURE_SIDE * FEATURE_SIDE * 3) as usize
+        );
+    }
+
+    #[test]
     fn stale_results_cannot_repopulate_a_cleared_cache() {
         let mut cache = offline_cache();
         let (sender, receiver) = mpsc::sync_channel(PENDING_CAPACITY);
@@ -594,6 +697,7 @@ mod tests {
         sender
             .send(Completion {
                 url: "https://i.ytimg.com/old".into(),
+                side: SIDE,
                 generation: 0,
                 pixels: Some(vec![0; (SIDE * SIDE * 3) as usize]),
             })

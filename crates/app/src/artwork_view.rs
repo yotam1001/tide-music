@@ -109,7 +109,7 @@ mod tests {
             assert!(range.len() <= MAX_VISIBLE_IMAGES);
         }
         let groups = crate::browse_layout::home_groups(&vec!["Mixes".into(); 200], &[true; 200], 6);
-        assert_eq!(group_image_range(&groups, 2..4), 12..24);
+        assert_eq!(group_image_range(&groups, 2..4), 10..22);
         assert_eq!(group_image_range(&groups, 0..0), 0..0);
         assert_eq!(group_image_range(&groups, 0..30).len(), MAX_VISIBLE_IMAGES);
     }

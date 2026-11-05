@@ -163,4 +163,15 @@ fn library_sections_keep_collection_and_history_actions_at_every_size() {
             ui.set_account_busy(false);
         }
     }
+
+    assert_eq!(ui.get_active_navigation(), "library");
+    ui.set_detail_open(true);
+    ui.set_detail_navigation("liked".into());
+    assert_eq!(ui.get_active_navigation(), "liked");
+    ui.set_detail_navigation("supermix".into());
+    assert_eq!(ui.get_active_navigation(), "supermix");
+    ui.set_detail_navigation("".into());
+    assert_eq!(ui.get_active_navigation(), "");
+    ui.set_detail_open(false);
+    assert_eq!(ui.get_active_navigation(), "library");
 }

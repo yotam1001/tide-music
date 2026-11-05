@@ -9,6 +9,7 @@ pub fn release_ui(ui: &crate::AppWindow) {
         slint::VecModel::<crate::LyricRow>::default(),
     ));
     ui.set_lyrics_active(-1);
+    ui.set_lyrics_sung_prefix("".into());
     ui.set_lyrics_synced(false);
     ui.set_lyrics_source("".into());
     ui.set_lyrics_backdrop(Image::default());

@@ -126,4 +126,43 @@ fn typed_search_tabs_and_collections_keep_actions_at_each_size() {
             ui.set_search_busy(false);
         }
     }
+
+    // Alt+Left must work even when the search input has focus. Closing a
+    // collection first should reveal the same results and selected category.
+    let weak = ui.as_weak();
+    ui.on_close_detail(move || {
+        let ui = weak.upgrade().unwrap();
+        ui.set_forward_collection(true);
+        ui.set_detail_open(false);
+    });
+    let weak = ui.as_weak();
+    ui.on_close_search(move || weak.upgrade().unwrap().set_search_open(false));
+    ui.set_detail_open(true);
+    draw(&window, 1140, 800);
+    click(&ui, 340.0, 32.0);
+    let navigate = |direction: slint::platform::Key| {
+        use slint::platform::Key;
+        for text in [Key::Alt.into(), direction.into()] {
+            ui.window().dispatch_event(WindowEvent::KeyPressed { text });
+        }
+        for text in [direction.into(), Key::Alt.into()] {
+            ui.window()
+                .dispatch_event(WindowEvent::KeyReleased { text });
+        }
+    };
+    navigate(slint::platform::Key::LeftArrow);
+    assert!(!ui.get_detail_open());
+    assert!(ui.get_search_open());
+    assert_eq!(ui.get_search_kind(), 3);
+    navigate(slint::platform::Key::RightArrow);
+    assert!(ui.get_detail_open());
+    assert!(ui.get_search_open());
+    navigate(slint::platform::Key::LeftArrow);
+    navigate(slint::platform::Key::LeftArrow);
+    assert!(!ui.get_search_open());
+    navigate(slint::platform::Key::RightArrow);
+    assert!(
+        !ui.get_detail_open(),
+        "Closing search must invalidate its forward collection"
+    );
 }

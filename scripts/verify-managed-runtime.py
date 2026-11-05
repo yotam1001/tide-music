@@ -40,13 +40,13 @@ def main():
              str(fixture / "scripts/setup-provider.ps1"), "-Managed"])
         interpreter = fixture / ".tools/provider-venv/Scripts/python.exe"
         run([str(interpreter), "-I", "-c",
-             "import sys, importlib.metadata as m, ytmusicapi, requests, certifi; "
+             "import sys, importlib.metadata as m, ytmusicapi, requests, certifi, ruamel.yaml; "
              "assert sys.version_info[:3] == (3,14,0); "
              "expected={'ytmusicapi':'1.12.3','requests':'2.34.2','charset-normalizer':'3.5.2',"
-             "'idna':'3.20','urllib3':'2.8.0','certifi':'2026.7.22'}; "
+             "'idna':'3.20','urllib3':'2.8.0','certifi':'2026.7.22','ruamel.yaml':'0.19.1'}; "
              "assert all(m.version(k)==v for k,v in expected.items()); "
              "assert sys.flags.isolated; assert hasattr(ytmusicapi, 'YTMusic')"])
-        print("PASS: pinned embedded CPython and all six helper wheel versions/imports", flush=True)
+        print("PASS: pinned embedded CPython and all seven helper wheel versions/imports", flush=True)
         run(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
              str(fixture / "scripts/setup-runtime.ps1"), "-Destination", "tools"])
         for name, arguments, version in (

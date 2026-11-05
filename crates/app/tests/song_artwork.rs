@@ -21,12 +21,12 @@ fn cover(color: Rgb8Pixel) -> Image {
     Image::from_rgb8(buffer)
 }
 
-fn draw(window: &MinimalSoftwareWindow, pixels: &mut [Rgb8Pixel]) {
+fn draw(window: &MinimalSoftwareWindow, pixels: &mut [Rgb8Pixel], width: usize) {
     for _ in 0..3 {
         slint::platform::update_timers_and_animations();
         window.request_redraw();
         window.draw_if_needed(|renderer| {
-            renderer.render(pixels, 780);
+            renderer.render(pixels, width);
         });
     }
 }
@@ -48,21 +48,21 @@ fn changing_songs_clears_old_cover_until_the_selected_cover_arrives() {
     }])));
     ui.set_current_index(0);
     ui.set_track_artwork(cover(red));
-    draw(&window, &mut pixels);
+    draw(&window, &mut pixels, 780);
     assert!(pixels.contains(&red));
     ui.set_track_title("Next song".into());
     ui.set_track_artwork(Image::default());
-    draw(&window, &mut pixels);
+    draw(&window, &mut pixels, 780);
     assert!(
         !pixels.contains(&red),
         "Old row artwork leaked into the new song"
     );
     ui.set_track_artwork(cover(blue));
-    draw(&window, &mut pixels);
+    draw(&window, &mut pixels, 780);
     assert!(pixels.contains(&blue));
     assert!(!pixels.contains(&red));
     ui.set_track_artwork(Image::default());
-    draw(&window, &mut pixels);
+    draw(&window, &mut pixels, 780);
     assert!(
         !pixels.contains(&blue),
         "Missing artwork retained the previous cover"
@@ -73,7 +73,7 @@ fn changing_songs_clears_old_cover_until_the_selected_cover_arrives() {
         title: "Playlist without artwork".into(),
         ..Default::default()
     }])));
-    draw(&window, &mut pixels);
+    draw(&window, &mut pixels, 780);
     // Locate the opaque sleeve color in the rendered asset instead of coupling
     // this artwork check to the library heading's current pixel coordinates.
     let sleeve = Rgb8Pixel::new(208, 192, 189);
@@ -92,7 +92,7 @@ fn changing_songs_clears_old_cover_until_the_selected_cover_arrives() {
         artwork: cover(blue),
         ..Default::default()
     }])));
-    draw(&window, &mut pixels);
+    draw(&window, &mut pixels, 780);
     assert_eq!(
         pixels[cover_probe], blue,
         "Source artwork must replace the shared default cover"
@@ -107,7 +107,7 @@ fn changing_songs_clears_old_cover_until_the_selected_cover_arrives() {
                 artwork: if real { cover(blue) } else { Image::default() },
                 ..Default::default()
             }])));
-            draw(&window, &mut pixels);
+            draw(&window, &mut pixels, 780);
             let hash = pixels.iter().fold(0u64, |hash, p| {
                 hash.wrapping_mul(31)
                     .wrapping_add(u64::from(p.r) + (u64::from(p.g) << 8) + (u64::from(p.b) << 16))
@@ -130,4 +130,29 @@ fn changing_songs_clears_old_cover_until_the_selected_cover_arrives() {
         source_hashes.iter().all(|hash| *hash == source_hashes[0]),
         "Real artwork must override every fallback variant"
     );
+
+    // With the queue closed, only Home's next-song preview should paint this cover.
+    ui.set_library_open(false);
+    window.set_size(PhysicalSize::new(1140, 800));
+    let mut pixels = vec![Rgb8Pixel::default(); 1140 * 800];
+    ui.set_rows(ModelRc::new(VecModel::from(vec![
+        TrackRow {
+            title: "Current song".into(),
+            ..Default::default()
+        },
+        TrackRow {
+            title: "Next song".into(),
+            artwork: cover(blue),
+            ..Default::default()
+        },
+    ])));
+    draw(&window, &mut pixels, 1140);
+    assert!(ui.get_home_next_artwork_visible());
+    assert!(
+        pixels.contains(&blue),
+        "Home did not paint the next track's cover"
+    );
+    ui.set_library_open(true);
+    draw(&window, &mut pixels, 1140);
+    assert!(!ui.get_home_next_artwork_visible());
 }

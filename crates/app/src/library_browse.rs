@@ -6,18 +6,23 @@ use tide_provider::{BrowseSection, Card, Request};
 pub(super) struct Browse {
     pub section: Option<BrowseSection>,
     pub cards: Vec<Card>,
+    categories: Vec<tide_provider::ExploreCategory>,
+    category: Option<usize>,
 }
 pub(super) fn reset(s: &mut State, u: &AppWindow) {
     s.library_browse = Browse::default();
     u.set_library_section(0);
     u.set_library_note("".into());
     u.set_library_cards(ModelRc::new(VecModel::default()));
+    u.set_explore_categories(ModelRc::new(VecModel::default()));
+    u.set_explore_category(0);
 }
 fn request(section: BrowseSection) -> Request {
     match section {
         BrowseSection::Albums => Request::LibraryAlbums,
         BrowseSection::Artists => Request::LibraryArtists,
         BrowseSection::History => Request::History,
+        BrowseSection::Explore => Request::Explore,
     }
 }
 pub(super) fn refresh(s: &mut State, u: &AppWindow, tx: &mpsc::SyncSender<LibraryResult>) {
@@ -26,6 +31,17 @@ pub(super) fn refresh(s: &mut State, u: &AppWindow, tx: &mpsc::SyncSender<Librar
         .section
         .map(request)
         .unwrap_or(Request::Library);
+    let request = if s.library_browse.section == Some(BrowseSection::Explore) {
+        s.library_browse
+            .category
+            .and_then(|index| s.library_browse.categories.get(index))
+            .map(|category| Request::Mood {
+                params: category.params.clone(),
+            })
+            .unwrap_or(request)
+    } else {
+        request
+    };
     request_library(s, u, tx, request);
 }
 pub(super) fn choose(
@@ -42,10 +58,13 @@ pub(super) fn choose(
         1 => Some(BrowseSection::Albums),
         2 => Some(BrowseSection::Artists),
         3 => Some(BrowseSection::History),
+        4 => Some(BrowseSection::Explore),
         _ => return,
     };
     s.library_browse.section = section;
     s.library_browse.cards.clear();
+    s.library_browse.category = None;
+    u.set_explore_category(0);
     u.set_library_section(index);
     u.set_library_note("".into());
     u.set_library_artwork_y(0.0);
@@ -70,7 +89,9 @@ pub(super) fn receive(
         .filter(|card| accepts(section, card))
         .collect();
     u.set_library_note(
-        if truncated {
+        if truncated && section == BrowseSection::Explore {
+            "Showing a limited selection from YouTube Music"
+        } else if truncated {
             "Showing the first 200 items from YouTube Music"
         } else {
             ""
@@ -89,6 +110,14 @@ fn accepts(section: BrowseSection, card: &Card) -> bool {
                 Some(card_navigation::Action::Artist)
             )
             | (BrowseSection::History, Some(card_navigation::Action::Song))
+            | (
+                BrowseSection::Explore,
+                Some(
+                    card_navigation::Action::Song
+                        | card_navigation::Action::Album
+                        | card_navigation::Action::Playlist
+                )
+            )
     )
 }
 pub(super) fn song(s: &State, index: usize) -> Option<Track> {
@@ -99,6 +128,34 @@ pub(super) fn song(s: &State, index: usize) -> Option<Track> {
         .map(recommendation_track)
 }
 pub(super) fn wire(ui: &AppWindow, state: Rc<RefCell<State>>, tx: mpsc::SyncSender<LibraryResult>) {
+    let category_state = state.clone();
+    let weak = ui.as_weak();
+    let category_tx = tx.clone();
+    ui.on_select_explore_category(move |index| {
+        if let Some(u) = weak.upgrade() {
+            let mut s = category_state.borrow_mut();
+            if s.library_worker.is_some()
+                || s.pending_saved_connection.is_some()
+                || s.library_browse.section != Some(BrowseSection::Explore)
+            {
+                return;
+            }
+            let Ok(index) = usize::try_from(index) else {
+                return;
+            };
+            if index > s.library_browse.categories.len() {
+                return;
+            }
+            u.set_forward_collection(false);
+            s.library_browse.category = index.checked_sub(1);
+            u.set_explore_category(index as i32);
+            s.library_browse.cards.clear();
+            u.set_library_note("".into());
+            u.set_library_artwork_y(0.0);
+            refresh_library_models(&s, &u);
+            refresh(&mut s, &u, &category_tx);
+        }
+    });
     let section_state = state.clone();
     let weak = ui.as_weak();
     let section_tx = tx.clone();
@@ -134,6 +191,37 @@ pub(super) fn wire(ui: &AppWindow, state: Rc<RefCell<State>>, tx: mpsc::SyncSend
         }
     });
 }
+pub(super) fn receive_explore(
+    s: &mut State,
+    u: &AppWindow,
+    cards: Vec<Card>,
+    categories: Vec<tide_provider::ExploreCategory>,
+    available: bool,
+    truncated: bool,
+) {
+    if s.library_browse.section != Some(BrowseSection::Explore)
+        || s.library_browse.category.is_some()
+    {
+        return;
+    }
+    s.library_browse.categories = categories.into_iter().take(128).collect();
+    let labels: Vec<slint::SharedString> = std::iter::once("Charts & new releases".into())
+        .chain(
+            s.library_browse
+                .categories
+                .iter()
+                .map(|category| format!("{} · {}", category.group, category.title).into()),
+        )
+        .collect();
+    u.set_explore_categories(ModelRc::new(VecModel::from(labels)));
+    receive(s, u, BrowseSection::Explore, cards, truncated);
+    if !available {
+        u.set_library_note(
+            "Moods and genres are temporarily unavailable. Charts and releases are still shown."
+                .into(),
+        );
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -146,6 +234,7 @@ mod tests {
             subtitle: String::new(),
             shelf: String::new(),
             artists: Vec::new(),
+            featured_artwork_url: None,
             artwork_url: None,
             duration_seconds: None,
         };

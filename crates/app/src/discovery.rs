@@ -106,6 +106,7 @@ mod tests {
             kind: ["song", "playlist"][index % 2].into(),
             shelf: format!("Shelf {}", (index / 2) % 8),
             artwork_url: Some(format!("https://i.ytimg.com/{index}")),
+            featured_artwork_url: None,
             duration_seconds: Some(180 + index as u64),
         }
     }

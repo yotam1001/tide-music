@@ -113,7 +113,7 @@ fn cover_grid_and_list_preserve_song_and_playlist_actions() {
                 columns as usize,
             );
             let spotlight_count = groups[0].count as i32;
-            let shelf = groups[0].layout == browse_layout::Layout::Tiles;
+            let shelf = groups[0].layout == browse_layout::Layout::Editorial;
             ui.set_home_browse_rows(ModelRc::new(VecModel::from(
                 groups
                     .iter()
@@ -125,6 +125,7 @@ fn cover_grid_and_list_preserve_song_and_playlist_actions() {
                             browse_layout::Layout::Spotlight => "spotlight",
                             browse_layout::Layout::Compact => "compact",
                             browse_layout::Layout::Tiles => "tiles",
+                            browse_layout::Layout::Editorial => "editorial",
                         }
                         .into(),
                     })
@@ -139,6 +140,13 @@ fn cover_grid_and_list_preserve_song_and_playlist_actions() {
             let page = width as f32 - nav;
             let left = nav + (width as f32 - nav - page) / 2.0 + 28.0;
             let available = page - 56.0;
+            let cell_start = |index: i32| {
+                let weights = [1.65f32, 1.0, 2.55, 1.0];
+                let units: f32 = weights[..spotlight_count as usize].iter().sum();
+                let before: f32 = weights[..index as usize].iter().sum();
+                left + 12.0 * index as f32
+                    + (available - 12.0 * (spotlight_count - 1) as f32) * before / units
+            };
             for index in 0..if spotlight_count > 1 { 2 } else { 1 } {
                 selected.set((-1, -1));
                 click(
@@ -147,7 +155,7 @@ fn cover_grid_and_list_preserve_song_and_playlist_actions() {
                         left + 30.0
                     } else {
                         if shelf {
-                            left + (available + 12.0) / columns as f32 + 30.0
+                            cell_start(1) + 30.0
                         } else {
                             left + available * 0.48 + 42.0
                         }
@@ -167,7 +175,7 @@ fn cover_grid_and_list_preserve_song_and_playlist_actions() {
                 }
                 queued.set(None);
                 let menu_x = if shelf {
-                    left + (available + 12.0) / columns as f32 * (index + 1) as f32 - 42.0
+                    cell_start(index + 1) - 12.0 - 27.0
                 } else if index == 0 {
                     left + available * (if spotlight_count > 1 { 0.48 } else { 1.0 }) - 30.0
                 } else {
