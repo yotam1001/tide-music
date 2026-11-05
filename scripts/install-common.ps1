@@ -294,6 +294,49 @@ function Test-TideClosablePlayer($Process, [string]$InstallRoot) {
     } catch { return $false }
 }
 function Get-TideCloseCandidate([int]$Id) { return [Diagnostics.Process]::GetProcessById($Id) }
+function Request-TideHiddenWindowClose([int]$Id) {
+    if (!('TideSetup.WindowClose' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+
+namespace TideSetup {
+    public static class WindowClose {
+        private delegate bool EnumProc(IntPtr window, IntPtr data);
+
+        [DllImport("user32.dll")] private static extern bool EnumWindows(EnumProc callback, IntPtr data);
+        [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr window, out uint process);
+        [DllImport("user32.dll")] private static extern IntPtr GetWindow(IntPtr window, uint command);
+        [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr window);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        private static extern int GetWindowText(IntPtr window, StringBuilder title, int capacity);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        private static extern bool PostMessage(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
+
+        public static bool Request(uint process) {
+            const uint owner = 4, close = 0x0010;
+            bool posted = false;
+            EnumWindows(delegate(IntPtr window, IntPtr ignored) {
+                uint candidate;
+                if (GetWindowThreadProcessId(window, out candidate) == 0 || candidate != process ||
+                    IsWindowVisible(window) || GetWindow(window, owner) != IntPtr.Zero)
+                    return true;
+
+                var title = new StringBuilder(6);
+                if (GetWindowText(window, title, title.Capacity) == 4 && title.ToString() == "Tide" &&
+                    GetWindowThreadProcessId(window, out candidate) != 0 && candidate == process)
+                    posted |= PostMessage(window, close, IntPtr.Zero, IntPtr.Zero);
+                return true;
+            }, IntPtr.Zero);
+            return posted;
+        }
+    }
+}
+'@
+    }
+    return [TideSetup.WindowClose]::Request([uint32]$Id)
+}
 function Request-TidePlayerClose($Process, [string]$InstallRoot) {
     $candidate = $null
     try {
@@ -302,7 +345,9 @@ function Request-TidePlayerClose($Process, [string]$InstallRoot) {
         $candidate = Get-TideCloseCandidate $Process.Id
         $null = $candidate.Handle
         if (!(Test-TideClosablePlayer $candidate $InstallRoot) -or $candidate.HasExited) { return $false }
-        return $candidate.CloseMainWindow()
+        if ($candidate.CloseMainWindow()) { return $true }
+        # CloseMainWindow ignores the hidden player when it is in the tray.
+        return !$candidate.HasExited -and (Request-TideHiddenWindowClose $candidate.Id)
     } catch { return $false }
     finally { if ($null -ne $candidate) { $candidate.Dispose() } }
 }
