@@ -1753,6 +1753,16 @@ export component AppWindow inherits Window {
     in-out property <bool> update-panel-open: false;
     in property <[string]> search-suggestions;
     in-out property <bool> suggestions-open: false;
+    private property <int> suggestion-index: -1;
+    private property <bool> search-field-focused: false;
+    private property <bool> suggestions-visible: root.suggestions-open && root.search-suggestions.length > 0
+        && !root.collapsed && !root.lyrics-open && !root.settings-open && !root.account-open
+        && !root.jam-open && !root.update-panel-open;
+    function select-suggestion(value: string) {
+        root.suggestions-open = false;
+        root.source-input = value;
+        root.choose-suggestion(value);
+    }
     callback suggest-search(string);
     callback choose-suggestion(string);
     function submit-source(value: string) {
@@ -1996,6 +2006,20 @@ export component AppWindow inherits Window {
                 else { root.record-shortcut(event.text, event.modifiers.control, event.modifiers.alt, event.modifiers.shift, event.modifiers.meta); }
                 return accept;
             }
+            if root.search-field-focused && root.suggestions-visible {
+                if event.text == Key.DownArrow {
+                    root.suggestion-index = (root.suggestion-index + 1) < root.search-suggestions.length ? root.suggestion-index + 1 : 0;
+                    return accept;
+                }
+                if event.text == Key.UpArrow {
+                    root.suggestion-index = root.suggestion-index > 0 ? root.suggestion-index - 1 : root.search-suggestions.length - 1;
+                    return accept;
+                }
+                if event.text == Key.Return && root.suggestion-index >= 0 && root.suggestion-index < root.search-suggestions.length {
+                    root.select-suggestion(root.search-suggestions[root.suggestion-index]);
+                    return accept;
+                }
+            }
             if event.modifiers.alt && !event.modifiers.control && !event.modifiers.shift && !event.modifiers.meta
                 && root.browsing-enabled && !root.collapsed && !root.playlist-picker-open {
                 if event.text == Key.RightArrow && root.forward-collection && !root.detail-open && !root.account-busy {
@@ -2054,7 +2078,7 @@ export component AppWindow inherits Window {
                     cross-axis-alignment: center;
                     Image { width: 32px; height: 32px; source: @image-url("assets/tide-icon.png"); image-fit: contain; }
                     if root.header-branding : Text { width: 56px; text: "Tide"; color: root.foreground; font-size: 21px; font-weight: 700; }
-                    LineEdit { in property <int> focus-revision: root.search-focus-revision; changed focus-revision => { self.focus(); } horizontal-stretch: 1; height: 36px; font-size: 13px; enabled: root.browsing-enabled; text <=> root.source-input; placeholder-text: "Search music or paste a link"; accessible-label: "Search music or paste a YouTube link"; edited(value) => { root.suggestions-open = true; root.suggest-search(value); } accepted(value) => { root.submit-source(value); } }
+                    LineEdit { in property <int> focus-revision: root.search-focus-revision; changed focus-revision => { self.focus(); } horizontal-stretch: 1; height: 36px; font-size: 13px; enabled: root.browsing-enabled; text <=> root.source-input; placeholder-text: "Search music or paste a link"; accessible-label: "Search music or paste a YouTube link"; changed has-focus => { root.search-field-focused = self.has-focus; } edited(value) => { root.suggestion-index = -1; root.suggestions-open = true; root.suggest-search(value); } accepted(value) => { root.submit-source(value); } }
                     LibraryButton { width: 36px; height: 36px; show-tooltip: true; light-mode: root.light-mode; enabled: root.browsing-enabled; icon-path: "M 10.5 3 A 7.5 7.5 0 1 0 10.5 18 A 7.5 7.5 0 1 0 10.5 3 Z M 16 16 L 22 22"; label: "Search for music or open the pasted link"; clicked => { root.submit-source(root.source-input); } }
                     LibraryButton { width: 36px; height: 36px; show-tooltip: true; enabled: !root.artist-picker-open; light-mode: root.light-mode; icon-kind: root.light-mode ? "moon" : "sun"; label: root.light-mode ? "Switch to dark theme" : "Switch to light theme"; clicked => { root.switch-mode(); } }
                     LibraryButton { width: 36px; height: 36px; show-tooltip: true; quiet: true; enabled: !root.artist-picker-open; light-mode: root.light-mode; icon-path: "M 9 4 L 9.5 2 L 14.5 2 L 15 4 L 17 5 L 19 4.5 L 21.5 9 L 20 10.5 L 20 13.5 L 21.5 15 L 19 19.5 L 17 19 L 15 20 L 14.5 22 L 9.5 22 L 9 20 L 7 19 L 5 19.5 L 2.5 15 L 4 13.5 L 4 10.5 L 2.5 9 L 5 4.5 L 7 5 Z M 12 8 A 4 4 0 1 0 12 16 A 4 4 0 1 0 12 8 Z"; label: "Open settings"; active: root.settings-open; clicked => { root.settings-open = !root.settings-open; } }
@@ -2850,9 +2874,7 @@ export component AppWindow inherits Window {
                 toggle-queue => { root.queue-open = !root.queue-open; }
             }
         }
-        if root.suggestions-open && root.search-suggestions.length > 0 && !root.collapsed
-                && !root.lyrics-open && !root.settings-open && !root.account-open
-                && !root.jam-open && !root.update-panel-open : Rectangle {
+        if root.suggestions-visible : Rectangle {
             y: 56px; width: root.width; height: root.height - self.y;
             TouchArea { clicked => { root.suggestions-open = false; } }
             Rectangle {
@@ -2862,9 +2884,10 @@ export component AppWindow inherits Window {
                 border-radius: 9px; border-width: 1px; border-color: root.outline; background: root.surface;
                 VerticalLayout {
                     padding: 8px;
-                    for suggestion in root.search-suggestions : LibraryButton {
+                    for suggestion[index] in root.search-suggestions : LibraryButton {
                         height: 36px; light-mode: root.light-mode; caption: suggestion; label: "Search for " + suggestion;
-                        clicked => { root.suggestions-open = false; root.source-input = suggestion; root.choose-suggestion(suggestion); }
+                        active: index == root.suggestion-index;
+                        clicked => { root.select-suggestion(suggestion); }
                     }
                 }
             }

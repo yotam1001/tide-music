@@ -165,4 +165,27 @@ fn typed_search_tabs_and_collections_keep_actions_at_each_size() {
         !ui.get_detail_open(),
         "Closing search must invalidate its forward collection"
     );
+
+    let chosen = Rc::new(Cell::new(None));
+    let captured = chosen.clone();
+    ui.on_choose_suggestion(move |value| captured.set(Some(value)));
+    ui.set_search_suggestions(ModelRc::new(VecModel::from(vec![
+        slint::SharedString::from("First suggestion"),
+        slint::SharedString::from("Second suggestion"),
+    ])));
+    ui.set_suggestions_open(true);
+    draw(&window, 1140, 800);
+    click(&ui, 340.0, 32.0);
+    let press = |key: slint::platform::Key| {
+        let text: slint::SharedString = key.into();
+        ui.window()
+            .dispatch_event(WindowEvent::KeyPressed { text: text.clone() });
+        ui.window()
+            .dispatch_event(WindowEvent::KeyReleased { text });
+    };
+    press(slint::platform::Key::DownArrow);
+    press(slint::platform::Key::DownArrow);
+    press(slint::platform::Key::Return);
+    assert_eq!(chosen.take().as_deref(), Some("Second suggestion"));
+    assert!(!ui.get_suggestions_open());
 }
