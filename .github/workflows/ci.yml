@@ -162,7 +162,9 @@ jobs:
           Invoke-WebRequest $expectedUrl -OutFile .local/upgrade-baseline.zip
           $hash = (Get-FileHash .local/upgrade-baseline.zip -Algorithm SHA256).Hash.ToLowerInvariant()
           if ('sha256:' + $hash -cne $asset[0].digest) { throw 'Baseline archive digest mismatch' }
-          python scripts/check-preview-package.py .local/upgrade-baseline.zip --with-browser-host
+          $baselineArgs = @('.local/upgrade-baseline.zip', '--with-browser-host')
+          if ([version]$release.tag_name.Substring(1) -ge [version]'0.4.13') { $baselineArgs += '--with-native-login' }
+          python scripts/check-preview-package.py @baselineArgs
           if ($LASTEXITCODE -ne 0) { throw 'Baseline package verification failed' }
           Expand-Archive -LiteralPath .local/upgrade-baseline.zip -DestinationPath .local/upgrade-baseline
           Write-Host ('Verified previous public stable baseline: ' + $release.tag_name + ' SHA256 ' + $hash)
