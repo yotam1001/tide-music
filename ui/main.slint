@@ -1378,11 +1378,11 @@ component UpdateAction inherits Rectangle {
     private property <bool> cancelable: root.phase == 1 || root.phase == 3 || root.phase == 4;
     private property <color> ink: root.light-mode ? #593641 : #f0eeef;
     Rectangle {
-        width: root.width - (root.cancelable ? root.height + 6px : 0px);
+        x: 0px; width: root.width - (root.cancelable ? root.height + 6px : 0px);
         height: root.height; border-radius: self.height / 2; clip: true;
         animate width { duration: 160ms; easing: ease-in-out; }
         LibraryButton { width: parent.width; height: parent.height; caption: ""; quiet: false; light-mode: root.light-mode; enabled: !root.busy && (root.phase == 0 || root.phase == 2); label: root.phase == 2 ? "Restart Tide to install the verified update" : "Download Tide update"; clicked => { root.activate(); } }
-        Rectangle { height: parent.height; width: parent.width * (root.phase == 2 ? 1 : (root.downloading ? clamp(root.progress / 100, 0, 1) : 0)); background: root.light-mode ? #b13e622c : #b13e6240; animate width { duration: 160ms; } }
+        Rectangle { x: 0px; height: parent.height; width: parent.width * (root.phase == 2 ? 1 : (root.downloading ? clamp(root.progress / 100, 0, 1) : 0)); background: root.light-mode ? #b13e622c : #b13e6240; animate width { duration: 160ms; } }
         Rectangle { x: 5px; y: 5px; width: parent.height - 10px; height: self.width; border-radius: self.height / 2; background: root.light-mode ? #b45249 : #b13e62;
             Path { x: 6px; y: 6px; width: parent.width - 12px; height: parent.height - 12px; viewbox-width: 24; viewbox-height: 24; fill: Colors.transparent; stroke: #fff5ee; stroke-width: 2px; commands: root.phase == 2 ? "M5 12 L10 17 L19 7" : "M12 3 V15 M7 10 L12 15 L17 10 M5 17 V21 H19 V17"; }
         }
