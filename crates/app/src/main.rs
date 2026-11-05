@@ -1189,6 +1189,7 @@ fn restore_settings(value: serde_json::Value) -> Settings {
         light_mode,
         library_grid,
         autoplay,
+        skip_disliked,
         check_updates,
         media_controls,
         history_feedback,
@@ -1597,6 +1598,7 @@ fn start_window_media(ui: &AppWindow) -> Result<tide_windows::MediaSession, Stri
                 tide_windows::MediaAction::Previous => (4, 0.0),
                 tide_windows::MediaAction::Stop => (5, 0.0),
                 tide_windows::MediaAction::Seek(seconds) => (6, seconds as f32),
+                tide_windows::MediaAction::ShowMini => (7, 0.0),
             };
             let _ = weak.upgrade_in_event_loop(move |u| {
                 if u.get_media_controls_enabled() {
@@ -3291,6 +3293,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let Some(u) = weak.upgrade() else {
                 return;
             };
+            if action == 7 {
+                if !u.get_collapsed() {
+                    u.invoke_collapse_player();
+                }
+                return;
+            }
             if u.get_shortcut_recording_index() >= 0 {
                 return;
             }

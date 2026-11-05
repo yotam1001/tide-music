@@ -127,6 +127,7 @@ pub enum MediaAction {
     Next,
     Previous,
     Stop,
+    ShowMini,
     /// Absolute playback position in seconds.
     Seek(f64),
 }

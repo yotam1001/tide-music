@@ -38,6 +38,7 @@ const TRAY_MESSAGE: u32 = WM_APP + 73;
 const SHOW: u32 = 0x7201;
 const HIDE: u32 = 0x7202;
 const QUIT: u32 = 0x7203;
+const MINI: u32 = 0x7204;
 use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
 use windows::Win32::UI::WindowsAndMessaging::WM_SETTINGCHANGE;
 fn system_light_theme() -> bool {
@@ -170,6 +171,7 @@ impl State {
             };
             for (id, label) in [
                 (SHOW, "Open Tide"),
+                (MINI, "Open Mini player"),
                 (TOGGLE, if self.playing.get() { "Pause" } else { "Play" }),
                 (PREVIOUS, "Previous song"),
                 (NEXT, "Next song"),
@@ -203,6 +205,12 @@ impl State {
             let _ = DestroyMenu(menu);
             match command {
                 SHOW => self.show_player(hwnd),
+                MINI => {
+                    self.show_player(hwnd);
+                    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        (self.callback)(MediaAction::ShowMini)
+                    }));
+                }
                 HIDE => {
                     let _ = ShowWindow(hwnd, SW_MINIMIZE);
                     let _ = ShowWindow(hwnd, SW_HIDE);

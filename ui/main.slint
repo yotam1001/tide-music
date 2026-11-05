@@ -1375,7 +1375,7 @@ component UpdateAction inherits Rectangle {
     callback activate();
     callback cancel();
     private property <bool> downloading: root.phase > 0;
-    private property <bool> cancelable: root.phase == 1 || root.phase == 3;
+    private property <bool> cancelable: root.phase == 1 || root.phase == 3 || root.phase == 4;
     private property <color> ink: root.light-mode ? #593641 : #f0eeef;
     Rectangle {
         width: root.width - (root.cancelable ? root.height + 6px : 0px);
@@ -1389,7 +1389,7 @@ component UpdateAction inherits Rectangle {
         Text { x: parent.height + 4px; width: max(0px, parent.width - self.x - 8px); height: parent.height; vertical-alignment: center; text: root.phase == 4 ? "Preparing restart…" : (root.phase == 2 ? "Restart to update" : (root.phase == 3 ? "Canceling…" : (root.phase == 1 ? "Downloading " + root.progress.to-fixed(0) + "%" : "Download update"))); color: root.ink; font-size: 12px; font-weight: 600; overflow: elide; }
     }
     if root.cancelable : Rectangle { x: parent.width - self.width; width: parent.height; height: parent.height; border-radius: self.height / 2; clip: true;
-        LibraryButton { width: parent.width; height: parent.height; caption: "×"; label: "Cancel update download"; light-mode: root.light-mode; quiet: false; enabled: root.phase != 3; clicked => { root.cancel(); } }
+        LibraryButton { width: parent.width; height: parent.height; caption: "×"; label: root.phase == 4 ? "Cancel update preparation" : "Cancel update download"; light-mode: root.light-mode; quiet: false; enabled: root.phase != 3; clicked => { root.cancel(); } }
     }
 }
 
