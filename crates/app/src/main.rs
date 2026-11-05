@@ -70,6 +70,7 @@ struct Settings {
     check_updates: bool,
     #[serde(default = "enabled_by_default")]
     media_controls: bool,
+    close_to_tray: bool,
     #[serde(default)]
     history_feedback: bool,
     #[serde(default)]
@@ -103,6 +104,7 @@ impl Default for Settings {
             saved_dislikes: Default::default(),
             check_updates: true,
             media_controls: true,
+            close_to_tray: false,
             history_feedback: false,
             discord_presence: false,
             discord_application_id: default_discord_application_id(),
@@ -1210,6 +1212,7 @@ fn restore_settings(value: serde_json::Value) -> Settings {
         saved_dislikes,
         check_updates,
         media_controls,
+        close_to_tray,
         history_feedback,
         discord_presence,
         discord_application_id,
@@ -2307,6 +2310,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ui.set_skip_disliked(state.borrow().settings.skip_disliked);
     ui.set_auto_update_checks(state.borrow().settings.check_updates);
     ui.set_media_controls_enabled(state.borrow().settings.media_controls);
+    ui.set_close_to_tray(state.borrow().settings.close_to_tray);
     ui.set_discord_presence_enabled(state.borrow().settings.discord_presence);
     ui.set_discord_application_id(
         state
@@ -3268,6 +3272,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         save(&s.settings);
     });
+    bind!(on_toggle_close_to_tray, |s, u| {
+        s.settings.close_to_tray = !s.settings.close_to_tray;
+        u.set_close_to_tray(s.settings.close_to_tray);
+        save(&s.settings);
+    });
     bind!(on_toggle_media_controls, |s, u| {
         s.settings.media_controls = !s.settings.media_controls;
         u.set_media_controls_enabled(s.settings.media_controls);
@@ -3800,6 +3809,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     (false, u.get_position() as f64, u.get_duration() as f64)
                 };
                 if let Some(session) = media.borrow_mut().as_mut() {
+                    #[cfg(windows)]
+                    session.set_close_to_tray(s.settings.close_to_tray);
                     let _ = session.update(
                         &u.get_track_title(),
                         &u.get_track_artist(),
@@ -5169,6 +5180,7 @@ mod tests {
                 history_feedback: enabled,
                 discord_presence: enabled,
                 normalize_volume: enabled,
+                close_to_tray: enabled,
                 library_grid: enabled,
                 audio_device: "wasapi/fixture".into(),
                 light_mode: true,
@@ -5179,6 +5191,7 @@ mod tests {
             assert_eq!(restored.history_feedback, enabled);
             assert_eq!(restored.discord_presence, enabled);
             assert_eq!(restored.normalize_volume, enabled);
+            assert_eq!(restored.close_to_tray, enabled);
             assert_eq!(restored.library_grid, enabled);
             assert_eq!(restored.audio_device, "wasapi/fixture");
             assert!(restored.light_mode);
@@ -5186,6 +5199,7 @@ mod tests {
         let old = restore_settings(serde_json::json!({"light_mode": true}));
         assert!(!old.history_feedback);
         assert!(!old.discord_presence);
+        assert!(!old.close_to_tray);
         assert!(old.light_mode);
         assert!(old.library_grid);
     }

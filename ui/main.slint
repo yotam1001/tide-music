@@ -1835,6 +1835,8 @@ export component AppWindow inherits Window {
     in-out property <string> shortcut-previous;
     in property <string> shortcut-status: "";
     callback toggle-media-controls();
+    in property <bool> close-to-tray: false;
+    callback toggle-close-to-tray();
     in property <bool> discord-presence-enabled: false;
     in-out property <string> discord-application-id;
     in property <string> discord-status: "Off — listening activity stays private";
@@ -2664,6 +2666,7 @@ export component AppWindow inherits Window {
                                         spacing: 10px; alignment: start;
                                         LibraryButton { height: 36px; quiet: false; caption: "Open audio file"; label: "Open a local audio file"; light-mode: root.light-mode; clicked => { root.open-file(); root.settings-open = false; } }
                                         PreferenceRow { title: "Windows media keys"; checked: root.media-controls-enabled; light-mode: root.light-mode; toggled => { root.toggle-media-controls(); } }
+                                        if root.media-controls-enabled : PreferenceRow { title: "Keep playing when I close Tide"; checked: root.close-to-tray; light-mode: root.light-mode; toggled => { root.toggle-close-to-tray(); } }
                                         PreferenceRow { title: "Skip known disliked songs"; checked: root.skip-disliked; light-mode: root.light-mode; toggled => { root.toggle-skip-disliked(); } }
                                         PreferenceRow { title: "Check for updates on startup"; checked: root.auto-update-checks; light-mode: root.light-mode; toggled => { root.toggle-update-checks(); } }
                                         Text { height: 18px; text: "Mini opacity · " + root.mini-opacity.to-fixed(0) + "%"; color: root.secondary; font-size: 12px; }

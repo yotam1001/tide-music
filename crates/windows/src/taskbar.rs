@@ -11,8 +11,9 @@ use windows::Win32::{
         WindowsAndMessaging::{
             AppendMenuW, CopyIcon, CreatePopupMenu, DestroyMenu, GetCursorPos, PostMessageW,
             SendMessageW, SetForegroundWindow, ShowWindow, TrackPopupMenu, HICON as TrayIcon,
-            ICON_SMALL, MF_STRING, SW_HIDE, SW_MINIMIZE, SW_RESTORE, TPM_NONOTIFY, TPM_RETURNCMD,
-            TPM_RIGHTBUTTON, WM_APP, WM_CLOSE, WM_GETICON, WM_LBUTTONUP, WM_RBUTTONUP,
+            ICON_SMALL, MF_STRING, SC_CLOSE, SW_HIDE, SW_MINIMIZE, SW_RESTORE, TPM_NONOTIFY,
+            TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_APP, WM_CLOSE, WM_GETICON, WM_LBUTTONUP,
+            WM_RBUTTONUP, WM_SYSCOMMAND,
         },
     },
 };
@@ -82,6 +83,7 @@ struct State {
     light_theme: Cell<bool>,
     enabled: Cell<bool>,
     tray_allowed: bool,
+    close_to_tray: Cell<bool>,
     tray_added: Cell<bool>,
     tray_created: u32,
 }
@@ -294,6 +296,7 @@ impl Taskbar {
             light_theme: Cell::new(system_light_theme()),
             enabled: Cell::new(false),
             tray_allowed: tray_allowed && has_tray_icon,
+            close_to_tray: Cell::new(false),
             tray_added: Cell::new(false),
             tray_created: unsafe { RegisterWindowMessageW(w!("TaskbarCreated")) },
         });
@@ -311,6 +314,12 @@ impl Taskbar {
             _ui_thread: PhantomData,
         })
     }
+    pub(super) fn set_close_to_tray(&self, enabled: bool) {
+        if let Some(state) = &self.state {
+            state.close_to_tray.set(enabled);
+        }
+    }
+
     pub(super) fn update(&self, playing: bool, enabled: bool) {
         if let Some(state) = &self.state {
             let playing_changed = state.playing.replace(playing) != playing;
@@ -356,6 +365,18 @@ unsafe extern "system" fn procedure(
         unsafe {
             let _ = RemoveWindowSubclass(hwnd, Some(procedure), SUBCLASS);
         }
+    } else if message == WM_SYSCOMMAND
+        && (wp.0 & 0xfff0) as u32 == SC_CLOSE
+        && state.close_to_tray.get()
+        && state.tray_added.get()
+    {
+        // System-menu close is a user gesture. Leave WM_CLOSE to explicit
+        // Quit and installer shutdown so updating still closes the app.
+        unsafe {
+            let _ = ShowWindow(hwnd, SW_MINIMIZE);
+            let _ = ShowWindow(hwnd, SW_HIDE);
+        }
+        return LRESULT(0);
     } else if message == WM_SETTINGCHANGE {
         let light = system_light_theme();
         if state.light_theme.replace(light) != light {

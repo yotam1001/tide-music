@@ -271,6 +271,12 @@ fn button_action(button: SystemMediaTransportControlsButton) -> Option<MediaActi
 }
 
 impl MediaSession {
+    pub fn set_close_to_tray(&self, enabled: bool) {
+        if let Some(taskbar) = &self.taskbar {
+            taskbar.set_close_to_tray(enabled);
+        }
+    }
+
     /// Publish a bounded, already decoded/re-encoded PNG. No URL, file, or network access.
     pub fn set_thumbnail(&mut self, png: Option<&[u8]>) -> Result<(), String> {
         use windows::Storage::Streams::{IRandomAccessStream, RandomAccessStreamReference};
