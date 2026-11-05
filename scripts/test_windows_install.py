@@ -580,6 +580,57 @@ class WindowsInstallTests(unittest.TestCase):
             with self.subTest(scenario=scenario):
                 self.run_scenario(scenario, "powershell.exe")
 
+    @unittest.skipUnless(shutil.which("powershell.exe"), "requires Windows Forms")
+    def test_hidden_player_accepts_normal_close(self):
+        with tempfile.TemporaryDirectory(prefix="tide-hidden-window-test-") as temporary:
+            fixture = Path(temporary).resolve()
+            (fixture / "window.ps1").write_text(r'''
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Windows.Forms
+$player = [Windows.Forms.Form]::new()
+$player.Text = 'Tide'
+$other = [Windows.Forms.Form]::new()
+$other.Text = 'Tide Setup'
+$other.add_FormClosing({
+    [IO.File]::WriteAllText('wrong-window', 'closed')
+})
+$context = [Windows.Forms.ApplicationContext]::new($player)
+$null = $player.Handle
+$null = $other.Handle
+[IO.File]::WriteAllText('ready', 'ready')
+[Windows.Forms.Application]::Run($context)
+[IO.File]::WriteAllText('closed', 'closed')
+''', encoding="utf-8")
+            harness = fixture / "close.ps1"
+            harness.write_text(r'''
+param($Common)
+$ErrorActionPreference = 'Stop'
+. $Common
+$shell = Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe'
+$child = Start-Process $shell -ArgumentList '-NoProfile', '-STA', '-File', 'window.ps1' -WindowStyle Hidden -PassThru
+try {
+    $deadline = [DateTime]::UtcNow.AddSeconds(10)
+    while (!(Test-Path -LiteralPath 'ready') -and !$child.HasExited -and [DateTime]::UtcNow -lt $deadline) {
+        Start-Sleep -Milliseconds 100
+    }
+    if (!(Test-Path -LiteralPath 'ready') -or $child.HasExited) { throw 'Hidden fixture did not start' }
+    if ($child.CloseMainWindow()) { throw 'Hidden fixture unexpectedly exposed a main window' }
+    if (!(Request-TideHiddenWindowClose $child.Id)) { throw 'No close posted to hidden fixture' }
+    if (!$child.WaitForExit(5000) -or $child.ExitCode -ne 0 -or !(Test-Path -LiteralPath 'closed')) {
+        throw 'Hidden fixture did not close normally'
+    }
+    if (Test-Path -LiteralPath 'wrong-window') { throw 'Close reached an unrelated window' }
+} finally {
+    if (!$child.HasExited) { $child.Kill(); $child.WaitForExit() }
+    $child.Dispose()
+}
+''', encoding="utf-8")
+            result = subprocess.run(
+                ["pwsh", "-NoProfile", "-File", str(harness), str(COMMON)],
+                cwd=fixture, capture_output=True, timeout=30, check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
+
     def test_real_shortcut_roundtrip_in_temp_only(self):
         with tempfile.TemporaryDirectory(prefix="tide-shortcut-test-") as temporary:
             fixture = Path(temporary).resolve()
