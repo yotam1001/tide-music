@@ -58,6 +58,7 @@ struct Settings {
     queue: Queue,
     playback_bookmark: Option<PlaybackBookmark>,
     light_mode: bool,
+    follow_windows_theme: bool,
     #[serde(default)]
     compact_mode: bool,
     #[serde(default = "enabled_by_default")]
@@ -97,6 +98,7 @@ impl Default for Settings {
             queue: Queue::default(),
             playback_bookmark: None,
             light_mode: false,
+            follow_windows_theme: false,
             compact_mode: false,
             library_grid: true,
             autoplay: true,
@@ -122,6 +124,13 @@ impl Default for Settings {
 }
 fn default_discord_application_id() -> String {
     discord::APPLICATION_ID.to_owned()
+}
+fn preferred_light_mode(settings: &Settings) -> bool {
+    #[cfg(windows)]
+    if settings.follow_windows_theme {
+        return tide_windows::app_light_theme().unwrap_or(settings.light_mode);
+    }
+    settings.light_mode
 }
 fn opaque_mini() -> u8 {
     100
@@ -1206,6 +1215,7 @@ fn restore_settings(value: serde_json::Value) -> Settings {
         queue,
         playback_bookmark,
         light_mode,
+        follow_windows_theme,
         library_grid,
         autoplay,
         skip_disliked,
@@ -2303,7 +2313,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         .into(),
     );
-    ui.set_light_mode(state.borrow().settings.light_mode);
+    ui.set_light_mode(preferred_light_mode(&state.borrow().settings));
+    ui.set_windows_theme_supported(cfg!(windows) && !test_mode);
+    ui.set_follow_windows_theme(state.borrow().settings.follow_windows_theme);
     ui.set_compact_mode(state.borrow().settings.compact_mode);
     ui.set_library_grid(state.borrow().settings.library_grid);
     ui.set_autoplay_enabled(state.borrow().settings.autoplay);
@@ -3249,10 +3261,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         save(&s.settings);
     });
     bind!(on_switch_mode, |s, u| {
+        s.settings.follow_windows_theme = false;
+        u.set_follow_windows_theme(false);
         s.settings.light_mode = !u.get_light_mode();
         u.set_light_mode(s.settings.light_mode);
         save(&s.settings);
     });
+    bind!(on_toggle_follow_windows_theme, |s, u| {
+        s.settings.follow_windows_theme = !s.settings.follow_windows_theme;
+        u.set_follow_windows_theme(s.settings.follow_windows_theme);
+        u.set_light_mode(preferred_light_mode(&s.settings));
+        save(&s.settings);
+    });
+    {
+        let state = state.clone();
+        let weak = ui.as_weak();
+        ui.on_poll_windows_theme(move || {
+            if let Some(ui) = weak.upgrade() {
+                let theme = preferred_light_mode(&state.borrow().settings);
+                if ui.get_light_mode() != theme {
+                    ui.set_light_mode(theme);
+                }
+            }
+        });
+    }
     bind!(on_toggle_library_view, |s, u| {
         s.settings.library_grid = !u.get_library_grid();
         u.set_library_grid(s.settings.library_grid);
@@ -5181,6 +5213,7 @@ mod tests {
                 discord_presence: enabled,
                 normalize_volume: enabled,
                 close_to_tray: enabled,
+                follow_windows_theme: enabled,
                 library_grid: enabled,
                 audio_device: "wasapi/fixture".into(),
                 light_mode: true,
@@ -5192,6 +5225,7 @@ mod tests {
             assert_eq!(restored.discord_presence, enabled);
             assert_eq!(restored.normalize_volume, enabled);
             assert_eq!(restored.close_to_tray, enabled);
+            assert_eq!(restored.follow_windows_theme, enabled);
             assert_eq!(restored.library_grid, enabled);
             assert_eq!(restored.audio_device, "wasapi/fixture");
             assert!(restored.light_mode);

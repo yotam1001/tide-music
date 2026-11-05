@@ -42,22 +42,29 @@ const QUIT: u32 = 0x7203;
 const MINI: u32 = 0x7204;
 use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
 use windows::Win32::UI::WindowsAndMessaging::WM_SETTINGCHANGE;
-fn system_light_theme() -> bool {
+fn light_theme_setting(name: windows::core::PCWSTR) -> Option<bool> {
     let mut value = 0u32;
     let mut size = 4u32;
     unsafe {
         RegGetValueW(
             HKEY_CURRENT_USER,
             w!("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"),
-            w!("SystemUsesLightTheme"),
+            name,
             RRF_RT_REG_DWORD,
             None,
             Some((&mut value as *mut u32).cast()),
             Some(&mut size),
         )
     }
-    .is_ok()
-        && value != 0
+    .ok()
+    .map(|()| value != 0)
+}
+fn system_light_theme() -> bool {
+    light_theme_setting(w!("SystemUsesLightTheme")).unwrap_or(false)
+}
+
+pub(super) fn app_light_theme() -> Option<bool> {
+    light_theme_setting(w!("AppsUseLightTheme"))
 }
 const SUBCLASS: usize = 0x5449_4445;
 const PREVIOUS: u32 = 0x7101;

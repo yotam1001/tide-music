@@ -1940,6 +1940,15 @@ export component AppWindow inherits Window {
     callback toggle-repeat();
     callback shuffle-queue();
     callback switch-mode();
+    in property <bool> follow-windows-theme: false;
+    in property <bool> windows-theme-supported: false;
+    callback toggle-follow-windows-theme();
+    callback poll-windows-theme();
+    Timer {
+        interval: 1000ms;
+        running: root.windows-theme-supported && root.follow-windows-theme;
+        triggered => { root.poll-windows-theme(); }
+    }
     callback collapse-player();
     callback open-file();
     callback clear-queue();
@@ -2665,6 +2674,7 @@ export component AppWindow inherits Window {
                                     if root.settings-more-open : VerticalLayout {
                                         spacing: 10px; alignment: start;
                                         LibraryButton { height: 36px; quiet: false; caption: "Open audio file"; label: "Open a local audio file"; light-mode: root.light-mode; clicked => { root.open-file(); root.settings-open = false; } }
+                                        if root.windows-theme-supported : PreferenceRow { title: "Follow Windows theme"; checked: root.follow-windows-theme; light-mode: root.light-mode; toggled => { root.toggle-follow-windows-theme(); } }
                                         PreferenceRow { title: "Windows media keys"; checked: root.media-controls-enabled; light-mode: root.light-mode; toggled => { root.toggle-media-controls(); } }
                                         if root.media-controls-enabled : PreferenceRow { title: "Keep playing when I close Tide"; checked: root.close-to-tray; light-mode: root.light-mode; toggled => { root.toggle-close-to-tray(); } }
                                         PreferenceRow { title: "Skip known disliked songs"; checked: root.skip-disliked; light-mode: root.light-mode; toggled => { root.toggle-skip-disliked(); } }

@@ -140,6 +140,11 @@ mod taskbar;
 pub use native::MediaSession;
 
 #[cfg(windows)]
+pub fn app_light_theme() -> Option<bool> {
+    taskbar::app_light_theme()
+}
+
+#[cfg(windows)]
 pub fn start(
     hwnd: *mut c_void,
     callback: impl Fn(MediaAction) + Send + 'static,
