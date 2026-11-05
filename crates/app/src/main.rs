@@ -46,10 +46,17 @@ mod system_artwork;
 mod updater;
 use tide_music::*;
 
+#[derive(Clone, Serialize, Deserialize)]
+struct PlaybackBookmark {
+    source: String,
+    seconds: f64,
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(default)]
 struct Settings {
     queue: Queue,
+    playback_bookmark: Option<PlaybackBookmark>,
     light_mode: bool,
     #[serde(default)]
     compact_mode: bool,
@@ -85,6 +92,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             queue: Queue::default(),
+            playback_bookmark: None,
             light_mode: false,
             compact_mode: false,
             library_grid: true,
@@ -1186,6 +1194,7 @@ fn restore_settings(value: serde_json::Value) -> Settings {
     }
     restore!(
         queue,
+        playback_bookmark,
         light_mode,
         library_grid,
         autoplay,
@@ -1203,6 +1212,9 @@ fn restore_settings(value: serde_json::Value) -> Settings {
         audio_device,
         repeat,
     );
+    if saved_position(&settings).is_none() {
+        settings.playback_bookmark = None;
+    }
     // The size preset was retired. An old saved value must not lock out the
     // responsive navigation now that users resize the window directly.
     settings
@@ -1692,6 +1704,58 @@ fn submit_load(
     Ok(())
 }
 
+fn saved_position(settings: &Settings) -> Option<f64> {
+    let bookmark = settings.playback_bookmark.as_ref()?;
+    let track = settings.queue.tracks.get(settings.queue.current?)?;
+    (bookmark.source == track.source
+        && bookmark.seconds.is_finite()
+        && (1.0..=86_400.0).contains(&bookmark.seconds))
+    .then_some(bookmark.seconds)
+}
+
+fn bookmark_playback(state: &mut State) -> bool {
+    if !local_controls_allowed(state) {
+        return false;
+    }
+    let Some(snapshot) = state.engine.as_ref().map(|engine| engine.snapshot()) else {
+        return false;
+    };
+    let Some(track) = state
+        .settings
+        .queue
+        .current
+        .and_then(|index| state.settings.queue.tracks.get(index))
+    else {
+        return false;
+    };
+    if !state.active_playback
+        || snapshot.generation != state.generation
+        || snapshot.loading
+        || snapshot.ended
+        || snapshot.error.is_some()
+        || !snapshot.position.is_finite()
+        || !(1.0..=86_400.0).contains(&snapshot.position)
+        || !snapshot.duration.is_finite()
+        || snapshot.position >= snapshot.duration - 1.0
+    {
+        return false;
+    }
+    state.settings.playback_bookmark = Some(PlaybackBookmark {
+        source: track.source.clone(),
+        seconds: snapshot.position,
+    });
+    true
+}
+
+fn resume_or_play(state: &mut State, ui: &AppWindow) {
+    let seconds = saved_position(&state.settings);
+    if play(state, ui) {
+        if let Some(seconds) = seconds {
+            send(state, ui, PlaybackCommand::Seek(seconds));
+        }
+    }
+}
+
 fn play(state: &mut State, ui: &AppWindow) -> bool {
     if !local_controls_allowed(state) {
         return false;
@@ -1734,6 +1798,7 @@ fn play(state: &mut State, ui: &AppWindow) -> bool {
         report_error(state, ui, error);
         return false;
     }
+    state.settings.playback_bookmark = None;
     state.load_requested_at = Some((state.generation, requested_at));
     if !ui.get_playback_error_action().is_empty() {
         ui.set_error_message("".into());
@@ -3060,7 +3125,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     bind!(on_toggle_pause, |s, u| {
         if s.connection_resume.is_none() && !s.active_playback && s.settings.queue.current.is_some()
         {
-            play(&mut s, &u);
+            resume_or_play(&mut s, &u);
         } else {
             send(&mut s, &u, PlaybackCommand::TogglePause);
         }
@@ -3326,7 +3391,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         && !s.active_playback
                         && s.settings.queue.current.is_some()
                     {
-                        play(&mut s, &u);
+                        resume_or_play(&mut s, &u);
                     } else {
                         send(&mut s, &u, PlaybackCommand::SetPaused(false));
                     }
@@ -4919,9 +4984,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         timer.stop();
     }
     let mut s = state.borrow_mut();
+    let bookmarked = bookmark_playback(&mut s);
     #[cfg(feature = "experimental-jams")]
     jam::leave(&mut s, &ui, "Jam closed");
-    if s.volume_save_pending {
+    if bookmarked || s.volume_save_pending {
         save(&s.settings);
     }
     s.search_cancel.store(true, Ordering::Release);
@@ -5139,6 +5205,28 @@ mod tests {
         p.error = None;
         p.loading = true;
         assert!(!preparation_eligible(true, 7, &p));
+    }
+
+    #[test]
+    fn playback_bookmark_restores_only_for_the_selected_source() {
+        let queue = Queue {
+            tracks: vec![track("first"), track("second")],
+            current: Some(1),
+        };
+        let settings = restore_settings(serde_json::json!({
+            "queue": queue, "playback_bookmark": {"source": "second", "seconds": 42.5}
+        }));
+        assert_eq!(saved_position(&settings), Some(42.5));
+        for bookmark in [
+            serde_json::json!({"source": "first", "seconds": 42.5}),
+            serde_json::json!({"source": "second", "seconds": -1}),
+            serde_json::json!({"source": "second", "seconds": 1e100}),
+        ] {
+            let settings = restore_settings(serde_json::json!({
+                "queue": queue, "playback_bookmark": bookmark
+            }));
+            assert!(settings.playback_bookmark.is_none());
+        }
     }
 
     #[test]
