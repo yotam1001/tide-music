@@ -136,6 +136,8 @@ component TideSlider inherits Rectangle {
     in property <float> minimum: 0;
     in property <float> maximum: 100;
     in property <float> value: 0;
+    in property <float> step: 1;
+    in property <bool> wheel-adjustable: false;
     in property <int> reset-revision: 0;
     // Native input must never assign the externally owned value: doing so
     // breaks its binding to the live clock/volume. Keep a local drag preview.
@@ -198,28 +200,37 @@ component TideSlider inherits Rectangle {
         border-color: root.light-mode ? #68465d : #f2bccb;
         background: root.enabled ? root.accent : (root.light-mode ? #c1b3aa : #4b4950);
     }
-    native := Slider {
-        width: parent.width;
-        height: parent.height;
-        opacity: 0;
-        minimum: root.minimum;
-        maximum: root.maximum;
-        value <=> root.input-value;
-        enabled: root.enabled;
-        accessible-label: root.label;
-        accessible-value: root.value-text;
-        accessible-action-set-value(value) => {
-            if value.is-float() { root.commit-accessible(value.to-float()); }
+    TouchArea {
+        width: parent.width; height: parent.height;
+        scroll-event(event) => {
+            if !root.enabled || !root.wheel-adjustable || event.delta-y == 0px { return reject; }
+            root.commit-accessible(root.value + (event.delta-y > 0px ? root.step : -root.step));
+            return accept;
         }
-        accessible-action-increment => { root.commit-accessible(root.value + 1); }
-        accessible-action-decrement => { root.commit-accessible(root.value - 1); }
-        changed(value) => { root.interacting = true; root.changed(value); }
-        released(value) => {
-            root.interacting = false;
-            root.released(value);
-            // A rejected/no-op seek need not change the owner's value, so a
-            // changed-value callback alone cannot end the local preview.
-            root.input-value = root.value;
+        native := Slider {
+            width: parent.width;
+            height: parent.height;
+            opacity: 0;
+            step: root.step;
+            minimum: root.minimum;
+            maximum: root.maximum;
+            value <=> root.input-value;
+            enabled: root.enabled;
+            accessible-label: root.label;
+            accessible-value: root.value-text;
+            accessible-action-set-value(value) => {
+                if value.is-float() { root.commit-accessible(value.to-float()); }
+            }
+            accessible-action-increment => { root.commit-accessible(root.value + root.step); }
+            accessible-action-decrement => { root.commit-accessible(root.value - root.step); }
+            changed(value) => { root.interacting = true; root.changed(value); }
+            released(value) => {
+                root.interacting = false;
+                root.released(value);
+                // A rejected/no-op seek need not change the owner's value, so a
+                // changed-value callback alone cannot end the local preview.
+                root.input-value = root.value;
+            }
         }
     }
 }
@@ -1444,6 +1455,7 @@ component PlayerBar inherits Rectangle {
     callback next-track();
     callback previous-track();
     callback seek(float);
+    in property <float> volume-step: 2;
     callback change-volume(float);
     callback restore();
     callback toggle-queue();
@@ -1511,7 +1523,7 @@ component PlayerBar inherits Rectangle {
             TideSlider { reset-revision: root.input-revision; light-mode: root.light-mode; horizontal-stretch: 1; minimum: 0; maximum: max(1, root.duration); value: root.position; enabled: root.transport-enabled && root.duration > 0; label: "Playback position"; value-text: root.format-time(root.position); released(value) => { root.seek(value); } }
             Text { width: 38px; text: root.format-time(root.duration); color: root.secondary; font-size: 11px; }
             VolumeMark { ink: root.secondary; }
-            TideSlider { reset-revision: root.input-revision; light-mode: root.light-mode; width: root.compact || root.collapsed ? 105px : 150px; minimum: 0; maximum: 100; value: root.volume; label: "Volume"; value-text: root.volume.to-fixed(0) + "%"; changed(value) => { root.change-volume(value); } }
+            TideSlider { reset-revision: root.input-revision; light-mode: root.light-mode; width: root.compact || root.collapsed ? 105px : 150px; minimum: 0; maximum: 100; value: root.volume; step: root.volume-step; wheel-adjustable: true; label: "Volume"; value-text: root.volume.to-fixed(0) + "%"; changed(value) => { root.change-volume(value); } }
             Text { width: 38px; text: root.volume.to-fixed(0) + "%"; color: root.secondary; font-size: 11px; horizontal-alignment: right; }
         }
     }
@@ -1893,6 +1905,8 @@ export component AppWindow inherits Window {
     callback next-track();
     callback previous-track();
     callback seek(float);
+    in property <int> volume-step-index: 1;
+    callback set-volume-step(int);
     callback change-volume(float);
     callback toggle-repeat();
     callback shuffle-queue();
@@ -2593,6 +2607,8 @@ export component AppWindow inherits Window {
                                     Text { text: "Output device"; color: root.secondary; font-size: 12px; }
                                     ComboBox { model: root.audio-device-names; current-index: root.audio-device-index; selected(value) => { root.choose-audio-device(self.current-index); } }
                                     Text { text: root.audio-status; color: root.secondary; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
+                                    Text { text: "Volume step for wheel and arrow keys"; color: root.secondary; font-size: 12px; }
+                                    ComboBox { model: ["1%", "2%", "5%", "10%"]; current-index: root.volume-step-index; accessible-label: "Volume adjustment step"; selected(value) => { root.set-volume-step(self.current-index); } }
                                     PreferenceRow { title: "Even volume"; detail: "Smooth volume differences between songs."; checked: root.normalize-volume; light-mode: root.light-mode; toggled => { root.toggle-normalization(); } }
                                     Text { text: "Smooth out loud and quiet songs locally. This changes the sound and adds a small processing delay. Off preserves the original dynamics."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
                                 }
@@ -2870,6 +2886,7 @@ export component AppWindow inherits Window {
                 duration: root.duration;
                 paused: root.paused;
                 volume: root.volume;
+                volume-step: root.volume-step-index == 0 ? 1 : root.volume-step-index == 2 ? 5 : root.volume-step-index == 3 ? 10 : 2;
                 light-mode: root.light-mode;
                 compact: root.compact-mode;
                 collapsed: root.collapsed;

@@ -83,6 +83,7 @@ struct Settings {
     #[serde(default)]
     shortcuts: [String; 3],
     volume: Option<f64>,
+    volume_step_index: i32,
     normalize_volume: bool,
     audio_device: String,
     repeat: bool,
@@ -109,6 +110,7 @@ impl Default for Settings {
             mini_opacity: 100,
             shortcuts: Default::default(),
             volume: None,
+            volume_step_index: 1,
             normalize_volume: false,
             audio_device: "auto".into(),
             repeat: false,
@@ -1211,10 +1213,14 @@ fn restore_settings(value: serde_json::Value) -> Settings {
         mini_opacity,
         shortcuts,
         volume,
+        volume_step_index,
         normalize_volume,
         audio_device,
         repeat,
     );
+    if !(0..=3).contains(&settings.volume_step_index) {
+        settings.volume_step_index = 1;
+    }
     settings.saved_dislikes.sanitize();
     if saved_position(&settings).is_none() {
         settings.playback_bookmark = None;
@@ -2314,6 +2320,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ui.set_shortcut_previous(s.settings.shortcuts[2].clone().into());
     }
     ui.set_volume(state.borrow().settings.volume.unwrap_or(70.0) as f32);
+    ui.set_volume_step_index(state.borrow().settings.volume_step_index);
     ui.set_repeat_enabled(state.borrow().settings.repeat);
     ui.set_paused(true);
     refresh(&ui, &state.borrow());
@@ -3236,6 +3243,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         u.set_auto_update_checks(s.settings.check_updates);
         save(&s.settings);
     });
+    {
+        let state = state.clone();
+        let weak = ui.as_weak();
+        ui.on_set_volume_step(move |index| {
+            if let Some(ui) = weak.upgrade().filter(|_| (0..=3).contains(&index)) {
+                let mut state = state.borrow_mut();
+                state.settings.volume_step_index = index;
+                ui.set_volume_step_index(index);
+                save(&state.settings);
+            }
+        });
+    }
     bind!(on_toggle_skip_disliked, |s, u| {
         s.settings.skip_disliked = !s.settings.skip_disliked;
         u.set_skip_disliked(s.settings.skip_disliked);
