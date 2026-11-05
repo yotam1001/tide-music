@@ -1051,6 +1051,15 @@ def run(client, request):
                 "truncated": isinstance(items, list) and len(items) > MAX_LIBRARY_CARDS}
     if action == "feedback":
         return feedback(client, request.get("request"))
+    if action == "suggestions":
+        query = request.get("query")
+        if (not isinstance(query, str) or not 2 <= len(query.strip()) <= 120
+                or any(not char.isprintable() for char in query)):
+            return {"type": "suggestions", "items": []}
+        items = client.get_search_suggestions(query.strip())
+        suggestions = dict.fromkeys(clean(item, 120).strip()
+                                    for item in (items[:20] if isinstance(items, list) else []) if isinstance(item, str))
+        return {"type": "suggestions", "items": [item for item in suggestions if item][:5]}
     if action == "search":
         kind, query = request.get("kind"), request.get("query")
         kinds = {"songs": "song", "albums": "album", "artists": "artist", "playlists": "playlist"}
@@ -1294,6 +1303,8 @@ def main():
             print(json.dumps(result, ensure_ascii=True))
             return
         client, session = create_client(request.pop("headers"))
+        if request.get("action") == "suggestions":
+            session._tide_request_timeout = 3
         if request.get("action") == "lyrics":
             # Both reads can time out and still return refreshed cookies before
             # the owning provider's 25-second overall deadline.

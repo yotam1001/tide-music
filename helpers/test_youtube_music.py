@@ -153,6 +153,16 @@ class ProviderTests(unittest.TestCase):
             self.assertEqual(result, {"type": "error", "code": "request"})
             self.assertNotIn("private fixture", json.dumps(result))
 
+    def test_suggestions_preserve_provider_order_and_bound_untrusted_text(self):
+        client = FakeClient()
+        client.get_search_suggestions = MagicMock(return_value=[
+            "First", None, "First", "Second", "Third", "Fourth", "Fifth", "Sixth"])
+        result = run(client, {"action": "suggestions", "query": "  tide  "})
+        self.assertEqual(result, {"type": "suggestions", "items": [
+            "First", "Second", "Third", "Fourth", "Fifth"]})
+        client.get_search_suggestions.assert_called_once_with("tide")
+        self.assertEqual(run(client, {"action": "suggestions", "query": "x"})["items"], [])
+
     def test_radio_filters_seed_duplicates_malformed_and_unavailable_tracks(self):
         client = FakeClient()
         items = [None, "unsupported", {}, {"videoId": "bad/id"}, {"videoId": 12345678901},

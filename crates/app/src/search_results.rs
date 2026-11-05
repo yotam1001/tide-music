@@ -152,12 +152,134 @@ pub(super) fn refresh(s: &State, ui: &AppWindow) {
         .collect();
     ui.set_search_cards(update_model(ui.get_search_cards(), rows));
 }
+struct SuggestionWork {
+    query: String,
+    connection: tide_provider::SavedConnection,
+    receiver: mpsc::Receiver<Result<Response, String>>,
+}
+
+fn wire_suggestions(ui: &AppWindow, state: Rc<RefCell<State>>) {
+    let timer = Rc::new(slint::Timer::default());
+    let work = Rc::new(RefCell::new(None::<SuggestionWork>));
+    let weak = ui.as_weak();
+    ui.on_suggest_search(move |input| {
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        ui.set_search_suggestions(ModelRc::default());
+        let query = input.trim().to_owned();
+        let eligible = (2..=120).contains(&query.chars().count())
+            && !query.contains(['/', '\\', ':'])
+            && !query.chars().any(char::is_control)
+            && !Path::new(&query).is_file();
+        let weak = weak.clone();
+        let state = state.clone();
+        let owner = Rc::downgrade(&timer);
+        let work = work.clone();
+        timer.start(
+            slint::TimerMode::Repeated,
+            Duration::from_millis(350),
+            move || {
+                let (Some(ui), Some(timer)) = (weak.upgrade(), owner.upgrade()) else {
+                    return;
+                };
+                let state = state.borrow();
+                let mut work = work.borrow_mut();
+                let show = eligible
+                    && ui.get_suggestions_open()
+                    && state.account_verified
+                    && ui.get_source_input().trim() == query
+                    && !ui.get_account_open()
+                    && !ui.get_settings_open()
+                    && !ui.get_collapsed()
+                    && !ui.get_lyrics_open()
+                    && !ui.get_jam_open();
+                if let Some(active) = work.as_ref() {
+                    let result = match active.receiver.try_recv() {
+                        Ok(result) => result.ok(),
+                        Err(mpsc::TryRecvError::Empty) => return,
+                        Err(mpsc::TryRecvError::Disconnected) => None,
+                    };
+                    let matches = show
+                        && active.query == query
+                        && state.saved_connection.as_ref() == Some(&active.connection);
+                    *work = None;
+                    if matches {
+                        if let Some(Response::Suggestions { items }) = result {
+                            ui.set_search_suggestions(ModelRc::new(VecModel::from(
+                                items
+                                    .into_iter()
+                                    .take(5)
+                                    .filter(|value| {
+                                        !value.is_empty()
+                                            && value.len() <= 480
+                                            && !value.contains(['/', '\\', ':'])
+                                            && !value.chars().any(char::is_control)
+                                    })
+                                    .map(slint::SharedString::from)
+                                    .collect::<Vec<_>>(),
+                            )));
+                        }
+                        timer.stop();
+                        return;
+                    }
+                }
+                if !show {
+                    timer.stop();
+                    return;
+                }
+                let (Some(provider), Some(connection)) =
+                    (state.provider.clone(), state.saved_connection.clone())
+                else {
+                    timer.stop();
+                    return;
+                };
+                let (sender, receiver) = mpsc::sync_channel(1);
+                let request = Request::Suggestions {
+                    query: query.clone(),
+                };
+                if std::thread::Builder::new()
+                    .name("tide-suggestions".into())
+                    .spawn(move || {
+                        let _ = sender
+                            .send(provider.execute(request, Arc::new(AtomicBool::new(false))));
+                    })
+                    .is_ok()
+                {
+                    *work = Some(SuggestionWork {
+                        query: query.clone(),
+                        connection,
+                        receiver,
+                    });
+                } else {
+                    timer.stop();
+                }
+            },
+        );
+    });
+}
+
 pub(super) fn wire(
     ui: &AppWindow,
     state: Rc<RefCell<State>>,
     tx: Sender,
     library_tx: mpsc::SyncSender<LibraryResult>,
 ) {
+    wire_suggestions(ui, state.clone());
+    let weak = ui.as_weak();
+    let search_state = state.clone();
+    let search_tx = tx.clone();
+    ui.on_choose_suggestion(move |suggestion| {
+        if let Some(ui) = weak.upgrade() {
+            start(
+                &mut search_state.borrow_mut(),
+                &ui,
+                &search_tx,
+                suggestion.to_string(),
+                ui.get_search_kind(),
+            );
+        }
+    });
     let weak = ui.as_weak();
     let s = state.clone();
     ui.on_select_search_kind(move |index| {

@@ -23,6 +23,7 @@ pub struct Music {
     listening: history_feedback::Listening,
     synthetic: bool,
     current_video: Option<String>,
+    disliked: std::collections::VecDeque<String>,
     inspected: bool,
     notice_until: Option<Instant>,
     playlist: Option<PlaylistDetails>,
@@ -37,12 +38,18 @@ impl Music {
             listening: Default::default(),
             synthetic,
             current_video: None,
+            disliked: Default::default(),
             inspected: false,
             notice_until: None,
             playlist: None,
             detail_revision: 0,
             picker: None,
         }
+    }
+    pub fn skips(&self, source: &str, identity: Option<&SavedConnection>) -> bool {
+        !self.disliked.is_empty()
+            && self.identity.as_ref() == identity
+            && source_video_id(source).is_some_and(|id| self.disliked.contains(&id))
     }
     pub fn shutdown(&mut self) {
         if let Some(work) = self.worker.take() {
@@ -525,6 +532,7 @@ pub fn tick(s: &mut State, u: &AppWindow) {
         s.music_feedback.listening.reset();
         s.music_feedback.identity = s.saved_connection.clone();
         s.music_feedback.current_video = None;
+        s.music_feedback.disliked.clear();
         s.music_feedback.inspected = false;
         s.music_feedback.picker = None;
         u.set_playlist_picker_open(false);
@@ -569,6 +577,16 @@ pub fn tick(s: &mut State, u: &AppWindow) {
                     FeedbackOperation::Rating | FeedbackOperation::Rate
                 )
             }) {
+                if let Some(rating) = result.rating {
+                    let disliked = &mut s.music_feedback.disliked;
+                    disliked.retain(|id| id != &result.video_id);
+                    if rating == Rating::Dislike {
+                        if disliked.len() == 512 {
+                            disliked.pop_front();
+                        }
+                        disliked.push_back(result.video_id.clone());
+                    }
+                }
                 if current_video_id(s).as_deref() == Some(result.video_id.as_str()) {
                     u.set_current_rating(match result.rating {
                         Some(Rating::Like) => 1,

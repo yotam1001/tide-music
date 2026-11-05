@@ -57,6 +57,7 @@ struct Settings {
     library_grid: bool,
     #[serde(default = "enabled_by_default")]
     autoplay: bool,
+    skip_disliked: bool,
     #[serde(default = "enabled_by_default")]
     check_updates: bool,
     #[serde(default = "enabled_by_default")]
@@ -88,6 +89,7 @@ impl Default for Settings {
             compact_mode: false,
             library_grid: true,
             autoplay: true,
+            skip_disliked: true,
             check_updates: true,
             media_controls: true,
             history_feedback: false,
@@ -451,8 +453,12 @@ fn current_video_id(s: &State) -> Option<String> {
         .queue
         .current
         .and_then(|index| s.settings.queue.tracks.get(index))?;
-    let url = url::Url::parse(&track.source).ok()?;
-    if !is_youtube_source(&track.source) {
+    source_video_id(&track.source)
+}
+
+fn source_video_id(source: &str) -> Option<String> {
+    let url = url::Url::parse(source).ok()?;
+    if !is_youtube_source(source) {
         return None;
     }
     let id = if url.host_str() == Some("youtu.be") {
@@ -487,8 +493,15 @@ fn request_radio(s: &mut State, u: &AppWindow, tx: &mpsc::SyncSender<LibraryResu
         return;
     };
     if !force
-        && (upcoming.len() > 2
-            || upcoming.iter().any(|track| !track.recommended)
+        && (upcoming
+            .iter()
+            .filter(|track| !skip_disliked(s, track))
+            .take(3)
+            .count()
+            > 2
+            || upcoming
+                .iter()
+                .any(|track| !track.recommended && !skip_disliked(s, track))
             || !s.radio_requests.ready(s.generation, Instant::now()))
     {
         return;
@@ -1605,17 +1618,24 @@ fn preparation_eligible(active: bool, generation: u64, p: &tide_core::PlaybackSn
     active && p.generation == generation && !p.loading && p.error.is_none()
 }
 
-fn upcoming_source(queue: &Queue, repeat: bool) -> Option<&str> {
-    let current = queue.current?;
-    if current >= queue.tracks.len() {
-        return None;
-    }
-    let next = current + 1;
-    queue
-        .tracks
-        .get(next)
-        .or_else(|| repeat.then(|| queue.tracks.first()).flatten())
-        .map(|track| track.source.as_str())
+fn skip_disliked(s: &State, track: &Track) -> bool {
+    s.settings.skip_disliked
+        && s.music_feedback
+            .skips(&track.source, s.saved_connection.as_ref())
+}
+
+fn next_playable(queue: &Queue, repeat: bool, skip: impl Fn(&Track) -> bool) -> Option<usize> {
+    let start = queue.current.map_or(0, |index| index.saturating_add(1));
+    let start = start.min(queue.tracks.len());
+    (start..queue.tracks.len())
+        .chain(0..if repeat { start } else { 0 })
+        .find(|&index| !skip(&queue.tracks[index]))
+}
+
+fn next_queue_index(s: &State) -> Option<usize> {
+    next_playable(&s.settings.queue, s.settings.repeat, |track| {
+        skip_disliked(s, track)
+    })
 }
 
 fn send(state: &mut State, ui: &AppWindow, cmd: PlaybackCommand) -> bool {
@@ -1754,9 +1774,9 @@ fn next_track(s: &mut State, u: &AppWindow, tx: &mpsc::SyncSender<LibraryResult>
     if !local_controls_allowed(s) {
         return;
     }
-    let repeat = s.settings.repeat;
     let previous = s.settings.queue.current;
-    if s.settings.queue.next_track(repeat).is_some() {
+    if let Some(index) = next_queue_index(s) {
+        s.settings.queue.select(index);
         if !play(s, u) {
             s.settings.queue.current = previous;
             refresh(u, s);
@@ -2202,6 +2222,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ui.set_compact_mode(state.borrow().settings.compact_mode);
     ui.set_library_grid(state.borrow().settings.library_grid);
     ui.set_autoplay_enabled(state.borrow().settings.autoplay);
+    ui.set_skip_disliked(state.borrow().settings.skip_disliked);
     ui.set_auto_update_checks(state.borrow().settings.check_updates);
     ui.set_media_controls_enabled(state.borrow().settings.media_controls);
     ui.set_discord_presence_enabled(state.borrow().settings.discord_presence);
@@ -3142,6 +3163,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         u.set_auto_update_checks(s.settings.check_updates);
         save(&s.settings);
     });
+    bind!(on_toggle_skip_disliked, |s, u| {
+        s.settings.skip_disliked = !s.settings.skip_disliked;
+        u.set_skip_disliked(s.settings.skip_disliked);
+        save(&s.settings);
+    });
     bind!(on_toggle_autoplay, |s, u| {
         s.settings.autoplay = !s.settings.autoplay;
         u.set_autoplay_enabled(s.settings.autoplay);
@@ -3441,7 +3467,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let p = engine.snapshot();
                 let eligible = preparation_eligible(s.active_playback, s.generation, &p);
                 let _ = engine.prepare_next(if eligible && local_controls_allowed(&s) {
-                    upcoming_source(&s.settings.queue, s.settings.repeat)
+                    next_queue_index(&s).map(|index| s.settings.queue.tracks[index].source.as_str())
                 } else {
                     None
                 });
@@ -4059,9 +4085,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     if !local_controls_allowed(&s) { return; }
                     if p.ended && !failed {
-                        let repeat = s.settings.repeat;
                         let previous = s.settings.queue.current;
-                        if s.settings.queue.next_track(repeat).is_some() {
+                        if let Some(index) = next_queue_index(&s) {
+                            s.settings.queue.select(index);
                             if !play(&mut s, &u) {
                                 s.settings.queue.current = previous;
                                 s.active_playback = false;
@@ -5144,16 +5170,17 @@ mod tests {
             tracks: vec![track("current"), track("next"), track("last")],
             current: Some(0),
         };
-        assert_eq!(upcoming_source(&queue, false), Some("next"));
-        queue.tracks.swap(1, 2);
-        assert_eq!(upcoming_source(&queue, false), Some("last"));
+        assert_eq!(next_playable(&queue, false, |_| false), Some(1));
+        assert_eq!(
+            next_playable(&queue, false, |t| t.source == "next"),
+            Some(2)
+        );
         queue.current = Some(2);
-        assert_eq!(upcoming_source(&queue, false), None);
-        assert_eq!(upcoming_source(&queue, true), Some("current"));
-        queue.current = Some(99);
-        assert_eq!(upcoming_source(&queue, true), None);
+        assert_eq!(next_playable(&queue, false, |_| false), None);
+        assert_eq!(next_playable(&queue, true, |_| false), Some(0));
+        assert_eq!(next_playable(&queue, true, |_| true), None);
         queue.current = None;
-        assert_eq!(upcoming_source(&queue, true), None);
+        assert_eq!(next_playable(&queue, false, |_| false), Some(0));
     }
 
     #[test]
@@ -5168,7 +5195,7 @@ mod tests {
         requests.succeeded();
         assert!(!requests.ready(7, now));
         queue.remove(1).unwrap();
-        assert_eq!(upcoming_source(&queue, false), None);
+        assert_eq!(next_playable(&queue, false, |_| false), None);
         requests.queue_depleted(7);
         assert!(requests.ready(7, now));
         requests.started(7);
