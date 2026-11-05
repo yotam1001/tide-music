@@ -57,7 +57,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force .local | Out-Null
-          cargo test -p tide-music --locked --features experimental-jams --bin tide-music --no-run --message-format=json | Set-Content .local/jam-pipe-build.jsonl -Encoding utf8
+          cargo test --workspace --locked --features tide-music/experimental-jams,tide-provider/native-login --no-run --message-format=json | Set-Content .local/jam-pipe-build.jsonl -Encoding utf8
           if ($LASTEXITCODE -ne 0) { throw 'Private file probe build failed' }
           python experiments/jam/check-private-pipe.py --cargo-artifacts .local/jam-pipe-build.jsonl
           if ($LASTEXITCODE -ne 0) { throw 'Private file cancellation probe failed' }
