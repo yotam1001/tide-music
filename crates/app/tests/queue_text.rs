@@ -151,3 +151,29 @@ fn long_queue_metadata_keeps_duration_and_remove_controls_in_place() {
         }
     }
 }
+
+#[test]
+fn related_view_loads_without_selecting_a_track_and_closes_on_song_change() {
+    let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
+    slint::platform::set_platform(Box::new(TestPlatform(window.clone()))).unwrap();
+    let ui = AppWindow::new().unwrap();
+    ui.set_account_verified(true);
+    ui.set_queue_open(true);
+    ui.set_current_index(0);
+    ui.set_rows(rows("Current song", "Artist"));
+    let loads = Rc::new(Cell::new(0));
+    let capture = loads.clone();
+    ui.on_load_related(move || capture.set(capture.get() + 1));
+    let selections = Rc::new(Cell::new(0));
+    let capture = selections.clone();
+    ui.on_select_track(move |_| capture.set(capture.get() + 1));
+    ui.show().unwrap();
+    draw(&window, 1140);
+    click(&ui, 982.0, 95.0);
+    assert!(ui.get_related_open());
+    assert_eq!(loads.get(), 1);
+    assert_eq!(selections.get(), 0);
+    ui.set_lyrics_generation("next-song".into());
+    assert!(!ui.get_related_open());
+    assert!(ui.get_queue_open());
+}
