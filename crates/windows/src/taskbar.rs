@@ -3,7 +3,7 @@
 use crate::MediaAction;
 use std::{cell::Cell, marker::PhantomData, rc::Rc};
 use windows::Win32::{
-    Foundation::POINT,
+    Foundation::{ERROR_SUCCESS, POINT},
     UI::{
         Shell::{
             Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW,
@@ -45,7 +45,7 @@ use windows::Win32::UI::WindowsAndMessaging::WM_SETTINGCHANGE;
 fn light_theme_setting(name: windows::core::PCWSTR) -> Option<bool> {
     let mut value = 0u32;
     let mut size = 4u32;
-    unsafe {
+    let status = unsafe {
         RegGetValueW(
             HKEY_CURRENT_USER,
             w!("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"),
@@ -55,9 +55,8 @@ fn light_theme_setting(name: windows::core::PCWSTR) -> Option<bool> {
             Some((&mut value as *mut u32).cast()),
             Some(&mut size),
         )
-    }
-    .ok()
-    .map(|()| value != 0)
+    };
+    (status == ERROR_SUCCESS).then_some(value != 0)
 }
 fn system_light_theme() -> bool {
     light_theme_setting(w!("SystemUsesLightTheme")).unwrap_or(false)

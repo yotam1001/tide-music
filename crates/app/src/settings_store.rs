@@ -12,14 +12,19 @@ fn backup(path: &Path) -> PathBuf {
     path.with_extension("json.bak")
 }
 
-fn read(path: &Path) -> Option<Vec<u8>> {
+fn read(path: &Path) -> Option<Value> {
     let mut bytes = Vec::new();
     File::open(path)
         .ok()?
         .take(MAX_BYTES + 1)
         .read_to_end(&mut bytes)
         .ok()?;
-    (bytes.len() as u64 <= MAX_BYTES && valid(&bytes)).then_some(bytes)
+    if bytes.len() as u64 > MAX_BYTES {
+        return None;
+    }
+    serde_json::from_slice::<Value>(&bytes)
+        .ok()
+        .filter(Value::is_object)
 }
 
 fn valid(bytes: &[u8]) -> bool {
@@ -27,9 +32,7 @@ fn valid(bytes: &[u8]) -> bool {
 }
 
 pub(super) fn load(path: &Path) -> Option<Value> {
-    read(path)
-        .or_else(|| read(&backup(path)))
-        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+    read(path).or_else(|| read(&backup(path)))
 }
 
 fn replace(path: &Path, bytes: &[u8]) -> io::Result<()> {
@@ -77,7 +80,7 @@ mod tests {
         assert_eq!(recovered["history_feedback"], false);
         assert_eq!(recovered["discord_presence"], false);
         save(&path, ENABLED).unwrap();
-        assert_eq!(read(&backup(&path)).unwrap(), ENABLED);
+        assert_eq!(fs::read(backup(&path)).unwrap(), ENABLED);
         assert_eq!(fs::read_dir(path.parent().unwrap()).unwrap().count(), 2);
     }
 

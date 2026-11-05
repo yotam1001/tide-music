@@ -576,6 +576,28 @@ component Cover inherits Rectangle {
     }
 }
 
+// Keep cover art square and anchored to the same edge as the caption.
+component TileArtwork inherits Rectangle {
+    in property <length> max-side;
+    in property <image> artwork;
+    in property <bool> playlist: false;
+    in property <int> variant;
+    in property <bool> light-mode;
+    min-width: 0px;
+    horizontal-stretch: 1;
+    height: cover.width;
+    cover := Cover {
+        x: 0px;
+        width: min(root.width, root.max-side);
+        height: self.width;
+        preserve-artwork: true;
+        artwork: root.artwork;
+        playlist: root.playlist;
+        variant: root.variant;
+        light-mode: root.light-mode;
+    }
+}
+
 component PlaylistTile inherits Rectangle {
     in property <bool> editorial: false;
     in property <int> cover-variant;
@@ -611,8 +633,7 @@ component PlaylistTile inherits Rectangle {
     }
     if !root.featured || root.width < 360px : VerticalLayout {
         padding: root.featured ? 14px : 10px; spacing: root.featured ? 5px : 6px; alignment: start;
-        if root.editorial && root.width <= 235px : Rectangle { height: 36px; }
-        Rectangle { height: root.editorial ? (root.width > 235px ? 222px : 180px) : root.featured ? 96px : min(160px, max(96px, root.width - 20px)); min-width: 0px; Cover { x: 0px; preserve-artwork: true; width: root.editorial ? parent.width : root.featured ? 96px : min(160px, max(96px, root.width - 20px)); height: root.editorial ? parent.height : self.width; artwork: root.artwork; playlist: root.playlist-cover; variant: root.cover-variant; light-mode: root.light-mode; } }
+        TileArtwork { max-side: root.editorial ? 222px : root.featured ? 96px : 160px; artwork: root.artwork; playlist: root.playlist-cover; variant: root.cover-variant; light-mode: root.light-mode; }
         Text { height: 22px; text: root.title; color: root.light-mode ? #392e33 : #f0eeef; font-size: root.editorial ? 18px : root.featured ? 16px : 14px; font-weight: 600; overflow: elide; }
         Text { height: 18px; text: root.subtitle; color: root.light-mode ? #716773 : #a1a5ae; font-size: 12px; overflow: elide; }
         if root.featured : Rectangle { height: 30px; min-width: 0px; LibraryButton { x: 0px; y: 0px; width: 112px; height: 30px; active: true; caption: "Open " + root.collection-kind; label: "Open " + root.collection-kind + " " + root.title; light-mode: root.light-mode; enabled: root.enabled; clicked => { root.open(); } } }
@@ -804,8 +825,7 @@ component SongRow inherits Rectangle {
     }
     if root.tile-mode && (!root.featured || root.width < 360px) : VerticalLayout {
         padding: root.featured ? 14px : 10px; spacing: root.featured ? 5px : 6px; alignment: start;
-        if root.editorial && root.width <= 235px : Rectangle { height: 36px; }
-        Rectangle { height: root.editorial ? (root.width > 235px ? 222px : 180px) : root.featured ? 96px : min(160px, max(96px, root.width - 20px)); min-width: 0px; Cover { x: 0px; preserve-artwork: true; width: root.editorial ? parent.width : root.featured ? 96px : min(160px, max(96px, root.width - 20px)); height: root.editorial ? parent.height : self.width; artwork: root.track.artwork; light-mode: root.light-mode; } }
+        TileArtwork { max-side: root.editorial ? 222px : root.featured ? 96px : 160px; artwork: root.track.artwork; light-mode: root.light-mode; }
         Text { height: 22px; min-width: 0px; text: root.track.title; color: root.light-mode ? #392e33 : #f0eeef; font-size: root.editorial ? 18px : root.featured ? 16px : 14px; font-weight: 600; overflow: elide; }
         ArtistLink { height: 18px; artist: root.track.artist; enabled: root.enabled && root.track.artist-enabled; light-mode: root.light-mode; label-size: 12px; activated => { root.artist(); } }
         if root.featured : Rectangle { height: 30px; min-width: 0px; LibraryButton { x: 0px; y: 0px; width: 88px; height: 30px; active: true; caption: root.shared-queue ? "Add" : "Play"; leading-icon: root.shared-queue ? "M 12 5 L 12 19 M 5 12 L 19 12" : "M 7 4 L 20 12 L 7 20 Z"; label: root.shared-queue ? "Add " + root.track.title + " to the shared queue" : "Play " + root.track.title; light-mode: root.light-mode; enabled: root.enabled; clicked => { root.select(); } } }
@@ -1965,7 +1985,7 @@ export component AppWindow inherits Window {
     in property <string> detail-note;
     in property <[TrackRow]> detail-rows;
     in property <bool> detail-busy;
-    in property <bool> search-open;
+    in-out property <bool> search-open;
     in property <[TrackRow]> search-rows;
     in property <[RecommendationRow]> search-cards;
     in-out property <int> search-kind: 0;
@@ -1978,10 +1998,42 @@ export component AppWindow inherits Window {
     in-out property <bool> settings-open: false;
     in-out property <bool> account-open: false;
     in-out property <bool> forward-collection: false;
-    changed detail-open => { if root.detail-open { root.forward-collection = false; } }
-    changed search-open => { root.forward-collection = false; }
-    changed library-open => { root.forward-collection = false; }
-    changed library-section => { root.forward-collection = false; }
+    private property <bool> forward-search: false;
+    changed detail-open => { if root.detail-open { root.forward-collection = false; root.forward-search = false; } }
+    changed search-open => { root.forward-collection = false; if root.search-open { root.forward-search = false; } }
+    changed source-input => { root.forward-search = false; }
+    changed account-busy => { if root.account-busy { root.forward-search = false; } }
+    changed library-open => { root.forward-collection = false; root.forward-search = false; }
+    changed library-section => { root.forward-collection = false; root.forward-search = false; }
+    public function navigate-browse(forward: bool) -> bool {
+        if !root.browsing-enabled || root.collapsed || root.playlist-picker-open
+            || root.account-open || root.settings-open || root.update-panel-open
+            || root.artist-picker-open || root.lyrics-open || root.jam-open
+            || root.playlist-manage-mode != 0 || root.playlist-create-open {
+            return false;
+        }
+        if forward {
+            if root.detail-open || root.account-busy { return false; }
+            if root.forward-collection {
+                root.detail-open = true;
+                return true;
+            }
+            if root.forward-search && !root.search-open {
+                root.forward-search = false;
+                root.search-open = true;
+                return true;
+            }
+        } else if root.detail-open {
+            if root.detail-is-artist { root.back-detail(); } else { root.close-detail(); }
+            return true;
+        } else if root.search-open {
+            root.forward-collection = false;
+            root.forward-search = !root.search-busy;
+            root.close-search();
+            return true;
+        }
+        return false;
+    }
     callback close-detail();
     callback close-search();
     callback play-detail();
@@ -2080,17 +2132,9 @@ export component AppWindow inherits Window {
                     return accept;
                 }
             }
-            if event.modifiers.alt && !event.modifiers.control && !event.modifiers.shift && !event.modifiers.meta
-                && root.browsing-enabled && !root.collapsed && !root.playlist-picker-open {
-                if event.text == Key.RightArrow && root.forward-collection && !root.detail-open && !root.account-busy {
-                    root.detail-open = true;
-                    return accept;
-                }
-                if event.text == Key.LeftArrow && root.detail-open {
-                    if root.detail-is-artist { root.back-detail(); } else { root.close-detail(); }
-                    return accept;
-                }
-                if event.text == Key.LeftArrow && root.search-open { root.forward-collection = false; root.close-search(); return accept; }
+            if event.modifiers.alt && !event.modifiers.control && !event.modifiers.shift && !event.modifiers.meta {
+                if event.text == Key.LeftArrow && root.navigate-browse(false) { return accept; }
+                if event.text == Key.RightArrow && root.navigate-browse(true) { return accept; }
             }
             if event.modifiers.control && !event.modifiers.alt && !event.modifiers.meta {
                 if (event.text == "k" || event.text == "K") && root.browsing-enabled { root.search-focus-revision += 1; return accept; }

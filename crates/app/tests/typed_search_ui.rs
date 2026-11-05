@@ -165,6 +165,27 @@ fn typed_search_tabs_and_collections_keep_actions_at_each_size() {
         !ui.get_detail_open(),
         "Closing search must invalidate its forward collection"
     );
+    assert!(
+        ui.get_search_open(),
+        "Forward should restore finished search"
+    );
+    assert_eq!(ui.get_search_kind(), 3);
+    ui.set_settings_open(true);
+    navigate(slint::platform::Key::LeftArrow);
+    assert!(
+        ui.get_search_open(),
+        "Settings should block browse navigation"
+    );
+    ui.set_settings_open(false);
+    ui.set_search_busy(true);
+    navigate(slint::platform::Key::LeftArrow);
+    assert!(!ui.get_search_open());
+    ui.set_search_busy(false);
+    navigate(slint::platform::Key::RightArrow);
+    assert!(
+        !ui.get_search_open(),
+        "Forward must not reopen a canceled search"
+    );
 
     let chosen = Rc::new(Cell::new(None));
     let captured = chosen.clone();

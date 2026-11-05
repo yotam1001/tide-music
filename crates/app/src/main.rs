@@ -1253,7 +1253,7 @@ fn save(settings: &Settings) {
     let Some(path) = settings_path() else {
         return;
     };
-    if let Ok(bytes) = serde_json::to_vec_pretty(settings) {
+    if let Ok(bytes) = serde_json::to_vec(settings) {
         if settings_store::save(&path, &bytes).is_err() {
             eprintln!("Tide could not finish saving preferences.");
         }
@@ -1706,6 +1706,9 @@ fn send(state: &mut State, ui: &AppWindow, cmd: PlaybackCommand) -> bool {
             if clears_audio {
                 ui.set_audio_quality("".into());
                 ui.set_playback_hint("".into());
+                if state.settings.playback_bookmark.take().is_some() {
+                    save(&state.settings);
+                }
             }
             state.command_error = None;
             true
@@ -1740,34 +1743,46 @@ fn saved_position(settings: &Settings) -> Option<f64> {
     .then_some(bookmark.seconds)
 }
 
-fn bookmark_playback(state: &mut State) -> bool {
-    if !local_controls_allowed(state) {
-        return false;
-    }
-    let Some(snapshot) = state.engine.as_ref().map(|engine| engine.snapshot()) else {
-        return false;
-    };
-    let Some(track) = state
-        .settings
-        .queue
-        .current
-        .and_then(|index| state.settings.queue.tracks.get(index))
-    else {
-        return false;
-    };
-    if !state.active_playback
+fn bookmark_playback(state: &mut State, snapshot: &tide_core::PlaybackSnapshot) -> bool {
+    if !local_controls_allowed(state)
+        || !state.active_playback
         || snapshot.generation != state.generation
-        || snapshot.loading
-        || snapshot.ended
-        || snapshot.error.is_some()
-        || !snapshot.position.is_finite()
-        || !(1.0..=86_400.0).contains(&snapshot.position)
-        || !snapshot.duration.is_finite()
-        || snapshot.position >= snapshot.duration - 1.0
     {
         return false;
     }
-    state.settings.playback_bookmark = Some(PlaybackBookmark {
+    update_bookmark(&mut state.settings, snapshot)
+}
+
+fn update_bookmark(settings: &mut Settings, snapshot: &tide_core::PlaybackSnapshot) -> bool {
+    if snapshot.ended && snapshot.error.is_none() {
+        return settings.playback_bookmark.take().is_some();
+    }
+    if snapshot.loading
+        || snapshot.error.is_some()
+        || !snapshot.position.is_finite()
+        || !snapshot.duration.is_finite()
+        || snapshot.duration <= 0.0
+    {
+        return false;
+    }
+    if !(1.0..=86_400.0).contains(&snapshot.position)
+        || snapshot.position >= snapshot.duration - 1.0
+    {
+        return settings.playback_bookmark.take().is_some();
+    }
+    let Some(track) = settings
+        .queue
+        .current
+        .and_then(|index| settings.queue.tracks.get(index))
+    else {
+        return false;
+    };
+    if settings.playback_bookmark.as_ref().is_some_and(|bookmark| {
+        bookmark.source == track.source && (bookmark.seconds - snapshot.position).abs() < 1.0
+    }) {
+        return false;
+    }
+    settings.playback_bookmark = Some(PlaybackBookmark {
         source: track.source.clone(),
         seconds: snapshot.position,
     });
@@ -1775,15 +1790,18 @@ fn bookmark_playback(state: &mut State) -> bool {
 }
 
 fn resume_or_play(state: &mut State, ui: &AppWindow) {
-    let seconds = saved_position(&state.settings);
-    if play(state, ui) {
-        if let Some(seconds) = seconds {
-            send(state, ui, PlaybackCommand::Seek(seconds));
-        }
-    }
+    play_at(
+        state,
+        ui,
+        saved_position(&state.settings).unwrap_or_default(),
+    );
 }
 
 fn play(state: &mut State, ui: &AppWindow) -> bool {
+    play_at(state, ui, 0.0)
+}
+
+fn play_at(state: &mut State, ui: &AppWindow, position: f64) -> bool {
     if !local_controls_allowed(state) {
         return false;
     }
@@ -1818,14 +1836,16 @@ fn play(state: &mut State, ui: &AppWindow) -> bool {
             engine
                 .as_ref()
                 .ok_or_else(|| "Playback runtime unavailable. See setup instructions.".to_string())?
-                .send(PlaybackCommand::Load { source, generation })
+                .load_at(source, generation, position)
         },
     );
     if let Err(error) = result {
         report_error(state, ui, error);
         return false;
     }
-    state.settings.playback_bookmark = None;
+    if position == 0.0 {
+        state.settings.playback_bookmark = None;
+    }
     state.load_requested_at = Some((state.generation, requested_at));
     if !ui.get_playback_error_action().is_empty() {
         ui.set_error_message("".into());
@@ -1838,7 +1858,7 @@ fn play(state: &mut State, ui: &AppWindow) -> bool {
     state.radio_resume_when_ready = false;
     refresh(ui, state);
     ui.set_status_text("Loading…".into());
-    ui.set_position(0.0);
+    ui.set_position(position as f32);
     ui.set_duration(0.0);
     ui.set_paused(false);
     save(&state.settings);
@@ -2345,6 +2365,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ui.set_repeat_enabled(state.borrow().settings.repeat);
     ui.set_paused(true);
     refresh(&ui, &state.borrow());
+    {
+        let state = state.borrow();
+        if let Some(position) = saved_position(&state.settings) {
+            let duration = state
+                .settings
+                .queue
+                .current
+                .and_then(|index| state.settings.queue.tracks.get(index))
+                .and_then(|track| track.duration_seconds);
+            if let Some(duration) = duration.filter(|duration| *duration as f64 > position) {
+                ui.set_duration(duration as f32);
+                ui.set_position(position as f32);
+            }
+        }
+    }
     ui.set_status_text(
         error
             .unwrap_or_else(|| "Ready · paste a link, search, or open a file".into())
@@ -3400,6 +3435,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     s.radio_requests.queue_depleted(generation);
                 }
                 if was_current {
+                    s.settings.playback_bookmark = None;
                     s.radio_resume_when_ready = false;
                 }
                 if was_current && s.active_playback {
@@ -3574,6 +3610,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
     ui.show()?;
+    {
+        use slint::winit_030::{
+            winit::event::{ElementState, MouseButton, WindowEvent},
+            EventResult, WinitWindowAccessor,
+        };
+        let weak = ui.as_weak();
+        ui.window().on_winit_window_event(move |_, event| {
+            let WindowEvent::MouseInput {
+                state: ElementState::Released,
+                button,
+                ..
+            } = event
+            else {
+                return EventResult::Propagate;
+            };
+            let forward = match button {
+                MouseButton::Back => false,
+                MouseButton::Forward => true,
+                _ => return EventResult::Propagate,
+            };
+            if weak
+                .upgrade()
+                .is_some_and(|ui| ui.invoke_navigate_browse(forward))
+            {
+                EventResult::PreventDefault
+            } else {
+                EventResult::Propagate
+            }
+        });
+    }
     let media = Rc::new(RefCell::new(None::<tide_windows::MediaSession>));
     let media_enabled =
         cfg!(windows) && !test_mode && listening_seconds.is_none() && !smoke_autoplay;
@@ -3875,6 +3941,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let library_tx = library_tx.clone();
         let mut last_content_view = None;
         let mut last_volume_save = Instant::now();
+        let mut last_bookmark_check = Instant::now();
         let mut connection_monitor = connection::Monitor::new();
         let picker_busy = picker_busy.clone();
         timer.start(
@@ -4279,8 +4346,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     let generation = s.generation;
                     let active = s.active_playback;
-                    if metadata::remember_duration(&mut s.settings.queue, generation, active, &p) {
+                    let duration_changed = metadata::remember_duration(&mut s.settings.queue, generation, active, &p);
+                    let checkpoint_due = p.ended || last_bookmark_check.elapsed() >= Duration::from_secs(30);
+                    let bookmark_changed = if checkpoint_due {
+                        last_bookmark_check = Instant::now();
+                        bookmark_playback(&mut s, &p)
+                    } else {
+                        false
+                    };
+                    if duration_changed || bookmark_changed {
                         save(&s.settings);
+                    }
+                    if duration_changed {
                         refresh(&u, &s);
                     }
                     u.set_audio_quality(playback_feedback::quality(&p).into());
@@ -5134,7 +5211,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         timer.stop();
     }
     let mut s = state.borrow_mut();
-    let bookmarked = bookmark_playback(&mut s);
+    let snapshot = s.engine.as_ref().map(|engine| engine.snapshot());
+    let bookmarked = snapshot
+        .as_ref()
+        .is_some_and(|snapshot| bookmark_playback(&mut s, snapshot));
     #[cfg(feature = "experimental-jams")]
     jam::leave(&mut s, &ui, "Jam closed");
     if bookmarked || s.volume_save_pending {
@@ -5382,6 +5462,27 @@ mod tests {
             }));
             assert!(settings.playback_bookmark.is_none());
         }
+    }
+
+    #[test]
+    fn playback_checkpoint_ignores_loading_and_unchanged_positions_and_clears_on_end() {
+        let mut settings = Settings::default();
+        settings.queue.tracks.push(track("first"));
+        settings.queue.current = Some(0);
+        let mut snapshot = tide_core::PlaybackSnapshot {
+            position: 42.5,
+            duration: 180.0,
+            loading: true,
+            ..Default::default()
+        };
+        assert!(!update_bookmark(&mut settings, &snapshot));
+        snapshot.loading = false;
+        assert!(update_bookmark(&mut settings, &snapshot));
+        assert_eq!(saved_position(&settings), Some(42.5));
+        assert!(!update_bookmark(&mut settings, &snapshot));
+        snapshot.ended = true;
+        assert!(update_bookmark(&mut settings, &snapshot));
+        assert_eq!(saved_position(&settings), None);
     }
 
     #[test]
