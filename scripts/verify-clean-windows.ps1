@@ -306,8 +306,21 @@ try {
     Write-Host 'PASS actual graphical setup waited, installed, retained Chrome and restarted Tide'
     $taskLoginHelper = Join-Path $taskUpdatedRelease 'tide-login.exe'
     if (!(Test-Path -LiteralPath $taskLoginHelper -PathType Leaf)) { throw 'Updated package is missing its native sign-in helper.' }
+    $taskAccountDirectory = Join-Path $taskSentinelDirectory 'account'
+    $taskStaleLoginProfile = Join-Path $taskAccountDirectory 'login-4294967295-1'
+    $taskOtherLoginProfile = Join-Path $taskAccountDirectory ('login-' + $PID + '-1')
+    New-Item -ItemType Directory -Path $taskStaleLoginProfile,$taskOtherLoginProfile -Force | Out-Null
+    [IO.File]::WriteAllText((Join-Path $taskStaleLoginProfile 'offline-fixture'), 'abandoned')
+    [IO.File]::WriteAllText((Join-Path $taskOtherLoginProfile 'offline-fixture'), 'active')
     $taskLoginOutput = Invoke-CleanChild $taskLoginHelper @('--probe') 'installed-native-login' 90
     if ($taskLoginOutput -notmatch 'Native login offline probe completed;') { throw 'Installed sign-in helper failed its isolated lifecycle probe.' }
+    $taskRemainingLoginProfiles = @(Get-ChildItem -LiteralPath $taskAccountDirectory -Directory -Filter 'login-*' -Force)
+    if ($taskRemainingLoginProfiles.Count -ne 1 -or $taskRemainingLoginProfiles[0].FullName -ne $taskOtherLoginProfile -or
+        [IO.File]::ReadAllText((Join-Path $taskOtherLoginProfile 'offline-fixture')) -cne 'active' -or
+        (Test-Path -LiteralPath (Join-Path $taskAccountDirectory 'session.dpapi'))) {
+        throw 'Offline sign-in did not clean up the abandoned profile safely.'
+    }
+    Write-Host 'PASS installed sign-in removed abandoned profile, preserved the live owner profile and stored no session'
     Assert-CleanSentinel
     # Exercise the exact installed production binary, not a separate feature
     # build, before claiming that the stable installer actually includes Jams.
