@@ -613,6 +613,9 @@ component EmptyState inherits Rectangle {
     in property <bool> light-mode;
     in property <string> heading;
     in property <string> detail;
+    in property <bool> welcome-actions: false;
+    callback start-search();
+    callback connect-account();
     background: Colors.transparent;
     border-radius: 10px;
     border-color: root.light-mode ? #ded0c4 : #292e37;
@@ -621,8 +624,13 @@ component EmptyState inherits Rectangle {
         padding: 28px;
         spacing: 10px;
         alignment: center;
-        Text { text: root.heading; color: root.light-mode ? #392e33 : #f0eeef; font-size: 20px; font-weight: 650; horizontal-alignment: center; }
+        Text { text: root.heading; color: root.light-mode ? #392e33 : #f0eeef; font-size: root.welcome-actions ? 27px : 20px; font-weight: 650; horizontal-alignment: center; }
         Text { text: root.detail; color: root.light-mode ? #716773 : #a1a5ae; font-size: 13px; horizontal-alignment: center; wrap: word-wrap; }
+        if root.welcome-actions : HorizontalLayout {
+            height: 40px; spacing: 10px; alignment: center;
+            LibraryButton { width: 132px; height: 40px; light-mode: root.light-mode; active: true; caption: "Search music"; label: "Focus the music search box"; clicked => { root.start-search(); } }
+            LibraryButton { width: 162px; height: 40px; light-mode: root.light-mode; quiet: false; caption: "Connect YouTube Music"; label: "Open account sign-in for your library and recommendations"; clicked => { root.connect-account(); } }
+        }
     }
 }
 
@@ -2397,7 +2405,7 @@ export component AppWindow inherits Window {
                             }
                             if !root.library-open && !root.detail-open && !root.search-open : VerticalLayout {
                                 spacing: 12px;
-                                if !root.listening-card-visible : HorizontalLayout {
+                                if !root.listening-card-visible && (root.account-connected || root.account-busy || root.jam-guest) : HorizontalLayout {
                                     height: 48px;
                                     spacing: 10px;
                                     cross-axis-alignment: center;
@@ -2466,7 +2474,14 @@ export component AppWindow inherits Window {
                                         }
                                     }
                                 }
-                                if root.recommendations.length == 0 : EmptyState { vertical-stretch: 1; light-mode: root.light-mode; heading: root.account-busy ? "Loading your music…" : root.account-connected ? "Your recommendations" : "Welcome to Tide"; detail: root.account-connected ? "Refresh to load recommendations, or search for a song above." : "Search above to start listening. Open Account to connect YouTube Music and see your recommendations."; }
+                                if root.recommendations.length == 0 : EmptyState {
+                                    vertical-stretch: 1; light-mode: root.light-mode;
+                                    welcome-actions: !root.account-connected && !root.account-busy && !root.jam-guest && root.browsing-enabled;
+                                    heading: root.account-busy ? "Loading your music…" : root.account-connected ? "Your recommendations" : "Welcome to Tide";
+                                    detail: root.account-connected ? "Refresh to load recommendations, or search for a song above." : "Search for music now, or connect YouTube Music for your library and personalized recommendations.";
+                                    start-search => { root.search-focus-revision += 1; }
+                                    connect-account => { root.account-open = true; }
+                                }
                             }
                         }
                     }
