@@ -90,6 +90,15 @@ pub fn start_local_benchmark() -> Result<PlaybackHandle, String> {
     start_with_output(None, 0, true)
 }
 
+/// Run a synthetic account handoff with the same native playback engine but no audio device.
+#[cfg(windows)]
+pub fn start_connection_probe(
+    cookies: Option<PathBuf>,
+    account_index: u32,
+) -> Result<PlaybackHandle, String> {
+    start_with_output(cookies, account_index, true)
+}
+
 #[cfg(windows)]
 fn start_with_output(
     cookies: Option<PathBuf>,
@@ -209,6 +218,11 @@ pub fn start_with_account(_: Option<PathBuf>, _: u32) -> Result<PlaybackHandle, 
 }
 #[cfg(not(windows))]
 pub fn start_local_benchmark() -> Result<PlaybackHandle, String> {
+    start()
+}
+
+#[cfg(not(windows))]
+pub fn start_connection_probe(_: Option<PathBuf>, _: u32) -> Result<PlaybackHandle, String> {
     start()
 }
 

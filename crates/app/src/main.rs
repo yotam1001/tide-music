@@ -192,6 +192,7 @@ struct State {
     rejected_saved_connection: Option<Option<tide_provider::SavedConnection>>,
     connection_retry: connection::AdoptionRetry,
     connection_resume: Option<(u64, String, f64, bool)>,
+    connection_probe: bool,
     cookie_lease: Option<tide_provider::CookieLease>,
     pending_cookie_updates: std::collections::VecDeque<tide_playback::CookieUpdate>,
     cookie_update_retry_at: Option<Instant>,
@@ -982,7 +983,12 @@ fn configure_account_playback(s: &mut State, u: &AppWindow) -> bool {
     u.set_position(0.0);
     u.set_duration(0.0);
     u.set_status_text("Ready".into());
-    let result = tide_playback::start_with_account(
+    let start = if s.connection_probe {
+        tide_playback::start_connection_probe
+    } else {
+        tide_playback::start_with_account
+    };
+    let result = start(
         lease.as_ref().map(|l| l.path().to_path_buf()),
         account_index,
     );
@@ -2270,7 +2276,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let (engine, error) = match credential_error.map_or_else(
         || {
-            if performance_args.is_some() {
+            if connection_smoke.is_some() {
+                tide_playback::start_connection_probe(
+                    cookie_lease.as_ref().map(|l| l.path().to_path_buf()),
+                    saved_connection.as_ref().map_or(0, |c| c.account_index),
+                )
+            } else if performance_args.is_some() || std::env::args().any(|a| a == "--smoke-ui") {
                 tide_playback::start_local_benchmark()
             } else {
                 tide_playback::start_with_account(
@@ -2308,6 +2319,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         rejected_saved_connection: None,
         connection_retry: connection::AdoptionRetry::new(),
         connection_resume: None,
+        connection_probe: connection_smoke.is_some(),
         provider,
         cookie_lease,
         pending_cookie_updates: std::collections::VecDeque::new(),

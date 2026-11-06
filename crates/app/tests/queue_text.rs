@@ -174,6 +174,7 @@ fn related_view_loads_without_selecting_a_track_and_closes_on_song_change() {
     assert_eq!(loads.get(), 1);
     assert_eq!(selections.get(), 0);
     ui.set_lyrics_generation("next-song".into());
+    draw(&window, 1140);
     assert!(!ui.get_related_open());
     assert!(ui.get_queue_open());
 }
