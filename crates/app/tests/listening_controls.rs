@@ -104,7 +104,10 @@ fn filtered_playlist_and_queue_keep_absolute_indices_and_audio_has_its_own_page(
     ui.set_current_index(3);
     ui.set_autoplay_enabled(true);
     ui.set_account_verified(true);
-    assert!(!ui.get_can_skip(), "Autoplay cannot extend a local-file queue");
+    assert!(
+        !ui.get_can_skip(),
+        "Autoplay cannot extend a local-file queue"
+    );
     ui.set_has_radio_seed(true);
     assert!(ui.get_can_skip(), "YouTube Music can extend its queue");
     ui.set_has_radio_seed(false);

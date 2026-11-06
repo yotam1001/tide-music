@@ -1896,14 +1896,18 @@ fn next_track(s: &mut State, u: &AppWindow, tx: &mpsc::SyncSender<LibraryResult>
             s.settings.queue.current = previous;
             refresh(u, s);
         }
-    } else if s.settings.autoplay
+    } else if !s.radio_resume_when_ready
+        && s.settings.autoplay
         && s.account_verified
         && current_video_id(s).is_some()
         && send(s, u, PlaybackCommand::Stop)
     {
         s.active_playback = false;
         s.radio_resume_when_ready = true;
-        s.radio_requests.reset();
+        if !(s.library_worker.is_some() && matches!(s.library_action, LibraryAction::Radio { .. }))
+        {
+            s.radio_requests.reset();
+        }
         request_radio(s, u, tx, false);
         u.set_paused(true);
         u.set_status_text("Finding the next recommended song...".into());
