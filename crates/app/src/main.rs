@@ -1506,6 +1506,8 @@ fn refresh(ui: &AppWindow, state: &State) {
     }
     let mut artwork = state.artwork.borrow_mut();
     let current = state.settings.queue.current.unwrap_or(0);
+    let next = next_queue_index(state);
+    ui.set_next_queue_index(next.map_or(-1, |index| index as i32));
     let metrics = ui.global::<LayoutMetrics>();
     let row_height = metrics.get_queue_row_height();
     let heading_height = metrics.get_queue_heading_height();
@@ -1573,8 +1575,7 @@ fn refresh(ui: &AppWindow, state: &State) {
                 .as_deref()
                 .filter(|_| {
                     index == current
-                        || (ui.get_home_next_artwork_visible()
-                            && current.checked_add(1) == Some(index))
+                        || (ui.get_home_next_artwork_visible() && next == Some(index))
                         || (ui.get_jam_queue_visible() && jam_images.contains(&index))
                         || (ui.get_queue_open()
                             && index >= current
@@ -3316,6 +3317,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     bind!(on_toggle_repeat, |s, u| {
         s.settings.repeat = !s.settings.repeat;
         u.set_repeat_enabled(s.settings.repeat);
+        refresh(&u, &s);
         save(&s.settings);
     });
     bind!(on_switch_mode, |s, u| {
@@ -3421,6 +3423,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     bind!(on_toggle_skip_disliked, |s, u| {
         s.settings.skip_disliked = !s.settings.skip_disliked;
         u.set_skip_disliked(s.settings.skip_disliked);
+        refresh(&u, &s);
         save(&s.settings);
     });
     bind!(on_toggle_autoplay, |s, u| {

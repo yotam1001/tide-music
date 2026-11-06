@@ -597,6 +597,7 @@ pub fn tick(s: &mut State, u: &AppWindow) {
             .settings
             .saved_dislikes
             .for_connection(s.saved_connection.as_ref());
+        refresh(u, s);
         s.music_feedback.inspected = false;
         s.music_feedback.picker = None;
         u.set_playlist_picker_open(false);
@@ -667,6 +668,7 @@ pub fn tick(s: &mut State, u: &AppWindow) {
                     if s.settings.saved_dislikes.store(&work.expected, disliked) {
                         save(&s.settings);
                     }
+                    refresh(u, s);
                 }
                 if current_video_id(s).as_deref() == Some(result.video_id.as_str()) {
                     u.set_current_rating(match result.rating {

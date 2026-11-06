@@ -1772,7 +1772,8 @@ export component AppWindow inherits Window {
     private property <bool> listening-card-visible: !root.library-open && !root.detail-open && !root.search-open
         && !root.jam-open && !root.lyrics-open && !root.collapsed && !root.minimized
         && !root.narrow-navigation && root.sidebar-tall && root.current-index >= 0 && root.current-index < root.rows.length;
-    out property <bool> home-next-artwork-visible: root.listening-card-visible && root.current-index + 1 < root.rows.length;
+    out property <bool> home-next-artwork-visible: root.listening-card-visible
+        && root.next-queue-index >= 0 && root.next-queue-index < root.rows.length;
     in-out property <bool> queue-open: false;
     in-out property <bool> lyrics-open: false;
     out property <bool> lyrics-presented: root.lyrics-open && !root.collapsed && !root.minimized
@@ -1923,9 +1924,10 @@ export component AppWindow inherits Window {
     changed detail-title => { root.detail-filter = ""; }
     in property <[TrackRow]> rows;
     in property <int> current-index;
+    in property <int> next-queue-index: root.current-index + 1 < root.rows.length ? root.current-index + 1 : -1;
     in property <bool> has-radio-seed;
     out property <bool> can-skip: root.jam-guest || (root.rows.length > 0
-        && (root.current-index < root.rows.length - 1 || root.repeat-enabled
+        && (root.next-queue-index >= 0
         || (root.has-radio-seed && root.autoplay-enabled && root.account-verified)));
     in property <string> track-title;
     in property <string> track-artist;
@@ -2533,9 +2535,9 @@ export component AppWindow inherits Window {
                                 if root.listening-card-visible : ListeningCard {
                                     song: root.track-title; artist: root.track-artist; artwork: root.current-artwork; paused: root.paused;
                                     light-mode: root.light-mode;
-                                    next-song: root.home-next-artwork-visible ? root.rows[root.current-index + 1].title : "";
-                                    next-artist: root.home-next-artwork-visible ? root.rows[root.current-index + 1].artist : "";
-                                    next-artwork: root.home-next-artwork-visible ? root.rows[root.current-index + 1].artwork : @image-url("");
+                                    next-song: root.home-next-artwork-visible ? root.rows[root.next-queue-index].title : "";
+                                    next-artist: root.home-next-artwork-visible ? root.rows[root.next-queue-index].artist : "";
+                                    next-artwork: root.home-next-artwork-visible ? root.rows[root.next-queue-index].artwork : @image-url("");
                                     can-refresh: root.browsing-enabled && root.account-connected && !root.account-busy;
                                     refresh => { root.refresh-recommendations(); }
                                     queue => { root.queue-open = true; }
