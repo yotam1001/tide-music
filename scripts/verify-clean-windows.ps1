@@ -360,6 +360,9 @@ try {
     if ($taskSmokeOutput -notmatch 'PASS: native song/playlist play preserves browsing') {
         throw 'Installed app did not report the expected local-audio UI regression.'
     }
+    if ($taskSmokeOutput -notmatch 'PASS: edited saved playhead resumed decoded local audio') {
+        throw 'Installed app did not resume local audio at the edited saved position.'
+    }
     foreach ($name in @('full.png', 'light.png', 'restored.png')) {
         $image = Join-Path $taskScreenshots $name
         if (!(Test-Path -LiteralPath $image -PathType Leaf) -or (Get-Item -LiteralPath $image).Length -eq 0) {

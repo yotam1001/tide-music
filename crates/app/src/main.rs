@@ -4880,6 +4880,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             ui.set_detail_open(false);
             ui.set_paused(true);
+            {
+                let mut s = state.borrow_mut();
+                s.settings.queue.tracks[0].duration_seconds = Some(60);
+                s.settings.playback_bookmark = Some(PlaybackBookmark {
+                    source: audio,
+                    seconds: 20.0,
+                });
+                ui.set_duration(60.0);
+                ui.set_position(20.0);
+            }
+            ui.invoke_change_volume(0.0);
+            ui.invoke_seek(30.0);
+            assert_eq!(ui.get_position(), 30.0);
+            ui.invoke_toggle_pause();
+            {
+                let mut s = state.borrow_mut();
+                let engine = s.engine.as_ref().expect("Local playback runtime");
+                let deadline = Instant::now() + Duration::from_secs(10);
+                loop {
+                    let p = engine.snapshot();
+                    assert!(p.error.is_none(), "Restored playback failed");
+                    if p.generation == s.generation && !p.loading && p.position > 30.05 {
+                        break;
+                    }
+                    assert!(Instant::now() < deadline, "Edited position did not resume");
+                    std::thread::sleep(Duration::from_millis(25));
+                }
+                send(&mut s, &ui, PlaybackCommand::Stop);
+                s.active_playback = false;
+                s.settings.queue.tracks[0].duration_seconds = None;
+                ui.set_position(0.0);
+                ui.set_duration(0.0);
+                ui.set_paused(true);
+            }
+            println!("PASS: edited saved playhead resumed decoded local audio");
             ui.set_status_text("Visual test data · playback inactive".into());
             println!("PASS: native song/playlist play preserves browsing; search seed, queue priority, autoplay off, shuffle, reorder and removal");
             println!("PASS: media Next/Previous share player actions and preserve browsing");
