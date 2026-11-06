@@ -132,7 +132,7 @@ fn settings_theme_account_and_song_menu_remain_independent() {
                 start: 0,
                 count: 4,
                 title: "Listen again".into(),
-                layout: "spotlight".into(),
+                layout: "tiles".into(),
             },
             HomeBrowseRow {
                 start: 4,

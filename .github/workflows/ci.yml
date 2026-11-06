@@ -36,7 +36,7 @@ jobs:
         with:
           shared-key: windows-validation
       - run: cargo fmt --all -- --check
-      - run: cargo check --workspace --locked --features tide-music/experimental-jams,tide-provider/native-login
+      - run: cargo check --workspace --all-targets --locked --features tide-music/experimental-jams,tide-provider/native-login
   checks:
     name: Release Rust and native checks
     if: github.event_name != 'pull_request'

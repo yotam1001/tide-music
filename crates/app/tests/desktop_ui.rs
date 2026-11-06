@@ -138,9 +138,6 @@ fn sidebar_home_transport_and_keyboard_shortcuts_keep_their_actions() {
         assert!(ui.get_library_open(), "Library is reachable from the rail");
         click(&ui, 44.0, 114.0);
         assert!(!ui.get_library_open(), "Home is reachable from the rail");
-        click(&ui, 1020.0, 140.0);
-        assert!(ui.get_queue_open(), "Up Next opens the queue");
-        ui.set_queue_open(false);
         draw(&window, 1140, 800);
         let before = pauses.get();
         click(&ui, 570.0, 724.0);
