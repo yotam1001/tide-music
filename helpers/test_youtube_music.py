@@ -85,6 +85,11 @@ class ArtistTests(unittest.TestCase):
         self.assertEqual([t["title"] for t in result["tracks"]], ["First"])
         self.assertNotIn("private source", json.dumps(result))
         self.assertFalse(result["truncated"])
+        client.get_playlist.side_effect = None
+        for expansion in ([], [{"videoId": "00000000001", "isAvailable": False}]):
+            client.get_playlist.return_value = {"tracks": expansion}
+            result = run(client, {"action": "artist", "id": self.artist})
+            self.assertEqual([t["title"] for t in result["tracks"]], ["First"])
         client.get_artist.return_value = {}
         self.assertEqual(run(client, {"action": "artist", "id": self.artist})["code"], "artist_unavailable")
 

@@ -1193,8 +1193,9 @@ def run(client, request):
             # is bounded and optional: retain the returned top songs on failure.
             try:
                 expanded = client.get_playlist(playlist, limit=51)
-                if isinstance(expanded, dict) and isinstance(expanded.get("tracks"), list):
-                    items = expanded["tracks"]
+                expanded_tracks = expanded.get("tracks") if isinstance(expanded, dict) else None
+                if isinstance(expanded_tracks, list) and tracks(expanded_tracks[:51], limit=1):
+                    items = expanded_tracks
             except Exception:
                 pass
         bounded = []
