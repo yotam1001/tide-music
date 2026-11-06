@@ -1308,10 +1308,14 @@ def main():
         request = json.loads(raw)
         if request.get("action") == "verify_import":
             headers = session_headers(request.get("headers", {}))
-            if headers and validate_session(headers):
+            if not headers:
+                result = {"type": "error", "code": "session"}
+            elif validate_session(headers):
                 result = {"type": "session", "headers": headers}
             else:
-                result = {"type": "error", "code": "session"}
+                # An empty or unfamiliar identity response cannot verify the
+                # candidate, but only an explicit denial proves it was rejected.
+                result = {"type": "error", "code": "request"}
             print(json.dumps(result, ensure_ascii=True))
             return
         if request.get("action") == "switchaccount":
