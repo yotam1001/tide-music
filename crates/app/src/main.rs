@@ -1586,6 +1586,7 @@ fn refresh(ui: &AppWindow, state: &State) {
         .collect();
     ui.set_rows(update_model(ui.get_rows(), rows));
     ui.set_current_index(state.settings.queue.current.map_or(-1, |i| i as i32));
+    ui.set_has_radio_seed(current_video_id(state).is_some());
     if let Some(t) = state
         .settings
         .queue
@@ -1895,8 +1896,11 @@ fn next_track(s: &mut State, u: &AppWindow, tx: &mpsc::SyncSender<LibraryResult>
             s.settings.queue.current = previous;
             refresh(u, s);
         }
-    } else if s.settings.autoplay && s.account_verified {
-        send(s, u, PlaybackCommand::Stop);
+    } else if s.settings.autoplay
+        && s.account_verified
+        && current_video_id(s).is_some()
+        && send(s, u, PlaybackCommand::Stop)
+    {
         s.active_playback = false;
         s.radio_resume_when_ready = true;
         s.radio_requests.reset();

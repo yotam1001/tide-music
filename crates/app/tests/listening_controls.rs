@@ -101,6 +101,14 @@ fn filtered_playlist_and_queue_keep_absolute_indices_and_audio_has_its_own_page(
     space();
     assert_eq!(toggles.get(), 1);
     assert!(ui.get_source_input().contains(' '));
+    ui.set_current_index(3);
+    ui.set_autoplay_enabled(true);
+    ui.set_account_verified(true);
+    assert!(!ui.get_can_skip(), "Autoplay cannot extend a local-file queue");
+    ui.set_has_radio_seed(true);
+    assert!(ui.get_can_skip(), "YouTube Music can extend its queue");
+    ui.set_has_radio_seed(false);
+    ui.set_account_verified(false);
     for width in [650, 1140] {
         for light in [false, true] {
             ui.set_light_mode(light);
