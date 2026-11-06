@@ -72,6 +72,35 @@ fn filtered_playlist_and_queue_keep_absolute_indices_and_audio_has_its_own_page(
     let q = selected.clone();
     ui.on_select_track(move |i| q.set(i));
     ui.show().unwrap();
+    let toggles = Rc::new(Cell::new(0));
+    let seen = toggles.clone();
+    ui.on_toggle_pause(move || seen.set(seen.get() + 1));
+    ui.set_current_index(-1);
+    draw(&window, 1140, "keyboard-transport");
+    let space = || {
+        for event in [
+            WindowEvent::KeyPressed { text: " ".into() },
+            WindowEvent::KeyPressRepeated { text: " ".into() },
+            WindowEvent::KeyReleased { text: " ".into() },
+        ] {
+            ui.window().dispatch_event(event);
+        }
+    };
+    space();
+    assert_eq!(toggles.get(), 0);
+    ui.set_current_index(0);
+    space();
+    assert_eq!(toggles.get(), 1);
+    ui.set_settings_open(true);
+    draw(&window, 1140, "settings-keyboard-focus");
+    space();
+    assert_eq!(toggles.get(), 1);
+    ui.set_settings_open(false);
+    draw(&window, 1140, "search-keyboard-focus");
+    click(&ui, 340.0, 32.0);
+    space();
+    assert_eq!(toggles.get(), 1);
+    assert!(ui.get_source_input().contains(' '));
     for width in [650, 1140] {
         for light in [false, true] {
             ui.set_light_mode(light);

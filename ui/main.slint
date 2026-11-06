@@ -2071,6 +2071,7 @@ export component AppWindow inherits Window {
     min-width: 650px;
     min-height: root.collapsed ? (root.jam-active ? 146px : 112px) : 420px;
     background: root.light-mode ? #f4eee6 : #111318;
+    forward-focus: app-focus;
     changed height => { root.sidebar-tall = root.height >= 720px; root.sidebar-profile = root.height >= 650px; }
     init => { root.sidebar-tall = root.height >= 720px; root.sidebar-profile = root.height >= 650px; Palette.color-scheme = root.light-mode ? light : dark; root.wide = root.width >= 1050px; root.narrow-navigation = root.width < 900px; root.header-branding = root.width >= 780px; }
     changed width => { root.wide = root.width >= 1050px; root.narrow-navigation = root.width < 900px; root.header-branding = root.width >= 780px; }
@@ -2164,6 +2165,14 @@ export component AppWindow inherits Window {
                     return accept;
                 }
                 if root.search-open { root.close-search(); return accept; }
+            }
+            if event.text == " " && !event.modifiers.control && !event.modifiers.alt
+                && !event.modifiers.shift && !event.modifiers.meta
+                && root.current-index >= 0 && !root.search-field-focused && !root.jam-guest && !root.settings-open
+                && !root.account-open && !root.update-panel-open && !root.playlist-picker-open
+                && !root.playlist-create-open && root.playlist-manage-mode == 0 {
+                if !event.repeat { root.toggle-pause(); }
+                return accept;
             }
             return reject;
         }
@@ -2690,7 +2699,7 @@ export component AppWindow inherits Window {
                                     ShortcutRow { action: "Previous song"; binding: root.shortcut-previous; recording: root.shortcut-recording-index == 2; light-mode: root.light-mode; record => { root.begin-shortcut(2); app-focus.focus(); } clear => { root.clear-shortcut(2); } }
                                     if root.shortcut-status != "" : Text { text: root.shortcut-status; color: root.secondary; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
                                     Rectangle { height: 1px; background: root.outline; }
-                                    Text { height: 36px; text: "Your keyboard’s media keys work automatically. Custom shortcuts also work in the background."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
+                                    Text { height: 48px; text: "Press Space to play or pause while Tide has focus. Media keys and custom shortcuts also work in the background."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
                                 }
                                 if root.settings-audio-open : VerticalLayout {
                                     spacing: 12px; alignment: start;
