@@ -810,7 +810,8 @@ class LoginTests(unittest.TestCase):
             self.assertEqual(result["type"], "session")
             self.assertEqual(result["headers"]["x-goog-authuser"], "0")
             validate.assert_called_once_with(result["headers"])
-            for failure, code in [(False, "session"), (ValueError("fixture error"), "request")]:
+            for failure, code in [(False, "request"), (ValueError("fixture error"), "request"),
+                                  (RuntimeError("Server returned HTTP 403: fixture"), "session")]:
                 with patch("youtube_music.validate_session", side_effect=[failure]):
                     self.assertEqual(connect_existing(str(selected)), {"type": "error", "code": code})
             self.assertEqual(selected.read_bytes(), before)
@@ -844,7 +845,8 @@ class LoginTests(unittest.TestCase):
             with patch("youtube_music.validate_session") as validate:
                 self.assertEqual(switch_account(current, index), {"type": "error", "code": "session"})
             validate.assert_not_called()
-        for failure, code in [(False, "session"), (ValueError("fixture error"), "request")]:
+        for failure, code in [(False, "request"), (ValueError("fixture error"), "request"),
+                              (RuntimeError("Server returned HTTP 403: fixture"), "session")]:
             with patch("youtube_music.validate_session", side_effect=[failure]):
                 self.assertEqual(switch_account(current, 1), {"type": "error", "code": code})
         self.assertEqual(current["x-goog-authuser"], "0")

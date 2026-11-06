@@ -246,16 +246,12 @@ def connect_existing(database, index=0):
         headers = session_headers({"x-goog-authuser": str(index)}, cookies)
     except (CookieReadError, CookieSelectionError) as error:
         return {"type": "error", "code": error.args[0]}
-    if not headers:
-        return {"type": "error", "code": "session"}
     try:
-        if validate_session(headers):
-            return {"type": "session", "headers": headers}
+        return verify_candidate(headers)
     except ImportError:
         return {"type": "error", "code": "runtime"}
     except Exception as error:
         return request_failure(error)
-    return {"type": "error", "code": "session"}
 
 
 def switch_account(headers, index):
@@ -267,13 +263,11 @@ def switch_account(headers, index):
         candidate_source = {name: value for name, value in headers.items()
                             if name.lower() != "x-goog-pageid"}
         candidate = session_headers({**candidate_source, "x-goog-authuser": str(index)})
-        if candidate and validate_session(candidate):
-            return {"type": "session", "headers": candidate}
+        return verify_candidate(candidate)
     except ImportError:
         return {"type": "error", "code": "runtime"}
     except Exception as error:
         return request_failure(error)
-    return {"type": "error", "code": "session"}
 
 
 def create_client(auth):
@@ -365,6 +359,16 @@ def validate_session(headers):
         return verified
     finally:
         session.close()
+
+
+def verify_candidate(headers):
+    if not headers:
+        return {"type": "error", "code": "session"}
+    if validate_session(headers):
+        return {"type": "session", "headers": headers}
+    # An empty or unfamiliar identity response cannot verify the candidate.
+    # Explicit denials are classified by request_failure at the call boundary.
+    return {"type": "error", "code": "request"}
 
 
 def zen_executable():
@@ -1308,14 +1312,7 @@ def main():
         request = json.loads(raw)
         if request.get("action") == "verify_import":
             headers = session_headers(request.get("headers", {}))
-            if not headers:
-                result = {"type": "error", "code": "session"}
-            elif validate_session(headers):
-                result = {"type": "session", "headers": headers}
-            else:
-                # An empty or unfamiliar identity response cannot verify the
-                # candidate, but only an explicit denial proves it was rejected.
-                result = {"type": "error", "code": "request"}
+            result = verify_candidate(headers)
             print(json.dumps(result, ensure_ascii=True))
             return
         if request.get("action") == "switchaccount":
