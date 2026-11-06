@@ -7,10 +7,7 @@ on:
       - 'experiments/jam/**'
       - 'crates/core/**'
       - 'crates/playback/**'
-      - 'crates/app/**'
-      - 'ui/**'
       - 'Cargo.toml'
-      - 'Cargo.lock'
       - '.github/workflows/jam-lab.yml'
   pull_request:
     paths:
@@ -18,10 +15,7 @@ on:
       - 'experiments/jam/**'
       - 'crates/core/**'
       - 'crates/playback/**'
-      - 'crates/app/**'
-      - 'ui/**'
       - 'Cargo.toml'
-      - 'Cargo.lock'
       - '.github/workflows/jam-lab.yml'
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}

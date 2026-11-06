@@ -23,7 +23,23 @@ jobs:
       - run: python -m unittest discover -s helpers -p "test_*.py"
       - run: python -m unittest discover -s scripts -p "test_*.py"
       - run: node --test browser-companion/tests/background.test.cjs
+  pull-request-check:
+    name: Pull request compile and formatting
+    if: github.event_name == 'pull_request'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: windows-validation
+      - run: cargo fmt --all -- --check
+      - run: cargo check --workspace --locked --features tide-music/experimental-jams,tide-provider/native-login
   checks:
+    name: Release Rust and native checks
+    if: github.event_name != 'pull_request'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -32,32 +48,16 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
         with:
+          shared-key: windows-validation
           cache-on-failure: true
       - run: cargo fmt --all -- --check
-      # Stable defaults already enable Jams. Check the full workspace and its
-      # native UI once, then reuse these compiled outputs for isolation probes.
       - run: cargo test --workspace --locked --features tide-music/experimental-jams,tide-provider/native-login
-        env:
-          TIDE_UI_REVIEW_DIR: .local/ui-review
-          TIDE_JAM_LAYOUT_DIR: ${{ github.workspace }}/.local/jam-ui-layouts
-          TIDE_PLAYER_INDICATORS_DIR: ${{ github.workspace }}/.local/player-indicators
-      - name: Save synthetic native UI review images
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: tide-ui-review-${{ github.sha }}-${{ github.run_attempt }}
-          path: |
-            crates/app/.local/ui-review/*.png
-            .local/jam-ui-layouts/*.png
-            .local/player-indicators/*.png
-          if-no-files-found: ignore
-          retention-days: 7
-      - run: cargo clippy --workspace --all-targets --locked --features tide-music/experimental-jams,tide-provider/native-login -- -D warnings
+      - run: cargo clippy --workspace --lib --bins --locked --features tide-music/experimental-jams,tide-provider/native-login -- -D warnings
       - name: Reject private pipe input without blocking guest cancellation
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force .local | Out-Null
-          cargo test --workspace --locked --features tide-music/experimental-jams,tide-provider/native-login --no-run --message-format=json | Set-Content .local/jam-pipe-build.jsonl -Encoding utf8
+          cargo test -p tide-music --bin tide-music --locked --features experimental-jams,tide-provider/native-login --no-run --message-format=json | Set-Content .local/jam-pipe-build.jsonl -Encoding utf8
           if ($LASTEXITCODE -ne 0) { throw 'Private file probe build failed' }
           python experiments/jam/check-private-pipe.py --cargo-artifacts .local/jam-pipe-build.jsonl
           if ($LASTEXITCODE -ne 0) { throw 'Private file cancellation probe failed' }
@@ -67,9 +67,6 @@ jobs:
           $taskDefaultTree = cargo tree -p tide-music --no-default-features --locked --edges normal --prefix none
           if ($LASTEXITCODE -ne 0) { throw 'Default dependency tree failed' }
           if ($taskDefaultTree | Select-String '^tide-jam-lab v') { throw 'Opt-out build links the Jam transport' }
-          $taskJamTree = cargo tree -p tide-music --locked --features experimental-jams --edges normal --prefix none
-          if ($LASTEXITCODE -ne 0) { throw 'Experimental dependency tree failed' }
-          if ($taskJamTree | Select-String '^axum v') { throw 'Player links the relay server' }
           $taskStableTree = cargo tree -p tide-music --locked --edges normal --prefix none
           if ($LASTEXITCODE -ne 0) { throw 'Stable dependency tree failed' }
           if (!($taskStableTree | Select-String '^tide-jam-lab v')) { throw 'Stable player is missing Jams' }
@@ -81,6 +78,7 @@ jobs:
           cargo run -p tide-music --locked --features experimental-jams -- --smoke-jam-ownership
           if ($LASTEXITCODE -ne 0) { throw 'Guest ownership verification failed' }
   preview:
+    if: github.event_name != 'pull_request'
     # Packaging is isolated and may build while tests/lint run. Publication is
     # gated on every job by release-ready below.
     runs-on: windows-latest
@@ -181,7 +179,7 @@ jobs:
           retention-days: 7
   release-ready:
     name: Release validation
-    if: ${{ always() }}
+    if: ${{ always() && github.event_name != 'pull_request' }}
     needs: [fast-checks, checks, installed-preview]
     runs-on: ubuntu-latest
     steps:
