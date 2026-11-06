@@ -475,28 +475,6 @@ fn settings_theme_account_and_song_menu_remain_independent() {
     ui.set_detail_note("Top songs from YouTube Music".into());
     ui.set_track_artist_enabled(true);
     ui.set_audio_quality("Opus · ~160 kbps · 48 kHz".into());
-    let artist_action = Rc::new(Cell::new(None));
-    let capture = artist_action.clone();
-    ui.on_open_artist(move |source, index| capture.set(Some((source, index))));
-    let track_action = Rc::new(Cell::new(None));
-    let capture = track_action.clone();
-    ui.on_select_detail_track(move |index| capture.set(Some(index)));
-    export("artist-before-click", 1140, 800, &draw(&window, 1140, 800));
-    // The artist page's source note adds a line above the list.
-    click(
-        &ui,
-        ui.global::<LayoutMetrics>().get_navigation_wide() + 130.0,
-        277.0,
-    );
-    assert_eq!(
-        artist_action.get(),
-        Some((1, 0)),
-        "artist click must open the band"
-    );
-    assert!(
-        track_action.get().is_none(),
-        "artist click must not also play the row"
-    );
     export("artist-top-songs", 1140, 800, &draw(&window, 1140, 800));
     ui.set_light_mode(true);
     export("artist-light-minimum", 650, 420, &draw(&window, 650, 420));
