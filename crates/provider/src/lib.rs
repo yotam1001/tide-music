@@ -250,6 +250,10 @@ pub enum Response {
         retry_after_seconds: u32,
     },
     Artist {
+        #[serde(default)]
+        artwork_url: Option<String>,
+        #[serde(default)]
+        releases: Vec<Card>,
         name: String,
         tracks: Vec<Track>,
         truncated: bool,

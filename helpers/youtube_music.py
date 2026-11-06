@@ -1215,8 +1215,14 @@ def run(client, request):
                 if not artist_links(item):
                     item["artists"] = [{"id": artist, "name": name}]
                 bounded.append(item)
+        releases = []
+        for key, label in (("albums", "Albums"), ("singles", "Singles & EPs")):
+            section = data.get(key)
+            if isinstance(section, dict):
+                releases.extend(browse_cards(section.get("results"), "album", label)[:8])
         return {"type": "artist", "name": name, "tracks": tracks(bounded, 50, (), True),
-                "truncated": len(items) > 50}
+                "truncated": len(items) > 50, "artwork_url": artwork_url(data, side=320),
+                "releases": releases}
     if action == "library":
         info = client.get_account_info()
         playlists = client.get_library_playlists(limit=201)

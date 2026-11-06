@@ -76,6 +76,20 @@ class ArtistTests(unittest.TestCase):
         self.assertTrue(result["truncated"])
         client.get_playlist.assert_called_once_with("PLfixture", limit=51)
 
+    def test_artist_releases_keep_their_section_and_valid_album_identity(self):
+        client = SimpleNamespace(get_artist=MagicMock(return_value={
+            "name": "Band",
+            "albums": {"results": [
+                {"browseId": "MPREalbum123", "title": "Album"},
+                {"browseId": "not-an-album", "title": "Invalid"},
+            ]},
+            "singles": {"results": [{"browseId": "MPREsingle123", "title": "Single"}]},
+        }))
+        result = run(client, {"action": "artist", "id": self.artist})
+        self.assertEqual([(r["id"], r["shelf"]) for r in result["releases"]], [
+            ("MPREalbum123", "Albums"), ("MPREsingle123", "Singles & EPs"),
+        ])
+
     def test_optional_expansion_failure_retains_playable_top_songs(self):
         song = {"videoId": "K4DyBUG242c", "title": "First"}
         client = SimpleNamespace(get_artist=MagicMock(return_value={"name": "Band", "songs": {

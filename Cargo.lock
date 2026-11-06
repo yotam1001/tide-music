@@ -2323,7 +2323,7 @@ checksum = "d4a5ff6bcca6c4867b1c4fd4ef63e4db7436ef363e0ad7531d1558856bae64f4"
 
 [[package]]
 name = "linux-raw-sys"
-version = "0.4.15"
+version = "0.4.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d26c52dbd32dccf2d10cac7725f8eae5296885fb5703b261f7d0a0739ec807ab"
 
@@ -4242,7 +4242,7 @@ dependencies = [
 
 [[package]]
 name = "tide-core"
-version = "0.4.15"
+version = "0.4.16"
 dependencies = [
  "serde",
 ]
@@ -4263,7 +4263,7 @@ dependencies = [
 
 [[package]]
 name = "tide-music"
-version = "0.4.15"
+version = "0.4.16"
 dependencies = [
  "arboard",
  "image",
@@ -4290,7 +4290,7 @@ dependencies = [
 
 [[package]]
 name = "tide-playback"
-version = "0.4.15"
+version = "0.4.16"
 dependencies = [
  "serde_json",
  "tide-core",
@@ -4302,7 +4302,7 @@ dependencies = [
 
 [[package]]
 name = "tide-provider"
-version = "0.4.15"
+version = "0.4.16"
 dependencies = [
  "serde",
  "serde_json",
@@ -4315,7 +4315,7 @@ dependencies = [
 
 [[package]]
 name = "tide-windows"
-version = "0.4.15"
+version = "0.4.16"
 dependencies = [
  "serde_json",
  "url",

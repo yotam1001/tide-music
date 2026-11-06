@@ -14,6 +14,119 @@ pub(super) struct Origin {
     queue: bool,
 }
 
+#[derive(Clone, Default)]
+pub(super) struct Page {
+    pub artwork_url: Option<String>,
+    pub releases: Vec<tide_provider::Card>,
+}
+
+pub(super) struct AlbumBack {
+    page: Page,
+    collection_cover_url: Option<String>,
+    collection_has_cover: bool,
+    collection_cover_variant: i32,
+    origin: Option<Origin>,
+    title: String,
+    note: String,
+    tracks: Vec<Track>,
+    scroll: f32,
+}
+
+pub(super) fn refresh_page(s: &State, u: &AppWindow) {
+    if !u.get_detail_open() || !u.get_detail_is_artist() {
+        u.set_artist_portrait(Default::default());
+        u.set_artist_releases(update_model(u.get_artist_releases(), Vec::new()));
+        return;
+    }
+    let mut artwork = s.artwork.borrow_mut();
+    u.set_artist_portrait(
+        s.artist_page
+            .artwork_url
+            .as_deref()
+            .map(|url| artwork.get_or_request_feature(url))
+            .unwrap_or_default(),
+    );
+    u.set_artist_releases(update_model(
+        u.get_artist_releases(),
+        s.artist_page
+            .releases
+            .iter()
+            .take(16)
+            .map(|card| RecommendationRow {
+                id: card.id.clone().into(),
+                title: card.title.clone().into(),
+                subtitle: card.subtitle.clone().into(),
+                shelf: card.shelf.clone().into(),
+                kind: card.kind.clone().into(),
+                cover_variant: 0,
+                artwork: card
+                    .artwork_url
+                    .as_deref()
+                    .map(|url| artwork.get_or_request(url))
+                    .unwrap_or_default(),
+            })
+            .collect(),
+    ));
+}
+
+pub(super) fn open_release(
+    s: &mut State,
+    u: &AppWindow,
+    tx: &mpsc::SyncSender<LibraryResult>,
+    index: i32,
+) {
+    if s.library_worker.is_some() || !u.get_detail_open() || !u.get_detail_is_artist() {
+        return;
+    }
+    let Some(card) = usize::try_from(index)
+        .ok()
+        .and_then(|i| s.artist_page.releases.get(i))
+        .cloned()
+    else {
+        return;
+    };
+    let back = AlbumBack {
+        page: s.artist_page.clone(),
+        collection_cover_url: s.detail_cover_url.clone(),
+        collection_has_cover: u.get_detail_has_cover(),
+        collection_cover_variant: u.get_detail_cover_variant(),
+        origin: s.artist_origin.take(),
+        title: u.get_detail_title().to_string(),
+        note: u.get_detail_note().to_string(),
+        tracks: s.detail_tracks.clone(),
+        scroll: u.get_detail_artwork_y(),
+    };
+    open_provider_card(s, u, tx, card);
+    if u.get_detail_is_artist() {
+        s.artist_origin = back.origin;
+    } else {
+        s.artist_album_back = Some(back);
+    }
+}
+
+pub(super) fn back_from_release(s: &mut State, u: &AppWindow) -> bool {
+    if s.library_worker.is_some() && s.artist_album_back.is_some() {
+        return true;
+    }
+    let Some(back) = s.artist_album_back.take() else {
+        return false;
+    };
+    s.artist_origin = back.origin;
+    s.artist_page = back.page;
+    s.detail_tracks = back.tracks;
+    music_feedback::set_playlist(s, u, None, None);
+    s.detail_cover_url = back.collection_cover_url;
+    u.set_detail_has_cover(back.collection_has_cover);
+    u.set_detail_cover_variant(back.collection_cover_variant);
+    u.set_detail_title(back.title.into());
+    u.set_detail_note(back.note.into());
+    u.set_detail_artwork_y(back.scroll);
+    u.set_detail_is_artist(true);
+    u.set_detail_busy(false);
+    refresh_content_models(s, u);
+    true
+}
+
 pub(super) fn video_id(source: &str) -> Option<String> {
     if !is_youtube_source(source) {
         return None;
@@ -71,6 +184,7 @@ pub(super) fn open(
             queue: u.get_queue_open(),
         });
     }
+    s.artist_page = Page::default();
     s.detail_tracks.clear();
     u.set_detail_open(true);
     u.set_detail_is_artist(true);
