@@ -675,6 +675,16 @@ def playlist_entry(value):
     return value if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,256}", value) else None
 
 
+def playlist_count_label(count):
+    if isinstance(count, str):
+        count = count.strip()
+        if len(count) <= 15 and re.fullmatch(r"[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+", count):
+            count = int(count.replace(",", ""))
+    if type(count) is int and 0 <= count < 10**12:
+        return f"{count:,} track" if count == 1 else f"{count:,} tracks"
+    return ""
+
+
 def playlist_context(playlist, data):
     items = data.get("tracks", []) if isinstance(data, dict) else []
     items = items if isinstance(items, list) else []
@@ -1212,7 +1222,7 @@ def run(client, request):
         playlists = client.get_library_playlists(limit=201)
         return {"type": "library", "account": clean(info.get("accountName") or info.get("name") or "YouTube Music"),
                 "playlists": [{"id": identifier(p.get("playlistId")), "title": clean(p.get("title")),
-                               "subtitle": clean(str(p.get("count") or "") + " tracks"),
+                               "subtitle": playlist_count_label(p.get("count")),
                                "artwork_url": artwork_url(p), "owned": p.get("owned") is True}
                               for p in playlists[:200] if isinstance(p, dict) and identifier(p.get("playlistId"))],
                 "truncated": len(playlists) > 200}

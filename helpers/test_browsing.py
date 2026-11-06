@@ -13,6 +13,15 @@ class BrowsingTests(unittest.TestCase):
     artist = "UC1234567890123456789012"
     art = "https://i.ytimg.com/vi/K4DyBUG242c/hqdefault.jpg"
 
+    def test_library_playlist_count_distinguishes_empty_from_unknown(self):
+        entries = [{"playlistId": f"PLfixture{i}", "title": "Playlist", "count": count}
+                   for i, count in enumerate([None, 0, "1", "1,250", True, "unknown"])]
+        client = SimpleNamespace(get_account_info=MagicMock(return_value={"accountName": "Listener"}),
+                                 get_library_playlists=MagicMock(return_value=entries))
+        result = run(client, {"action": "library"})
+        self.assertEqual([entry["subtitle"] for entry in result["playlists"]],
+                         ["", "0 tracks", "1 track", "1,250 tracks", "", ""])
+
     def test_search_is_typed_bounded_and_does_not_mutate_provider_items(self):
         cases = [
             ("songs", "song", {"videoId": self.video, "title": "Song", "artists": [{"id": self.artist, "name": "Band"}]}),
