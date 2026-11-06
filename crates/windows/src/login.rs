@@ -32,6 +32,7 @@ const START: &str = "https://accounts.google.com/ServiceLogin?continue=https://m
 pub enum Outcome {
     Candidate(Zeroizing<Vec<u8>>),
     Cancelled,
+    TimedOut,
 }
 #[derive(Default)]
 struct State {
@@ -50,6 +51,7 @@ struct State {
     failed: bool,
     failure: Option<String>,
     deadline: Option<Instant>,
+    timed_out: bool,
     candidate: Option<Zeroizing<Vec<u8>>>,
 }
 thread_local! { static STATE: RefCell<State> = RefCell::new(State::default()); }
@@ -74,13 +76,14 @@ pub fn run(profile: &Path, probe: bool) -> Result<Outcome, String> {
         .ok()
         .map_err(fail)?;
     let result = run_window(profile, probe);
-    let (candidate, failed, exited, failure) = STATE.with(|state| {
+    let (candidate, failed, exited, failure, timed_out) = STATE.with(|state| {
         let mut state = state.borrow_mut();
         (
             state.candidate.take(),
             state.failed,
             state.exited,
             state.failure.take(),
+            state.timed_out,
         )
     });
     STATE.with(|state| *state.borrow_mut() = State::default());
@@ -94,7 +97,14 @@ pub fn run(profile: &Path, probe: bool) -> Result<Outcome, String> {
     if failed || !exited {
         return Err("Native browser shutdown was not confirmed".into());
     }
-    Ok(candidate.map_or(Outcome::Cancelled, Outcome::Candidate))
+    Ok(candidate.map_or(
+        if timed_out {
+            Outcome::TimedOut
+        } else {
+            Outcome::Cancelled
+        },
+        Outcome::Candidate,
+    ))
 }
 
 fn run_window(profile: &Path, probe: bool) -> Result<(), String> {
@@ -340,15 +350,19 @@ fn create_webview(hwnd: HWND, profile: &Path, probe: bool) -> Result<(), String>
             .map_err(fail)?;
         webview
             .add_SourceChanged(
-                &SourceChangedEventHandler::create(Box::new(|sender, _| {
+                &SourceChangedEventHandler::create(Box::new(|sender, args| {
                     if let Some(webview) = sender {
+                        let mut new_document = BOOL(0);
+                        if let Some(args) = args {
+                            args.IsNewDocument(&mut new_document)?;
+                        }
                         let mut raw = PWSTR::null();
                         webview.Source(&mut raw)?;
                         let source = CoTaskMemPWSTR::from(raw).to_string();
                         STATE.with(|state| {
                             let mut state = state.borrow_mut();
                             state.music = is_music_url(&source);
-                            if !state.music {
+                            if !state.music || new_document.as_bool() {
                                 state.metadata.clear();
                             }
                         });
@@ -768,6 +782,7 @@ unsafe extern "system" fn window_proc(
                     .deadline
                     .is_some_and(|deadline| Instant::now() >= deadline)
             }) {
+                STATE.with(|state| state.borrow_mut().timed_out = true);
                 begin_close();
             }
             Some(LRESULT(0))

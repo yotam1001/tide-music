@@ -136,6 +136,8 @@ component TideSlider inherits Rectangle {
     in property <float> minimum: 0;
     in property <float> maximum: 100;
     in property <float> value: 0;
+    in property <float> step: 1;
+    in property <bool> wheel-adjustable: false;
     in property <int> reset-revision: 0;
     // Native input must never assign the externally owned value: doing so
     // breaks its binding to the live clock/volume. Keep a local drag preview.
@@ -198,28 +200,37 @@ component TideSlider inherits Rectangle {
         border-color: root.light-mode ? #68465d : #f2bccb;
         background: root.enabled ? root.accent : (root.light-mode ? #c1b3aa : #4b4950);
     }
-    native := Slider {
-        width: parent.width;
-        height: parent.height;
-        opacity: 0;
-        minimum: root.minimum;
-        maximum: root.maximum;
-        value <=> root.input-value;
-        enabled: root.enabled;
-        accessible-label: root.label;
-        accessible-value: root.value-text;
-        accessible-action-set-value(value) => {
-            if value.is-float() { root.commit-accessible(value.to-float()); }
+    TouchArea {
+        width: parent.width; height: parent.height;
+        scroll-event(event) => {
+            if !root.enabled || !root.wheel-adjustable || event.delta-y == 0px { return reject; }
+            root.commit-accessible(root.value + (event.delta-y > 0px ? root.step : -root.step));
+            return accept;
         }
-        accessible-action-increment => { root.commit-accessible(root.value + 1); }
-        accessible-action-decrement => { root.commit-accessible(root.value - 1); }
-        changed(value) => { root.interacting = true; root.changed(value); }
-        released(value) => {
-            root.interacting = false;
-            root.released(value);
-            // A rejected/no-op seek need not change the owner's value, so a
-            // changed-value callback alone cannot end the local preview.
-            root.input-value = root.value;
+        native := Slider {
+            width: parent.width;
+            height: parent.height;
+            opacity: 0;
+            step: root.step;
+            minimum: root.minimum;
+            maximum: root.maximum;
+            value <=> root.input-value;
+            enabled: root.enabled;
+            accessible-label: root.label;
+            accessible-value: root.value-text;
+            accessible-action-set-value(value) => {
+                if value.is-float() { root.commit-accessible(value.to-float()); }
+            }
+            accessible-action-increment => { root.commit-accessible(root.value + root.step); }
+            accessible-action-decrement => { root.commit-accessible(root.value - root.step); }
+            changed(value) => { root.interacting = true; root.changed(value); }
+            released(value) => {
+                root.interacting = false;
+                root.released(value);
+                // A rejected/no-op seek need not change the owner's value, so a
+                // changed-value callback alone cannot end the local preview.
+                root.input-value = root.value;
+            }
         }
     }
 }
@@ -536,6 +547,7 @@ component Cover inherits Rectangle {
     in property <bool> playlist: false;
     in property <image> artwork;
     in property <bool> light-mode;
+    in property <bool> preserve-artwork: false;
     border-radius: 7px;
     background: root.light-mode ? #e0d1c9 : #29262d;
     clip: true;
@@ -543,11 +555,12 @@ component Cover inherits Rectangle {
         width: parent.width;
         height: parent.height;
         source: root.artwork;
-        image-fit: cover;
+        image-fit: root.preserve-artwork ? contain : cover;
     }
     if (root.artwork.width == 0 || root.artwork.height == 0) && root.playlist : Image {
         width: parent.width; height: parent.height;
-        source: mod(root.variant, 4) == 1 ? @image-url("assets/playlist-waves.svg") : mod(root.variant, 4) == 2 ? @image-url("assets/playlist-orbit.svg") : mod(root.variant, 4) == 3 ? @image-url("assets/playlist-rhythm.svg") : @image-url("assets/playlist-default.svg"); image-fit: cover;
+        source: mod(root.variant, 4) == 1 ? @image-url("assets/playlist-waves.svg") : mod(root.variant, 4) == 2 ? @image-url("assets/playlist-orbit.svg") : mod(root.variant, 4) == 3 ? @image-url("assets/playlist-rhythm.svg") : @image-url("assets/playlist-default.svg");
+        image-fit: root.preserve-artwork ? contain : cover;
     }
     if (root.artwork.width == 0 || root.artwork.height == 0) && !root.playlist : Path {
         x: (parent.width - 22px) / 2;
@@ -560,6 +573,28 @@ component Cover inherits Rectangle {
         stroke: root.light-mode ? #956a61 : #bd8496;
         stroke-width: 1.5px;
         commands: "M 9 18 L 9 5 L 20 3 L 20 16 M 9 8 L 20 6 M 9 18 C 9 22 3 22 3 19 C 3 16 9 15 9 18 Z M 20 16 C 20 20 14 20 14 17 C 14 14 20 13 20 16 Z";
+    }
+}
+
+// Keep cover art square and anchored to the same edge as the caption.
+component TileArtwork inherits Rectangle {
+    in property <length> max-side;
+    in property <image> artwork;
+    in property <bool> playlist: false;
+    in property <int> variant;
+    in property <bool> light-mode;
+    min-width: 0px;
+    horizontal-stretch: 1;
+    height: cover.width;
+    cover := Cover {
+        x: 0px;
+        width: min(root.width, root.max-side);
+        height: self.width;
+        preserve-artwork: true;
+        artwork: root.artwork;
+        playlist: root.playlist;
+        variant: root.variant;
+        light-mode: root.light-mode;
     }
 }
 
@@ -598,8 +633,7 @@ component PlaylistTile inherits Rectangle {
     }
     if !root.featured || root.width < 360px : VerticalLayout {
         padding: root.featured ? 14px : 10px; spacing: root.featured ? 5px : 6px; alignment: start;
-        if root.editorial && root.width <= 235px : Rectangle { height: 36px; }
-        Rectangle { height: root.editorial ? (root.width > 235px ? 222px : 180px) : root.featured ? 96px : min(160px, max(96px, root.width - 20px)); min-width: 0px; Cover { width: root.editorial ? parent.width : root.featured ? 96px : min(160px, max(96px, root.width - 20px)); height: root.editorial ? parent.height : self.width; artwork: root.artwork; playlist: root.playlist-cover; variant: root.cover-variant; light-mode: root.light-mode; } }
+        TileArtwork { max-side: root.editorial ? 222px : root.featured ? 96px : 160px; artwork: root.artwork; playlist: root.playlist-cover; variant: root.cover-variant; light-mode: root.light-mode; }
         Text { height: 22px; text: root.title; color: root.light-mode ? #392e33 : #f0eeef; font-size: root.editorial ? 18px : root.featured ? 16px : 14px; font-weight: 600; overflow: elide; }
         Text { height: 18px; text: root.subtitle; color: root.light-mode ? #716773 : #a1a5ae; font-size: 12px; overflow: elide; }
         if root.featured : Rectangle { height: 30px; min-width: 0px; LibraryButton { x: 0px; y: 0px; width: 112px; height: 30px; active: true; caption: "Open " + root.collection-kind; label: "Open " + root.collection-kind + " " + root.title; light-mode: root.light-mode; enabled: root.enabled; clicked => { root.open(); } } }
@@ -611,6 +645,9 @@ component EmptyState inherits Rectangle {
     in property <bool> light-mode;
     in property <string> heading;
     in property <string> detail;
+    in property <bool> welcome-actions: false;
+    callback start-search();
+    callback connect-account();
     background: Colors.transparent;
     border-radius: 10px;
     border-color: root.light-mode ? #ded0c4 : #292e37;
@@ -619,8 +656,13 @@ component EmptyState inherits Rectangle {
         padding: 28px;
         spacing: 10px;
         alignment: center;
-        Text { text: root.heading; color: root.light-mode ? #392e33 : #f0eeef; font-size: 20px; font-weight: 650; horizontal-alignment: center; }
+        Text { text: root.heading; color: root.light-mode ? #392e33 : #f0eeef; font-size: root.welcome-actions ? 27px : 20px; font-weight: 650; horizontal-alignment: center; }
         Text { text: root.detail; color: root.light-mode ? #716773 : #a1a5ae; font-size: 13px; horizontal-alignment: center; wrap: word-wrap; }
+        if root.welcome-actions : HorizontalLayout {
+            height: 40px; spacing: 10px; alignment: center;
+            LibraryButton { width: 132px; height: 40px; light-mode: root.light-mode; active: true; caption: "Search music"; label: "Focus the music search box"; clicked => { root.start-search(); } }
+            LibraryButton { width: 162px; height: 40px; light-mode: root.light-mode; quiet: false; caption: "Connect YouTube Music"; label: "Open account sign-in for your library and recommendations"; clicked => { root.connect-account(); } }
+        }
     }
 }
 
@@ -783,8 +825,7 @@ component SongRow inherits Rectangle {
     }
     if root.tile-mode && (!root.featured || root.width < 360px) : VerticalLayout {
         padding: root.featured ? 14px : 10px; spacing: root.featured ? 5px : 6px; alignment: start;
-        if root.editorial && root.width <= 235px : Rectangle { height: 36px; }
-        Rectangle { height: root.editorial ? (root.width > 235px ? 222px : 180px) : root.featured ? 96px : min(160px, max(96px, root.width - 20px)); min-width: 0px; Cover { width: root.editorial ? parent.width : root.featured ? 96px : min(160px, max(96px, root.width - 20px)); height: root.editorial ? parent.height : self.width; artwork: root.track.artwork; light-mode: root.light-mode; } }
+        TileArtwork { max-side: root.editorial ? 222px : root.featured ? 96px : 160px; artwork: root.track.artwork; light-mode: root.light-mode; }
         Text { height: 22px; min-width: 0px; text: root.track.title; color: root.light-mode ? #392e33 : #f0eeef; font-size: root.editorial ? 18px : root.featured ? 16px : 14px; font-weight: 600; overflow: elide; }
         ArtistLink { height: 18px; artist: root.track.artist; enabled: root.enabled && root.track.artist-enabled; light-mode: root.light-mode; label-size: 12px; activated => { root.artist(); } }
         if root.featured : Rectangle { height: 30px; min-width: 0px; LibraryButton { x: 0px; y: 0px; width: 88px; height: 30px; active: true; caption: root.shared-queue ? "Add" : "Play"; leading-icon: root.shared-queue ? "M 12 5 L 12 19 M 5 12 L 19 12" : "M 7 4 L 20 12 L 7 20 Z"; label: root.shared-queue ? "Add " + root.track.title + " to the shared queue" : "Play " + root.track.title; light-mode: root.light-mode; enabled: root.enabled; clicked => { root.select(); } } }
@@ -1136,6 +1177,12 @@ component QueueDrawer inherits Rectangle {
     private property <bool> filtering: root.query != "";
     changed query => { root.cancel-drag(); root.artwork-scroll-y = 0px; }
 
+    in-out property <bool> related-open: false;
+    in property <bool> related-enabled: false;
+    in property <[TrackRow]> related-rows;
+    in property <string> related-note;
+    callback load-related();
+    callback add-related(int);
     in property <bool> collection-enabled: false;
     callback add-playlist(int);
     in-out property <length> artwork-scroll-y;
@@ -1206,20 +1253,34 @@ component QueueDrawer inherits Rectangle {
             height: 34px;
             spacing: 7px;
             cross-axis-alignment: center;
-            Text { horizontal-stretch: 1; text: "Queue"; color: root.light-mode ? #392e33 : #f0eeef; font-size: 20px; font-weight: 600; }
-            LibraryButton { width: 30px; height: 30px; show-tooltip: true; light-mode: root.light-mode; active: root.filter-open || root.filtering; icon-path: "M 16 10 A 6 6 0 1 0 4 10 A 6 6 0 1 0 16 10 M 14 14 L 21 21"; label: "Search queue"; clicked => { root.filter-open = !root.filter-open; if !root.filter-open { root.query = ""; root.filter-changed(); } } }
-            LibraryButton { width: 30px; height: 30px; enabled: root.enabled; caption: "..."; label: "More queue actions"; light-mode: root.light-mode; clicked => { queue-menu.show(); } }
+            Text { horizontal-stretch: 1; text: root.related-open ? "Related" : "Queue"; color: root.light-mode ? #392e33 : #f0eeef; font-size: 20px; font-weight: 600; }
+            LibraryButton { width: 66px; height: 30px; light-mode: root.light-mode; caption: root.related-open ? "Queue" : "Related"; label: root.related-open ? "Back to the queue" : "See songs related to the current track"; enabled: root.related-enabled && root.enabled; active: root.related-open; clicked => { root.cancel-drag(); root.related-open = !root.related-open; if root.related-open { root.load-related(); } } }
+            if !root.related-open : LibraryButton { width: 30px; height: 30px; show-tooltip: true; light-mode: root.light-mode; active: root.filter-open || root.filtering; icon-path: "M 16 10 A 6 6 0 1 0 4 10 A 6 6 0 1 0 16 10 M 14 14 L 21 21"; label: "Search queue"; clicked => { root.filter-open = !root.filter-open; if !root.filter-open { root.query = ""; root.filter-changed(); } } }
+            if !root.related-open : LibraryButton { width: 30px; height: 30px; enabled: root.enabled; caption: "..."; label: "More queue actions"; light-mode: root.light-mode; clicked => { queue-menu.show(); } }
             LibraryButton { width: 30px; height: 30px; enabled: root.enabled; caption: "×"; label: "Close queue drawer"; light-mode: root.light-mode; clicked => { root.cancel-drag(); root.close(); } }
         }
-        if root.filter-open || root.filtering : HorizontalLayout {
+        if !root.related-open && (root.filter-open || root.filtering) : HorizontalLayout {
             height: 34px; spacing: 6px;
             LineEdit { horizontal-stretch: 1; text <=> root.query; edited => { root.filter-changed(); } placeholder-text: "Search queue"; accessible-label: "Filter queue by title, artist or album"; }
             if root.filtering : LibraryButton { width: 30px; height: 30px; caption: "×"; label: "Clear queue search"; light-mode: root.light-mode; clicked => { root.query = ""; root.filter-changed(); } }
         }
-        if root.filtering : Text { height: 16px; text: "Clear search to reorder songs"; color: root.light-mode ? #716773 : #a1a5ae; font-size: 11px; }
-        if root.filtering && root.matches.length == 0 : EmptyState { vertical-stretch: 1; light-mode: root.light-mode; heading: "No matching songs"; detail: "Try another title, artist or album."; }
+        if !root.related-open && root.filtering : Text { height: 16px; text: "Clear search to reorder songs"; color: root.light-mode ? #716773 : #a1a5ae; font-size: 11px; }
+        if !root.related-open && root.filtering && root.matches.length == 0 : EmptyState { vertical-stretch: 1; light-mode: root.light-mode; heading: "No matching songs"; detail: "Try another title, artist or album."; }
+        if root.related-open : Text { text: root.related-note; wrap: word-wrap; color: root.light-mode ? #716773 : #a1a5ae; font-size: 12px; accessible-live-region: polite; }
+        if root.related-open : ListView {
+            vertical-stretch: 1; accessible-label: "Related songs";
+            for track[index] in root.related-rows : HorizontalLayout {
+                height: 50px; spacing: 8px; cross-axis-alignment: center;
+                VerticalLayout {
+                    horizontal-stretch: 1; min-width: 0px; alignment: center;
+                    Text { text: track.title; overflow: elide; color: root.light-mode ? #392e33 : #f0eeef; font-size: 14px; }
+                    Text { text: track.artist; overflow: elide; color: root.light-mode ? #716773 : #a1a5ae; font-size: 12px; }
+                }
+                LibraryButton { width: 36px; height: 34px; light-mode: root.light-mode; caption: "+"; label: "Add " + track.title + " to the queue"; enabled: root.enabled; clicked => { root.add-related(index); } }
+            }
+        }
         // The fixed rail owns pointer capture while ListView recycles song rows.
-        if root.rows.length > 0 && (!root.filtering || root.matches.length > 0) : queue-area := Rectangle {
+        if !root.related-open && root.rows.length > 0 && (!root.filtering || root.matches.length > 0) : queue-area := Rectangle {
             vertical-stretch: 1;
             private property <bool> drag-in-list: root.drag-x >= self.absolute-position.x && root.drag-x < self.absolute-position.x + queue-list.visible-width
                 && root.drag-y >= self.absolute-position.y && root.drag-y < self.absolute-position.y + queue-list.visible-height;
@@ -1327,8 +1388,8 @@ component QueueDrawer inherits Rectangle {
                 }
             }
         }
-        if root.rows.length == 0 : EmptyState { vertical-stretch: 1; light-mode: root.light-mode; heading: "Queue is empty"; detail: "Choose a song or playlist to start listening."; }
-        PreferenceRow { title: "Autoplay"; checked: root.autoplay-enabled; enabled: root.enabled; light-mode: root.light-mode; toggled => { root.toggle-autoplay(); } }
+        if !root.related-open && root.rows.length == 0 : EmptyState { vertical-stretch: 1; light-mode: root.light-mode; heading: "Queue is empty"; detail: "Choose a song or playlist to start listening."; }
+        if !root.related-open : PreferenceRow { title: "Autoplay"; checked: root.autoplay-enabled; enabled: root.enabled; light-mode: root.light-mode; toggled => { root.toggle-autoplay(); } }
     }
 }
 
@@ -1372,21 +1433,22 @@ component UpdateAction inherits Rectangle {
     in property <float> progress: 0;
     callback activate();
     callback cancel();
-    private property <bool> downloading: root.phase == 1 || root.phase == 2 || root.phase == 3 || root.phase == 4;
+    private property <bool> downloading: root.phase > 0;
+    private property <bool> cancelable: root.phase == 1 || root.phase == 3 || root.phase == 4;
     private property <color> ink: root.light-mode ? #593641 : #f0eeef;
     Rectangle {
-        width: root.width - (root.downloading ? root.height + 6px : 0px);
+        x: 0px; width: root.width - (root.cancelable ? root.height + 6px : 0px);
         height: root.height; border-radius: self.height / 2; clip: true;
         animate width { duration: 160ms; easing: ease-in-out; }
         LibraryButton { width: parent.width; height: parent.height; caption: ""; quiet: false; light-mode: root.light-mode; enabled: !root.busy && (root.phase == 0 || root.phase == 2); label: root.phase == 2 ? "Restart Tide to install the verified update" : "Download Tide update"; clicked => { root.activate(); } }
-        Rectangle { height: parent.height; width: parent.width * (root.phase == 2 ? 1 : (root.downloading ? clamp(root.progress / 100, 0, 1) : 0)); background: root.light-mode ? #b13e622c : #b13e6240; animate width { duration: 160ms; } }
+        Rectangle { x: 0px; height: parent.height; width: parent.width * (root.phase == 2 ? 1 : (root.downloading ? clamp(root.progress / 100, 0, 1) : 0)); background: root.light-mode ? #b13e622c : #b13e6240; animate width { duration: 160ms; } }
         Rectangle { x: 5px; y: 5px; width: parent.height - 10px; height: self.width; border-radius: self.height / 2; background: root.light-mode ? #b45249 : #b13e62;
             Path { x: 6px; y: 6px; width: parent.width - 12px; height: parent.height - 12px; viewbox-width: 24; viewbox-height: 24; fill: Colors.transparent; stroke: #fff5ee; stroke-width: 2px; commands: root.phase == 2 ? "M5 12 L10 17 L19 7" : "M12 3 V15 M7 10 L12 15 L17 10 M5 17 V21 H19 V17"; }
         }
-        Text { x: parent.height + 4px; width: max(0px, parent.width - self.x - 8px); height: parent.height; vertical-alignment: center; text: root.phase == 4 ? "Preparing restart…" : (root.phase == 2 ? "Restart to update" : (root.phase == 3 ? "Canceling…" : (root.phase == 1 ? "Updating " + root.progress.to-fixed(0) + "%" : "Update Tide"))); color: root.ink; font-size: 12px; font-weight: 600; overflow: elide; }
+        Text { x: parent.height + 4px; width: max(0px, parent.width - self.x - 8px); height: parent.height; vertical-alignment: center; text: root.phase == 4 ? "Preparing restart…" : (root.phase == 2 ? "Restart to update" : (root.phase == 3 ? "Canceling…" : (root.phase == 1 ? "Downloading " + root.progress.to-fixed(0) + "%" : "Download update"))); color: root.ink; font-size: 12px; font-weight: 600; overflow: elide; }
     }
-    if root.downloading : Rectangle { x: parent.width - self.width; width: parent.height; height: parent.height; border-radius: self.height / 2; clip: true;
-        LibraryButton { width: parent.width; height: parent.height; caption: "×"; label: root.phase == 2 ? "Discard the verified download to download again" : "Cancel update and keep listening"; light-mode: root.light-mode; quiet: false; enabled: root.phase != 3; clicked => { root.cancel(); } }
+    if root.cancelable : Rectangle { x: parent.width - self.width; width: parent.height; height: parent.height; border-radius: self.height / 2; clip: true;
+        LibraryButton { width: parent.width; height: parent.height; caption: "×"; label: root.phase == 4 ? "Cancel update preparation" : "Cancel update download"; light-mode: root.light-mode; quiet: false; enabled: root.phase != 3; clicked => { root.cancel(); } }
     }
 }
 
@@ -1433,6 +1495,7 @@ component PlayerBar inherits Rectangle {
     callback next-track();
     callback previous-track();
     callback seek(float);
+    in property <float> volume-step: 2;
     callback change-volume(float);
     callback restore();
     callback toggle-queue();
@@ -1500,7 +1563,7 @@ component PlayerBar inherits Rectangle {
             TideSlider { reset-revision: root.input-revision; light-mode: root.light-mode; horizontal-stretch: 1; minimum: 0; maximum: max(1, root.duration); value: root.position; enabled: root.transport-enabled && root.duration > 0; label: "Playback position"; value-text: root.format-time(root.position); released(value) => { root.seek(value); } }
             Text { width: 38px; text: root.format-time(root.duration); color: root.secondary; font-size: 11px; }
             VolumeMark { ink: root.secondary; }
-            TideSlider { reset-revision: root.input-revision; light-mode: root.light-mode; width: root.compact || root.collapsed ? 105px : 150px; minimum: 0; maximum: 100; value: root.volume; label: "Volume"; value-text: root.volume.to-fixed(0) + "%"; changed(value) => { root.change-volume(value); } }
+            TideSlider { reset-revision: root.input-revision; light-mode: root.light-mode; width: root.compact || root.collapsed ? 105px : 150px; minimum: 0; maximum: 100; value: root.volume; step: root.volume-step; wheel-adjustable: true; label: "Volume"; value-text: root.volume.to-fixed(0) + "%"; changed(value) => { root.change-volume(value); } }
             Text { width: 38px; text: root.volume.to-fixed(0) + "%"; color: root.secondary; font-size: 11px; horizontal-alignment: right; }
         }
     }
@@ -1709,7 +1772,8 @@ export component AppWindow inherits Window {
     private property <bool> listening-card-visible: !root.library-open && !root.detail-open && !root.search-open
         && !root.jam-open && !root.lyrics-open && !root.collapsed && !root.minimized
         && !root.narrow-navigation && root.sidebar-tall && root.current-index >= 0 && root.current-index < root.rows.length;
-    out property <bool> home-next-artwork-visible: root.listening-card-visible && root.current-index + 1 < root.rows.length;
+    out property <bool> home-next-artwork-visible: root.listening-card-visible
+        && root.next-queue-index >= 0 && root.next-queue-index < root.rows.length;
     in-out property <bool> queue-open: false;
     in-out property <bool> lyrics-open: false;
     out property <bool> lyrics-presented: root.lyrics-open && !root.collapsed && !root.minimized
@@ -1735,6 +1799,13 @@ export component AppWindow inherits Window {
     callback toggle-compact();
     callback toggle-autoplay();
     callback shuffle-playlist(int);
+    in-out property <bool> related-open: false;
+    in property <[TrackRow]> related-rows;
+    in property <string> related-note;
+    callback load-related();
+    callback queue-related(int);
+    changed lyrics-generation => { root.related-open = false; }
+    changed account-verified => { root.related-open = false; }
     callback play-radio();
     callback remove-queue-track(int);
     callback import-account();
@@ -1747,6 +1818,25 @@ export component AppWindow inherits Window {
     callback select-recommendation(int);
     callback open-account-help();
     in property <string> app-version: "0.1.1";
+    in-out property <bool> update-panel-open: false;
+    in property <[string]> search-suggestions;
+    in-out property <bool> suggestions-open: false;
+    private property <int> suggestion-index: -1;
+    private property <bool> search-field-focused: false;
+    private property <bool> suggestions-visible: root.suggestions-open && root.search-suggestions.length > 0
+        && !root.collapsed && !root.lyrics-open && !root.settings-open && !root.account-open
+        && !root.jam-open && !root.update-panel-open;
+    function select-suggestion(value: string) {
+        root.suggestions-open = false;
+        root.source-input = value;
+        root.choose-suggestion(value);
+    }
+    callback suggest-search(string);
+    callback choose-suggestion(string);
+    function submit-source(value: string) {
+        root.suggestions-open = false;
+        if value != "" { root.add-source(value); }
+    }
     in property <string> update-status: "Check for a new version of Tide";
     in property <bool> update-busy: false;
     in property <bool> update-available: false;
@@ -1758,12 +1848,16 @@ export component AppWindow inherits Window {
     in property <int> update-phase: 0;
     in property <float> update-progress: 0;
     callback toggle-update-checks();
+    in property <bool> skip-disliked: true;
+    callback toggle-skip-disliked();
     in property <bool> media-controls-enabled: true;
     in-out property <string> shortcut-toggle;
     in-out property <string> shortcut-next;
     in-out property <string> shortcut-previous;
     in property <string> shortcut-status: "";
     callback toggle-media-controls();
+    in property <bool> close-to-tray: false;
+    callback toggle-close-to-tray();
     in property <bool> discord-presence-enabled: false;
     in-out property <string> discord-application-id;
     in property <string> discord-status: "Off — listening activity stays private";
@@ -1830,6 +1924,11 @@ export component AppWindow inherits Window {
     changed detail-title => { root.detail-filter = ""; }
     in property <[TrackRow]> rows;
     in property <int> current-index;
+    in property <int> next-queue-index: root.current-index + 1 < root.rows.length ? root.current-index + 1 : -1;
+    in property <bool> has-radio-seed;
+    out property <bool> can-skip: root.jam-guest || (root.rows.length > 0
+        && (root.next-queue-index >= 0
+        || (root.has-radio-seed && root.autoplay-enabled && root.account-verified)));
     in property <string> track-title;
     in property <string> track-artist;
     in property <bool> track-artist-enabled;
@@ -1861,10 +1960,21 @@ export component AppWindow inherits Window {
     callback next-track();
     callback previous-track();
     callback seek(float);
+    in property <int> volume-step-index: 1;
+    callback set-volume-step(int);
     callback change-volume(float);
     callback toggle-repeat();
     callback shuffle-queue();
     callback switch-mode();
+    in property <bool> follow-windows-theme: false;
+    in property <bool> windows-theme-supported: false;
+    callback toggle-follow-windows-theme();
+    callback poll-windows-theme();
+    Timer {
+        interval: 1000ms;
+        running: root.windows-theme-supported && root.follow-windows-theme;
+        triggered => { root.poll-windows-theme(); }
+    }
     callback collapse-player();
     callback open-file();
     callback clear-queue();
@@ -1881,7 +1991,7 @@ export component AppWindow inherits Window {
     in property <string> detail-note;
     in property <[TrackRow]> detail-rows;
     in property <bool> detail-busy;
-    in property <bool> search-open;
+    in-out property <bool> search-open;
     in property <[TrackRow]> search-rows;
     in property <[RecommendationRow]> search-cards;
     in-out property <int> search-kind: 0;
@@ -1894,10 +2004,42 @@ export component AppWindow inherits Window {
     in-out property <bool> settings-open: false;
     in-out property <bool> account-open: false;
     in-out property <bool> forward-collection: false;
-    changed detail-open => { if root.detail-open { root.forward-collection = false; } }
-    changed search-open => { root.forward-collection = false; }
-    changed library-open => { root.forward-collection = false; }
-    changed library-section => { root.forward-collection = false; }
+    private property <bool> forward-search: false;
+    changed detail-open => { if root.detail-open { root.forward-collection = false; root.forward-search = false; } }
+    changed search-open => { root.forward-collection = false; if root.search-open { root.forward-search = false; } }
+    changed source-input => { root.forward-search = false; }
+    changed account-busy => { if root.account-busy { root.forward-search = false; } }
+    changed library-open => { root.forward-collection = false; root.forward-search = false; }
+    changed library-section => { root.forward-collection = false; root.forward-search = false; }
+    public function navigate-browse(forward: bool) -> bool {
+        if !root.browsing-enabled || root.collapsed || root.playlist-picker-open
+            || root.account-open || root.settings-open || root.update-panel-open
+            || root.artist-picker-open || root.lyrics-open || root.jam-open
+            || root.playlist-manage-mode != 0 || root.playlist-create-open {
+            return false;
+        }
+        if forward {
+            if root.detail-open || root.account-busy { return false; }
+            if root.forward-collection {
+                root.detail-open = true;
+                return true;
+            }
+            if root.forward-search && !root.search-open {
+                root.forward-search = false;
+                root.search-open = true;
+                return true;
+            }
+        } else if root.detail-open {
+            if root.detail-is-artist { root.back-detail(); } else { root.close-detail(); }
+            return true;
+        } else if root.search-open {
+            root.forward-collection = false;
+            root.forward-search = !root.search-busy;
+            root.close-search();
+            return true;
+        }
+        return false;
+    }
     callback close-detail();
     callback close-search();
     callback play-detail();
@@ -1935,23 +2077,25 @@ export component AppWindow inherits Window {
     min-width: 650px;
     min-height: root.collapsed ? (root.jam-active ? 146px : 112px) : 420px;
     background: root.light-mode ? #f4eee6 : #111318;
+    forward-focus: app-focus;
     changed height => { root.sidebar-tall = root.height >= 720px; root.sidebar-profile = root.height >= 650px; }
     init => { root.sidebar-tall = root.height >= 720px; root.sidebar-profile = root.height >= 650px; Palette.color-scheme = root.light-mode ? light : dark; root.wide = root.width >= 1050px; root.narrow-navigation = root.width < 900px; root.header-branding = root.width >= 780px; }
     changed width => { root.wide = root.width >= 1050px; root.narrow-navigation = root.width < 900px; root.header-branding = root.width >= 780px; }
+    changed collapsed => { if root.collapsed { root.suggestions-open = false; root.update-panel-open = false; } }
     changed settings-open => {
         root.settings-scroll-y = 0px;
-        if root.settings-open { root.playlist-picker-open = false; root.account-open = false; root.jam-open = false; app-focus.focus(); }
+        if root.settings-open { root.suggestions-open = false; root.playlist-picker-open = false; root.account-open = false; root.jam-open = false; app-focus.focus(); }
         else { root.cancel-shortcut(); root.settings-shortcuts-open = false; root.settings-audio-open = false; root.settings-more-open = false; }
     }
     changed account-open => {
-        if root.account-open { root.playlist-picker-open = false; root.settings-open = false; root.jam-open = false; app-focus.focus(); }
+        if root.account-open { root.suggestions-open = false; root.playlist-picker-open = false; root.settings-open = false; root.jam-open = false; app-focus.focus(); }
 
         else { root.advanced-open = false; }
     }
-    changed jam-open => { if root.jam-open { root.playlist-picker-open = false; root.settings-open = false; root.account-open = false; app-focus.focus(); } }
+    changed jam-open => { if root.jam-open { root.suggestions-open = false; root.playlist-picker-open = false; root.settings-open = false; root.account-open = false; app-focus.focus(); } }
     changed playlist-picker-open => { if root.playlist-picker-open { root.settings-open = false; root.account-open = false; root.jam-open = false; root.artist-picker-open = false; app-focus.focus(); } }
-    changed queue-open => { if root.queue-open { root.lyrics-open = false; if !root.wide { app-focus.focus(); } } }
-    changed lyrics-open => { if root.lyrics-open { root.queue-open = false; root.settings-open = false; root.account-open = false; root.jam-open = false; root.artist-picker-open = false; root.playlist-picker-open = false; app-focus.focus(); } }
+    changed queue-open => { if !root.queue-open { root.related-open = false; } if root.queue-open { root.lyrics-open = false; if !root.wide { app-focus.focus(); } } }
+    changed lyrics-open => { if root.lyrics-open { root.suggestions-open = false; root.update-panel-open = false; root.queue-open = false; root.settings-open = false; root.account-open = false; root.jam-open = false; root.artist-picker-open = false; root.playlist-picker-open = false; app-focus.focus(); } }
     changed wide => { if !root.wide && (root.queue-open || root.lyrics-open) { app-focus.focus(); } }
     changed light-mode => { Palette.color-scheme = root.light-mode ? light : dark; }
 
@@ -1981,17 +2125,23 @@ export component AppWindow inherits Window {
                 else { root.record-shortcut(event.text, event.modifiers.control, event.modifiers.alt, event.modifiers.shift, event.modifiers.meta); }
                 return accept;
             }
-            if event.modifiers.alt && !event.modifiers.control && !event.modifiers.shift && !event.modifiers.meta
-                && root.browsing-enabled && !root.collapsed && !root.playlist-picker-open {
-                if event.text == Key.RightArrow && root.forward-collection && !root.detail-open && !root.account-busy {
-                    root.detail-open = true;
+            if root.search-field-focused && root.suggestions-visible {
+                if event.text == Key.DownArrow {
+                    root.suggestion-index = (root.suggestion-index + 1) < root.search-suggestions.length ? root.suggestion-index + 1 : 0;
                     return accept;
                 }
-                if event.text == Key.LeftArrow && root.detail-open {
-                    if root.detail-is-artist { root.back-detail(); } else { root.close-detail(); }
+                if event.text == Key.UpArrow {
+                    root.suggestion-index = root.suggestion-index > 0 ? root.suggestion-index - 1 : root.search-suggestions.length - 1;
                     return accept;
                 }
-                if event.text == Key.LeftArrow && root.search-open { root.forward-collection = false; root.close-search(); return accept; }
+                if event.text == Key.Return && root.suggestion-index >= 0 && root.suggestion-index < root.search-suggestions.length {
+                    root.select-suggestion(root.search-suggestions[root.suggestion-index]);
+                    return accept;
+                }
+            }
+            if event.modifiers.alt && !event.modifiers.control && !event.modifiers.shift && !event.modifiers.meta {
+                if event.text == Key.LeftArrow && root.navigate-browse(false) { return accept; }
+                if event.text == Key.RightArrow && root.navigate-browse(true) { return accept; }
             }
             if event.modifiers.control && !event.modifiers.alt && !event.modifiers.meta {
                 if (event.text == "k" || event.text == "K") && root.browsing-enabled { root.search-focus-revision += 1; return accept; }
@@ -2007,6 +2157,8 @@ export component AppWindow inherits Window {
                 if event.text == Key.Return || event.text == " " { root.choose-artist(root.artist-choice-index); return accept; }
             }
             if event.text == Key.Escape {
+                if root.update-panel-open { root.update-panel-open = false; return accept; }
+                if root.suggestions-open { root.suggestions-open = false; return accept; }
                 if root.playlist-picker-open { root.cancel-playlist-picker(); return accept; }
                 if root.jam-open { root.jam-open = false; return accept; }
                 if root.settings-open { root.settings-open = false; return accept; }
@@ -2019,6 +2171,22 @@ export component AppWindow inherits Window {
                     return accept;
                 }
                 if root.search-open { root.close-search(); return accept; }
+            }
+            if !event.modifiers.control && !event.modifiers.alt
+                && !event.modifiers.shift && !event.modifiers.meta
+                && root.current-index >= 0 && !root.search-field-focused && !root.jam-guest && !root.settings-open
+                && !root.account-open && !root.update-panel-open && !root.playlist-picker-open
+                && !root.playlist-create-open && root.playlist-manage-mode == 0 {
+                if event.text == " " {
+                    if !event.repeat { root.toggle-pause(); }
+                    return accept;
+                }
+                if root.duration > 0 && (event.text == "j" || event.text == "l") {
+                    if !event.repeat {
+                        root.seek(clamp(root.position + (event.text == "j" ? -10 : 10), 0, root.duration));
+                    }
+                    return accept;
+                }
             }
             return reject;
         }
@@ -2037,11 +2205,10 @@ export component AppWindow inherits Window {
                     cross-axis-alignment: center;
                     Image { width: 32px; height: 32px; source: @image-url("assets/tide-icon.png"); image-fit: contain; }
                     if root.header-branding : Text { width: 56px; text: "Tide"; color: root.foreground; font-size: 21px; font-weight: 700; }
-                    LineEdit { in property <int> focus-revision: root.search-focus-revision; changed focus-revision => { self.focus(); } horizontal-stretch: 1; height: 36px; font-size: 13px; enabled: root.browsing-enabled; text <=> root.source-input; placeholder-text: "Search music or paste a link"; accessible-label: "Search music or paste a YouTube link"; accepted(value) => { if value != "" { root.add-source(value); } } }
-                    LibraryButton { width: 36px; height: 36px; show-tooltip: true; light-mode: root.light-mode; enabled: root.browsing-enabled; icon-path: "M 10.5 3 A 7.5 7.5 0 1 0 10.5 18 A 7.5 7.5 0 1 0 10.5 3 Z M 16 16 L 22 22"; label: "Search for music or open the pasted link"; clicked => { if root.source-input != "" { root.add-source(root.source-input); } } }
+                    LineEdit { in property <int> focus-revision: root.search-focus-revision; changed focus-revision => { self.focus(); } horizontal-stretch: 1; height: 36px; font-size: 13px; enabled: root.browsing-enabled; text <=> root.source-input; placeholder-text: "Search music or paste a link"; accessible-label: "Search music or paste a YouTube link"; changed has-focus => { root.search-field-focused = self.has-focus; } edited(value) => { root.suggestion-index = -1; root.suggestions-open = true; root.suggest-search(value); } accepted(value) => { root.submit-source(value); } }
+                    LibraryButton { width: 36px; height: 36px; show-tooltip: true; light-mode: root.light-mode; enabled: root.browsing-enabled; icon-path: "M 10.5 3 A 7.5 7.5 0 1 0 10.5 18 A 7.5 7.5 0 1 0 10.5 3 Z M 16 16 L 22 22"; label: "Search for music or open the pasted link"; clicked => { root.submit-source(root.source-input); } }
                     LibraryButton { width: 36px; height: 36px; show-tooltip: true; enabled: !root.artist-picker-open; light-mode: root.light-mode; icon-kind: root.light-mode ? "moon" : "sun"; label: root.light-mode ? "Switch to dark theme" : "Switch to light theme"; clicked => { root.switch-mode(); } }
-                    if root.header-branding && !root.settings-open && root.update-installable && (root.update-available || root.update-phase > 0) : UpdateAction { width: 198px; height: 36px; light-mode: root.light-mode; busy: root.update-busy; phase: root.update-phase; progress: root.update-progress; activate => { root.install-update(); } cancel => { root.cancel-update(); } }
-                    LibraryButton { width: 36px; height: 36px; show-tooltip: true; quiet: true; enabled: !root.artist-picker-open; light-mode: root.light-mode; icon-path: "M 9 4 L 9.5 2 L 14.5 2 L 15 4 L 17 5 L 19 4.5 L 21.5 9 L 20 10.5 L 20 13.5 L 21.5 15 L 19 19.5 L 17 19 L 15 20 L 14.5 22 L 9.5 22 L 9 20 L 7 19 L 5 19.5 L 2.5 15 L 4 13.5 L 4 10.5 L 2.5 9 L 5 4.5 L 7 5 Z M 12 8 A 4 4 0 1 0 12 16 A 4 4 0 1 0 12 8 Z"; notification: root.update-available; label: root.update-available ? "Open settings, update available" : "Open settings"; active: root.settings-open; clicked => { root.settings-open = !root.settings-open; } }
+                    LibraryButton { width: 36px; height: 36px; show-tooltip: true; quiet: true; enabled: !root.artist-picker-open; light-mode: root.light-mode; icon-path: "M 9 4 L 9.5 2 L 14.5 2 L 15 4 L 17 5 L 19 4.5 L 21.5 9 L 20 10.5 L 20 13.5 L 21.5 15 L 19 19.5 L 17 19 L 15 20 L 14.5 22 L 9.5 22 L 9 20 L 7 19 L 5 19.5 L 2.5 15 L 4 13.5 L 4 10.5 L 2.5 9 L 5 4.5 L 7 5 Z M 12 8 A 4 4 0 1 0 12 16 A 4 4 0 1 0 12 8 Z"; label: "Open settings"; active: root.settings-open; clicked => { root.settings-open = !root.settings-open; } }
                     LibraryButton { width: 36px; height: 36px; show-tooltip: true; quiet: true; enabled: !root.artist-picker-open && !root.jam-guest; light-mode: root.light-mode; icon-path: "M 12 2 A 10 10 0 1 0 12 22 A 10 10 0 1 0 12 2 Z M 12 6 A 3 3 0 1 0 12 12 A 3 3 0 1 0 12 6 Z M 5 19 C 5 12 19 12 19 19"; label: "Open YouTube Music account"; active: root.account-open; clicked => { root.account-open = !root.account-open; } }
 
                 }
@@ -2072,8 +2239,23 @@ export component AppWindow inherits Window {
                                 NavigationButton { mix: true; active: root.active-navigation == "supermix"; light-mode: root.light-mode; enabled: root.browsing-enabled && root.account-connected && !root.account-busy; clicked => { root.open-supermix(); } }
                             }
                             Rectangle { vertical-stretch: 1; }
-
-
+                            HorizontalLayout {
+                                height: 40px; alignment: center;
+                                LibraryButton {
+                                    width: 48px; height: 40px;
+                                    show-tooltip: true; quiet: !root.update-available && root.update-phase == 0;
+                                    light-mode: root.light-mode; active: root.update-panel-open || root.update-phase == 2;
+                                    notification: root.update-available && root.update-phase == 0;
+                                    caption: root.update-phase == 1 ? root.update-progress.to-fixed(0) + "%" : "";
+                                    icon-path: root.update-phase == 1 ? "" : root.update-phase == 2 ? "M5 12 L10 17 L19 7" : "M12 3 V15 M7 10 L12 15 L17 10 M5 17 V21 H19 V17";
+                                    label: root.update-phase == 2 ? "Tide update ready" : (root.update-available ? "Tide update available" : "Tide updates");
+                                    clicked => {
+                                        root.suggestions-open = false; root.update-panel-open = true;
+                                        app-focus.focus();
+                                    }
+                                }
+                            }
+                            Rectangle { height: 4px; }
                         }
                     }
                     Rectangle {
@@ -2094,7 +2276,7 @@ export component AppWindow inherits Window {
                                     cross-axis-alignment: center;
                                     Text { horizontal-stretch: 1; text: root.error-message; color: root.foreground; font-size: 12px; wrap: word-wrap; overflow: elide; accessible-live-region: assertive; }
                                     LibraryButton { width: root.error-is-account || root.playback-error-action != "" ? 128px : 70px; light-mode: root.light-mode; caption: root.error-is-account ? "Account settings" : root.error-retryable ? (root.playback-error-action != "" ? root.playback-error-action : "Retry") : "Dismiss"; enabled: root.browsing-enabled; label: root.error-is-account ? "Open account settings to resolve the connection problem" : root.error-retryable ? "Retry interrupted playback or recommendations" : "Dismiss this error"; clicked => { root.retry-error(); } }
-                                    if root.playback-error-action != "" && !root.jam-guest : LibraryButton { width: 56px; caption: "Skip"; label: "Skip this failed song"; light-mode: root.light-mode; enabled: root.browsing-enabled && (root.current-index < root.rows.length - 1 || root.repeat-enabled || (root.autoplay-enabled && root.account-verified)); clicked => { root.skip-error(); } }
+                                    if root.playback-error-action != "" && !root.jam-guest : LibraryButton { width: 56px; caption: "Skip"; label: "Skip this failed song"; light-mode: root.light-mode; enabled: root.browsing-enabled && root.can-skip; clicked => { root.skip-error(); } }
                                     LibraryButton { width: 28px; caption: "×"; label: "Dismiss error"; light-mode: root.light-mode; clicked => { root.dismiss-error(); } }
                                 }
                             }
@@ -2342,7 +2524,7 @@ export component AppWindow inherits Window {
                             }
                             if !root.library-open && !root.detail-open && !root.search-open : VerticalLayout {
                                 spacing: 12px;
-                                if !root.listening-card-visible : HorizontalLayout {
+                                if !root.listening-card-visible && (root.account-connected || root.account-busy || root.jam-guest) : HorizontalLayout {
                                     height: 48px;
                                     spacing: 10px;
                                     cross-axis-alignment: center;
@@ -2353,9 +2535,9 @@ export component AppWindow inherits Window {
                                 if root.listening-card-visible : ListeningCard {
                                     song: root.track-title; artist: root.track-artist; artwork: root.current-artwork; paused: root.paused;
                                     light-mode: root.light-mode;
-                                    next-song: root.home-next-artwork-visible ? root.rows[root.current-index + 1].title : "";
-                                    next-artist: root.home-next-artwork-visible ? root.rows[root.current-index + 1].artist : "";
-                                    next-artwork: root.home-next-artwork-visible ? root.rows[root.current-index + 1].artwork : @image-url("");
+                                    next-song: root.home-next-artwork-visible ? root.rows[root.next-queue-index].title : "";
+                                    next-artist: root.home-next-artwork-visible ? root.rows[root.next-queue-index].artist : "";
+                                    next-artwork: root.home-next-artwork-visible ? root.rows[root.next-queue-index].artwork : @image-url("");
                                     can-refresh: root.browsing-enabled && root.account-connected && !root.account-busy;
                                     refresh => { root.refresh-recommendations(); }
                                     queue => { root.queue-open = true; }
@@ -2399,7 +2581,7 @@ export component AppWindow inherits Window {
                                         if group.layout != "spotlight" : HorizontalLayout {
                                             height: group.layout == "editorial" ? LayoutMetrics.home-editorial-height : group.layout == "compact" ? LayoutMetrics.home-compact-height : LayoutMetrics.library-tile-height; spacing: 12px;
                                             for column in (group.layout == "editorial" ? group.count : group.layout == "compact" ? min(2, root.home-columns) : root.home-columns) : Rectangle {
-                                                horizontal-stretch: group.layout == "editorial" ? (column == 0 ? 1.65 : column == 2 ? 2.55 : 1) : 1; min-width: 0px;
+                                                horizontal-stretch: group.layout == "editorial" ? (column == 0 ? 1.3 : column == 2 ? 1.6 : 1) : 1; min-width: 0px;
                                                 private property <int> item-index: group.start + column;
                                                 if column < group.count : HomeCard {
                                                     width: parent.width; height: parent.height; quick: group.layout == "compact"; editorial: group.layout == "editorial";
@@ -2411,12 +2593,24 @@ export component AppWindow inherits Window {
                                         }
                                     }
                                 }
-                                if root.recommendations.length == 0 : EmptyState { vertical-stretch: 1; light-mode: root.light-mode; heading: root.account-busy ? "Loading your music…" : root.account-connected ? "Your recommendations" : "Welcome to Tide"; detail: root.account-connected ? "Refresh to load recommendations, or search for a song above." : "Search above to start listening. Open Account to connect YouTube Music and see your recommendations."; }
+                                if root.recommendations.length == 0 : EmptyState {
+                                    vertical-stretch: 1; light-mode: root.light-mode;
+                                    welcome-actions: !root.account-connected && !root.account-busy && !root.jam-guest && root.browsing-enabled;
+                                    heading: root.account-busy ? "Loading your music…" : root.account-connected ? "Your recommendations" : "Welcome to Tide";
+                                    detail: root.account-connected ? "Refresh to load recommendations, or search for a song above." : "Search for music now, or connect YouTube Music for your library and personalized recommendations.";
+                                    start-search => { root.search-focus-revision += 1; }
+                                    connect-account => { root.account-open = true; }
+                                }
                             }
                         }
                     }
 
                     if root.queue-open && root.wide : QueueDrawer {
+                        related-open <=> root.related-open;
+                        related-enabled: root.account-verified && root.current-index >= 0;
+                        related-rows: root.related-rows; related-note: root.related-note;
+                        load-related => { root.load-related(); }
+                        add-related(index) => { root.queue-related(index); }
                         query <=> root.queue-filter;
                         matches: root.queue-matches;
                         filter-changed => { root.filter-queue(); }
@@ -2461,6 +2655,11 @@ export component AppWindow inherits Window {
                     height: parent.height;
                     Rectangle { x: 0px; y: 0px; width: max(0px, parent.width - 340px); height: parent.height; background: #00000060; TouchArea { clicked => { root.queue-open = false; } } }
                     QueueDrawer {
+                        related-open <=> root.related-open;
+                        related-enabled: root.account-verified && root.current-index >= 0;
+                        related-rows: root.related-rows; related-note: root.related-note;
+                        load-related => { root.load-related(); }
+                        add-related(index) => { root.queue-related(index); }
                         query <=> root.queue-filter;
                         matches: root.queue-matches;
                         filter-changed => { root.filter-queue(); }
@@ -2514,7 +2713,7 @@ export component AppWindow inherits Window {
                                     ShortcutRow { action: "Previous song"; binding: root.shortcut-previous; recording: root.shortcut-recording-index == 2; light-mode: root.light-mode; record => { root.begin-shortcut(2); app-focus.focus(); } clear => { root.clear-shortcut(2); } }
                                     if root.shortcut-status != "" : Text { text: root.shortcut-status; color: root.secondary; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
                                     Rectangle { height: 1px; background: root.outline; }
-                                    Text { height: 36px; text: "Your keyboard’s media keys work automatically. Custom shortcuts also work in the background."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
+                                    Text { height: 56px; text: "While Tide has focus, press Space to play or pause, or J and L to seek 10 seconds. Media keys and custom shortcuts also work in the background."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
                                 }
                                 if root.settings-audio-open : VerticalLayout {
                                     spacing: 12px; alignment: start;
@@ -2523,6 +2722,8 @@ export component AppWindow inherits Window {
                                     Text { text: "Output device"; color: root.secondary; font-size: 12px; }
                                     ComboBox { model: root.audio-device-names; current-index: root.audio-device-index; selected(value) => { root.choose-audio-device(self.current-index); } }
                                     Text { text: root.audio-status; color: root.secondary; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
+                                    Text { text: "Volume step for wheel and arrow keys"; color: root.secondary; font-size: 12px; }
+                                    ComboBox { model: ["1%", "2%", "5%", "10%"]; current-index: root.volume-step-index; accessible-label: "Volume adjustment step"; selected(value) => { root.set-volume-step(self.current-index); } }
                                     PreferenceRow { title: "Even volume"; detail: "Smooth volume differences between songs."; checked: root.normalize-volume; light-mode: root.light-mode; toggled => { root.toggle-normalization(); } }
                                     Text { text: "Smooth out loud and quiet songs locally. This changes the sound and adds a small processing delay. Off preserves the original dynamics."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
                                 }
@@ -2536,16 +2737,14 @@ export component AppWindow inherits Window {
                                     SettingsLink { title: "Audio"; icon-path: "M 4 10 L 8 10 L 13 5 L 13 19 L 8 14 L 4 14 Z M 17 8 C 21 10 21 14 17 16 M 19 4 C 27 9 27 15 19 20"; light-mode: root.light-mode; activated => { root.settings-audio-open = true; } }
                                     SettingsLink { title: "Keyboard shortcuts"; icon-path: "M 2 5 L 22 5 L 22 19 L 2 19 Z M 5 9 L 7 9 M 10 9 L 12 9 M 15 9 L 19 9 M 5 12 L 7 12 M 10 12 L 12 12 M 15 12 L 19 12 M 6 16 L 18 16"; light-mode: root.light-mode; activated => { root.settings-shortcuts-open = true; app-focus.focus(); } }
                                     Rectangle { height: 1px; background: root.outline; }
-                                    HorizontalLayout { height: 24px; Text { horizontal-stretch: 1; text: "Updates"; color: root.foreground; font-size: 17px; font-weight: 600; } Text { text: "Tide " + root.app-version; color: root.secondary; font-size: 12px; } }
-                                    Text { text: root.update-status; color: root.secondary; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
-                                    LibraryButton { height: 38px; quiet: false; active: root.update-available && root.update-installable && root.update-phase == 0; caption: root.update-busy ? "Please wait…" : root.update-available && root.update-installable && root.update-phase == 0 ? "Update Tide" : "Check for updates"; label: root.update-available && root.update-installable && root.update-phase == 0 ? "Download and verify the available Tide update" : "Check GitHub for a newer stable Tide release"; light-mode: root.light-mode; enabled: !root.update-busy; clicked => { if root.update-available && root.update-installable && root.update-phase == 0 { root.install-update(); } else { root.check-updates(); } } }
-                                    if root.update-available && root.update-installable && root.update-phase > 0 : UpdateAction { width: 280px; height: 44px; horizontal-stretch: 0; light-mode: root.light-mode; busy: root.update-busy; phase: root.update-phase; progress: root.update-progress; activate => { root.install-update(); } cancel => { root.cancel-update(); } }
-                                    if root.update-available && !root.update-installable : Text { text: "Restart Tide and check again to refresh installation status. Portable copies need TideSetup.exe from the latest GitHub release."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
                                     LibraryButton { height: 34px; caption: root.settings-more-open ? "Advanced  −" : "Advanced  +"; label: "Show additional settings"; light-mode: root.light-mode; clicked => { root.settings-more-open = !root.settings-more-open; } }
                                     if root.settings-more-open : VerticalLayout {
                                         spacing: 10px; alignment: start;
                                         LibraryButton { height: 36px; quiet: false; caption: "Open audio file"; label: "Open a local audio file"; light-mode: root.light-mode; clicked => { root.open-file(); root.settings-open = false; } }
+                                        if root.windows-theme-supported : PreferenceRow { title: "Follow Windows theme"; checked: root.follow-windows-theme; light-mode: root.light-mode; toggled => { root.toggle-follow-windows-theme(); } }
                                         PreferenceRow { title: "Windows media keys"; checked: root.media-controls-enabled; light-mode: root.light-mode; toggled => { root.toggle-media-controls(); } }
+                                        if root.media-controls-enabled : PreferenceRow { title: "Keep playing when I close Tide"; checked: root.close-to-tray; light-mode: root.light-mode; toggled => { root.toggle-close-to-tray(); } }
+                                        PreferenceRow { title: "Skip known disliked songs"; checked: root.skip-disliked; light-mode: root.light-mode; toggled => { root.toggle-skip-disliked(); } }
                                         PreferenceRow { title: "Check for updates on startup"; checked: root.auto-update-checks; light-mode: root.light-mode; toggled => { root.toggle-update-checks(); } }
                                         Text { height: 18px; text: "Mini opacity · " + root.mini-opacity.to-fixed(0) + "%"; color: root.secondary; font-size: 12px; }
                                         TideSlider { height: 28px; light-mode: root.light-mode; minimum: 60; maximum: 100; value: root.mini-opacity; label: "Mini player opacity"; value-text: root.mini-opacity.to-fixed(0) + "%"; released(value) => { root.change-mini-opacity(value); } }
@@ -2782,7 +2981,7 @@ export component AppWindow inherits Window {
             PlayerBar {
                 window-minimized: root.minimized;
                 transport-enabled: !root.jam-guest;
-                skip-enabled: true;
+                skip-enabled: root.can-skip;
                 preferred-height: 110px;
                 min-height: 110px;
                 max-height: root.collapsed ? 1000px : 110px;
@@ -2804,6 +3003,7 @@ export component AppWindow inherits Window {
                 duration: root.duration;
                 paused: root.paused;
                 volume: root.volume;
+                volume-step: root.volume-step-index == 0 ? 1 : root.volume-step-index == 2 ? 5 : root.volume-step-index == 3 ? 10 : 2;
                 light-mode: root.light-mode;
                 compact: root.compact-mode;
                 collapsed: root.collapsed;
@@ -2821,6 +3021,49 @@ export component AppWindow inherits Window {
                 restore => { root.collapse-player(); }
                 mini => { root.collapse-player(); }
                 toggle-queue => { root.queue-open = !root.queue-open; }
+            }
+        }
+        if root.suggestions-visible : Rectangle {
+            y: 56px; width: root.width; height: root.height - self.y;
+            TouchArea { clicked => { root.suggestions-open = false; } }
+            Rectangle {
+                x: root.header-branding ? 126px : 60px;
+                width: min(480px, root.width - self.x - 18px);
+                height: 16px + 36px * root.search-suggestions.length;
+                border-radius: 9px; border-width: 1px; border-color: root.outline; background: root.surface;
+                VerticalLayout {
+                    padding: 8px;
+                    for suggestion[index] in root.search-suggestions : LibraryButton {
+                        height: 36px; light-mode: root.light-mode; caption: suggestion; label: "Search for " + suggestion;
+                        active: index == root.suggestion-index;
+                        clicked => { root.select-suggestion(suggestion); }
+                    }
+                }
+            }
+        }
+        if root.update-panel-open && !root.collapsed && !root.lyrics-open : Rectangle {
+            width: root.width; height: root.height;
+            TouchArea { clicked => { root.update-panel-open = false; } }
+            Rectangle {
+                x: 12px; y: parent.height - self.height - (root.jam-active ? 208px : 174px);
+                width: 330px; height: 166px;
+                background: root.surface; border-width: 1px; border-color: root.outline; border-radius: 12px;
+                TouchArea { }
+                VerticalLayout {
+                    padding: 14px; spacing: 8px; alignment: start;
+                    HorizontalLayout {
+                        height: 28px; spacing: 8px; cross-axis-alignment: center;
+                        Text { horizontal-stretch: 1; text: root.update-phase == 2 ? "Ready to restart" : "Tide updates"; color: root.foreground; font-weight: 650; font-size: 17px; }
+                        Text { text: "Tide " + root.app-version; color: root.secondary; font-size: 11px; }
+                        LibraryButton { width: 54px; height: 28px; light-mode: root.light-mode; caption: "Later"; label: "Close updates and keep listening"; clicked => { root.update-panel-open = false; } }
+                    }
+                    Text { height: 42px; text: root.update-available && !root.update-installable ? root.update-status + ". Use TideSetup.exe from GitHub to update this copy." : root.update-status; color: root.secondary; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
+                    HorizontalLayout {
+                        height: 36px; spacing: 8px; cross-axis-alignment: center;
+                        if root.update-installable && (root.update-available || root.update-phase > 0) : UpdateAction { horizontal-stretch: 1; height: 36px; light-mode: root.light-mode; busy: root.update-busy; phase: root.update-phase; progress: root.update-progress; activate => { root.install-update(); } cancel => { root.cancel-update(); } }
+                        if !root.update-installable || (!root.update-available && root.update-phase == 0) : LibraryButton { width: 150px; height: 36px; quiet: false; caption: root.update-busy ? "Checking…" : "Check for updates"; label: "Check GitHub for a newer stable Tide release"; light-mode: root.light-mode; enabled: !root.update-busy; clicked => { root.check-updates(); } }
+                    }
+                }
             }
         }
         if !root.collapsed && root.playlist-picker-open : Rectangle {

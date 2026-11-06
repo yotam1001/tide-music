@@ -246,16 +246,12 @@ def connect_existing(database, index=0):
         headers = session_headers({"x-goog-authuser": str(index)}, cookies)
     except (CookieReadError, CookieSelectionError) as error:
         return {"type": "error", "code": error.args[0]}
-    if not headers:
-        return {"type": "error", "code": "session"}
     try:
-        if validate_session(headers):
-            return {"type": "session", "headers": headers}
+        return verify_candidate(headers)
     except ImportError:
         return {"type": "error", "code": "runtime"}
     except Exception as error:
         return request_failure(error)
-    return {"type": "error", "code": "session"}
 
 
 def switch_account(headers, index):
@@ -267,13 +263,11 @@ def switch_account(headers, index):
         candidate_source = {name: value for name, value in headers.items()
                             if name.lower() != "x-goog-pageid"}
         candidate = session_headers({**candidate_source, "x-goog-authuser": str(index)})
-        if candidate and validate_session(candidate):
-            return {"type": "session", "headers": candidate}
+        return verify_candidate(candidate)
     except ImportError:
         return {"type": "error", "code": "runtime"}
     except Exception as error:
         return request_failure(error)
-    return {"type": "error", "code": "session"}
 
 
 def create_client(auth):
@@ -365,6 +359,16 @@ def validate_session(headers):
         return verified
     finally:
         session.close()
+
+
+def verify_candidate(headers):
+    if not headers:
+        return {"type": "error", "code": "session"}
+    if validate_session(headers):
+        return {"type": "session", "headers": headers}
+    # An empty or unfamiliar identity response cannot verify the candidate.
+    # Explicit denials are classified by request_failure at the call boundary.
+    return {"type": "error", "code": "request"}
 
 
 def zen_executable():
@@ -608,6 +612,39 @@ def tracks(items, limit=MAX_TRACKS, exclude=(), deduplicate=False):
     return result
 
 
+def radio_tracks(items, seed):
+    """Keep the service's ranking and prefer an explicitly identified album track."""
+    excluded = {seed}
+    candidates = []
+    for item in items[:MAX_TRACKS]:
+        if not isinstance(item, dict):
+            continue
+        video = identifier(item.get("videoId"), True)
+        if not video:
+            continue
+        counterpart = item.get("counterpart")
+        counterpart = counterpart if isinstance(counterpart, dict) else {}
+        alternate = identifier(counterpart.get("videoId"), True)
+        if (seed in (video, alternate) or item.get("likeStatus") == "DISLIKE"
+                or counterpart.get("likeStatus") == "DISLIKE"):
+            excluded.update((video, alternate))
+        if item.get("isAvailable") is False or item.get("videoType") == "MUSIC_VIDEO_TYPE_PODCAST_EPISODE":
+            continue
+        if (alternate and counterpart.get("videoType") == "MUSIC_VIDEO_TYPE_ATV"
+                and counterpart.get("isAvailable") is not False
+                and item.get("videoType") != "MUSIC_VIDEO_TYPE_ATV"):
+            chosen = {**counterpart}
+            if not artwork_url(chosen):
+                chosen["thumbnail"] = item.get("thumbnail")
+                chosen["thumbnails"] = item.get("thumbnails")
+        else:
+            chosen = {**item}
+        chosen["duration"] = chosen.get("duration") or chosen.get("length")
+        candidates.append((video, chosen))
+    return tracks([item for original, item in candidates if original not in excluded],
+                  MAX_RADIO_TRACKS, excluded, True)
+
+
 def browse_cards(items, kind, shelf):
     """Normalize read-only library/history data; never return opaque API tokens."""
     cards = []
@@ -636,6 +673,16 @@ def browse_cards(items, kind, shelf):
 
 def playlist_entry(value):
     return value if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,256}", value) else None
+
+
+def playlist_count_label(count):
+    if isinstance(count, str):
+        count = count.strip()
+        if len(count) <= 15 and re.fullmatch(r"[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+", count):
+            count = int(count.replace(",", ""))
+    if type(count) is int and 0 <= count < 10**12:
+        return f"{count:,} track" if count == 1 else f"{count:,} tracks"
+    return ""
 
 
 def playlist_context(playlist, data):
@@ -992,7 +1039,11 @@ def run(client, request):
         return lyrics(client, request.get("video_id"), request.get("allow_external", True) is True)
     action = request["action"]
     if action == "explore":
-        data = client.get_explore()
+        explore_error = None
+        try:
+            data = client.get_explore()
+        except Exception as error:
+            data, explore_error = {}, error
         data = data if isinstance(data, dict) else {}
         cards = []
         truncated = False
@@ -1015,8 +1066,12 @@ def run(client, request):
         except Exception:
             # A category/parser failure must not discard otherwise valid charts.
             category_data, categories_available = {}, False
+        if not categories_available or not category_data:
+            # The main Explore response can carry usable category links even
+            # when the dedicated catalog is temporarily unavailable.
+            category_data = {"Moods & genres": data.get("moods_and_genres")}
         categories, seen = [], set()
-        for group, items in islice(category_data.items() if isinstance(category_data, dict) else [], 8):
+        for group, items in islice(category_data.items(), 8):
             if not isinstance(group, str) or not isinstance(items, list):
                 continue
             for item in items[:MAX_EXPLORE_CATEGORIES + 1]:
@@ -1030,8 +1085,12 @@ def run(client, request):
                     truncated = True
                     break
                 categories.append({"title": title, "group": clean(group, 80), "params": params})
+        if explore_error is not None and not categories:
+            # With neither source available, preserve the original failure
+            # so the normal verification and retry handling can classify it.
+            raise explore_error
         return {"type": "explore", "cards": cards, "categories": categories,
-                "categories_available": categories_available, "truncated": truncated}
+                "categories_available": categories_available or bool(categories), "truncated": truncated}
     if action == "mood":
         params = request.get("params")
         if not mood_params(params):
@@ -1051,6 +1110,15 @@ def run(client, request):
                 "truncated": isinstance(items, list) and len(items) > MAX_LIBRARY_CARDS}
     if action == "feedback":
         return feedback(client, request.get("request"))
+    if action == "suggestions":
+        query = request.get("query")
+        if (not isinstance(query, str) or not 2 <= len(query.strip()) <= 120
+                or any(not char.isprintable() for char in query)):
+            return {"type": "suggestions", "items": []}
+        items = client.get_search_suggestions(query.strip())
+        suggestions = dict.fromkeys(clean(item, 120).strip()
+                                    for item in (items[:20] if isinstance(items, list) else []) if isinstance(item, str))
+        return {"type": "suggestions", "items": [item for item in suggestions if item][:5]}
     if action == "search":
         kind, query = request.get("kind"), request.get("query")
         kinds = {"songs": "song", "albums": "album", "artists": "artist", "playlists": "playlist"}
@@ -1135,8 +1203,9 @@ def run(client, request):
             # is bounded and optional: retain the returned top songs on failure.
             try:
                 expanded = client.get_playlist(playlist, limit=51)
-                if isinstance(expanded, dict) and isinstance(expanded.get("tracks"), list):
-                    items = expanded["tracks"]
+                expanded_tracks = expanded.get("tracks") if isinstance(expanded, dict) else None
+                if isinstance(expanded_tracks, list) and tracks(expanded_tracks[:51], limit=1):
+                    items = expanded_tracks
             except Exception:
                 pass
         bounded = []
@@ -1153,7 +1222,7 @@ def run(client, request):
         playlists = client.get_library_playlists(limit=201)
         return {"type": "library", "account": clean(info.get("accountName") or info.get("name") or "YouTube Music"),
                 "playlists": [{"id": identifier(p.get("playlistId")), "title": clean(p.get("title")),
-                               "subtitle": clean(str(p.get("count") or "") + " tracks"),
+                               "subtitle": playlist_count_label(p.get("count")),
                                "artwork_url": artwork_url(p), "owned": p.get("owned") is True}
                               for p in playlists[:200] if isinstance(p, dict) and identifier(p.get("playlistId"))],
                 "truncated": len(playlists) > 200}
@@ -1194,16 +1263,7 @@ def run(client, request):
             items = data.get("tracks", []) if isinstance(data, dict) else []
             if not isinstance(items, list):
                 return empty
-            excluded = {video}
-            for item in items[:MAX_TRACKS]:
-                if not isinstance(item, dict):
-                    continue
-                if item.get("videoId") == video or item.get("likeStatus") == "DISLIKE":
-                    excluded.add(identifier(item.get("videoId"), True))
-                    counterpart = item.get("counterpart")
-                    if isinstance(counterpart, dict):
-                        excluded.add(identifier(counterpart.get("videoId"), True))
-            return {"type": "tracks", "tracks": tracks(items, MAX_RADIO_TRACKS, excluded, True),
+            return {"type": "tracks", "tracks": radio_tracks(items, video),
                     "truncated": len(items) > MAX_RADIO_TRACKS}
         except Exception as error:
             return verified_request_failure(error, client)
@@ -1275,10 +1335,7 @@ def main():
         request = json.loads(raw)
         if request.get("action") == "verify_import":
             headers = session_headers(request.get("headers", {}))
-            if headers and validate_session(headers):
-                result = {"type": "session", "headers": headers}
-            else:
-                result = {"type": "error", "code": "session"}
+            result = verify_candidate(headers)
             print(json.dumps(result, ensure_ascii=True))
             return
         if request.get("action") == "switchaccount":
@@ -1294,6 +1351,8 @@ def main():
             print(json.dumps(result, ensure_ascii=True))
             return
         client, session = create_client(request.pop("headers"))
+        if request.get("action") == "suggestions":
+            session._tide_request_timeout = 3
         if request.get("action") == "lyrics":
             # Both reads can time out and still return refreshed cookies before
             # the owning provider's 25-second overall deadline.

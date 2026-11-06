@@ -256,25 +256,6 @@ fn settings_theme_account_and_song_menu_remain_independent() {
         draw(&window, width, height);
     }
 
-    ui.set_update_available(true);
-    ui.set_update_installable(true);
-    ui.set_update_status("Tide 0.2.0 is available".into());
-    ui.set_settings_open(true);
-    for light in [true, false] {
-        ui.set_light_mode(light);
-        export(
-            if light {
-                "updates-light"
-            } else {
-                "updates-dark"
-            },
-            1140,
-            800,
-            &draw(&window, 1140, 800),
-        );
-    }
-    ui.set_update_available(false);
-    ui.set_settings_open(false);
     ui.set_account_connected(false);
     ui.set_account_verified(false);
     ui.set_account_name("".into());
@@ -571,10 +552,10 @@ fn settings_theme_account_and_song_menu_remain_independent() {
     // Secondary controls stay hidden until explicitly expanded.
     ui.set_settings_more_open(false);
     draw(&window, 1140, 1200);
-    click(&ui, 920.0, 575.0);
+    click(&ui, 920.0, 467.0);
     assert!(ui.get_settings_more_open(), "More options is reachable");
     draw(&window, 1140, 1200);
-    click(&ui, 920.0, 671.0);
+    click(&ui, 920.0, 563.0);
     assert!(!ui.get_media_controls_enabled());
     assert_eq!(ui.get_shortcut_toggle(), "Ctrl+Alt+P");
     assert_eq!(ui.get_shortcut_next(), "Ctrl+Alt+N");

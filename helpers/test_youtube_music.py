@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 from youtube_music import (LOGIN_SECONDS, MAX_RADIO_TRACKS, MAX_SUPERMIX_SHELVES, MAX_HOME_CARDS, MAX_HOME_ITEMS_PER_SHELF,
                           MAX_HOME_SHELVES, MUSIC_URL, artwork_url, featured_artwork_url, connect, connect_existing, create_client, main,
                           music_cookies, cookie_matches_music, read_cookie_database, CookieReadError, CookieSelectionError,
-                          read_music_cookies, remove_login_profile, run,
+                          read_music_cookies, remove_login_profile, radio_tracks, run,
                           selected_zen_database, session_headers, switch_account, tracks,
                           validate_session, wait_for_login, zen_executable, request_failure, verified_request_failure)
 
@@ -85,6 +85,11 @@ class ArtistTests(unittest.TestCase):
         self.assertEqual([t["title"] for t in result["tracks"]], ["First"])
         self.assertNotIn("private source", json.dumps(result))
         self.assertFalse(result["truncated"])
+        client.get_playlist.side_effect = None
+        for expansion in ([], [{"videoId": "00000000001", "isAvailable": False}]):
+            client.get_playlist.return_value = {"tracks": expansion}
+            result = run(client, {"action": "artist", "id": self.artist})
+            self.assertEqual([t["title"] for t in result["tracks"]], ["First"])
         client.get_artist.return_value = {}
         self.assertEqual(run(client, {"action": "artist", "id": self.artist})["code"], "artist_unavailable")
 
@@ -153,6 +158,16 @@ class ProviderTests(unittest.TestCase):
             self.assertEqual(result, {"type": "error", "code": "request"})
             self.assertNotIn("private fixture", json.dumps(result))
 
+    def test_suggestions_preserve_provider_order_and_bound_untrusted_text(self):
+        client = FakeClient()
+        client.get_search_suggestions = MagicMock(return_value=[
+            "First", None, "First", "Second", "Third", "Fourth", "Fifth", "Sixth"])
+        result = run(client, {"action": "suggestions", "query": "  tide  "})
+        self.assertEqual(result, {"type": "suggestions", "items": [
+            "First", "Second", "Third", "Fourth", "Fifth"]})
+        client.get_search_suggestions.assert_called_once_with("tide")
+        self.assertEqual(run(client, {"action": "suggestions", "query": "x"})["items"], [])
+
     def test_radio_filters_seed_duplicates_malformed_and_unavailable_tracks(self):
         client = FakeClient()
         items = [None, "unsupported", {}, {"videoId": "bad/id"}, {"videoId": 12345678901},
@@ -172,6 +187,19 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(result["tracks"][1]["album"], "")
         self.assertEqual(result["tracks"][0]["source"], "https://www.youtube.com/watch?v=00000000002")
         self.assertFalse(result["truncated"])
+
+    def test_radio_prefers_verified_album_counterpart_without_duplicates(self):
+        album_track = {"videoId": "00000000002", "title": "Studio version",
+                       "videoType": "MUSIC_VIDEO_TYPE_ATV", "length": "3:01"}
+        music_video = {"videoId": "00000000001", "title": "Video with intro",
+                       "videoType": "MUSIC_VIDEO_TYPE_OMV", "length": "4:23",
+                       "counterpart": album_track}
+        podcast = {"videoId": "00000000003", "videoType": "MUSIC_VIDEO_TYPE_PODCAST_EPISODE"}
+        result = radio_tracks([music_video, album_track, podcast], "K4DyBUG242c")
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["source"], "https://www.youtube.com/watch?v=00000000002")
+        self.assertEqual(result[0]["duration_seconds"], 181)
+        self.assertEqual(radio_tracks([music_video, album_track], "00000000002"), [])
 
     def test_radio_caps_api_overshoot_and_only_uses_read_endpoint(self):
         client = SimpleNamespace(get_watch_playlist=MagicMock(return_value={"tracks": [
@@ -787,7 +815,8 @@ class LoginTests(unittest.TestCase):
             self.assertEqual(result["type"], "session")
             self.assertEqual(result["headers"]["x-goog-authuser"], "0")
             validate.assert_called_once_with(result["headers"])
-            for failure, code in [(False, "session"), (ValueError("fixture error"), "request")]:
+            for failure, code in [(False, "request"), (ValueError("fixture error"), "request"),
+                                  (RuntimeError("Server returned HTTP 403: fixture"), "session")]:
                 with patch("youtube_music.validate_session", side_effect=[failure]):
                     self.assertEqual(connect_existing(str(selected)), {"type": "error", "code": code})
             self.assertEqual(selected.read_bytes(), before)
@@ -821,7 +850,8 @@ class LoginTests(unittest.TestCase):
             with patch("youtube_music.validate_session") as validate:
                 self.assertEqual(switch_account(current, index), {"type": "error", "code": "session"})
             validate.assert_not_called()
-        for failure, code in [(False, "session"), (ValueError("fixture error"), "request")]:
+        for failure, code in [(False, "request"), (ValueError("fixture error"), "request"),
+                              (RuntimeError("Server returned HTTP 403: fixture"), "session")]:
             with patch("youtube_music.validate_session", side_effect=[failure]):
                 self.assertEqual(switch_account(current, 1), {"type": "error", "code": code})
         self.assertEqual(current["x-goog-authuser"], "0")
@@ -867,17 +897,21 @@ class LoginTests(unittest.TestCase):
                 self.assertEqual(result["headers"]["x-goog-pageid"], "123")
                 self.assertEqual(result["headers"]["x-goog-authuser"], "1")
             else:
-                self.assertEqual(result, {"type": "error", "code": "session"})
+                self.assertEqual(result, {"type": "error", "code": "request"})
 
     def test_browser_import_failure_never_returns_exception_credentials(self):
         headers = {"cookie": "__Secure-3PAPISID=" + "fixture", "x-goog-authuser": "1"}
-        stdin = SimpleNamespace(buffer=io.BytesIO(json.dumps({"action": "verify_import", "headers": headers}).encode()))
-        stdout = io.StringIO()
-        with patch("youtube_music.sys.stdin", stdin), patch("youtube_music.sys.stdout", stdout), \
-                patch("youtube_music.validate_session", side_effect=RuntimeError("private fixture cookie")):
-            main()
-        self.assertEqual(json.loads(stdout.getvalue()), {"type": "error", "code": "request"})
-        self.assertNotIn("fixture", stdout.getvalue())
+        for message, code in [
+            ("private fixture cookie", "request"),
+            ("Server returned HTTP 403: private fixture cookie", "session"),
+        ]:
+            stdin = SimpleNamespace(buffer=io.BytesIO(json.dumps({"action": "verify_import", "headers": headers}).encode()))
+            stdout = io.StringIO()
+            with patch("youtube_music.sys.stdin", stdin), patch("youtube_music.sys.stdout", stdout), \
+                    patch("youtube_music.validate_session", side_effect=RuntimeError(message)):
+                main()
+            self.assertEqual(json.loads(stdout.getvalue()), {"type": "error", "code": code})
+            self.assertNotIn("fixture", stdout.getvalue())
 
 if __name__ == "__main__":
     unittest.main()

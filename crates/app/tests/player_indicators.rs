@@ -212,6 +212,23 @@ fn native_sliders_keep_external_playback_updates_and_paint_volume_without_resize
         ));
     }
 
+    ui.set_volume_step_index(2);
+    let volume = ui.get_volume();
+    ui.window().dispatch_event(WindowEvent::PointerScrolled {
+        position: LogicalPosition::new(target_x, y as f32),
+        delta_x: 0.0,
+        delta_y: 30.0,
+    });
+    assert!(
+        (ui.get_volume() - (volume + 5.0)).abs() < 0.01,
+        "wheel volume step"
+    );
+    key(&ui, Key::RightArrow);
+    assert!(
+        (ui.get_volume() - (volume + 10.0)).abs() < 0.01,
+        "keyboard volume step"
+    );
+
     // Repeat the interaction/clock/track-handoff sequence that accumulates in
     // long listening sessions. This advances UI state, not wall-clock audio.
     for song in 0..30 {

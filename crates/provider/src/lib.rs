@@ -162,6 +162,9 @@ pub enum Request {
     Mood {
         params: String,
     },
+    Suggestions {
+        query: String,
+    },
     Search {
         query: String,
         kind: SearchKind,
@@ -279,6 +282,9 @@ pub enum Response {
         cards: Vec<Card>,
         truncated: bool,
     },
+    Suggestions {
+        items: Vec<String>,
+    },
     Search {
         kind: SearchKind,
         cards: Vec<Card>,
@@ -344,6 +350,7 @@ fn decode_helper_reply(bytes: &[u8]) -> Result<HelperReply, &'static str> {
             | Response::Home { .. }
             | Response::Browse { .. }
             | Response::Search { .. }
+            | Response::Suggestions { .. }
             | Response::Explore { .. }
             | Response::Mood { .. }
             | Response::Artist { .. }
@@ -1133,6 +1140,8 @@ impl Provider {
         let switching = matches!(request, Request::SwitchAccount { .. });
         let timeout = if matches!(request, Request::Lyrics { .. }) {
             Duration::from_secs(25)
+        } else if matches!(request, Request::Suggestions { .. }) {
+            Duration::from_secs(6)
         } else {
             Duration::from_secs(60)
         };

@@ -90,6 +90,15 @@ pub fn start_local_benchmark() -> Result<PlaybackHandle, String> {
     start_with_output(None, 0, true)
 }
 
+/// Run a synthetic account handoff with the same native playback engine but no audio device.
+#[cfg(windows)]
+pub fn start_connection_probe(
+    cookies: Option<PathBuf>,
+    account_index: u32,
+) -> Result<PlaybackHandle, String> {
+    start_with_output(cookies, account_index, true)
+}
+
 #[cfg(windows)]
 fn start_with_output(
     cookies: Option<PathBuf>,
@@ -212,6 +221,11 @@ pub fn start_local_benchmark() -> Result<PlaybackHandle, String> {
     start()
 }
 
+#[cfg(not(windows))]
+pub fn start_connection_probe(_: Option<PathBuf>, _: u32) -> Result<PlaybackHandle, String> {
+    start()
+}
+
 impl PlaybackHandle {
     /// Applies locally, including for Jam guests. Options survive worker recovery.
     pub fn configure_audio(&self, options: AudioOptions) -> Result<(), String> {
@@ -230,6 +244,65 @@ impl PlaybackHandle {
         Ok(())
     }
 
+    /// Queue a track and its initial position as one playback intent.
+    pub fn load_at(&self, source: String, generation: u64, position: f64) -> Result<(), String> {
+        if !position.is_finite() || position < 0.0 {
+            return Err("Start position must be a finite, non-negative number.".into());
+        }
+        let validated = validate_source(&source)?;
+        if validated.is_youtube && !self.yt_dlp_available {
+            return Err(
+                "YouTube playback needs yt-dlp.exe. Place it beside mpv in .tools/runtime or the app's tools directory, or add it to PATH.".into(),
+            );
+        }
+
+        let _gate = self
+            .send_gate
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let previous_generation = self.desired_generation.load(Ordering::Acquire);
+        if generation < previous_generation {
+            return Err(format!(
+                "Ignoring stale playback generation {generation}; generation {previous_generation} is already active."
+            ));
+        }
+
+        if self.shutdown_requested.load(Ordering::Acquire) {
+            return Err("The playback engine is shutting down.".into());
+        }
+        let epoch = next_epoch(self.supersede_epoch.load(Ordering::Acquire));
+        self.command_tx
+            .try_send(WorkerCommand::Load(PendingLoad {
+                prepared: self.preparation.take_for(&validated.source),
+                source: validated.source,
+                generation,
+                epoch,
+            }))
+            .map_err(command_queue_error)?;
+
+        self.supersede_epoch.store(epoch, Ordering::Release);
+        self.desired_generation.store(generation, Ordering::Release);
+        *self.intent.lock().unwrap_or_else(|p| p.into_inner()) = PlaybackIntent {
+            epoch,
+            paused: false,
+            seek: (position > 0.0).then_some(position),
+            seek_revision: u64::from(position > 0.0),
+        };
+        let mut snapshot = self.snapshot_write();
+        snapshot.generation = generation;
+        snapshot.position = position;
+        snapshot.duration = 0.0;
+        snapshot.paused = false;
+        snapshot.loading = true;
+        snapshot.ended = false;
+        snapshot.error = None;
+        snapshot.output_unavailable = false;
+        clear_audio_details(&mut snapshot);
+        snapshot.retry_attempt = 0;
+        snapshot.title = None;
+        Ok(())
+    }
+
     /// Queue a playback command without waiting for mpv or network I/O.
     pub fn send(&self, command: PlaybackCommand) -> Result<(), String> {
         if self.shutdown_requested.load(Ordering::Acquire) {
@@ -237,59 +310,7 @@ impl PlaybackHandle {
         }
 
         match command {
-            PlaybackCommand::Load { source, generation } => {
-                let validated = validate_source(&source)?;
-                if validated.is_youtube && !self.yt_dlp_available {
-                    return Err(
-                        "YouTube playback needs yt-dlp.exe. Place it beside mpv in .tools/runtime or the app's tools directory, or add it to PATH.".into(),
-                    );
-                }
-
-                let _gate = self
-                    .send_gate
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
-                let previous_generation = self.desired_generation.load(Ordering::Acquire);
-                if generation < previous_generation {
-                    return Err(format!(
-                        "Ignoring stale playback generation {generation}; generation {previous_generation} is already active."
-                    ));
-                }
-
-                if self.shutdown_requested.load(Ordering::Acquire) {
-                    return Err("The playback engine is shutting down.".into());
-                }
-                let epoch = next_epoch(self.supersede_epoch.load(Ordering::Acquire));
-                self.command_tx
-                    .try_send(WorkerCommand::Load(PendingLoad {
-                        prepared: self.preparation.take_for(&validated.source),
-                        source: validated.source,
-                        generation,
-                        epoch,
-                    }))
-                    .map_err(command_queue_error)?;
-
-                self.supersede_epoch.store(epoch, Ordering::Release);
-                self.desired_generation.store(generation, Ordering::Release);
-                *self.intent.lock().unwrap_or_else(|p| p.into_inner()) = PlaybackIntent {
-                    epoch,
-                    paused: false,
-                    ..PlaybackIntent::default()
-                };
-                let mut snapshot = self.snapshot_write();
-                snapshot.generation = generation;
-                snapshot.position = 0.0;
-                snapshot.duration = 0.0;
-                snapshot.paused = false;
-                snapshot.loading = true;
-                snapshot.ended = false;
-                snapshot.error = None;
-                snapshot.output_unavailable = false;
-                clear_audio_details(&mut snapshot);
-                snapshot.retry_attempt = 0;
-                snapshot.title = None;
-                Ok(())
-            }
+            PlaybackCommand::Load { source, generation } => self.load_at(source, generation, 0.0),
             PlaybackCommand::Seek(seconds) => {
                 if !seconds.is_finite() || seconds < 0.0 {
                     return Err("Seek position must be a finite, non-negative number.".into());
@@ -887,6 +908,9 @@ async fn run_worker(
                         if let Some(mut old) = player.take() { terminate_player(&mut old).await; }
                         state = PlayerState::default();
                         track = Some(recovery::Track::new(load, Instant::now()));
+                        // User loads are due now. Keep periodic ticks for recovery,
+                        // but don't make a new track wait for the next one.
+                        watchdog.reset_immediately();
                     }
                     WorkerCommand::Stop { epoch } => {
                         let current = {
@@ -1970,12 +1994,10 @@ mod tests {
         let handle = start().unwrap();
         handle.send(PlaybackCommand::SetVolume(0.0)).unwrap();
         handle
-            .send(PlaybackCommand::Load {
-                source: path.to_string_lossy().into_owned(),
-                generation: 1,
-            })
+            .load_at(path.to_string_lossy().into_owned(), 1, 5.0)
             .unwrap();
-        wait(&handle, |s| !s.loading && s.position > 0.1);
+        wait(&handle, |s| !s.loading);
+        assert!(handle.snapshot().position >= 5.0);
         handle.send(PlaybackCommand::Seek(12.0)).unwrap();
         wait(&handle, |s| s.position >= 12.0);
         kill_owned(&handle);

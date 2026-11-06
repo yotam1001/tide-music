@@ -46,21 +46,32 @@ mod system_artwork;
 mod updater;
 use tide_music::*;
 
+#[derive(Clone, Serialize, Deserialize)]
+struct PlaybackBookmark {
+    source: String,
+    seconds: f64,
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(default)]
 struct Settings {
     queue: Queue,
+    playback_bookmark: Option<PlaybackBookmark>,
     light_mode: bool,
+    follow_windows_theme: bool,
     #[serde(default)]
     compact_mode: bool,
     #[serde(default = "enabled_by_default")]
     library_grid: bool,
     #[serde(default = "enabled_by_default")]
     autoplay: bool,
+    skip_disliked: bool,
+    saved_dislikes: music_feedback::SavedDislikes,
     #[serde(default = "enabled_by_default")]
     check_updates: bool,
     #[serde(default = "enabled_by_default")]
     media_controls: bool,
+    close_to_tray: bool,
     #[serde(default)]
     history_feedback: bool,
     #[serde(default)]
@@ -74,6 +85,7 @@ struct Settings {
     #[serde(default)]
     shortcuts: [String; 3],
     volume: Option<f64>,
+    volume_step_index: i32,
     normalize_volume: bool,
     audio_device: String,
     repeat: bool,
@@ -84,12 +96,17 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             queue: Queue::default(),
+            playback_bookmark: None,
             light_mode: false,
+            follow_windows_theme: false,
             compact_mode: false,
             library_grid: true,
             autoplay: true,
+            skip_disliked: true,
+            saved_dislikes: Default::default(),
             check_updates: true,
             media_controls: true,
+            close_to_tray: false,
             history_feedback: false,
             discord_presence: false,
             discord_application_id: default_discord_application_id(),
@@ -97,6 +114,7 @@ impl Default for Settings {
             mini_opacity: 100,
             shortcuts: Default::default(),
             volume: None,
+            volume_step_index: 1,
             normalize_volume: false,
             audio_device: "auto".into(),
             repeat: false,
@@ -106,6 +124,13 @@ impl Default for Settings {
 }
 fn default_discord_application_id() -> String {
     discord::APPLICATION_ID.to_owned()
+}
+fn preferred_light_mode(settings: &Settings) -> bool {
+    #[cfg(windows)]
+    if settings.follow_windows_theme {
+        return tide_windows::app_light_theme().unwrap_or(settings.light_mode);
+    }
+    settings.light_mode
 }
 fn opaque_mini() -> u8 {
     100
@@ -122,6 +147,9 @@ enum LibraryAction {
     Shuffle,
     Preview {
         title: String,
+    },
+    Related {
+        generation: u64,
     },
     Radio {
         seed: String,
@@ -164,6 +192,7 @@ struct State {
     rejected_saved_connection: Option<Option<tide_provider::SavedConnection>>,
     connection_retry: connection::AdoptionRetry,
     connection_resume: Option<(u64, String, f64, bool)>,
+    connection_probe: bool,
     cookie_lease: Option<tide_provider::CookieLease>,
     pending_cookie_updates: std::collections::VecDeque<tide_playback::CookieUpdate>,
     cookie_update_retry_at: Option<Instant>,
@@ -176,6 +205,7 @@ struct State {
     recommendations: Vec<tide_provider::Card>,
     discovery: discovery::Discovery,
     detail_tracks: Vec<Track>,
+    related_tracks: Vec<Track>,
     detail_cover_url: Option<String>,
     artist_origin: Option<artists::Origin>,
     search_tracks: Vec<Track>,
@@ -451,8 +481,12 @@ fn current_video_id(s: &State) -> Option<String> {
         .queue
         .current
         .and_then(|index| s.settings.queue.tracks.get(index))?;
-    let url = url::Url::parse(&track.source).ok()?;
-    if !is_youtube_source(&track.source) {
+    source_video_id(&track.source)
+}
+
+fn source_video_id(source: &str) -> Option<String> {
+    let url = url::Url::parse(source).ok()?;
+    if !is_youtube_source(source) {
         return None;
     }
     let id = if url.host_str() == Some("youtu.be") {
@@ -487,8 +521,15 @@ fn request_radio(s: &mut State, u: &AppWindow, tx: &mpsc::SyncSender<LibraryResu
         return;
     };
     if !force
-        && (upcoming.len() > 2
-            || upcoming.iter().any(|track| !track.recommended)
+        && (upcoming
+            .iter()
+            .filter(|track| !skip_disliked(s, track))
+            .take(3)
+            .count()
+            > 2
+            || upcoming
+                .iter()
+                .any(|track| !track.recommended && !skip_disliked(s, track))
             || !s.radio_requests.ready(s.generation, Instant::now()))
     {
         return;
@@ -942,7 +983,12 @@ fn configure_account_playback(s: &mut State, u: &AppWindow) -> bool {
     u.set_position(0.0);
     u.set_duration(0.0);
     u.set_status_text("Ready".into());
-    let result = tide_playback::start_with_account(
+    let start = if s.connection_probe {
+        tide_playback::start_connection_probe
+    } else {
+        tide_playback::start_with_account
+    };
+    let result = start(
         lease.as_ref().map(|l| l.path().to_path_buf()),
         account_index,
     );
@@ -1173,11 +1219,16 @@ fn restore_settings(value: serde_json::Value) -> Settings {
     }
     restore!(
         queue,
+        playback_bookmark,
         light_mode,
+        follow_windows_theme,
         library_grid,
         autoplay,
+        skip_disliked,
+        saved_dislikes,
         check_updates,
         media_controls,
+        close_to_tray,
         history_feedback,
         discord_presence,
         discord_application_id,
@@ -1185,10 +1236,18 @@ fn restore_settings(value: serde_json::Value) -> Settings {
         mini_opacity,
         shortcuts,
         volume,
+        volume_step_index,
         normalize_volume,
         audio_device,
         repeat,
     );
+    if !(0..=3).contains(&settings.volume_step_index) {
+        settings.volume_step_index = 1;
+    }
+    settings.saved_dislikes.sanitize();
+    if saved_position(&settings).is_none() {
+        settings.playback_bookmark = None;
+    }
     // The size preset was retired. An old saved value must not lock out the
     // responsive navigation now that users resize the window directly.
     settings
@@ -1200,7 +1259,7 @@ fn save(settings: &Settings) {
     let Some(path) = settings_path() else {
         return;
     };
-    if let Ok(bytes) = serde_json::to_vec_pretty(settings) {
+    if let Ok(bytes) = serde_json::to_vec(settings) {
         if settings_store::save(&path, &bytes).is_err() {
             eprintln!("Tide could not finish saving preferences.");
         }
@@ -1453,6 +1512,8 @@ fn refresh(ui: &AppWindow, state: &State) {
     }
     let mut artwork = state.artwork.borrow_mut();
     let current = state.settings.queue.current.unwrap_or(0);
+    let next = next_queue_index(state);
+    ui.set_next_queue_index(next.map_or(-1, |index| index as i32));
     let metrics = ui.global::<LayoutMetrics>();
     let row_height = metrics.get_queue_row_height();
     let heading_height = metrics.get_queue_heading_height();
@@ -1520,8 +1581,7 @@ fn refresh(ui: &AppWindow, state: &State) {
                 .as_deref()
                 .filter(|_| {
                     index == current
-                        || (ui.get_home_next_artwork_visible()
-                            && current.checked_add(1) == Some(index))
+                        || (ui.get_home_next_artwork_visible() && next == Some(index))
                         || (ui.get_jam_queue_visible() && jam_images.contains(&index))
                         || (ui.get_queue_open()
                             && index >= current
@@ -1533,6 +1593,7 @@ fn refresh(ui: &AppWindow, state: &State) {
         .collect();
     ui.set_rows(update_model(ui.get_rows(), rows));
     ui.set_current_index(state.settings.queue.current.map_or(-1, |i| i as i32));
+    ui.set_has_radio_seed(current_video_id(state).is_some());
     if let Some(t) = state
         .settings
         .queue
@@ -1584,6 +1645,7 @@ fn start_window_media(ui: &AppWindow) -> Result<tide_windows::MediaSession, Stri
                 tide_windows::MediaAction::Previous => (4, 0.0),
                 tide_windows::MediaAction::Stop => (5, 0.0),
                 tide_windows::MediaAction::Seek(seconds) => (6, seconds as f32),
+                tide_windows::MediaAction::ShowMini => (7, 0.0),
             };
             let _ = weak.upgrade_in_event_loop(move |u| {
                 if u.get_media_controls_enabled() {
@@ -1605,17 +1667,24 @@ fn preparation_eligible(active: bool, generation: u64, p: &tide_core::PlaybackSn
     active && p.generation == generation && !p.loading && p.error.is_none()
 }
 
-fn upcoming_source(queue: &Queue, repeat: bool) -> Option<&str> {
-    let current = queue.current?;
-    if current >= queue.tracks.len() {
-        return None;
-    }
-    let next = current + 1;
-    queue
-        .tracks
-        .get(next)
-        .or_else(|| repeat.then(|| queue.tracks.first()).flatten())
-        .map(|track| track.source.as_str())
+fn skip_disliked(s: &State, track: &Track) -> bool {
+    s.settings.skip_disliked
+        && s.music_feedback
+            .skips(&track.source, s.saved_connection.as_ref())
+}
+
+fn next_playable(queue: &Queue, repeat: bool, skip: impl Fn(&Track) -> bool) -> Option<usize> {
+    let start = queue.current.map_or(0, |index| index.saturating_add(1));
+    let start = start.min(queue.tracks.len());
+    (start..queue.tracks.len())
+        .chain(0..if repeat { start } else { 0 })
+        .find(|&index| !skip(&queue.tracks[index]))
+}
+
+fn next_queue_index(s: &State) -> Option<usize> {
+    next_playable(&s.settings.queue, s.settings.repeat, |track| {
+        skip_disliked(s, track)
+    })
 }
 
 fn send(state: &mut State, ui: &AppWindow, cmd: PlaybackCommand) -> bool {
@@ -1645,6 +1714,9 @@ fn send(state: &mut State, ui: &AppWindow, cmd: PlaybackCommand) -> bool {
             if clears_audio {
                 ui.set_audio_quality("".into());
                 ui.set_playback_hint("".into());
+                if state.settings.playback_bookmark.take().is_some() {
+                    save(&state.settings);
+                }
             }
             state.command_error = None;
             true
@@ -1670,7 +1742,89 @@ fn submit_load(
     Ok(())
 }
 
+fn saved_position(settings: &Settings) -> Option<f64> {
+    let bookmark = settings.playback_bookmark.as_ref()?;
+    let track = settings.queue.tracks.get(settings.queue.current?)?;
+    (bookmark.source == track.source
+        && bookmark.seconds.is_finite()
+        && (1.0..=86_400.0).contains(&bookmark.seconds))
+    .then_some(bookmark.seconds)
+}
+
+fn bookmark_playback(state: &mut State, snapshot: &tide_core::PlaybackSnapshot) -> bool {
+    if !local_controls_allowed(state)
+        || !state.active_playback
+        || snapshot.generation != state.generation
+    {
+        return false;
+    }
+    update_bookmark(&mut state.settings, snapshot)
+}
+
+fn update_bookmark(settings: &mut Settings, snapshot: &tide_core::PlaybackSnapshot) -> bool {
+    if snapshot.ended && snapshot.error.is_none() {
+        return settings.playback_bookmark.take().is_some();
+    }
+    if snapshot.loading
+        || snapshot.error.is_some()
+        || !snapshot.position.is_finite()
+        || !snapshot.duration.is_finite()
+        || snapshot.duration <= 0.0
+    {
+        return false;
+    }
+    if !(1.0..=86_400.0).contains(&snapshot.position)
+        || snapshot.position >= snapshot.duration - 1.0
+    {
+        return settings.playback_bookmark.take().is_some();
+    }
+    let Some(track) = settings
+        .queue
+        .current
+        .and_then(|index| settings.queue.tracks.get(index))
+    else {
+        return false;
+    };
+    if settings.playback_bookmark.as_ref().is_some_and(|bookmark| {
+        bookmark.source == track.source && (bookmark.seconds - snapshot.position).abs() < 1.0
+    }) {
+        return false;
+    }
+    settings.playback_bookmark = Some(PlaybackBookmark {
+        source: track.source.clone(),
+        seconds: snapshot.position,
+    });
+    true
+}
+
+fn resume_or_play(state: &mut State, ui: &AppWindow) {
+    play_at(
+        state,
+        ui,
+        saved_position(&state.settings).unwrap_or_default(),
+    );
+}
+
+fn seek_before_playback(settings: &mut Settings, requested: f64) -> Option<f64> {
+    if !requested.is_finite() || requested < 0.0 {
+        return None;
+    }
+    let track = settings.queue.tracks.get(settings.queue.current?)?;
+    let duration = track.duration_seconds.filter(|seconds| *seconds > 0)? as f64;
+    let position = requested.min(duration - 1.0).min(86_400.0);
+    let position = if position < 1.0 { 0.0 } else { position };
+    settings.playback_bookmark = (position > 0.0).then(|| PlaybackBookmark {
+        source: track.source.clone(),
+        seconds: position,
+    });
+    Some(position)
+}
+
 fn play(state: &mut State, ui: &AppWindow) -> bool {
+    play_at(state, ui, 0.0)
+}
+
+fn play_at(state: &mut State, ui: &AppWindow, position: f64) -> bool {
     if !local_controls_allowed(state) {
         return false;
     }
@@ -1705,12 +1859,15 @@ fn play(state: &mut State, ui: &AppWindow) -> bool {
             engine
                 .as_ref()
                 .ok_or_else(|| "Playback runtime unavailable. See setup instructions.".to_string())?
-                .send(PlaybackCommand::Load { source, generation })
+                .load_at(source, generation, position)
         },
     );
     if let Err(error) = result {
         report_error(state, ui, error);
         return false;
+    }
+    if position == 0.0 {
+        state.settings.playback_bookmark = None;
     }
     state.load_requested_at = Some((state.generation, requested_at));
     if !ui.get_playback_error_action().is_empty() {
@@ -1724,7 +1881,7 @@ fn play(state: &mut State, ui: &AppWindow) -> bool {
     state.radio_resume_when_ready = false;
     refresh(ui, state);
     ui.set_status_text("Loading…".into());
-    ui.set_position(0.0);
+    ui.set_position(position as f32);
     ui.set_duration(0.0);
     ui.set_paused(false);
     save(&state.settings);
@@ -1754,18 +1911,25 @@ fn next_track(s: &mut State, u: &AppWindow, tx: &mpsc::SyncSender<LibraryResult>
     if !local_controls_allowed(s) {
         return;
     }
-    let repeat = s.settings.repeat;
     let previous = s.settings.queue.current;
-    if s.settings.queue.next_track(repeat).is_some() {
+    if let Some(index) = next_queue_index(s) {
+        s.settings.queue.select(index);
         if !play(s, u) {
             s.settings.queue.current = previous;
             refresh(u, s);
         }
-    } else if s.settings.autoplay && s.account_verified {
-        send(s, u, PlaybackCommand::Stop);
+    } else if !s.radio_resume_when_ready
+        && s.settings.autoplay
+        && s.account_verified
+        && current_video_id(s).is_some()
+        && send(s, u, PlaybackCommand::Stop)
+    {
         s.active_playback = false;
         s.radio_resume_when_ready = true;
-        s.radio_requests.reset();
+        if !(s.library_worker.is_some() && matches!(s.library_action, LibraryAction::Radio { .. }))
+        {
+            s.radio_requests.reset();
+        }
         request_radio(s, u, tx, false);
         u.set_paused(true);
         u.set_status_text("Finding the next recommended song...".into());
@@ -2112,7 +2276,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let (engine, error) = match credential_error.map_or_else(
         || {
-            if performance_args.is_some() {
+            if connection_smoke.is_some() {
+                tide_playback::start_connection_probe(
+                    cookie_lease.as_ref().map(|l| l.path().to_path_buf()),
+                    saved_connection.as_ref().map_or(0, |c| c.account_index),
+                )
+            } else if performance_args.is_some() || std::env::args().any(|a| a == "--smoke-ui") {
                 tide_playback::start_local_benchmark()
             } else {
                 tide_playback::start_with_account(
@@ -2150,6 +2319,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         rejected_saved_connection: None,
         connection_retry: connection::AdoptionRetry::new(),
         connection_resume: None,
+        connection_probe: connection_smoke.is_some(),
         provider,
         cookie_lease,
         pending_cookie_updates: std::collections::VecDeque::new(),
@@ -2163,6 +2333,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         recommendations: Vec::new(),
         discovery: discovery::Discovery::default(),
         detail_tracks: Vec::new(),
+        related_tracks: Vec::new(),
         detail_cover_url: None,
         artist_origin: None,
         search_tracks: Vec::new(),
@@ -2198,12 +2369,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         .into(),
     );
-    ui.set_light_mode(state.borrow().settings.light_mode);
+    ui.set_light_mode(preferred_light_mode(&state.borrow().settings));
+    ui.set_windows_theme_supported(cfg!(windows) && !test_mode);
+    ui.set_follow_windows_theme(state.borrow().settings.follow_windows_theme);
     ui.set_compact_mode(state.borrow().settings.compact_mode);
     ui.set_library_grid(state.borrow().settings.library_grid);
     ui.set_autoplay_enabled(state.borrow().settings.autoplay);
+    ui.set_skip_disliked(state.borrow().settings.skip_disliked);
     ui.set_auto_update_checks(state.borrow().settings.check_updates);
     ui.set_media_controls_enabled(state.borrow().settings.media_controls);
+    ui.set_close_to_tray(state.borrow().settings.close_to_tray);
     ui.set_discord_presence_enabled(state.borrow().settings.discord_presence);
     ui.set_discord_application_id(
         state
@@ -2222,9 +2397,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ui.set_shortcut_previous(s.settings.shortcuts[2].clone().into());
     }
     ui.set_volume(state.borrow().settings.volume.unwrap_or(70.0) as f32);
+    ui.set_volume_step_index(state.borrow().settings.volume_step_index);
     ui.set_repeat_enabled(state.borrow().settings.repeat);
     ui.set_paused(true);
     refresh(&ui, &state.borrow());
+    {
+        let state = state.borrow();
+        if let Some(position) = saved_position(&state.settings) {
+            let duration = state
+                .settings
+                .queue
+                .current
+                .and_then(|index| state.settings.queue.tracks.get(index))
+                .and_then(|track| track.duration_seconds);
+            if let Some(duration) = duration.filter(|duration| *duration as f64 > position) {
+                ui.set_duration(duration as f32);
+                ui.set_position(position as f32);
+            }
+        }
+    }
     ui.set_status_text(
         error
             .unwrap_or_else(|| "Ready · paste a link, search, or open a file".into())
@@ -2243,6 +2434,65 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (library_tx, library_rx) = mpsc::sync_channel::<LibraryResult>(2);
     music_feedback::install(&state, &ui, &library_tx);
     let _lyrics = lyrics::install(&state, &ui);
+    {
+        let state = state.clone();
+        let weak = ui.as_weak();
+        let tx = library_tx.clone();
+        ui.on_load_related(move || {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            let mut s = state.borrow_mut();
+            s.related_tracks.clear();
+            ui.set_related_rows(ModelRc::default());
+            if s.library_worker.is_some() || !s.account_verified || !local_controls_allowed(&s) {
+                ui.set_related_note("Wait for the current request, then reopen Related.".into());
+                return;
+            }
+            let Some(video_id) = current_video_id(&s) else {
+                ui.set_related_note("Play a YouTube Music song to see related tracks.".into());
+                return;
+            };
+            request_library(&mut s, &ui, &tx, tide_provider::Request::Radio { video_id });
+            if s.library_worker.is_some() {
+                s.library_action = LibraryAction::Related {
+                    generation: s.generation,
+                };
+                ui.set_related_note("Finding related songs…".into());
+            } else {
+                ui.set_related_note("Connect YouTube Music to see related tracks.".into());
+            }
+        });
+    }
+    {
+        let state = state.clone();
+        let weak = ui.as_weak();
+        ui.on_queue_related(move |index| {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            let mut s = state.borrow_mut();
+            if !ui.get_related_open() || !s.account_verified || !local_controls_allowed(&s) {
+                return;
+            }
+            if let Some(track) = usize::try_from(index)
+                .ok()
+                .and_then(|index| s.related_tracks.get(index))
+                .cloned()
+            {
+                let before = s.settings.queue.tracks.len();
+                queue_choice(&mut s, &ui, track, false);
+                ui.set_related_note(
+                    if s.settings.queue.tracks.len() > before {
+                        "Added to your queue."
+                    } else {
+                        "Your queue is full."
+                    }
+                    .into(),
+                );
+            }
+        });
+    }
     {
         let state = state.clone();
         let weak = ui.as_weak();
@@ -2545,6 +2795,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 match result {
                     Ok(()) => {
                         configure_account_playback(&mut s, &u);
+                        s.settings.saved_dislikes = Default::default();
+                        save(&s.settings);
                         s.library_playlists.clear();
                         library_browse::reset(&mut s, &u);
                         s.recommendations.clear();
@@ -3037,7 +3289,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     bind!(on_toggle_pause, |s, u| {
         if s.connection_resume.is_none() && !s.active_playback && s.settings.queue.current.is_some()
         {
-            play(&mut s, &u);
+            resume_or_play(&mut s, &u);
         } else {
             send(&mut s, &u, PlaybackCommand::TogglePause);
         }
@@ -3077,13 +3329,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     bind!(on_toggle_repeat, |s, u| {
         s.settings.repeat = !s.settings.repeat;
         u.set_repeat_enabled(s.settings.repeat);
+        refresh(&u, &s);
         save(&s.settings);
     });
     bind!(on_switch_mode, |s, u| {
+        s.settings.follow_windows_theme = false;
+        u.set_follow_windows_theme(false);
         s.settings.light_mode = !u.get_light_mode();
         u.set_light_mode(s.settings.light_mode);
         save(&s.settings);
     });
+    bind!(on_toggle_follow_windows_theme, |s, u| {
+        s.settings.follow_windows_theme = !s.settings.follow_windows_theme;
+        u.set_follow_windows_theme(s.settings.follow_windows_theme);
+        u.set_light_mode(preferred_light_mode(&s.settings));
+        save(&s.settings);
+    });
+    {
+        let state = state.clone();
+        let weak = ui.as_weak();
+        ui.on_poll_windows_theme(move || {
+            if let Some(ui) = weak.upgrade() {
+                let theme = preferred_light_mode(&state.borrow().settings);
+                if ui.get_light_mode() != theme {
+                    ui.set_light_mode(theme);
+                }
+            }
+        });
+    }
     bind!(on_toggle_library_view, |s, u| {
         s.settings.library_grid = !u.get_library_grid();
         u.set_library_grid(s.settings.library_grid);
@@ -3101,6 +3374,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 slint::LogicalSize::new(1140.0, 800.0)
             });
         }
+        save(&s.settings);
+    });
+    bind!(on_toggle_close_to_tray, |s, u| {
+        s.settings.close_to_tray = !s.settings.close_to_tray;
+        u.set_close_to_tray(s.settings.close_to_tray);
         save(&s.settings);
     });
     bind!(on_toggle_media_controls, |s, u| {
@@ -3142,6 +3420,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         u.set_auto_update_checks(s.settings.check_updates);
         save(&s.settings);
     });
+    {
+        let state = state.clone();
+        let weak = ui.as_weak();
+        ui.on_set_volume_step(move |index| {
+            if let Some(ui) = weak.upgrade().filter(|_| (0..=3).contains(&index)) {
+                let mut state = state.borrow_mut();
+                state.settings.volume_step_index = index;
+                ui.set_volume_step_index(index);
+                save(&state.settings);
+            }
+        });
+    }
+    bind!(on_toggle_skip_disliked, |s, u| {
+        s.settings.skip_disliked = !s.settings.skip_disliked;
+        u.set_skip_disliked(s.settings.skip_disliked);
+        refresh(&u, &s);
+        save(&s.settings);
+    });
     bind!(on_toggle_autoplay, |s, u| {
         s.settings.autoplay = !s.settings.autoplay;
         u.set_autoplay_enabled(s.settings.autoplay);
@@ -3177,6 +3473,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     s.radio_requests.queue_depleted(generation);
                 }
                 if was_current {
+                    s.settings.playback_bookmark = None;
                     s.radio_resume_when_ready = false;
                 }
                 if was_current && s.active_playback {
@@ -3251,7 +3548,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 return;
             }
             if let Some(u) = weak.upgrade() {
-                send(&mut state.borrow_mut(), &u, PlaybackCommand::Seek(p as f64));
+                let mut s = state.borrow_mut();
+                if s.active_playback || s.connection_resume.is_some() {
+                    send(&mut s, &u, PlaybackCommand::Seek(p as f64));
+                } else if u.get_duration() > 0.0 {
+                    if let Some(position) = seek_before_playback(&mut s.settings, p as f64) {
+                        u.set_position(position as f32);
+                        save(&s.settings);
+                    }
+                }
             }
         });
     }
@@ -3265,6 +3570,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let Some(u) = weak.upgrade() else {
                 return;
             };
+            if action == 7 {
+                if !u.get_collapsed() {
+                    u.invoke_collapse_player();
+                }
+                return;
+            }
             if u.get_shortcut_recording_index() >= 0 {
                 return;
             }
@@ -3292,7 +3603,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         && !s.active_playback
                         && s.settings.queue.current.is_some()
                     {
-                        play(&mut s, &u);
+                        resume_or_play(&mut s, &u);
                     } else {
                         send(&mut s, &u, PlaybackCommand::SetPaused(false));
                     }
@@ -3345,6 +3656,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
     ui.show()?;
+    {
+        use slint::winit_030::{
+            winit::event::{ElementState, MouseButton, WindowEvent},
+            EventResult, WinitWindowAccessor,
+        };
+        let weak = ui.as_weak();
+        ui.window().on_winit_window_event(move |_, event| {
+            let WindowEvent::MouseInput {
+                state: ElementState::Released,
+                button,
+                ..
+            } = event
+            else {
+                return EventResult::Propagate;
+            };
+            let forward = match button {
+                MouseButton::Back => false,
+                MouseButton::Forward => true,
+                _ => return EventResult::Propagate,
+            };
+            if weak
+                .upgrade()
+                .is_some_and(|ui| ui.invoke_navigate_browse(forward))
+            {
+                EventResult::PreventDefault
+            } else {
+                EventResult::Propagate
+            }
+        });
+    }
     let media = Rc::new(RefCell::new(None::<tide_windows::MediaSession>));
     let media_enabled =
         cfg!(windows) && !test_mode && listening_seconds.is_none() && !smoke_autoplay;
@@ -3441,7 +3782,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let p = engine.snapshot();
                 let eligible = preparation_eligible(s.active_playback, s.generation, &p);
                 let _ = engine.prepare_next(if eligible && local_controls_allowed(&s) {
-                    upcoming_source(&s.settings.queue, s.settings.repeat)
+                    next_queue_index(&s).map(|index| s.settings.queue.tracks[index].source.as_str())
                 } else {
                     None
                 });
@@ -3612,6 +3953,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     (false, u.get_position() as f64, u.get_duration() as f64)
                 };
                 if let Some(session) = media.borrow_mut().as_mut() {
+                    #[cfg(windows)]
+                    session.set_close_to_tray(s.settings.close_to_tray);
                     let _ = session.update(
                         &u.get_track_title(),
                         &u.get_track_artist(),
@@ -3644,6 +3987,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let library_tx = library_tx.clone();
         let mut last_content_view = None;
         let mut last_volume_save = Instant::now();
+        let mut last_bookmark_check = Instant::now();
         let mut connection_monitor = connection::Monitor::new();
         let picker_busy = picker_busy.clone();
         timer.start(
@@ -3744,6 +4088,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 u.set_account_status("Account data loaded; playback session update will be retried on the next refresh.".into());
                             }
                         }
+                    }
+                    if let LibraryAction::Related { generation } = s.library_action {
+                        if generation == s.generation && u.get_related_open() && s.account_verified {
+                            if let Ok(tide_provider::Response::Tracks { tracks, .. }) = result {
+                                s.related_tracks = tracks.into_iter().take(25)
+                                    .filter(|track| source_video_id(&track.source).is_some() && !skip_disliked(&s, track))
+                                    .collect();
+                                u.set_related_rows(ModelRc::new(VecModel::from(s.related_tracks.iter()
+                                    .map(|track| TrackRow { title: track.title.clone().into(), artist: track.artist.clone().into(), ..Default::default() })
+                                    .collect::<Vec<_>>())));
+                                u.set_related_note(if s.related_tracks.is_empty() { "No related songs were returned." } else { "Add songs without changing what’s playing." }.into());
+                            } else {
+                                u.set_related_note("Related songs couldn’t load. Close and reopen Related to retry.".into());
+                            }
+                        }
+                        continue;
                     }
                     match result {
                         Ok(tide_provider::Response::Connected) => {
@@ -3847,6 +4207,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 {
                                     continue;
                                 }
+                                let mut tracks = tracks;
+                                tracks.retain(|track| !skip_disliked(&s, track));
                                 if tracks.is_empty() {
                                     library_failure(&mut s, &u, false);
                                     continue;
@@ -3964,7 +4326,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             );
                             u.set_account_status(error.into());
                         }
-                        Ok(tide_provider::Response::Session { .. } | tide_provider::Response::Feedback { .. } | tide_provider::Response::Lyrics { .. } | tide_provider::Response::Search { .. }) | Err(_) => {
+                        Ok(tide_provider::Response::Session { .. } | tide_provider::Response::Feedback { .. } | tide_provider::Response::Lyrics { .. } | tide_provider::Response::Search { .. } | tide_provider::Response::Suggestions { .. }) | Err(_) => {
                             library_failure(&mut s, &u, false);
                         }
                     }
@@ -4030,8 +4392,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     let generation = s.generation;
                     let active = s.active_playback;
-                    if metadata::remember_duration(&mut s.settings.queue, generation, active, &p) {
+                    let duration_changed = metadata::remember_duration(&mut s.settings.queue, generation, active, &p);
+                    let checkpoint_due = p.ended || last_bookmark_check.elapsed() >= Duration::from_secs(30);
+                    let bookmark_changed = if checkpoint_due {
+                        last_bookmark_check = Instant::now();
+                        bookmark_playback(&mut s, &p)
+                    } else {
+                        false
+                    };
+                    if duration_changed || bookmark_changed {
                         save(&s.settings);
+                    }
+                    if duration_changed {
                         refresh(&u, &s);
                     }
                     u.set_audio_quality(playback_feedback::quality(&p).into());
@@ -4059,9 +4431,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     if !local_controls_allowed(&s) { return; }
                     if p.ended && !failed {
-                        let repeat = s.settings.repeat;
                         let previous = s.settings.queue.current;
-                        if s.settings.queue.next_track(repeat).is_some() {
+                        if let Some(index) = next_queue_index(&s) {
+                            s.settings.queue.select(index);
                             if !play(&mut s, &u) {
                                 s.settings.queue.current = previous;
                                 s.active_playback = false;
@@ -4523,6 +4895,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             ui.set_detail_open(false);
             ui.set_paused(true);
+            {
+                let mut s = state.borrow_mut();
+                s.settings.queue.tracks[0].duration_seconds = Some(60);
+                s.settings.playback_bookmark = Some(PlaybackBookmark {
+                    source: audio,
+                    seconds: 20.0,
+                });
+                ui.set_duration(60.0);
+                ui.set_position(20.0);
+            }
+            ui.invoke_change_volume(0.0);
+            ui.invoke_seek(30.0);
+            assert_eq!(ui.get_position(), 30.0);
+            ui.invoke_toggle_pause();
+            {
+                let mut s = state.borrow_mut();
+                let engine = s.engine.as_ref().expect("Local playback runtime");
+                let deadline = Instant::now() + Duration::from_secs(10);
+                loop {
+                    let p = engine.snapshot();
+                    assert!(p.error.is_none(), "Restored playback failed");
+                    if p.generation == s.generation && !p.loading && p.position > 30.05 {
+                        break;
+                    }
+                    assert!(Instant::now() < deadline, "Edited position did not resume");
+                    std::thread::sleep(Duration::from_millis(25));
+                }
+                send(&mut s, &ui, PlaybackCommand::Stop);
+                s.active_playback = false;
+                s.settings.queue.tracks[0].duration_seconds = None;
+                ui.set_position(0.0);
+                ui.set_duration(0.0);
+                ui.set_paused(true);
+            }
+            println!("PASS: edited saved playhead resumed decoded local audio");
             ui.set_status_text("Visual test data · playback inactive".into());
             println!("PASS: native song/playlist play preserves browsing; search seed, queue priority, autoplay off, shuffle, reorder and removal");
             println!("PASS: media Next/Previous share player actions and preserve browsing");
@@ -4885,9 +5292,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         timer.stop();
     }
     let mut s = state.borrow_mut();
+    let snapshot = s.engine.as_ref().map(|engine| engine.snapshot());
+    let bookmarked = snapshot
+        .as_ref()
+        .is_some_and(|snapshot| bookmark_playback(&mut s, snapshot));
     #[cfg(feature = "experimental-jams")]
     jam::leave(&mut s, &ui, "Jam closed");
-    if s.volume_save_pending {
+    if bookmarked || s.volume_save_pending {
         save(&s.settings);
     }
     s.search_cancel.store(true, Ordering::Release);
@@ -4962,6 +5373,8 @@ mod tests {
                 history_feedback: enabled,
                 discord_presence: enabled,
                 normalize_volume: enabled,
+                close_to_tray: enabled,
+                follow_windows_theme: enabled,
                 library_grid: enabled,
                 audio_device: "wasapi/fixture".into(),
                 light_mode: true,
@@ -4972,6 +5385,8 @@ mod tests {
             assert_eq!(restored.history_feedback, enabled);
             assert_eq!(restored.discord_presence, enabled);
             assert_eq!(restored.normalize_volume, enabled);
+            assert_eq!(restored.close_to_tray, enabled);
+            assert_eq!(restored.follow_windows_theme, enabled);
             assert_eq!(restored.library_grid, enabled);
             assert_eq!(restored.audio_device, "wasapi/fixture");
             assert!(restored.light_mode);
@@ -4979,6 +5394,7 @@ mod tests {
         let old = restore_settings(serde_json::json!({"light_mode": true}));
         assert!(!old.history_feedback);
         assert!(!old.discord_presence);
+        assert!(!old.close_to_tray);
         assert!(old.light_mode);
         assert!(old.library_grid);
     }
@@ -5108,6 +5524,66 @@ mod tests {
     }
 
     #[test]
+    fn playback_bookmark_restores_only_for_the_selected_source() {
+        let queue = Queue {
+            tracks: vec![track("first"), track("second")],
+            current: Some(1),
+        };
+        let settings = restore_settings(serde_json::json!({
+            "queue": queue, "playback_bookmark": {"source": "second", "seconds": 42.5}
+        }));
+        assert_eq!(saved_position(&settings), Some(42.5));
+        for bookmark in [
+            serde_json::json!({"source": "first", "seconds": 42.5}),
+            serde_json::json!({"source": "second", "seconds": -1}),
+            serde_json::json!({"source": "second", "seconds": 1e100}),
+        ] {
+            let settings = restore_settings(serde_json::json!({
+                "queue": queue, "playback_bookmark": bookmark
+            }));
+            assert!(settings.playback_bookmark.is_none());
+        }
+    }
+
+    #[test]
+    fn playback_checkpoint_ignores_loading_and_unchanged_positions_and_clears_on_end() {
+        let mut settings = Settings::default();
+        settings.queue.tracks.push(track("first"));
+        settings.queue.current = Some(0);
+        let mut snapshot = tide_core::PlaybackSnapshot {
+            position: 42.5,
+            duration: 180.0,
+            loading: true,
+            ..Default::default()
+        };
+        assert!(!update_bookmark(&mut settings, &snapshot));
+        snapshot.loading = false;
+        assert!(update_bookmark(&mut settings, &snapshot));
+        assert_eq!(saved_position(&settings), Some(42.5));
+        assert!(!update_bookmark(&mut settings, &snapshot));
+        snapshot.ended = true;
+        assert!(update_bookmark(&mut settings, &snapshot));
+        assert_eq!(saved_position(&settings), None);
+    }
+
+    #[test]
+    fn playback_bookmark_can_be_edited_before_starting() {
+        let mut settings = Settings::default();
+        let mut selected = track("first");
+        selected.duration_seconds = Some(180);
+        settings.queue.tracks.push(selected);
+        settings.queue.current = Some(0);
+        assert_eq!(seek_before_playback(&mut settings, 42.0), Some(42.0));
+        assert_eq!(saved_position(&settings), Some(42.0));
+        assert_eq!(seek_before_playback(&mut settings, f64::NAN), None);
+        assert_eq!(saved_position(&settings), Some(42.0));
+        assert_eq!(seek_before_playback(&mut settings, 250.0), Some(179.0));
+        assert_eq!(saved_position(&settings), Some(179.0));
+        assert_eq!(seek_before_playback(&mut settings, 0.0), Some(0.0));
+        assert_eq!(saved_position(&settings), None);
+    }
+
+    #[test]
     fn content_retries_preserve_playlist_identity_without_repeating_account_actions() {
         use tide_provider::Request;
         for request in [
@@ -5144,16 +5620,17 @@ mod tests {
             tracks: vec![track("current"), track("next"), track("last")],
             current: Some(0),
         };
-        assert_eq!(upcoming_source(&queue, false), Some("next"));
-        queue.tracks.swap(1, 2);
-        assert_eq!(upcoming_source(&queue, false), Some("last"));
+        assert_eq!(next_playable(&queue, false, |_| false), Some(1));
+        assert_eq!(
+            next_playable(&queue, false, |t| t.source == "next"),
+            Some(2)
+        );
         queue.current = Some(2);
-        assert_eq!(upcoming_source(&queue, false), None);
-        assert_eq!(upcoming_source(&queue, true), Some("current"));
-        queue.current = Some(99);
-        assert_eq!(upcoming_source(&queue, true), None);
+        assert_eq!(next_playable(&queue, false, |_| false), None);
+        assert_eq!(next_playable(&queue, true, |_| false), Some(0));
+        assert_eq!(next_playable(&queue, true, |_| true), None);
         queue.current = None;
-        assert_eq!(upcoming_source(&queue, true), None);
+        assert_eq!(next_playable(&queue, false, |_| false), Some(0));
     }
 
     #[test]
@@ -5168,7 +5645,7 @@ mod tests {
         requests.succeeded();
         assert!(!requests.ready(7, now));
         queue.remove(1).unwrap();
-        assert_eq!(upcoming_source(&queue, false), None);
+        assert_eq!(next_playable(&queue, false, |_| false), None);
         requests.queue_depleted(7);
         assert!(requests.ready(7, now));
         requests.started(7);

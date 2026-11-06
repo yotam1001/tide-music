@@ -3,7 +3,7 @@
 use crate::MediaAction;
 use std::{cell::Cell, marker::PhantomData, rc::Rc};
 use windows::Win32::{
-    Foundation::POINT,
+    Foundation::{ERROR_SUCCESS, POINT},
     UI::{
         Shell::{
             Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW,
@@ -11,8 +11,9 @@ use windows::Win32::{
         WindowsAndMessaging::{
             AppendMenuW, CopyIcon, CreatePopupMenu, DestroyMenu, GetCursorPos, PostMessageW,
             SendMessageW, SetForegroundWindow, ShowWindow, TrackPopupMenu, HICON as TrayIcon,
-            ICON_SMALL, MF_STRING, SW_HIDE, SW_MINIMIZE, SW_RESTORE, TPM_NONOTIFY, TPM_RETURNCMD,
-            TPM_RIGHTBUTTON, WM_APP, WM_CLOSE, WM_GETICON, WM_LBUTTONUP, WM_RBUTTONUP,
+            ICON_SMALL, MF_STRING, SC_CLOSE, SW_HIDE, SW_MINIMIZE, SW_RESTORE, TPM_NONOTIFY,
+            TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_APP, WM_CLOSE, WM_GETICON, WM_LBUTTONUP,
+            WM_RBUTTONUP, WM_SYSCOMMAND,
         },
     },
 };
@@ -38,24 +39,31 @@ const TRAY_MESSAGE: u32 = WM_APP + 73;
 const SHOW: u32 = 0x7201;
 const HIDE: u32 = 0x7202;
 const QUIT: u32 = 0x7203;
+const MINI: u32 = 0x7204;
 use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
 use windows::Win32::UI::WindowsAndMessaging::WM_SETTINGCHANGE;
-fn system_light_theme() -> bool {
+fn light_theme_setting(name: windows::core::PCWSTR) -> Option<bool> {
     let mut value = 0u32;
     let mut size = 4u32;
-    unsafe {
+    let status = unsafe {
         RegGetValueW(
             HKEY_CURRENT_USER,
             w!("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"),
-            w!("SystemUsesLightTheme"),
+            name,
             RRF_RT_REG_DWORD,
             None,
             Some((&mut value as *mut u32).cast()),
             Some(&mut size),
         )
-    }
-    .is_ok()
-        && value != 0
+    };
+    (status == ERROR_SUCCESS).then_some(value != 0)
+}
+fn system_light_theme() -> bool {
+    light_theme_setting(w!("SystemUsesLightTheme")).unwrap_or(false)
+}
+
+pub(super) fn app_light_theme() -> Option<bool> {
+    light_theme_setting(w!("AppsUseLightTheme"))
 }
 const SUBCLASS: usize = 0x5449_4445;
 const PREVIOUS: u32 = 0x7101;
@@ -81,6 +89,7 @@ struct State {
     light_theme: Cell<bool>,
     enabled: Cell<bool>,
     tray_allowed: bool,
+    close_to_tray: Cell<bool>,
     tray_added: Cell<bool>,
     tray_created: u32,
 }
@@ -170,6 +179,7 @@ impl State {
             };
             for (id, label) in [
                 (SHOW, "Open Tide"),
+                (MINI, "Open Mini player"),
                 (TOGGLE, if self.playing.get() { "Pause" } else { "Play" }),
                 (PREVIOUS, "Previous song"),
                 (NEXT, "Next song"),
@@ -203,6 +213,12 @@ impl State {
             let _ = DestroyMenu(menu);
             match command {
                 SHOW => self.show_player(hwnd),
+                MINI => {
+                    self.show_player(hwnd);
+                    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        (self.callback)(MediaAction::ShowMini)
+                    }));
+                }
                 HIDE => {
                     let _ = ShowWindow(hwnd, SW_MINIMIZE);
                     let _ = ShowWindow(hwnd, SW_HIDE);
@@ -286,6 +302,7 @@ impl Taskbar {
             light_theme: Cell::new(system_light_theme()),
             enabled: Cell::new(false),
             tray_allowed: tray_allowed && has_tray_icon,
+            close_to_tray: Cell::new(false),
             tray_added: Cell::new(false),
             tray_created: unsafe { RegisterWindowMessageW(w!("TaskbarCreated")) },
         });
@@ -303,6 +320,12 @@ impl Taskbar {
             _ui_thread: PhantomData,
         })
     }
+    pub(super) fn set_close_to_tray(&self, enabled: bool) {
+        if let Some(state) = &self.state {
+            state.close_to_tray.set(enabled);
+        }
+    }
+
     pub(super) fn update(&self, playing: bool, enabled: bool) {
         if let Some(state) = &self.state {
             let playing_changed = state.playing.replace(playing) != playing;
@@ -348,6 +371,18 @@ unsafe extern "system" fn procedure(
         unsafe {
             let _ = RemoveWindowSubclass(hwnd, Some(procedure), SUBCLASS);
         }
+    } else if message == WM_SYSCOMMAND
+        && (wp.0 & 0xfff0) as u32 == SC_CLOSE
+        && state.close_to_tray.get()
+        && state.tray_added.get()
+    {
+        // System-menu close is a user gesture. Leave WM_CLOSE to explicit
+        // Quit and installer shutdown so updating still closes the app.
+        unsafe {
+            let _ = ShowWindow(hwnd, SW_MINIMIZE);
+            let _ = ShowWindow(hwnd, SW_HIDE);
+        }
+        return LRESULT(0);
     } else if message == WM_SETTINGCHANGE {
         let light = system_light_theme();
         if state.light_theme.replace(light) != light {

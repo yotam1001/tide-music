@@ -127,6 +127,7 @@ pub enum MediaAction {
     Next,
     Previous,
     Stop,
+    ShowMini,
     /// Absolute playback position in seconds.
     Seek(f64),
 }
@@ -137,6 +138,11 @@ mod native;
 mod taskbar;
 #[cfg(windows)]
 pub use native::MediaSession;
+
+#[cfg(windows)]
+pub fn app_light_theme() -> Option<bool> {
+    taskbar::app_light_theme()
+}
 
 #[cfg(windows)]
 pub fn start(

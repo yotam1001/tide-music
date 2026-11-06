@@ -260,28 +260,4 @@ fn cover_grid_and_list_preserve_song_and_playlist_actions() {
             );
         }
     }
-    // Exercise the real update control without launching any installer here.
-    // Signature/handoff and the actual previous-release install run separately.
-    let updates = Rc::new(Cell::new(0));
-    let capture = updates.clone();
-    ui.on_install_update(move || capture.set(capture.get() + 1));
-    ui.set_update_available(true);
-    ui.set_update_installable(true);
-    ui.set_update_phase(2);
-    render(&window, 1140, false, "update-ready");
-    click(&ui, 860.0, 32.0);
-    assert_eq!(
-        updates.get(),
-        1,
-        "Verified restart action must stay reachable in the header"
-    );
-    ui.set_update_phase(4);
-    ui.set_update_busy(true);
-    render(&window, 1140, false, "update-preparing");
-    click(&ui, 860.0, 32.0);
-    assert_eq!(
-        updates.get(),
-        1,
-        "Preparing restart must reject duplicate clicks"
-    );
 }

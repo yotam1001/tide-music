@@ -41,12 +41,29 @@ fn run() -> Result<i32, ()> {
             }
         })? {
             Outcome::Cancelled => Ok(if probe { 0 } else { 2 }),
+            Outcome::TimedOut => Ok(7),
             Outcome::Candidate(candidate) if !probe => {
-                crate::Provider::new()
-                    .map_err(|_| ())?
-                    .import_browser_session(&candidate, Arc::new(AtomicBool::new(false)))
-                    .map_err(|_| ())?;
-                Ok(0)
+                use crate::SessionImportError;
+                // Exit codes are a fixed, credential-free contract with the player.
+                let provider = match crate::Provider::new() {
+                    Ok(provider) => provider,
+                    Err(_) => return Ok(6),
+                };
+                Ok(
+                    match provider
+                        .import_browser_session(&candidate, Arc::new(AtomicBool::new(false)))
+                    {
+                        Ok(()) => 0,
+                        Err(SessionImportError::Cancelled) => 2,
+                        Err(
+                            SessionImportError::InvalidHeaders
+                            | SessionImportError::SessionRejected,
+                        ) => 3,
+                        Err(SessionImportError::VerificationUnavailable) => 4,
+                        Err(SessionImportError::SessionChanged) => 5,
+                        Err(SessionImportError::StorageError) => 6,
+                    },
+                )
             }
             _ => Err(()),
         };
@@ -80,7 +97,7 @@ fn run() -> Result<i32, ()> {
             break status.code().unwrap_or(1);
         }
         if Instant::now() >= deadline {
-            break 1;
+            break 7;
         }
         std::thread::sleep(Duration::from_millis(50));
     };

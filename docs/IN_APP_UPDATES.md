@@ -1,10 +1,11 @@
 # In-app updates
 
 The installed Windows app checks stable GitHub releases. When an update is
-available, a compact Update Tide control appears in the wide header and in
-Settings → Updates. Narrow windows retain the Settings update badge.
+available, the update icon at the bottom of the sidebar shows a badge. Open it
+to check manually, see progress, or restart for a verified update. Tide 0.4.14
+and older use Settings → Check for updates.
 
-1. Choose Update Tide. Downloading and checksum verification happen while music
+1. Choose Download update. Downloading and checksum verification happen while music
    keeps playing. The button shows actual byte progress, with a Cancel action.
 2. A successfully verified download becomes Restart to update. Tide keeps playing
    until you choose it; downloading never starts setup or closes the player.
@@ -18,8 +19,8 @@ Settings → Updates. Narrow windows retain the Settings update badge.
 
 From 0.4.2, a failed setup launch or readiness timeout retains the verified
 download and offers Restart again. Reopening Tide can recover an already verified
-cached installer after a fresh release/signature check. The cancel control on a
-ready update lets you choose a fresh download. If installation succeeds but the
+cached installer after a fresh release/signature check. Choose Later to close
+the panel and keep the verified download ready. If installation succeeds but the
 player cannot reopen, setup reports that distinction and keeps Open Tide enabled.
 Manual update checks run immediately rather than silently ignoring clicks during
 a cooldown. Older clients can still launch the new setup through its legacy

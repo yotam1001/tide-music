@@ -306,8 +306,32 @@ try {
     Write-Host 'PASS actual graphical setup waited, installed, retained Chrome and restarted Tide'
     $taskLoginHelper = Join-Path $taskUpdatedRelease 'tide-login.exe'
     if (!(Test-Path -LiteralPath $taskLoginHelper -PathType Leaf)) { throw 'Updated package is missing its native sign-in helper.' }
+    $taskAccountDirectory = Join-Path $taskSentinelDirectory 'account'
+    $taskStaleLoginProfile = Join-Path $taskAccountDirectory 'login-4294967295-1'
+    $taskOtherLoginProfile = Join-Path $taskAccountDirectory ('login-' + $PID + '-1')
+    New-Item -ItemType Directory -Path $taskStaleLoginProfile,$taskOtherLoginProfile -Force | Out-Null
+    [IO.File]::WriteAllText((Join-Path $taskStaleLoginProfile 'offline-fixture'), 'abandoned')
+    [IO.File]::WriteAllText((Join-Path $taskOtherLoginProfile 'offline-fixture'), 'active')
     $taskLoginOutput = Invoke-CleanChild $taskLoginHelper @('--probe') 'installed-native-login' 90
     if ($taskLoginOutput -notmatch 'Native login offline probe completed;') { throw 'Installed sign-in helper failed its isolated lifecycle probe.' }
+    $taskRemainingLoginProfiles = @(Get-ChildItem -LiteralPath $taskAccountDirectory -Directory -Filter 'login-*' -Force)
+    if ($taskRemainingLoginProfiles.Count -ne 1 -or $taskRemainingLoginProfiles[0].FullName -ne $taskOtherLoginProfile -or
+        [IO.File]::ReadAllText((Join-Path $taskOtherLoginProfile 'offline-fixture')) -cne 'active' -or
+        (Test-Path -LiteralPath (Join-Path $taskAccountDirectory 'session.dpapi'))) {
+        throw 'Offline sign-in did not clean up the abandoned profile safely.'
+    }
+    Write-Host 'PASS installed sign-in removed abandoned profile, preserved the live owner profile and stored no session'
+    Assert-CleanSentinel
+    $taskPython = (Get-Command python -CommandType Application | Select-Object -First 1).Source
+    $taskConnectionOutput = Invoke-CleanChild $taskPython @(
+        (Join-Path $PSScriptRoot 'native-connection-smoke.py'),
+        '--app', (Join-Path $taskUpdatedRelease 'tide-music.exe'),
+        '--host', (Join-Path $taskUpdatedRelease 'tide-session-host.exe')
+    ) 'installed-connection-handoff' 90
+    if ($taskConnectionOutput -notmatch 'PASS connection adoption:' -or
+        $taskConnectionOutput -notmatch 'PASS credential-free native host probe') {
+        throw 'Installed player did not pass the isolated connection handoff.'
+    }
     Assert-CleanSentinel
     # Exercise the exact installed production binary, not a separate feature
     # build, before claiming that the stable installer actually includes Jams.
@@ -335,6 +359,9 @@ try {
     $taskSmokeOutput = Invoke-CleanChild (Join-Path $taskUpdatedRelease 'tide-music.exe') $taskSmokeArgs 'installed-app-ui' 90
     if ($taskSmokeOutput -notmatch 'PASS: native song/playlist play preserves browsing') {
         throw 'Installed app did not report the expected local-audio UI regression.'
+    }
+    if ($taskSmokeOutput -notmatch 'PASS: edited saved playhead resumed decoded local audio') {
+        throw 'Installed app did not resume local audio at the edited saved position.'
     }
     foreach ($name in @('full.png', 'light.png', 'restored.png')) {
         $image = Join-Path $taskScreenshots $name
@@ -378,7 +405,7 @@ try {
         }
     }
     Assert-CleanSentinel
-    [IO.File]::WriteAllText((Join-Path $taskEvidence 'result.txt'), 'PASS real clean Windows installation, background automatic update/restart, runtimes, synthetic Chrome registration, installed local-audio UI and removal. No browser or authenticated import tested.')
+    [IO.File]::WriteAllText((Join-Path $taskEvidence 'result.txt'), 'PASS real clean Windows installation, background automatic update/restart, runtimes, synthetic Chrome registration and account handoff, installed local-audio UI and removal. No live Google sign-in tested.')
     Write-Host 'PASS clean Windows integration; this does not validate GUI clicks or authenticated Chrome import.'
 } catch {
     [IO.File]::WriteAllText((Join-Path $taskEvidence 'result.txt'), 'FAIL clean Windows integration. Owned failure evidence retained; no automatic cleanup was attempted.')

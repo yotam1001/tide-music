@@ -1,6 +1,67 @@
 //! Collection operations are independent of browsing and playback workers.
 use super::*;
+use sha2::{Digest, Sha256};
+use std::collections::VecDeque;
 use tide_provider::{FeedbackOperation, FeedbackRequest, PlaylistDetails, Rating, SavedConnection};
+
+const MAX_DISLIKED: usize = 512;
+
+#[derive(Default, Serialize, Deserialize)]
+#[serde(transparent)]
+pub(super) struct SavedDislikes(Option<(String, VecDeque<String>)>);
+
+fn dislike_profile(connection: &SavedConnection) -> Option<String> {
+    let revision = connection.revision.as_deref()?;
+    let mut hash = Sha256::new();
+    hash.update(connection.account_index.to_be_bytes());
+    hash.update((revision.len() as u64).to_be_bytes());
+    hash.update(revision.as_bytes());
+    hash.update([u8::from(connection.page_id.is_some())]);
+    if let Some(page) = &connection.page_id {
+        hash.update(page.as_bytes());
+    }
+    Some(format!("{:x}", hash.finalize()))
+}
+
+impl SavedDislikes {
+    pub(super) fn sanitize(&mut self) {
+        let Some((key, videos)) = &mut self.0 else {
+            return;
+        };
+        if key.len() != 64 || !key.bytes().all(|b| b.is_ascii_hexdigit()) {
+            self.0 = None;
+            return;
+        }
+        videos.retain(|id| {
+            id.len() == 11
+                && id
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        });
+        while videos.len() > MAX_DISLIKED {
+            videos.pop_front();
+        }
+    }
+
+    fn for_connection(&self, connection: Option<&SavedConnection>) -> VecDeque<String> {
+        let Some((key, videos)) = &self.0 else {
+            return VecDeque::new();
+        };
+        if connection.and_then(dislike_profile).as_ref() == Some(key) {
+            videos.clone()
+        } else {
+            VecDeque::new()
+        }
+    }
+
+    fn store(&mut self, connection: &SavedConnection, videos: &VecDeque<String>) -> bool {
+        let Some(key) = dislike_profile(connection) else {
+            return false;
+        };
+        self.0 = (!videos.is_empty()).then(|| (key, videos.clone()));
+        true
+    }
+}
 
 struct Work {
     handle: std::thread::JoinHandle<()>,
@@ -23,6 +84,7 @@ pub struct Music {
     listening: history_feedback::Listening,
     synthetic: bool,
     current_video: Option<String>,
+    disliked: VecDeque<String>,
     inspected: bool,
     notice_until: Option<Instant>,
     playlist: Option<PlaylistDetails>,
@@ -37,12 +99,18 @@ impl Music {
             listening: Default::default(),
             synthetic,
             current_video: None,
+            disliked: Default::default(),
             inspected: false,
             notice_until: None,
             playlist: None,
             detail_revision: 0,
             picker: None,
         }
+    }
+    pub fn skips(&self, source: &str, identity: Option<&SavedConnection>) -> bool {
+        !self.disliked.is_empty()
+            && self.identity.as_ref() == identity
+            && source_video_id(source).is_some_and(|id| self.disliked.contains(&id))
     }
     pub fn shutdown(&mut self) {
         if let Some(work) = self.worker.take() {
@@ -525,6 +593,11 @@ pub fn tick(s: &mut State, u: &AppWindow) {
         s.music_feedback.listening.reset();
         s.music_feedback.identity = s.saved_connection.clone();
         s.music_feedback.current_video = None;
+        s.music_feedback.disliked = s
+            .settings
+            .saved_dislikes
+            .for_connection(s.saved_connection.as_ref());
+        refresh(u, s);
         s.music_feedback.inspected = false;
         s.music_feedback.picker = None;
         u.set_playlist_picker_open(false);
@@ -569,6 +642,34 @@ pub fn tick(s: &mut State, u: &AppWindow) {
                     FeedbackOperation::Rating | FeedbackOperation::Rate
                 )
             }) {
+                // Watch responses may report a dislike as INDIFFERENT. Only
+                // an explicit rating write can clear a remembered dislike that way.
+                let known = s.music_feedback.disliked.contains(&result.video_id);
+                let update = match result.rating {
+                    Some(Rating::Dislike) if !known => Some(true),
+                    Some(Rating::Like) if known => Some(false),
+                    Some(Rating::Indifferent)
+                        if known && result.operation == FeedbackOperation::Rate =>
+                    {
+                        Some(false)
+                    }
+                    _ => None,
+                };
+                if let Some(dislike) = update {
+                    let disliked = &mut s.music_feedback.disliked;
+                    if dislike {
+                        if disliked.len() == MAX_DISLIKED {
+                            disliked.pop_front();
+                        }
+                        disliked.push_back(result.video_id.clone());
+                    } else {
+                        disliked.retain(|id| id != &result.video_id);
+                    }
+                    if s.settings.saved_dislikes.store(&work.expected, disliked) {
+                        save(&s.settings);
+                    }
+                    refresh(u, s);
+                }
                 if current_video_id(s).as_deref() == Some(result.video_id.as_str()) {
                     u.set_current_rating(match result.rating {
                         Some(Rating::Like) => 1,
@@ -913,4 +1014,35 @@ pub fn read_probe() -> Result<(), String> {
     }
     println!("Collection read check PASS: {checked} owned playlists; rating metadata available; zero feedback writes.");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn persisted_dislikes_are_scoped_to_the_verified_connection() {
+        let connection = SavedConnection {
+            revision: Some("test-revision".into()),
+            account_index: 0,
+            page_id: Some("test-page".into()),
+        };
+        let mut saved = SavedDislikes::default();
+        let dislikes = VecDeque::from(["fixture0001".into()]);
+        assert!(saved.store(&connection, &dislikes));
+        let encoded = serde_json::to_string(&saved).unwrap();
+        assert!(!encoded.contains("test-revision") && !encoded.contains("test-page"));
+        let mut loaded: SavedDislikes = serde_json::from_str(&encoded).unwrap();
+        loaded.sanitize();
+        assert_eq!(loaded.for_connection(Some(&connection)), dislikes);
+        let mut other = connection.clone();
+        other.account_index = 1;
+        assert!(loaded.for_connection(Some(&other)).is_empty());
+        other = connection.clone();
+        other.revision = Some("new-sign-in".into());
+        assert!(loaded.for_connection(Some(&other)).is_empty());
+        assert!(loaded.for_connection(None).is_empty());
+        loaded.store(&connection, &VecDeque::new());
+        assert!(loaded.for_connection(Some(&connection)).is_empty());
+    }
 }

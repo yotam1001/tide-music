@@ -42,6 +42,36 @@ class ExploreTests(unittest.TestCase):
         self.assertEqual(result["categories"],[])
         self.assertNotIn("private fixture data",json.dumps(result))
 
+    def test_category_failure_keeps_clickable_categories_from_explore(self):
+        data = {"top_songs": {"items": [self.song]}, "moods_and_genres": [
+            {"title": "Chill", "params": "public_chill"},
+            {"title": "Duplicate", "params": "public_chill"},
+            {"title": "Invalid", "params": "invalid value"},
+        ]}
+        client = SimpleNamespace(get_explore=MagicMock(return_value=data),
+                                 get_mood_categories=MagicMock(side_effect=TimeoutError))
+        result = run(client, {"action": "explore"})
+        self.assertEqual(len(result["cards"]), 1)
+        self.assertTrue(result["categories_available"])
+        self.assertEqual(result["categories"], [
+            {"title": "Chill", "group": "Moods & genres", "params": "public_chill"},
+        ])
+
+    def test_chart_failure_keeps_dedicated_categories(self):
+        client = SimpleNamespace(get_explore=MagicMock(side_effect=TimeoutError),
+                                 get_mood_categories=MagicMock(return_value={
+                                     "Genres": [{"title": "Metal", "params": "public_metal"}],
+                                 }))
+        result = run(client, {"action": "explore"})
+        self.assertEqual(result["cards"], [])
+        self.assertTrue(result["categories_available"])
+        self.assertEqual(result["categories"], [
+            {"title": "Metal", "group": "Genres", "params": "public_metal"},
+        ])
+        client.get_mood_categories.return_value = {}
+        with self.assertRaises(TimeoutError):
+            run(client, {"action": "explore"})
+
     def test_mood_selection_validates_parameters_and_normalizes_only_playlists(self):
         item={"playlistId":"VLPLfixture","title":"Chill music","author":{"name":"YouTube Music"},"token":"private-fixture-token"}
         client=SimpleNamespace(get_mood_playlists=MagicMock(return_value=[item]))

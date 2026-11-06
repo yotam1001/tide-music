@@ -141,17 +141,24 @@ fn changing_songs_clears_old_cover_until_the_selected_cover_arrives() {
             ..Default::default()
         },
         TrackRow {
+            title: "Skipped song".into(),
+            artwork: cover(red),
+            ..Default::default()
+        },
+        TrackRow {
             title: "Next song".into(),
             artwork: cover(blue),
             ..Default::default()
         },
     ])));
+    ui.set_next_queue_index(2);
     draw(&window, &mut pixels, 1140);
     assert!(ui.get_home_next_artwork_visible());
     assert!(
         pixels.contains(&blue),
         "Home did not paint the next track's cover"
     );
+    assert!(!pixels.contains(&red), "Home painted the skipped cover");
     ui.set_library_open(true);
     draw(&window, &mut pixels, 1140);
     assert!(!ui.get_home_next_artwork_visible());

@@ -72,6 +72,59 @@ fn filtered_playlist_and_queue_keep_absolute_indices_and_audio_has_its_own_page(
     let q = selected.clone();
     ui.on_select_track(move |i| q.set(i));
     ui.show().unwrap();
+    let toggles = Rc::new(Cell::new(0));
+    let seen = toggles.clone();
+    ui.on_toggle_pause(move || seen.set(seen.get() + 1));
+    ui.set_current_index(-1);
+    draw(&window, 1140, "keyboard-transport");
+    let press = |key: &str| {
+        for event in [
+            WindowEvent::KeyPressed { text: key.into() },
+            WindowEvent::KeyPressRepeated { text: key.into() },
+            WindowEvent::KeyReleased { text: key.into() },
+        ] {
+            ui.window().dispatch_event(event);
+        }
+    };
+    press(" ");
+    assert_eq!(toggles.get(), 0);
+    ui.set_current_index(0);
+    press(" ");
+    assert_eq!(toggles.get(), 1);
+    let seeks = Rc::new(Cell::new(None));
+    let captured = seeks.clone();
+    ui.on_seek(move |position| captured.set(Some(position)));
+    ui.set_duration(60.0);
+    ui.set_position(4.0);
+    press("j");
+    assert_eq!(seeks.take(), Some(0.0));
+    ui.set_position(55.0);
+    press("l");
+    assert_eq!(seeks.take(), Some(60.0));
+    ui.set_settings_open(true);
+    draw(&window, 1140, "settings-keyboard-focus");
+    press(" ");
+    assert_eq!(toggles.get(), 1);
+    ui.set_settings_open(false);
+    draw(&window, 1140, "search-keyboard-focus");
+    click(&ui, 340.0, 32.0);
+    press(" ");
+    press("j");
+    assert_eq!(toggles.get(), 1);
+    assert!(ui.get_source_input().contains(' '));
+    assert!(ui.get_source_input().contains('j'));
+    assert_eq!(seeks.get(), None);
+    ui.set_current_index(3);
+    ui.set_autoplay_enabled(true);
+    ui.set_account_verified(true);
+    assert!(
+        !ui.get_can_skip(),
+        "Autoplay cannot extend a local-file queue"
+    );
+    ui.set_has_radio_seed(true);
+    assert!(ui.get_can_skip(), "YouTube Music can extend its queue");
+    ui.set_has_radio_seed(false);
+    ui.set_account_verified(false);
     for width in [650, 1140] {
         for light in [false, true] {
             ui.set_light_mode(light);
