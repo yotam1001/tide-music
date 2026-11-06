@@ -1798,6 +1798,21 @@ fn resume_or_play(state: &mut State, ui: &AppWindow) {
     );
 }
 
+fn seek_before_playback(settings: &mut Settings, requested: f64) -> Option<f64> {
+    if !requested.is_finite() || requested < 0.0 {
+        return None;
+    }
+    let track = settings.queue.tracks.get(settings.queue.current?)?;
+    let duration = track.duration_seconds.filter(|seconds| *seconds > 0)? as f64;
+    let position = requested.min(duration - 1.0).min(86_400.0);
+    let position = if position < 1.0 { 0.0 } else { position };
+    settings.playback_bookmark = (position > 0.0).then(|| PlaybackBookmark {
+        source: track.source.clone(),
+        seconds: position,
+    });
+    Some(position)
+}
+
 fn play(state: &mut State, ui: &AppWindow) -> bool {
     play_at(state, ui, 0.0)
 }
@@ -3518,7 +3533,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 return;
             }
             if let Some(u) = weak.upgrade() {
-                send(&mut state.borrow_mut(), &u, PlaybackCommand::Seek(p as f64));
+                let mut s = state.borrow_mut();
+                if s.active_playback || s.connection_resume.is_some() {
+                    send(&mut s, &u, PlaybackCommand::Seek(p as f64));
+                } else if u.get_duration() > 0.0 {
+                    if let Some(position) = seek_before_playback(&mut s.settings, p as f64) {
+                        u.set_position(position as f32);
+                        save(&s.settings);
+                    }
+                }
             }
         });
     }
@@ -5490,6 +5513,23 @@ mod tests {
         assert!(!update_bookmark(&mut settings, &snapshot));
         snapshot.ended = true;
         assert!(update_bookmark(&mut settings, &snapshot));
+        assert_eq!(saved_position(&settings), None);
+    }
+
+    #[test]
+    fn playback_bookmark_can_be_edited_before_starting() {
+        let mut settings = Settings::default();
+        let mut selected = track("first");
+        selected.duration_seconds = Some(180);
+        settings.queue.tracks.push(selected);
+        settings.queue.current = Some(0);
+        assert_eq!(seek_before_playback(&mut settings, 42.0), Some(42.0));
+        assert_eq!(saved_position(&settings), Some(42.0));
+        assert_eq!(seek_before_playback(&mut settings, f64::NAN), None);
+        assert_eq!(saved_position(&settings), Some(42.0));
+        assert_eq!(seek_before_playback(&mut settings, 250.0), Some(179.0));
+        assert_eq!(saved_position(&settings), Some(179.0));
+        assert_eq!(seek_before_playback(&mut settings, 0.0), Some(0.0));
         assert_eq!(saved_position(&settings), None);
     }
 
