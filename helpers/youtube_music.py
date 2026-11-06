@@ -1052,8 +1052,12 @@ def run(client, request):
         except Exception:
             # A category/parser failure must not discard otherwise valid charts.
             category_data, categories_available = {}, False
+        if not categories_available or not category_data:
+            # The main Explore response can carry usable category links even
+            # when the dedicated catalog is temporarily unavailable.
+            category_data = {"Moods & genres": data.get("moods_and_genres")}
         categories, seen = [], set()
-        for group, items in islice(category_data.items() if isinstance(category_data, dict) else [], 8):
+        for group, items in islice(category_data.items(), 8):
             if not isinstance(group, str) or not isinstance(items, list):
                 continue
             for item in items[:MAX_EXPLORE_CATEGORIES + 1]:
@@ -1068,7 +1072,7 @@ def run(client, request):
                     break
                 categories.append({"title": title, "group": clean(group, 80), "params": params})
         return {"type": "explore", "cards": cards, "categories": categories,
-                "categories_available": categories_available, "truncated": truncated}
+                "categories_available": categories_available or bool(categories), "truncated": truncated}
     if action == "mood":
         params = request.get("params")
         if not mood_params(params):
