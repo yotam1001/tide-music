@@ -120,11 +120,20 @@ switch ($Scenario) {
         $first = New-MockPlayer (Join-Path $previous 'tide-music.exe')
         $second = New-MockPlayer (Join-Path $previous 'tide-music.exe')
         $second.Id = 124
+        $second | Add-Member -Force -MemberType ScriptMethod -Name CloseMainWindow -Value { $this.CloseCount++; return $false }
+        $global:HiddenCloseCount = 0
+        function Request-TideHiddenWindowClose([int]$Id) {
+            if ($Id -ne $second.Id) { throw 'Unexpected hidden window target' }
+            $global:HiddenCloseCount++
+            $second.HasExited = $true
+            return $true
+        }
         $global:MockProcesses = @($first,$second)
         Test-TideInstall $package $root $links 'None' '' '1.2.3' | Out-Null
-        if ($first.CloseCount -or $second.CloseCount) { throw 'Preflight closed a player before COMMIT' }
+        if ($first.CloseCount -or $second.CloseCount -or $global:HiddenCloseCount) { throw 'Preflight closed a player before COMMIT' }
         Install-Tide $package $root $links 'None' '' '1.2.3' -CloseRunningPlayers | Out-Null
-        if ($first.CloseCount -ne 1 -or $second.CloseCount -ne 1 -or (Current-Release) -eq $previous) { throw 'Multiple windows did not close gracefully for update' }
+        if ($first.CloseCount -ne 1 -or $second.CloseCount -ne 1 -or $global:HiddenCloseCount -ne 1 -or
+            (Current-Release) -eq $previous) { throw 'Visible and hidden windows did not close gracefully for update' }
         $global:MockProcesses = $null
         Uninstall-Tide $root $links | Out-Null
     }
@@ -154,7 +163,8 @@ switch ($Scenario) {
         }
         [IO.File]::Copy((Join-Path $package 'tide-music.exe'), (Join-Path $release 'tide-music.exe'), $true)
         $stale = New-MockPlayer (Join-Path $release 'tide-music.exe')
-        $recycled = New-MockPlayer (Join-Path $Fixture 'foreign.exe')
+        $recycled = New-MockPlayer $stale.Path
+        $recycled.StartTime = $stale.StartTime.AddSeconds(1)
         $global:MockProcesses = @($stale); $global:ReopenedProcesses[$stale.Id] = $recycled
         Must-Fail { Wait-TideStopped $root 0 }
         if ($stale.CloseCount -or $recycled.CloseCount -or $recycled.HasExited) { throw 'A recycled PID inherited stale close authorization' }

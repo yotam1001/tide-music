@@ -340,11 +340,13 @@ namespace TideSetup {
 function Request-TidePlayerClose($Process, [string]$InstallRoot) {
     $candidate = $null
     try {
-        # Reopen and pin the target before consulting any cached process data.
-        # A name/path from enumeration must never authorize a recycled PID.
+        $expectedStart = $Process.StartTime.ToUniversalTime().Ticks
+        # Reopen and pin the target, then match its creation time and verify
+        # its current path and payload before sending either close request.
         $candidate = Get-TideCloseCandidate $Process.Id
         $null = $candidate.Handle
-        if (!(Test-TideClosablePlayer $candidate $InstallRoot) -or $candidate.HasExited) { return $false }
+        if ($candidate.StartTime.ToUniversalTime().Ticks -ne $expectedStart -or
+            !(Test-TideClosablePlayer $candidate $InstallRoot) -or $candidate.HasExited) { return $false }
         if ($candidate.CloseMainWindow()) { return $true }
         # CloseMainWindow ignores the hidden player when it is in the tray.
         return !$candidate.HasExited -and (Request-TideHiddenWindowClose $candidate.Id)
