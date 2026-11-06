@@ -57,6 +57,21 @@ class ExploreTests(unittest.TestCase):
             {"title": "Chill", "group": "Moods & genres", "params": "public_chill"},
         ])
 
+    def test_chart_failure_keeps_dedicated_categories(self):
+        client = SimpleNamespace(get_explore=MagicMock(side_effect=TimeoutError),
+                                 get_mood_categories=MagicMock(return_value={
+                                     "Genres": [{"title": "Metal", "params": "public_metal"}],
+                                 }))
+        result = run(client, {"action": "explore"})
+        self.assertEqual(result["cards"], [])
+        self.assertTrue(result["categories_available"])
+        self.assertEqual(result["categories"], [
+            {"title": "Metal", "group": "Genres", "params": "public_metal"},
+        ])
+        client.get_mood_categories.return_value = {}
+        with self.assertRaises(TimeoutError):
+            run(client, {"action": "explore"})
+
     def test_mood_selection_validates_parameters_and_normalizes_only_playlists(self):
         item={"playlistId":"VLPLfixture","title":"Chill music","author":{"name":"YouTube Music"},"token":"private-fixture-token"}
         client=SimpleNamespace(get_mood_playlists=MagicMock(return_value=[item]))

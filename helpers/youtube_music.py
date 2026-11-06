@@ -1029,7 +1029,11 @@ def run(client, request):
         return lyrics(client, request.get("video_id"), request.get("allow_external", True) is True)
     action = request["action"]
     if action == "explore":
-        data = client.get_explore()
+        explore_error = None
+        try:
+            data = client.get_explore()
+        except Exception as error:
+            data, explore_error = {}, error
         data = data if isinstance(data, dict) else {}
         cards = []
         truncated = False
@@ -1071,6 +1075,10 @@ def run(client, request):
                     truncated = True
                     break
                 categories.append({"title": title, "group": clean(group, 80), "params": params})
+        if explore_error is not None and not categories:
+            # With neither source available, preserve the original failure
+            # so the normal verification and retry handling can classify it.
+            raise explore_error
         return {"type": "explore", "cards": cards, "categories": categories,
                 "categories_available": categories_available or bool(categories), "truncated": truncated}
     if action == "mood":
