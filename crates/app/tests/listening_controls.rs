@@ -77,30 +77,43 @@ fn filtered_playlist_and_queue_keep_absolute_indices_and_audio_has_its_own_page(
     ui.on_toggle_pause(move || seen.set(seen.get() + 1));
     ui.set_current_index(-1);
     draw(&window, 1140, "keyboard-transport");
-    let space = || {
+    let press = |key: &str| {
         for event in [
-            WindowEvent::KeyPressed { text: " ".into() },
-            WindowEvent::KeyPressRepeated { text: " ".into() },
-            WindowEvent::KeyReleased { text: " ".into() },
+            WindowEvent::KeyPressed { text: key.into() },
+            WindowEvent::KeyPressRepeated { text: key.into() },
+            WindowEvent::KeyReleased { text: key.into() },
         ] {
             ui.window().dispatch_event(event);
         }
     };
-    space();
+    press(" ");
     assert_eq!(toggles.get(), 0);
     ui.set_current_index(0);
-    space();
+    press(" ");
     assert_eq!(toggles.get(), 1);
+    let seeks = Rc::new(Cell::new(None));
+    let captured = seeks.clone();
+    ui.on_seek(move |position| captured.set(Some(position)));
+    ui.set_duration(60.0);
+    ui.set_position(4.0);
+    press("j");
+    assert_eq!(seeks.take(), Some(0.0));
+    ui.set_position(55.0);
+    press("l");
+    assert_eq!(seeks.take(), Some(60.0));
     ui.set_settings_open(true);
     draw(&window, 1140, "settings-keyboard-focus");
-    space();
+    press(" ");
     assert_eq!(toggles.get(), 1);
     ui.set_settings_open(false);
     draw(&window, 1140, "search-keyboard-focus");
     click(&ui, 340.0, 32.0);
-    space();
+    press(" ");
+    press("j");
     assert_eq!(toggles.get(), 1);
     assert!(ui.get_source_input().contains(' '));
+    assert!(ui.get_source_input().contains('j'));
+    assert_eq!(seeks.get(), None);
     ui.set_current_index(3);
     ui.set_autoplay_enabled(true);
     ui.set_account_verified(true);

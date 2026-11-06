@@ -2170,13 +2170,21 @@ export component AppWindow inherits Window {
                 }
                 if root.search-open { root.close-search(); return accept; }
             }
-            if event.text == " " && !event.modifiers.control && !event.modifiers.alt
+            if !event.modifiers.control && !event.modifiers.alt
                 && !event.modifiers.shift && !event.modifiers.meta
                 && root.current-index >= 0 && !root.search-field-focused && !root.jam-guest && !root.settings-open
                 && !root.account-open && !root.update-panel-open && !root.playlist-picker-open
                 && !root.playlist-create-open && root.playlist-manage-mode == 0 {
-                if !event.repeat { root.toggle-pause(); }
-                return accept;
+                if event.text == " " {
+                    if !event.repeat { root.toggle-pause(); }
+                    return accept;
+                }
+                if root.duration > 0 && (event.text == "j" || event.text == "l") {
+                    if !event.repeat {
+                        root.seek(clamp(root.position + (event.text == "j" ? -10 : 10), 0, root.duration));
+                    }
+                    return accept;
+                }
             }
             return reject;
         }
@@ -2703,7 +2711,7 @@ export component AppWindow inherits Window {
                                     ShortcutRow { action: "Previous song"; binding: root.shortcut-previous; recording: root.shortcut-recording-index == 2; light-mode: root.light-mode; record => { root.begin-shortcut(2); app-focus.focus(); } clear => { root.clear-shortcut(2); } }
                                     if root.shortcut-status != "" : Text { text: root.shortcut-status; color: root.secondary; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
                                     Rectangle { height: 1px; background: root.outline; }
-                                    Text { height: 48px; text: "Press Space to play or pause while Tide has focus. Media keys and custom shortcuts also work in the background."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
+                                    Text { height: 56px; text: "While Tide has focus, press Space to play or pause, or J and L to seek 10 seconds. Media keys and custom shortcuts also work in the background."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
                                 }
                                 if root.settings-audio-open : VerticalLayout {
                                     spacing: 12px; alignment: start;
