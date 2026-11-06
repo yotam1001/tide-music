@@ -322,6 +322,17 @@ try {
     }
     Write-Host 'PASS installed sign-in removed abandoned profile, preserved the live owner profile and stored no session'
     Assert-CleanSentinel
+    $taskPython = (Get-Command python -CommandType Application | Select-Object -First 1).Source
+    $taskConnectionOutput = Invoke-CleanChild $taskPython @(
+        (Join-Path $PSScriptRoot 'native-connection-smoke.py'),
+        '--app', (Join-Path $taskUpdatedRelease 'tide-music.exe'),
+        '--host', (Join-Path $taskUpdatedRelease 'tide-session-host.exe')
+    ) 'installed-connection-handoff' 90
+    if ($taskConnectionOutput -notmatch 'PASS connection adoption:' -or
+        $taskConnectionOutput -notmatch 'PASS credential-free native host probe') {
+        throw 'Installed player did not pass the isolated connection handoff.'
+    }
+    Assert-CleanSentinel
     # Exercise the exact installed production binary, not a separate feature
     # build, before claiming that the stable installer actually includes Jams.
     Invoke-CleanChild (Join-Path $taskUpdatedRelease 'tide-music.exe') @('--verify-installed-updater') 'installed-update-eligibility' 60 | Out-Null
@@ -391,7 +402,7 @@ try {
         }
     }
     Assert-CleanSentinel
-    [IO.File]::WriteAllText((Join-Path $taskEvidence 'result.txt'), 'PASS real clean Windows installation, background automatic update/restart, runtimes, synthetic Chrome registration, installed local-audio UI and removal. No browser or authenticated import tested.')
+    [IO.File]::WriteAllText((Join-Path $taskEvidence 'result.txt'), 'PASS real clean Windows installation, background automatic update/restart, runtimes, synthetic Chrome registration and account handoff, installed local-audio UI and removal. No live Google sign-in tested.')
     Write-Host 'PASS clean Windows integration; this does not validate GUI clicks or authenticated Chrome import.'
 } catch {
     [IO.File]::WriteAllText((Join-Path $taskEvidence 'result.txt'), 'FAIL clean Windows integration. Owned failure evidence retained; no automatic cleanup was attempted.')
