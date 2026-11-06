@@ -174,7 +174,13 @@ fn related_view_loads_without_selecting_a_track_and_closes_on_song_change() {
     assert_eq!(loads.get(), 1);
     assert_eq!(selections.get(), 0);
     ui.set_lyrics_generation("next-song".into());
-    draw(&window, 1140);
+    // Slint delivers changed callbacks on a timer. Drive that timer
+    // instead of assuming a fixed number of repaints will reach it.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(250);
+    while ui.get_related_open() && std::time::Instant::now() < deadline {
+        slint::platform::update_timers_and_animations();
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
     assert!(!ui.get_related_open());
     assert!(ui.get_queue_open());
 }

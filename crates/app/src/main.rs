@@ -207,6 +207,8 @@ struct State {
     detail_tracks: Vec<Track>,
     related_tracks: Vec<Track>,
     detail_cover_url: Option<String>,
+    artist_page: artists::Page,
+    artist_album_back: Option<artists::AlbumBack>,
     artist_origin: Option<artists::Origin>,
     search_tracks: Vec<Track>,
     search_cards: Vec<tide_provider::Card>,
@@ -387,6 +389,7 @@ fn request_library(
                 .iter()
                 .chain(s.library_browse.cards.iter())
                 .chain(s.search_cards.iter())
+                .chain(&s.artist_page.releases)
                 .find(|card| card.id == *id)
                 .map(|card| card.title.clone())
                 .unwrap_or_else(|| "Album".into()),
@@ -434,6 +437,7 @@ fn request_library(
                         .iter()
                         .chain(&s.library_browse.cards)
                         .chain(&s.search_cards)
+                        .chain(&s.artist_page.releases)
                         .find(|item| item.id == id)
                         .and_then(|item| item.artwork_url.clone())
                 })
@@ -443,6 +447,7 @@ fn request_library(
         u.set_detail_cover(slint::Image::default());
         music_feedback::set_playlist(s, u, None, None);
         s.artist_origin = None;
+        s.artist_album_back = None;
         u.set_detail_is_artist(false);
         u.set_detail_note("".into());
         s.detail_tracks.clear();
@@ -1042,12 +1047,6 @@ fn refresh_library_models(s: &State, u: &AppWindow) {
         u.get_home_artwork_height(),
         home_groups.iter().map(|g| {
             (match g.layout {
-                browse_layout::Layout::Spotlight => {
-                    u.global::<LayoutMetrics>().get_home_spotlight_height()
-                }
-                browse_layout::Layout::Editorial => {
-                    u.global::<LayoutMetrics>().get_home_editorial_height()
-                }
                 browse_layout::Layout::Compact => {
                     u.global::<LayoutMetrics>().get_home_compact_height()
                 }
@@ -1062,11 +1061,6 @@ fn refresh_library_models(s: &State, u: &AppWindow) {
                 }
         }),
     );
-    let featured = home_groups
-        .first()
-        .filter(|group| group.layout == browse_layout::Layout::Editorial)
-        .map(|group| group.start..group.start + group.count)
-        .unwrap_or_default();
     let home_images = artwork_view::group_image_range(&home_groups, visible_groups);
     u.set_home_browse_rows(update_model(
         u.get_home_browse_rows(),
@@ -1077,8 +1071,6 @@ fn refresh_library_models(s: &State, u: &AppWindow) {
                 count: g.count as i32,
                 title: g.title.clone().into(),
                 layout: match g.layout {
-                    browse_layout::Layout::Spotlight => "spotlight",
-                    browse_layout::Layout::Editorial => "editorial",
                     browse_layout::Layout::Compact => "compact",
                     browse_layout::Layout::Tiles => "tiles",
                 }
@@ -1125,7 +1117,7 @@ fn refresh_library_models(s: &State, u: &AppWindow) {
                 let large = p
                     .featured_artwork_url
                     .as_deref()
-                    .filter(|_| featured.contains(&index))
+                    .filter(|_| p.kind != "song" && u.get_home_columns() >= 3)
                     .map(|url| artwork.get_or_request_feature(url))
                     .unwrap_or_default();
                 if large.size().width > 0 {
@@ -1345,6 +1337,7 @@ fn content_rows(
         .collect()
 }
 fn refresh_content_models(s: &State, u: &AppWindow) {
+    artists::refresh_page(s, u);
     let cover = s
         .detail_cover_url
         .as_deref()
@@ -1581,7 +1574,6 @@ fn refresh(ui: &AppWindow, state: &State) {
                 .as_deref()
                 .filter(|_| {
                     index == current
-                        || (ui.get_home_next_artwork_visible() && next == Some(index))
                         || (ui.get_jam_queue_visible() && jam_images.contains(&index))
                         || (ui.get_queue_open()
                             && index >= current
@@ -2335,6 +2327,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         detail_tracks: Vec::new(),
         related_tracks: Vec::new(),
         detail_cover_url: None,
+        artist_page: Default::default(),
+        artist_album_back: None,
         artist_origin: None,
         search_tracks: Vec::new(),
         search_cards: Vec::new(),
@@ -2760,6 +2754,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let state = state.clone();
         let weak = ui.as_weak();
         let tx = library_tx.clone();
+        let album_state = state.clone();
+        let album_weak = weak.clone();
+        let album_tx = tx.clone();
+        ui.on_open_artist_release(move |index| {
+            if let Some(u) = album_weak.upgrade() {
+                artists::open_release(&mut album_state.borrow_mut(), &u, &album_tx, index);
+            }
+        });
         ui.on_select_recommendation(move |index| {
             if let Some(u) = weak.upgrade() {
                 let mut s = state.borrow_mut();
@@ -3023,6 +3025,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let state = state.clone();
         ui.on_close_detail(move || {
             if let Some(u) = weak.upgrade() {
+                if artists::back_from_release(&mut state.borrow_mut(), &u) {
+                    return;
+                }
                 if u.get_detail_open() {
                     u.set_forward_collection(!u.get_detail_is_artist() && !u.get_detail_busy());
                     u.set_playlist_manage_mode(0);
@@ -4010,7 +4015,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     u.get_library_columns(),
                     u.get_home_columns(),
                     u.get_library_grid(),
-                    u.get_home_next_artwork_visible(),
                     u.get_library_open(),
                     u.get_detail_open(),
                     u.get_search_open(),
@@ -4169,8 +4173,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         Ok(tide_provider::Response::Artists { artists }) => {
                             artists::resolved(&mut s, &u, &library_tx, artists);
                         }
-                        Ok(tide_provider::Response::Artist { name, tracks, truncated }) => {
+                        Ok(tide_provider::Response::Artist { name, tracks, truncated, artwork_url, releases }) => {
                             if matches!(s.library_action, LibraryAction::Artist) && u.get_detail_open() && u.get_detail_is_artist() {
+                                s.artist_page = artists::Page { artwork_url, releases };
                                 s.detail_tracks = tracks.into_iter().take(50).collect();
                                 u.set_detail_title(name.chars().filter(|c| !c.is_control()).take(300).collect::<String>().into());
                                 u.set_detail_busy(false);

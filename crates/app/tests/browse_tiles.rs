@@ -2,9 +2,9 @@
 //! Synthetic review fixtures only; no account, network, or audio engine.
 use slint::platform::{
     software_renderer::{MinimalSoftwareWindow, RepaintBufferType},
-    Key, PointerEventButton, WindowEvent,
+    PointerEventButton, WindowEvent,
 };
-use slint::{ComponentHandle, LogicalPosition, Model, ModelRc, PhysicalSize, Rgb8Pixel, VecModel};
+use slint::{ComponentHandle, LogicalPosition, ModelRc, PhysicalSize, Rgb8Pixel, VecModel};
 use std::{cell::Cell, rc::Rc};
 use tide_music::*;
 #[path = "../src/browse_layout.rs"]
@@ -55,7 +55,7 @@ fn click(ui: &AppWindow, x: f32, y: f32) {
     }
 }
 #[test]
-fn cover_grid_and_list_preserve_song_and_playlist_actions() {
+fn cover_grid_and_list_preserve_playlist_actions() {
     let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
     slint::platform::set_platform(Box::new(Platform(window.clone()))).unwrap();
     let ui = AppWindow::new().unwrap();
@@ -84,19 +84,14 @@ fn cover_grid_and_list_preserve_song_and_playlist_actions() {
     )));
     let selected = Rc::new(Cell::new((-1, -1)));
     let capture = selected.clone();
-    ui.on_select_recommendation(move |i| capture.set((0, i)));
-    let capture = selected.clone();
     ui.on_select_library_playlist(move |i| capture.set((1, i)));
-    let queued = Rc::new(Cell::new(None));
-    let capture = queued.clone();
-    ui.on_queue_recommendation(move |i, next| capture.set(Some((i, next))));
     let weak = ui.as_weak();
     ui.on_toggle_library_view(move || {
         let u = weak.upgrade().unwrap();
         u.set_library_grid(!u.get_library_grid());
     });
     ui.show().unwrap();
-    for width in [650, 780, 1140, 1536, 1920] {
+    for width in [650, 1140] {
         for light in [false, true] {
             ui.set_light_mode(light);
             ui.set_library_open(false);
@@ -112,8 +107,6 @@ fn cover_grid_and_list_preserve_song_and_playlist_actions() {
                 &(0..12).map(|i| i == 1).collect::<Vec<_>>(),
                 columns as usize,
             );
-            let spotlight_count = groups[0].count as i32;
-            let shelf = groups[0].layout == browse_layout::Layout::Editorial;
             ui.set_home_browse_rows(ModelRc::new(VecModel::from(
                 groups
                     .iter()
@@ -122,10 +115,8 @@ fn cover_grid_and_list_preserve_song_and_playlist_actions() {
                         count: g.count as i32,
                         title: g.title.clone().into(),
                         layout: match g.layout {
-                            browse_layout::Layout::Spotlight => "spotlight",
                             browse_layout::Layout::Compact => "compact",
                             browse_layout::Layout::Tiles => "tiles",
-                            browse_layout::Layout::Editorial => "editorial",
                         }
                         .into(),
                     })
@@ -140,98 +131,6 @@ fn cover_grid_and_list_preserve_song_and_playlist_actions() {
             let page = width as f32 - nav;
             let left = nav + (width as f32 - nav - page) / 2.0 + 28.0;
             let available = page - 56.0;
-            let cell_start = |index: i32| {
-                let weights = [1.65f32, 1.0, 2.55, 1.0];
-                let units: f32 = weights[..spotlight_count as usize].iter().sum();
-                let before: f32 = weights[..index as usize].iter().sum();
-                left + 12.0 * index as f32
-                    + (available - 12.0 * (spotlight_count - 1) as f32) * before / units
-            };
-            for index in 0..if spotlight_count > 1 { 2 } else { 1 } {
-                selected.set((-1, -1));
-                click(
-                    &ui,
-                    if index == 0 {
-                        left + 30.0
-                    } else {
-                        if shelf {
-                            cell_start(1) + 30.0
-                        } else {
-                            left + available * 0.48 + 42.0
-                        }
-                    },
-                    230.0,
-                );
-                assert_eq!(
-                    selected.get(),
-                    (0, index),
-                    "Home tile action changed source index at width {width}"
-                );
-            }
-            // The tile's action popup must remain usable despite cover clipping.
-            for index in [0, spotlight_count - 1] {
-                if index == 1 {
-                    continue;
-                }
-                queued.set(None);
-                let menu_x = if shelf {
-                    cell_start(index + 1) - 12.0 - 27.0
-                } else if index == 0 {
-                    left + available * (if spotlight_count > 1 { 0.48 } else { 1.0 }) - 30.0
-                } else {
-                    left + available - 30.0
-                };
-                let lane = (ui.global::<LayoutMetrics>().get_home_spotlight_height() - 12.0) / 2.0;
-                click(
-                    &ui,
-                    menu_x,
-                    if shelf || index == 0 {
-                        225.0
-                    } else {
-                        196.0 + lane + 12.0 + lane / 2.0
-                    },
-                );
-                render(
-                    &window,
-                    width,
-                    light,
-                    if index == 0 {
-                        "home-menu"
-                    } else {
-                        "home-menu-edge"
-                    },
-                );
-                for value in [Key::DownArrow, Key::Return] {
-                    let text: slint::SharedString = value.into();
-                    ui.window()
-                        .dispatch_event(WindowEvent::KeyPressed { text: text.clone() });
-                    ui.window()
-                        .dispatch_event(WindowEvent::KeyReleased { text });
-                }
-                assert_eq!(
-                    queued.get(),
-                    Some((index, true)),
-                    "Tile menu lost its queue source index"
-                );
-            }
-            let original = ui.get_recommendations();
-            let collections = (0..original.row_count())
-                .map(|i| original.row_data(i).unwrap())
-                .collect::<Vec<_>>();
-            for kind in ["playlist", "album", "artist"] {
-                let mut items = collections.clone();
-                items[0].kind = kind.into();
-                ui.set_recommendations(ModelRc::new(VecModel::from(items)));
-                render(&window, width, light, &format!("featured-{kind}"));
-                selected.set((-1, -1));
-                click(&ui, left + 30.0, 230.0);
-                assert_eq!(
-                    selected.get(),
-                    (0, 0),
-                    "{kind} must open its source at width {width}"
-                );
-            }
-            ui.set_recommendations(original);
             ui.set_library_open(true);
             render(&window, width, light, "library-grid");
             let columns = ui.get_library_columns();

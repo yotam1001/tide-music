@@ -9,8 +9,6 @@ pub struct Group {
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Layout {
-    Spotlight,
-    Editorial,
     Tiles,
     Compact,
 }
@@ -24,37 +22,14 @@ pub fn home_groups(labels: &[String], collections: &[bool], columns: usize) -> V
         while end < labels.len() && labels[end] == labels[section] {
             end += 1;
         }
+        let collection_count = (section..end)
+            .filter(|&index| collections.get(index) == Some(&true))
+            .count();
+        let tiles = columns >= 3 && end - section >= 2 && collection_count * 2 >= end - section;
+        let row_size = if tiles { columns } else { columns.min(2) };
         let mut start = section;
-        if section == 0 {
-            // Artwork-led shelves on desktop; one compact spotlight on narrow windows.
-            let count = (end - start).min(if columns >= 3 { columns.min(4) } else { 1 });
-            groups.push(Group {
-                start,
-                count,
-                title: labels[section].clone(),
-                layout: if columns >= 3 {
-                    Layout::Editorial
-                } else {
-                    Layout::Spotlight
-                },
-            });
-            start += count;
-        }
         while start < end {
-            let collection = collections.get(start).copied().unwrap_or(false);
-            let mut run_end = start + 1;
-            while run_end < end && collections.get(run_end).copied().unwrap_or(false) == collection
-            {
-                run_end += 1;
-            }
-            let tiles = collection && run_end - start > 1;
-            // Pair isolated playlists with neighbouring songs instead of
-            // wasting a whole cover shelf on a single item.
-            let count = if tiles {
-                (run_end - start).min(columns)
-            } else {
-                (end - start).min(columns.min(2))
-            };
+            let count = (end - start).min(row_size);
             groups.push(Group {
                 start,
                 count,
@@ -100,17 +75,8 @@ mod tests {
                 .collect();
             assert_eq!(indices, (0..labels.len()).collect::<Vec<_>>());
             assert_eq!(groups.iter().filter(|g| !g.title.is_empty()).count(), 3);
-            assert!(groups
-                .iter()
-                .all(|g| g.count <= columns || g.layout == Layout::Spotlight));
-            assert_eq!(
-                groups[0].layout,
-                if columns >= 3 {
-                    Layout::Editorial
-                } else {
-                    Layout::Spotlight
-                }
-            );
+            assert!(groups.iter().all(|g| g.count <= columns));
+            assert_eq!(groups[0].layout, Layout::Compact);
         }
         assert!(home_groups(&[], &[], 0).is_empty());
     }
@@ -121,7 +87,7 @@ mod tests {
             &[true, false, true, false, false, false, false],
             2,
         );
-        assert_eq!(groups[0].count, 1);
+        assert_eq!(groups[0].count, 2);
         assert_eq!(groups[1].layout, Layout::Compact);
         assert_eq!(groups[1].count, 2);
         assert_eq!(

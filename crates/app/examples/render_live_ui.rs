@@ -203,8 +203,6 @@ fn run() -> Result<(), String> {
                     count: group.count as i32,
                     title: group.title.into(),
                     layout: match group.layout {
-                        browse_layout::Layout::Spotlight => "spotlight",
-                        browse_layout::Layout::Editorial => "editorial",
                         browse_layout::Layout::Tiles => "tiles",
                         browse_layout::Layout::Compact => "compact",
                     }
