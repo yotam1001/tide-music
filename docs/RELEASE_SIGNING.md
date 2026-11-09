@@ -27,6 +27,12 @@ outside the protection offered against a release-account-only compromise.
    browser packages and fresh-clone privacy scan. Download the tested artifacts.
 2. Independently inspect the installer payload, version and source correspondence.
    Do not automatically sign whatever the latest CI job supplies.
+   When a trusted Windows code-signing certificate is available, sign the
+   final setup EXE with [SignTool](https://learn.microsoft.com/en-us/windows/win32/seccrypto/signtool)
+   using SHA-256 and an RFC 3161 timestamp. Verify it with `signtool verify /pa`
+   before signing the Tide update manifest, which covers the exact installer bytes.
+   For an antivirus detection, submit the exact affected file through the
+   [Microsoft software developer submission portal](https://www.microsoft.com/en-us/wdsi/filesubmission/?persona=SoftwareDeveloper).
 3. On the signing PC, install `cryptography` for this maintainer tool if necessary,
    then run:
 

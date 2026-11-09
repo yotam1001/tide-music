@@ -144,6 +144,32 @@ pub fn app_light_theme() -> Option<bool> {
     taskbar::app_light_theme()
 }
 
+/// Read Windows Accessibility's animation preference once at startup.
+pub fn client_animations_enabled() -> bool {
+    #[cfg(windows)]
+    {
+        use windows::Win32::UI::WindowsAndMessaging::{
+            SystemParametersInfoW, SPI_GETCLIENTAREAANIMATION, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
+        };
+        let mut enabled = windows::core::BOOL::default();
+        // SPI_GETCLIENTAREAANIMATION writes one Win32 BOOL to this pointer.
+        unsafe {
+            SystemParametersInfoW(
+                SPI_GETCLIENTAREAANIMATION,
+                0,
+                Some((&mut enabled as *mut windows::core::BOOL).cast()),
+                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+            )
+        }
+        .is_ok()
+            && enabled.as_bool()
+    }
+    #[cfg(not(windows))]
+    {
+        true
+    }
+}
+
 #[cfg(windows)]
 pub fn start(
     hwnd: *mut c_void,

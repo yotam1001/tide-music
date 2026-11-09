@@ -134,7 +134,13 @@ impl Session {
                         host(&worker_state, &endpoint, None, None, timeline, true)
                     }
                     Start::GuestCode { code } => {
-                        Invite::from_code(&code).and_then(|invite| follow(&worker_state, invite))
+                        let short = Zeroizing::new(code.trim().to_ascii_uppercase());
+                        if valid_short_code(&short) {
+                            follow_code(&worker_state, &short)
+                        } else {
+                            Invite::from_code(&code)
+                                .and_then(|invite| follow(&worker_state, invite))
+                        }
                     }
                 };
                 if let Err(message) = result {
@@ -358,7 +364,7 @@ fn host(
     if let Some(path) = path {
         write_invite(path, &invitation)?;
     }
-    let mut invite_code = invitation.to_code()?;
+    let mut invite_code = display_invite(&client, &room.room.host, &invitation)?;
     let mut sampled = Instant::now();
     let mut revision = 0u64;
     let mut failures = 0;
@@ -391,7 +397,7 @@ fn host(
             match result {
                 Ok(Some(token)) => {
                     invitation.invite = token;
-                    invite_code = invitation.to_code()?;
+                    invite_code = display_invite(&client, &room.room.host, &invitation)?;
                 }
                 Ok(None) => {}
                 Err(_) => {
@@ -485,6 +491,38 @@ fn guest(shared: &Shared, path: &Path) -> Result<(), &'static str> {
     drop(bytes);
     follow(shared, invite)
 }
+fn display_invite(
+    client: &Client,
+    host: &Secret,
+    invite: &Invite,
+) -> Result<Zeroizing<String>, &'static str> {
+    if invite.endpoint == SHARED_RELAY {
+        if let Ok(code) = client.room_code(&invite.room, host) {
+            return Ok(Zeroizing::new(code));
+        }
+    }
+    invite.to_code()
+}
+
+fn follow_code(shared: &Shared, code: &str) -> Result<(), &'static str> {
+    let client = Client::new(SHARED_RELAY).map_err(|_| "Shared Jam relay unavailable")?;
+    if shared.stopped() || !wake_relay(shared, &client)? {
+        return Ok(());
+    }
+    let joined = client.join_code(code).map_err(|error| match error {
+        Error::Limited => "Too many join attempts. Wait a minute and try again.",
+        _ => "Cannot join Jam. Check the code and ask the host if the room is open.",
+    })?;
+    follow_membership(
+        shared,
+        Membership {
+            client: &client,
+            room: joined.room,
+            token: joined.member,
+        },
+    )
+}
+
 fn follow(shared: &Shared, invite: Invite) -> Result<(), &'static str> {
     let client = Client::new(&invite.endpoint)
         .map_err(|_| "Invite requires a canonical HTTPS relay or literal loopback address")?;
@@ -502,6 +540,11 @@ fn follow(shared: &Shared, invite: Invite) -> Result<(), &'static str> {
         room: invite.room,
         token: joined.member,
     };
+    follow_membership(shared, membership)
+}
+
+fn follow_membership(shared: &Shared, membership: Membership<'_>) -> Result<(), &'static str> {
+    let client = membership.client;
     let listener = client.listener_id(&membership.room, &membership.token).ok();
     let mut failures = 0;
     while !shared.stopped() {

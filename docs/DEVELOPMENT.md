@@ -22,10 +22,9 @@ Python prerequisite. Installed users get a private helper runtime through setup.
 See [advanced account setup](ACCOUNT_SETUP_ADVANCED.md).
 
 Use `scripts/cargo-local.ps1` for local compilation, tests and Clippy. It checks
-the selected output folder before and after a build: existing output over 8 GiB
-or free disk space below 5 GiB stops further work. It does not delete files or
-enforce a live filesystem quota; one build can cross the threshold. Dev/test
-profiles disable incremental snapshots and limit debug symbols. Prefer hosted
+the output drive for 5 GiB of free space before and after a build. Clear the
+current checkout's generated Cargo output after validation when no longer needed.
+Dev/test profiles disable incremental snapshots and limit debug symbols. Prefer hosted
 CI for full workspace and installer builds.
 
 ## Checks

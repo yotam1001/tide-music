@@ -4,10 +4,22 @@ use std::time::{Duration, Instant};
 #[derive(Default)]
 pub(crate) struct RadioRequests {
     generation: Option<u64>,
-    attempts: u8,
-    retry_at: Option<Instant>,
-    complete: bool,
-    filled: bool,
+    phase: Phase,
+}
+
+#[derive(Default)]
+enum Phase {
+    #[default]
+    Idle,
+    Fetching {
+        attempt: u8,
+    },
+    Waiting {
+        attempt: u8,
+        retry_at: Instant,
+    },
+    Filled,
+    Exhausted,
 }
 
 impl RadioRequests {
@@ -17,38 +29,49 @@ impl RadioRequests {
 
     pub(crate) fn ready(&self, generation: u64, now: Instant) -> bool {
         self.generation != Some(generation)
-            || (!self.complete && self.attempts < 3 && self.retry_at.is_some_and(|at| now >= at))
+            || matches!(self.phase, Phase::Waiting { retry_at, .. } if now >= retry_at)
     }
 
     pub(crate) fn started(&mut self, generation: u64) {
-        if self.generation != Some(generation) {
-            self.reset();
-            self.generation = Some(generation);
-        }
-        self.attempts += 1;
-        self.retry_at = None;
+        let attempt = if self.generation == Some(generation) {
+            match self.phase {
+                Phase::Fetching { attempt } | Phase::Waiting { attempt, .. } => {
+                    attempt.saturating_add(1)
+                }
+                _ => 1,
+            }
+        } else {
+            1
+        };
+        self.generation = Some(generation);
+        self.phase = Phase::Fetching { attempt };
     }
 
     pub(crate) fn failed(&mut self, now: Instant) -> bool {
-        if self.attempts >= 3 {
-            self.complete = true;
+        let attempt = match self.phase {
+            Phase::Fetching { attempt } | Phase::Waiting { attempt, .. } => attempt,
+            Phase::Exhausted => return false,
+            _ => 0,
+        };
+        if attempt >= 3 {
+            self.phase = Phase::Exhausted;
             return false;
         }
-        self.retry_at = Some(now + Duration::from_secs(10 * u64::from(self.attempts.max(1))));
+        self.phase = Phase::Waiting {
+            attempt,
+            retry_at: now + Duration::from_secs(10 * u64::from(attempt.max(1))),
+        };
         true
     }
 
     pub(crate) fn succeeded(&mut self) {
-        self.complete = true;
-        self.filled = true;
-        self.retry_at = None;
+        self.phase = Phase::Filled;
     }
 
     pub(crate) fn queue_depleted(&mut self, generation: u64) {
-        // Removing upcoming rows can exhaust a previously successful refill
-        // without advancing playback generation. Never reopen failed/exhausted
-        // attempts here: those still need bounded backoff or explicit Retry.
-        if self.generation == Some(generation) && self.complete && self.filled {
+        // Only successful refills may be reopened without a new generation.
+        // Exhausted requests require an explicit retry or a different track.
+        if self.generation == Some(generation) && matches!(self.phase, Phase::Filled) {
             self.reset();
         }
     }
@@ -57,6 +80,29 @@ impl RadioRequests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn queue_edits_reopen_successful_refills_but_preserve_failure_backoff() {
+        let now = Instant::now();
+        let mut requests = RadioRequests::default();
+        requests.started(7);
+        requests.failed(now);
+        requests.queue_depleted(7);
+        assert!(!requests.ready(7, now + Duration::from_secs(9)));
+        requests.started(7);
+        requests.failed(now);
+        requests.started(7);
+        assert!(!requests.failed(now));
+        requests.queue_depleted(7);
+        assert!(!requests.ready(7, now + Duration::from_secs(3600)));
+        requests.reset();
+        requests.started(7);
+        requests.succeeded();
+        requests.queue_depleted(8);
+        assert!(!requests.ready(7, now));
+        requests.queue_depleted(7);
+        assert!(requests.ready(7, now));
+    }
 
     #[test]
     fn retries_wait_and_stop_after_three_attempts_but_new_tracks_can_request() {

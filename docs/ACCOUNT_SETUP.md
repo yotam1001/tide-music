@@ -25,13 +25,13 @@ Tide does not capture form fields or log your credentials.
 Follow the [Chrome connection guide](https://github.com/yotam1001/tide-music/blob/main/docs/BROWSER_COMPANION_BETA.md):
 
 1. Load Tide's unpacked companion in Chrome.
-2. Copy its extension ID into **TideSetup.exe → Enable Chrome companion connection**.
+2. Register its local helper through the advanced ZIP setup as the guide describes.
 3. In your signed-in YouTube Music tab, choose **Import selected tab** in the
    companion, then click **Library** in YouTube Music.
 4. Wait for **Session imported**, then open Tide and confirm your account under
    **Account**, beside Settings.
 
-Already installed? Rerun setup to enable the companion. **Use browser companion instead**
+**Use browser companion instead**
 in Tide opens the instructions; the explicit Chrome import completes connection.
 **Check local connection** checks the helper, not your Google sign-in.
 

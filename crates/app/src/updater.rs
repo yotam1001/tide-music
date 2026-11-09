@@ -551,15 +551,33 @@ enum Completion {
     Checked(Result<(Option<Release>, Option<PathBuf>), String>),
     Downloaded(Result<PathBuf, String>),
 }
+// A single operation owns its channel or process and cancellation state.
+// Available/ready artifacts survive operation failures so Retry stays usable.
+#[derive(Default)]
+enum Task {
+    #[default]
+    Idle,
+    Checking(mpsc::Receiver<Completion>),
+    Downloading {
+        receiver: mpsc::Receiver<Completion>,
+        transfer: Arc<Transfer>,
+    },
+    Preparing(handoff::Pending),
+}
+
+impl Task {
+    fn busy(&self) -> bool {
+        !matches!(self, Self::Idle)
+    }
+}
+
 pub(super) struct Updater {
     timer: slint::Timer,
-    receiver: Option<mpsc::Receiver<Completion>>,
     available: Option<Release>,
     base: Option<PathBuf>,
     executable: Option<PathBuf>,
-    transfer: Option<Arc<Transfer>>,
     ready: Option<PathBuf>,
-    handoff: Option<handoff::Pending>,
+    task: Task,
 }
 impl Updater {
     fn installable(&self) -> bool {
@@ -585,7 +603,7 @@ impl Updater {
     fn start(owner: &Rc<RefCell<Self>>, ui: &super::AppWindow, install: bool) {
         let mut state = owner.borrow_mut();
         state.refresh_installability(ui);
-        if state.receiver.is_some() || state.handoff.is_some() {
+        if state.task.busy() {
             return;
         }
         let (sender, receiver) = mpsc::channel();
@@ -620,8 +638,11 @@ impl Updater {
             ui.set_update_status("Could not start the update check".into());
             return;
         }
-        state.receiver = Some(receiver);
-        state.transfer = install.then_some(transfer);
+        state.task = if install {
+            Task::Downloading { receiver, transfer }
+        } else {
+            Task::Checking(receiver)
+        };
         if install {
             state.ready = None;
             ui.set_update_phase(1);
@@ -649,47 +670,57 @@ impl Updater {
         );
     }
     fn poll(&mut self, ui: &super::AppWindow) {
-        if let Some(pending) = &mut self.handoff {
-            if let Some(result) = pending.poll() {
-                self.handoff = None;
+        let task = std::mem::take(&mut self.task);
+        let (receiver, transfer) = match task {
+            Task::Idle => {
                 self.timer.stop();
-                ui.set_update_busy(false);
-                ui.set_update_phase(2);
-                match result {
-                    Ok(()) => {
-                        ui.set_update_status("Setup is ready. Restarting Tide…".into());
-                        let _ = slint::quit_event_loop();
-                    }
-                    Err(message) => self.restart_failed(
-                        ui,
-                        LaunchFailure {
-                            message,
-                            keep_ready: true,
-                        },
-                    ),
-                }
+                return;
             }
-            return;
-        }
-        if let Some(transfer) = &self.transfer {
-            ui.set_update_progress(transfer.percent.load(Ordering::Relaxed) as f32);
-        }
-        let Some(receiver) = self.receiver.as_ref() else {
-            self.timer.stop();
-            return;
+            Task::Preparing(mut pending) => {
+                if let Some(result) = pending.poll() {
+                    self.timer.stop();
+                    ui.set_update_busy(false);
+                    ui.set_update_phase(2);
+                    match result {
+                        Ok(()) => {
+                            ui.set_update_status("Setup is ready. Restarting Tide…".into());
+                            let _ = slint::quit_event_loop();
+                        }
+                        Err(message) => self.restart_failed(
+                            ui,
+                            LaunchFailure {
+                                message,
+                                keep_ready: true,
+                            },
+                        ),
+                    }
+                } else {
+                    self.task = Task::Preparing(pending);
+                }
+                return;
+            }
+            Task::Checking(receiver) => (receiver, None),
+            Task::Downloading { receiver, transfer } => {
+                ui.set_update_progress(transfer.percent.load(Ordering::Relaxed) as f32);
+                (receiver, Some(transfer))
+            }
         };
         let result = match receiver.try_recv() {
             Ok(result) => result,
-            Err(mpsc::TryRecvError::Empty) => return,
-            Err(_) => Completion::Checked(Err("The update task stopped. Try again later.".into())),
+            Err(mpsc::TryRecvError::Empty) => {
+                self.task = match transfer {
+                    Some(transfer) => Task::Downloading { receiver, transfer },
+                    None => Task::Checking(receiver),
+                };
+                return;
+            }
+            Err(mpsc::TryRecvError::Disconnected) => {
+                Completion::Checked(Err("The update task stopped. Try again later.".into()))
+            }
         };
-        self.receiver = None;
         self.timer.stop();
         ui.set_update_busy(false);
-        let canceled = self
-            .transfer
-            .take()
-            .is_some_and(|t| t.canceled.load(Ordering::Relaxed));
+        let canceled = transfer.is_some_and(|t| t.canceled.load(Ordering::Relaxed));
         if canceled {
             self.ready = None;
             ui.set_update_phase(0);
@@ -739,13 +770,11 @@ pub(super) fn wire(ui: &super::AppWindow, enabled: bool) -> Rc<RefCell<Updater>>
     ui.set_update_installable(installable);
     let owner = Rc::new(RefCell::new(Updater {
         timer: slint::Timer::default(),
-        receiver: None,
         available: None,
         base,
         executable,
-        transfer: None,
         ready: None,
-        handoff: None,
+        task: Task::Idle,
     }));
     let state = owner.clone();
     let weak = ui.as_weak();
@@ -764,7 +793,7 @@ pub(super) fn wire(ui: &super::AppWindow, enabled: bool) -> Rc<RefCell<Updater>>
                 ui.set_update_status("Automatic update is unavailable for this copy. Install TideSetup.exe from the latest release.".into());
                 return;
             }
-            if updater.receiver.is_some() || updater.handoff.is_some() {
+            if updater.task.busy() {
                 return;
             }
             if let Some(path) = updater.ready.clone() {
@@ -773,7 +802,7 @@ pub(super) fn wire(ui: &super::AppWindow, enabled: bool) -> Rc<RefCell<Updater>>
                 };
                 match launch(&path, release) {
                     Ok(pending) => {
-                        updater.handoff = Some(pending);
+                        updater.task = Task::Preparing(pending);
                         ui.set_update_busy(true);
                         ui.set_update_phase(4);
                         ui.set_update_status("Preparing setup. Your music continues…".into());
@@ -804,21 +833,28 @@ pub(super) fn wire(ui: &super::AppWindow, enabled: bool) -> Rc<RefCell<Updater>>
     ui.on_cancel_update(move || {
         if let Some(ui) = weak.upgrade() {
             let mut updater = state.borrow_mut();
-            if updater.handoff.take().is_some() {
-                updater.timer.stop();
-                ui.set_update_busy(false);
-                ui.set_update_phase(2);
-                ui.set_update_status(
-                    "Restart canceled. The verified update is ready to retry.".into(),
-                );
-            } else if let Some(transfer) = &updater.transfer {
-                transfer.canceled.store(true, Ordering::Relaxed);
-                ui.set_update_phase(3);
-                ui.set_update_status("Canceling download…".into());
-            } else if updater.ready.take().is_some() {
-                ui.set_update_phase(0);
-                ui.set_update_progress(0.0);
-                ui.set_update_status("Ready to download the update again.".into());
+            match &updater.task {
+                Task::Preparing(_) => {
+                    updater.task = Task::Idle;
+                    updater.timer.stop();
+                    ui.set_update_busy(false);
+                    ui.set_update_phase(2);
+                    ui.set_update_status(
+                        "Restart canceled. The verified update is ready to retry.".into(),
+                    );
+                }
+                Task::Downloading { transfer, .. } => {
+                    transfer.canceled.store(true, Ordering::Relaxed);
+                    ui.set_update_phase(3);
+                    ui.set_update_status("Canceling download…".into());
+                }
+                Task::Idle | Task::Checking(_) => {
+                    if updater.ready.take().is_some() {
+                        ui.set_update_phase(0);
+                        ui.set_update_progress(0.0);
+                        ui.set_update_status("Ready to download the update again.".into());
+                    }
+                }
             }
         }
     });
@@ -1079,18 +1115,25 @@ mod tests {
         let (sender, receiver) = mpsc::channel();
         let mut updater = Updater {
             timer: slint::Timer::default(),
-            receiver: Some(receiver),
             available: Some(release),
             base: Some(base.path().to_owned()),
             executable: None,
-            transfer: Some(Arc::new(Transfer::default())),
             ready: None,
-            handoff: None,
+            task: Task::Downloading {
+                receiver,
+                transfer: Arc::new(Transfer::default()),
+            },
         };
+        updater.poll(&ui);
+        assert!(
+            updater.task.busy(),
+            "A pending poll must keep ownership of its operation"
+        );
         sender
             .send(Completion::Downloaded(Ok(path.clone())))
             .unwrap();
         updater.poll(&ui);
+        assert!(!updater.task.busy());
         assert_eq!(updater.ready.as_ref(), Some(&path));
         assert_eq!(ui.get_update_phase(), 2);
         assert_eq!(ui.get_update_progress(), 100.0);
@@ -1110,14 +1153,13 @@ mod tests {
         );
         assert!(!ui.get_update_busy());
         // A late queued timer callback after cancellation must not panic.
-        updater.receiver = None;
+        updater.task = Task::Idle;
         updater.poll(&ui);
         // No executable was launched: this fixture is deliberately not an EXE.
         let (sender, receiver) = mpsc::channel();
-        updater.receiver = Some(receiver);
         let transfer = Arc::new(Transfer::default());
         transfer.canceled.store(true, Ordering::Relaxed);
-        updater.transfer = Some(transfer);
+        updater.task = Task::Downloading { receiver, transfer };
         sender.send(Completion::Downloaded(Ok(path))).unwrap();
         updater.poll(&ui);
         assert!(updater.ready.is_none());
@@ -1134,13 +1176,11 @@ mod tests {
         fs::write(&executable, b"fixture").unwrap();
         let updater = Updater {
             timer: slint::Timer::default(),
-            receiver: None,
             available: None,
             base: Some(base.path().to_owned()),
             executable: Some(executable),
-            transfer: None,
             ready: None,
-            handoff: None,
+            task: Task::Idle,
         };
         assert!(!updater.installable());
         fs::write(

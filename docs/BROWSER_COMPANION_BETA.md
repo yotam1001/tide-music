@@ -4,7 +4,7 @@ This connects your existing YouTube Music account to Tide without copying reques
 headers. Sign in to Google in Chrome; Tide never asks for your password.
 
 **Preview setup:** the companion is not on the Chrome Web Store yet. You load it
-once from a folder and enable its connection in Tide's installer. Chrome is the
+from a folder and register its local helper using the advanced ZIP setup. Chrome is the
 connection path with a recorded successful import. Broader fresh-user setup
 coverage remains a preview test item; Zen's native connection is unresolved,
 and Edge and Firefox are not recommended paths yet.
@@ -39,18 +39,11 @@ not the ZIP, parent folder or Firefox package.**
 
 Keep the folder in place after loading it. Chrome reads the extension from disk.
 
-## 3. Enable its connection in setup
+## 3. Register the optional helper
 
-1. Close Tide if it is running and finish or cancel pending companion imports.
-2. Open **TideSetup.exe**. Already installed? Run it again; do not uninstall first.
-3. Check **Enable Chrome companion connection (optional)**.
-4. Paste the exact extension ID copied from Chrome into **Extension ID**.
-5. Choose **Install Tide** and wait for setup to finish.
-
-This registers the local helper for your extension and Windows user. It does not
-sign into Google or import your account yet. The checkbox starts off; leaving it
-off on a first install does not enable the connection. Later app updates retain
-the browser choice already recorded by setup.
+Use the matching **tide-windows-preview.zip** and follow the
+[advanced browser setup instructions](INSTALLATION_DETAILS.md#optional-browser-companion).
+Select Chrome and enter the exact extension ID copied in step 2.
 
 Open Tide's Chrome extension popup and select **Check local connection**. Continue
 when it says **The browser can reach Tide's local host**. This checks setup only;
@@ -81,7 +74,7 @@ not guaranteed, and repeated reconnect prompts should be reported as a bug.
 | What you see | What to do |
 | --- | --- |
 | Folder name is invalid / cannot load extension | Extract the ZIP first. Select the folder that contains `manifest.json` directly. |
-| Browser cannot find the local host | Rerun matching Tide setup with its Chrome checkbox enabled and the exact ID currently shown in `chrome://extensions`. Use the same Windows user. |
+| Browser cannot find the local host | Run the advanced ZIP setup with the exact ID shown in `chrome://extensions`. Use the same Windows user. |
 | ID not allowed / invalid reply / host outdated | Check the ID and matching app/companion versions. Retry setup once. Report a persistent conflict rather than editing the registry. |
 | Capture expired / nothing imported | Open Music Home, retry import, close the popup, then click Library promptly. Capture lasts at most two minutes and Chrome can suspend it. |
 | Wrong account or playlists | Select the intended Music identity in Chrome and explicitly import again. Successful import replaces Tide's saved session. |
@@ -92,7 +85,7 @@ not guaranteed, and repeated reconnect prompts should be reported as a bug.
 For an extension update, cancel pending imports, replace the files in the same
 folder with the matching new package, then choose **Reload** on its card at
 `chrome://extensions`. Recheck its ID and **Check local connection**. Moving the
-folder can change the ID; if it changes, rerun setup with the new ID. App updates
+folder can change the ID; if it changes, repeat advanced ZIP setup with the new ID. App updates
 do not update these unpacked extension files automatically.
 
 To remove the saved session, use **Account → Disconnect account** in Tide first.

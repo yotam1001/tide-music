@@ -147,6 +147,7 @@ enum LibraryAction {
     Shuffle,
     Preview {
         title: String,
+        radio_seed: Option<Track>,
     },
     Related {
         generation: u64,
@@ -322,6 +323,16 @@ fn request_library(
     tx: &mpsc::SyncSender<LibraryResult>,
     request: tide_provider::Request,
 ) {
+    request_library_view(s, u, tx, request, None);
+}
+
+fn request_library_view(
+    s: &mut State,
+    u: &AppWindow,
+    tx: &mpsc::SyncSender<LibraryResult>,
+    request: tide_provider::Request,
+    radio_seed: Option<Track>,
+) {
     // Writes use the separate account-bound collection worker. Never put them
     // through browsing's automatic/manual retry machinery.
     if matches!(&request, tide_provider::Request::Feedback { .. }) {
@@ -355,6 +366,10 @@ fn request_library(
         tide_provider::Request::Connect { .. } | tide_provider::Request::SwitchAccount { .. }
     );
     let action = match &request {
+        tide_provider::Request::Radio { .. } if radio_seed.is_some() => LibraryAction::Preview {
+            title: format!("{} Radio", radio_seed.as_ref().unwrap().title),
+            radio_seed,
+        },
         tide_provider::Request::Connect { .. } | tide_provider::Request::SwitchAccount { .. } => {
             LibraryAction::Connect
         }
@@ -365,6 +380,7 @@ fn request_library(
         },
         tide_provider::Request::Playlist { .. } if s.shuffle_request => LibraryAction::Shuffle,
         tide_provider::Request::Playlist { id } => LibraryAction::Preview {
+            radio_seed: None,
             title: s
                 .library_playlists
                 .iter()
@@ -381,9 +397,11 @@ fn request_library(
                 .unwrap_or_else(|| "Playlist".into()),
         },
         tide_provider::Request::Liked => LibraryAction::Preview {
+            radio_seed: None,
             title: "Liked Songs".into(),
         },
         tide_provider::Request::Album { id } => LibraryAction::Preview {
+            radio_seed: None,
             title: s
                 .recommendations
                 .iter()
@@ -395,6 +413,7 @@ fn request_library(
                 .unwrap_or_else(|| "Album".into()),
         },
         tide_provider::Request::Supermix => LibraryAction::Preview {
+            radio_seed: None,
             title: "My Supermix".into(),
         },
         tide_provider::Request::Artist { .. } | tide_provider::Request::Artists { .. } => {
@@ -411,11 +430,12 @@ fn request_library(
         return;
     };
     s.library_cancel.store(false, Ordering::Release);
-    if let LibraryAction::Preview { title } = &action {
+    if let LibraryAction::Preview { title, radio_seed } = &action {
         u.set_detail_navigation(
             match &request {
                 tide_provider::Request::Liked => "liked",
                 tide_provider::Request::Supermix => "supermix",
+                tide_provider::Request::Radio { .. } => "radio",
                 _ => "",
             }
             .into(),
@@ -449,7 +469,14 @@ fn request_library(
         s.artist_origin = None;
         s.artist_album_back = None;
         u.set_detail_is_artist(false);
-        u.set_detail_note("".into());
+        u.set_detail_note(
+            if radio_seed.is_some() {
+                "Preview this mix, then press Play or choose a song to start listening."
+            } else {
+                ""
+            }
+            .into(),
+        );
         s.detail_tracks.clear();
         u.set_detail_title(title.clone().into());
         u.set_detail_artwork_y(0.0);
@@ -466,6 +493,7 @@ fn request_library(
     s.shuffle_request = false;
     let cancel = s.library_cancel.clone();
     let tx = tx.clone();
+    u.set_home_refreshing(matches!(request, tide_provider::Request::Home));
     u.set_account_busy(true);
     u.set_account_status(
         if connecting {
@@ -811,6 +839,7 @@ fn adoption_failed(s: &mut State, u: &AppWindow, saved: Option<tide_provider::Sa
     } else {
         s.rejected_saved_connection = Some(saved);
         u.set_account_busy(false);
+        u.set_home_refreshing(false);
         u.set_account_status(
             "Could not apply the saved connection. Refresh Library to retry.".into(),
         );
@@ -926,6 +955,7 @@ fn adopt_saved_connection(s: &mut State, u: &AppWindow, tx: &mpsc::SyncSender<Li
         }
     }
     u.set_account_busy(false);
+    u.set_home_refreshing(false);
     u.set_account_index(
         saved
             .as_ref()
@@ -1453,6 +1483,7 @@ fn start_tracks(
         s.settings.queue.shuffle_all(seed);
     }
     if play(s, u) {
+        u.set_queue_source("".into());
         u.set_error_message("".into());
         true
     } else {
@@ -1461,6 +1492,19 @@ fn start_tracks(
         false
     }
 }
+fn start_detail_tracks(s: &mut State, u: &AppWindow, index: usize, shuffle: bool) {
+    let tracks = s.detail_tracks.clone();
+    if start_tracks(s, u, tracks, index, shuffle) {
+        let title = u.get_detail_title();
+        let source = if u.get_detail_is_artist() {
+            format!("Artist · {title}")
+        } else {
+            title.to_string()
+        };
+        u.set_queue_source(source.into());
+    }
+}
+
 fn queue_choice(s: &mut State, u: &AppWindow, track: Track, play_next: bool) {
     #[cfg(feature = "experimental-jams")]
     if jam::following(s) {
@@ -1470,7 +1514,11 @@ fn queue_choice(s: &mut State, u: &AppWindow, track: Track, play_next: bool) {
     if !local_controls_allowed(s) {
         return;
     }
+    let was_empty = s.settings.queue.tracks.is_empty();
     if s.settings.queue.insert_manual(track, play_next) {
+        if was_empty {
+            u.set_queue_source("".into());
+        }
         refresh(u, s);
         save(&s.settings);
         u.set_status_text(
@@ -2160,6 +2208,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     let ui = AppWindow::new()?;
+    ui.global::<ControlMotion>()
+        .set_enabled(tide_windows::client_animations_enabled());
     let mut settings: Settings = if jam_ownership_smoke {
         Settings {
             transient: true,
@@ -2704,12 +2754,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let tx = library_tx.clone();
         ui.on_open_supermix(move || {
             if let Some(u) = weak.upgrade() {
-                request_library(
-                    &mut state.borrow_mut(),
-                    &u,
-                    &tx,
-                    tide_provider::Request::Supermix,
-                );
+                let mut s = state.borrow_mut();
+                if s.library_worker.is_some() || s.pending_saved_connection.is_some() {
+                    return;
+                }
+                u.set_jam_open(false);
+                u.set_queue_open(false);
+                request_library(&mut s, &u, &tx, tide_provider::Request::Supermix);
             }
         });
     }
@@ -2719,12 +2770,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let tx = library_tx.clone();
         ui.on_play_liked(move || {
             if let Some(u) = weak.upgrade() {
-                request_library(
-                    &mut state.borrow_mut(),
-                    &u,
-                    &tx,
-                    tide_provider::Request::Liked,
-                );
+                let mut s = state.borrow_mut();
+                if s.library_worker.is_some() || s.pending_saved_connection.is_some() {
+                    return;
+                }
+                u.set_jam_open(false);
+                u.set_queue_open(false);
+                request_library(&mut s, &u, &tx, tide_provider::Request::Liked);
             }
         });
     }
@@ -2822,8 +2874,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             if let Some(u) = weak.upgrade() {
                 let mut s = state.borrow_mut();
-                let tracks = s.detail_tracks.clone();
-                start_tracks(&mut s, &u, tracks, 0, false);
+                start_detail_tracks(&mut s, &u, 0, false);
             }
         });
     }
@@ -2836,8 +2887,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             if let Some(u) = weak.upgrade() {
                 let mut s = state.borrow_mut();
-                let tracks = s.detail_tracks.clone();
-                start_tracks(&mut s, &u, tracks, 0, true);
+                start_detail_tracks(&mut s, &u, 0, true);
             }
         });
     }
@@ -2847,9 +2897,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ui.on_select_detail_track(move |index| {
             if let Some(u) = weak.upgrade() {
                 let mut s = state.borrow_mut();
-                let tracks = s.detail_tracks.clone();
                 if let Ok(index) = usize::try_from(index) {
-                    start_tracks(&mut s, &u, tracks, index, false);
+                    start_detail_tracks(&mut s, &u, index, false);
                 }
             }
         });
@@ -3146,11 +3195,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         );
                         return;
                     }
-                    if start_tracks(&mut s, &u, vec![track], 0, false) {
-                        s.settings.autoplay = true;
-                        u.set_autoplay_enabled(true);
-                        save(&s.settings);
-                        request_radio(&mut s, &u, &tx, true);
+                    let Some(video_id) = source_video_id(&track.source) else {
+                        u.set_status_text(
+                            "Song radio is available for YouTube Music tracks.".into(),
+                        );
+                        return;
+                    };
+                    if !s.account_verified {
+                        u.set_status_text(
+                            "Connect YouTube Music in Account to preview song radio.".into(),
+                        );
+                        return;
+                    }
+                    request_library_view(
+                        &mut s,
+                        &u,
+                        &tx,
+                        tide_provider::Request::Radio { video_id },
+                        Some(track),
+                    );
+                    if u.get_detail_navigation() == "radio" {
+                        u.set_queue_open(false);
                     }
                 }
             }
@@ -3500,6 +3565,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     bind!(on_clear_queue, |s, u| {
         send(&mut s, &u, PlaybackCommand::Stop);
         s.settings.queue = Queue::default();
+        u.set_queue_source("".into());
         s.active_playback = false;
         s.radio_resume_when_ready = false;
         refresh(&u, &s);
@@ -4045,6 +4111,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     last_content_view = Some(content_view);
                 }
                 while let Ok(result) = library_rx.try_recv() {
+                    u.set_home_refreshing(false);
                     if let Some(worker) = s.library_worker.take() {
                         let _ = worker.join();
                     }
@@ -4248,6 +4315,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 );
                                 continue;
                             }
+                            if let LibraryAction::Preview { radio_seed: Some(seed), .. } = &s.library_action {
+                                if u.get_detail_open() && u.get_detail_navigation() == "radio" {
+                                    let seed = seed.clone();
+                                    let mut seen = std::collections::HashSet::from([seed.source.clone()]);
+                                    let mix: Vec<_> = tracks.into_iter()
+                                        .filter(|track| !skip_disliked(&s, track) && seen.insert(track.source.clone()))
+                                        .collect();
+                                    if mix.is_empty() {
+                                        u.set_detail_note("YouTube Music did not return more songs for this radio.".into());
+                                    } else {
+                                        s.detail_tracks = std::iter::once(seed).chain(mix).collect();
+                                    }
+                                    refresh_content_models(&s, &u);
+                                }
+                                continue;
+                            }
                             if matches!(s.library_action, LibraryAction::Preview { .. }) {
                                 let playlist_id = match s.library_request.as_ref() {
                                     Some(tide_provider::Request::Playlist { id }) => Some(id.clone()),
@@ -4386,6 +4469,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         Err(search_results::Failure::Message(message)) => {
                             u.set_search_busy(false);
                             u.set_search_note(message.into());
+                            u.set_search_retryable(true);
                         }
                     }
                 }

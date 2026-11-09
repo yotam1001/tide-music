@@ -150,6 +150,27 @@ impl Client {
         }
         Ok(result)
     }
+    pub fn room_code(&self, room: &str, host: &Secret) -> Result<String, Error> {
+        let result: ShortCode = self.json("GET", &Self::path(room, "/code")?, Some(host), b"")?;
+        if !valid_short_code(&result.code) {
+            return Err(Error::Invalid);
+        }
+        Ok(result.code)
+    }
+
+    pub fn join_code(&self, code: &str) -> Result<CodeJoined, Error> {
+        if !valid_short_code(code) {
+            return Err(Error::Invalid);
+        }
+        let body =
+            serde_json::to_vec(&ShortCode { code: code.into() }).map_err(|_| Error::Invalid)?;
+        let result: CodeJoined = self.json("POST", "/v1/join-code", None, &body)?;
+        if !valid_hex(&result.room, 32) {
+            return Err(Error::Invalid);
+        }
+        Ok(result)
+    }
+
     pub fn join(&self, invite: &Invite) -> Result<Joined, Error> {
         // An invite cannot silently redirect an already selected client.
         let endpoint = Client::new(&invite.endpoint)?;

@@ -1,8 +1,6 @@
 param(
     [Parameter(ValueFromRemainingArguments = $true)][string[]]$CargoArgs,
-    [string]$ToolchainRoot,
-    # Explicit per-invocation choice for a reviewed existing cache; default stays lean.
-    [ValidateRange(1, 64)][int]$BuildBudgetGiB = 8
+    [string]$ToolchainRoot
 )
 $ErrorActionPreference = 'Stop'
 $taskRoot = Split-Path -Parent $PSScriptRoot
@@ -56,14 +54,13 @@ if ($taskBuild) {
         if ([string]::IsNullOrWhiteSpace($taskExplicitTarget)) { throw 'Empty --target-dir' }
         $taskTarget = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($taskExplicitTarget)
     }
-    Assert-TideBuildBudget -TargetDirectory $taskTarget -MaximumBytes ([long]$BuildBudgetGiB * 1GB)
+    Assert-TideBuildBudget -TargetDirectory $taskTarget
     $env:CARGO_INCREMENTAL = '0'
 }
 & $taskCargo @CargoArgs
 $taskResult = $LASTEXITCODE
 if ($taskBuild -and $taskResult -eq 0) {
-    # Also catch a successful build that grew past the budget; the next build is
-    # blocked until the developer reviews its generated files.
-    Assert-TideBuildBudget -TargetDirectory $taskTarget -MaximumBytes ([long]$BuildBudgetGiB * 1GB)
+    # Warn through the same check if compilation used the free-space reserve.
+    Assert-TideBuildBudget -TargetDirectory $taskTarget
 }
 exit $taskResult

@@ -187,6 +187,25 @@ pub struct Invite {
     pub invite: Secret,
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ShortCode {
+    pub code: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CodeJoined {
+    pub room: String,
+    pub member: Secret,
+}
+
+pub fn valid_short_code(code: &str) -> bool {
+    code.len() == 4 && code.bytes().all(|byte| byte.is_ascii_uppercase())
+}
+
+pub const SHARED_RELAY: &str = "https://tide-jam-trial.onrender.com";
+
 /// Text-only invitation. Contains only the guest capability, never host/operator
 /// authority or account credentials. Bounded before decoding or allocating JSON.
 impl Invite {

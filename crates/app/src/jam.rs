@@ -21,6 +21,8 @@ pub struct Jam {
     began: Option<Instant>,
     accepted_request: u64,
     accepted_skip: u64,
+    title_lookup: Option<mpsc::Receiver<(String, Option<String>)>>,
+    title_attempts: std::collections::HashSet<String>,
 }
 pub fn following(s: &State) -> bool {
     s.jam.guest
@@ -334,6 +336,8 @@ pub fn leave(s: &mut State, u: &AppWindow, message: &str) {
     }
     s.jam.follower = None;
     s.jam.view = None;
+    s.jam.title_lookup = None;
+    s.jam.title_attempts.clear();
     s.jam.began = None;
     s.jam.terminal = false;
     s.jam.connected = false;
@@ -357,7 +361,7 @@ pub fn account_changing(s: &mut State, u: &AppWindow) {
 }
 pub fn install(state: &Rc<RefCell<State>>, ui: &AppWindow, picker: &Rc<PickerState>) {
     ui.set_jam_available(true);
-    ui.set_jam_endpoint("https://tide-jam-trial.onrender.com".into());
+    ui.set_jam_endpoint(SHARED_RELAY.into());
     ui.set_jam_status("Listen together with friends".into());
     {
         let state = state.clone();
@@ -548,9 +552,13 @@ fn install_code_controls(state: &Rc<RefCell<State>>, ui: &AppWindow, picker: &Rc
                 }
             } else {
                 let text = zeroize::Zeroizing::new(u.get_jam_code_input().to_string());
-                if let Err(error) = Invite::from_code(&text) {
-                    u.set_jam_status(error.into());
-                    return;
+                let short = text.trim().len() == 4
+                    && text.trim().bytes().all(|byte| byte.is_ascii_alphabetic());
+                if !short {
+                    if let Err(error) = Invite::from_code(&text) {
+                        u.set_jam_status(error.into());
+                        return;
+                    }
                 }
                 Start::GuestCode { code: text }
             };
@@ -684,7 +692,109 @@ fn guest_update(
         status,
     })
 }
+// Resolve titles independently of playback and library requests. The relay
+// continues to share video IDs only. A guest asks YouTube for public metadata.
+fn refresh_guest_titles(s: &mut State, u: &AppWindow) {
+    if !s.jam.guest || !s.jam.connected || s.jam.terminal {
+        return;
+    }
+    if let Some(lookup) = &s.jam.title_lookup {
+        match lookup.try_recv() {
+            Ok((source, Some(title))) => {
+                let mut changed = false;
+                for track in &mut s.settings.queue.tracks {
+                    if track.source == source && track.title.starts_with("YouTube track · ") {
+                        track.title.clone_from(&title);
+                        changed = true;
+                    }
+                }
+                if changed {
+                    refresh(u, s);
+                }
+            }
+            Ok((_, None)) | Err(mpsc::TryRecvError::Disconnected) => {}
+            Err(mpsc::TryRecvError::Empty) => return,
+        }
+        s.jam.title_lookup = None;
+    }
+    if s.jam.title_attempts.len() >= 128 {
+        let upcoming: std::collections::HashSet<_> = s
+            .settings
+            .queue
+            .tracks
+            .iter()
+            .skip(s.settings.queue.current.unwrap_or(0))
+            .take(6)
+            .map(|track| track.source.as_str())
+            .collect();
+        s.jam
+            .title_attempts
+            .retain(|source| upcoming.contains(source.as_str()));
+    }
+    let Some(track) = s
+        .settings
+        .queue
+        .tracks
+        .iter()
+        .skip(s.settings.queue.current.unwrap_or(0))
+        .take(6)
+        .find(|track| {
+            track.title.starts_with("YouTube track · ")
+                && !s.jam.title_attempts.contains(&track.source)
+        })
+    else {
+        return;
+    };
+    let Some(video) = source_video_id(&track.source).and_then(|id| VideoId::parse(&id).ok()) else {
+        return;
+    };
+    let source = video.playback_url();
+    s.jam.title_attempts.insert(source.clone());
+    let (send, receive) = mpsc::sync_channel(1);
+    if std::thread::Builder::new()
+        .name("tide-jam-title".into())
+        .spawn(move || {
+            let title = public_video_title(&source);
+            let _ = send.send((source, title));
+        })
+        .is_ok()
+    {
+        s.jam.title_lookup = Some(receive);
+    }
+}
+
+fn public_video_title(source: &str) -> Option<String> {
+    let mut url = url::Url::parse("https://www.youtube.com/oembed").ok()?;
+    url.query_pairs_mut()
+        .append_pair("url", source)
+        .append_pair("format", "json");
+    let config = ureq::Agent::config_builder()
+        .https_only(true)
+        .max_redirects(0)
+        .timeout_global(Some(Duration::from_secs(3)))
+        .build();
+    let agent: ureq::Agent = config.into();
+    let mut response = agent.get(url.as_str()).call().ok()?;
+    let bytes = response
+        .body_mut()
+        .with_config()
+        .limit(16 * 1024)
+        .read_to_vec()
+        .ok()?;
+    let value: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    let title: String = value
+        .get("title")?
+        .as_str()?
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(300)
+        .collect();
+    let title = title.trim();
+    (!title.is_empty()).then(|| title.to_owned())
+}
+
 pub fn tick(s: &mut State, u: &AppWindow, tx: &mpsc::SyncSender<LibraryResult>) {
+    refresh_guest_titles(s, u);
     if let Some(notice) = s.jam.session.as_ref().and_then(Session::take_notice) {
         u.set_jam_queue_notice(notice.into());
     }
