@@ -55,6 +55,8 @@ fn filtered_playlist_and_queue_keep_absolute_indices_and_audio_has_its_own_page(
     let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
     slint::platform::set_platform(Box::new(Platform(window.clone()))).unwrap();
     let ui = AppWindow::new().unwrap();
+    // Search editing belongs to the connected-player fixture.
+    ui.set_account_connected(true);
     let rows = ModelRc::new(VecModel::from(
         (0..4)
             .map(|i| TrackRow {
