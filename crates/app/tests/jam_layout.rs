@@ -202,6 +202,7 @@ fn guest_mini_keeps_leave_and_volume_reachable_and_blocks_transport() {
         "Jam page changed the base canvas instead of using the native player surface"
     );
     ui.set_jam_open(false);
+    ui.set_account_connected(true);
     ui.set_source_input("".into());
     draw(&window, 1140, 800);
     click(&ui, 300.0, 32.0);
@@ -214,6 +215,26 @@ fn guest_mini_keeps_leave_and_volume_reachable_and_blocks_transport() {
         "a",
         "guest cannot use Search"
     );
+    let destination = Rc::new(std::cell::Cell::new(""));
+    let selected = destination.clone();
+    ui.on_play_liked(move || selected.set("liked"));
+    let selected = destination.clone();
+    ui.on_open_supermix(move || selected.set("supermix"));
+    ui.set_jam_open(true);
+    draw(&window, 1140, 800);
+    click(&ui, 44.0, 346.0);
+    assert_eq!(
+        destination.get(),
+        "liked",
+        "Jam blocked the Liked Songs shortcut"
+    );
+    click(&ui, 44.0, 418.0);
+    assert_eq!(
+        destination.get(),
+        "supermix",
+        "Jam blocked the Supermix shortcut"
+    );
+
     ui.set_jam_open(true);
     draw(&window, 780, 720);
     ui.window().dispatch_event(WindowEvent::KeyPressed {

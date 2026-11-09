@@ -122,19 +122,9 @@ namespace TideSetup {
     }
 
     internal sealed class InstallOptions {
-        internal readonly string ExtensionId;
-        internal bool Chrome { get { return ExtensionId != null; } }
-        internal InstallOptions(bool chrome, string extensionId) {
-            if (!chrome) return;
-            var value = (extensionId ?? "").Trim().ToLowerInvariant();
-            if (!Regex.IsMatch(value, "^[a-p]{32}$", RegexOptions.CultureInvariant))
-                throw new ArgumentException("Load Tide's companion in Chrome, then paste its exact 32-letter ID from chrome://extensions. This ID is not a password.");
-            ExtensionId = value;
-        }
         internal string Arguments(string script) {
             return "-NoLogo -NoProfile -ExecutionPolicy Bypass -File \"" + script + "\" -Mode Install"
-                + " -AppVersion " + Payload.AppVersion
-                + (Chrome ? " -Browser Chrome -ChromiumExtensionId " + ExtensionId : "");
+                + " -AppVersion " + Payload.AppVersion;
         }
         internal ProcessStartInfo StartInfo(string script, bool preflight = false, bool closePlayers = false) {
             if (preflight && closePlayers) throw new ArgumentException("Read-only preflight cannot close player windows.");
@@ -229,16 +219,12 @@ namespace TideSetup {
         readonly Button action = new Button(), close = new Button(), connect = new Button();
         readonly ProgressBar progress = new ProgressBar();
         readonly TextBox errorDetails = new TextBox();
-        readonly CheckBox chrome = new CheckBox();
-        readonly Label extensionLabel = new Label();
-        readonly TextBox extensionId = new TextBox();
-        readonly Button guide = new Button();
         readonly BackgroundWorker worker = new BackgroundWorker();
         readonly bool preview;
         readonly UpdateOptions update;
         bool busy, completed, updateStarted, revealUpdateError;
         string installed;
-        InstallOptions options;
+        readonly InstallOptions options = new InstallOptions();
         // Layout previews must not take keyboard focus from a running game.
         protected override bool ShowWithoutActivation { get { return preview || update != null; } }
         protected override void SetVisibleCore(bool value) {
@@ -263,7 +249,7 @@ namespace TideSetup {
         internal SetupWindow(bool demo, UpdateOptions handoff = null) {
             update = handoff;
             if (update != null) ShowInTaskbar = false;
-            preview = demo; Text = "Tide Setup"; ClientSize = new Size(580, 510); MinimumSize = Size; MaximumSize = Size;
+            preview = demo; Text = "Tide Setup"; ClientSize = new Size(580, 350); MinimumSize = Size; MaximumSize = Size;
             StartPosition = FormStartPosition.CenterScreen; MaximizeBox = false; AutoScaleMode = AutoScaleMode.Dpi;
             BackColor = Color.FromArgb(247, 242, 236); ForeColor = Color.FromArgb(51, 43, 47); Font = new Font("Segoe UI", 10);
             Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application;
@@ -273,31 +259,19 @@ namespace TideSetup {
             description.SetBounds(30, 132, 520, 84);
             errorDetails.SetBounds(30, 164, 520, 54); errorDetails.Multiline = true; errorDetails.ReadOnly = true;
             errorDetails.ScrollBars = ScrollBars.Vertical; errorDetails.Visible = false; errorDetails.BackColor = BackColor;
-            chrome.SetBounds(30, 225, 520, 28); chrome.Text = "Enable Chrome companion connection (optional)";
-            chrome.Name = "chromeConnection"; chrome.TabIndex = 0;
-            extensionLabel.SetBounds(30, 258, 520, 22); extensionLabel.Text = "Extension ID from chrome://extensions (not a password)"; extensionLabel.Enabled = false;
-            extensionId.SetBounds(30, 284, 520, 28); extensionId.MaxLength = 64; extensionId.Enabled = false;
-            extensionId.Name = "chromeExtensionId"; extensionId.AccessibleName = "Chrome extension ID"; extensionId.TabIndex = 1;
-            chrome.CheckedChanged += delegate { extensionId.Enabled = chrome.Checked; extensionLabel.Enabled = chrome.Checked; };
-            guide.SetBounds(30, 326, 280, 32); guide.Text = "Chrome extension setup guide"; guide.FlatStyle = FlatStyle.Flat;
-            guide.TabIndex = 2;
-            guide.Click += delegate {
-                try { Process.Start(new ProcessStartInfo { FileName = "https://github.com/yotam1001/tide-music/blob/main/docs/BROWSER_COMPANION_BETA.md", UseShellExecute = true }); }
-                catch (Exception) { MessageBox.Show(this, "Open Tide's GitHub repository and read docs/BROWSER_COMPANION_BETA.md.", "Tide Setup"); }
-            };
-            status.SetBounds(30, 380, 520, 30); status.Font = new Font("Segoe UI", 9);
-            progress.SetBounds(30, 414, 520, 10); progress.Visible = false;
-            action.SetBounds(350, 450, 200, 36); action.FlatStyle = FlatStyle.Flat; action.FlatAppearance.BorderSize = 0;
+            status.SetBounds(30, 234, 520, 32); status.Font = new Font("Segoe UI", 9);
+            progress.SetBounds(30, 268, 520, 10); progress.Visible = false;
+            action.SetBounds(350, 292, 200, 36); action.FlatStyle = FlatStyle.Flat; action.FlatAppearance.BorderSize = 0;
             action.BackColor = Color.FromArgb(139, 36, 63); action.ForeColor = Color.White;
-            action.TabIndex = 3;
-            close.SetBounds(30, 450, 110, 36); close.Text = "Close"; close.FlatStyle = FlatStyle.Flat;
-            close.TabIndex = 5;
-            connect.SetBounds(150, 450, 190, 36); connect.Text = "Connect YouTube Music"; connect.FlatStyle = FlatStyle.Flat; connect.Visible = false;
-            connect.TabIndex = 4;
+            action.TabIndex = 0;
+            close.SetBounds(30, 292, 110, 36); close.Text = "Close"; close.FlatStyle = FlatStyle.Flat;
+            close.TabIndex = 2;
+            connect.SetBounds(150, 292, 190, 36); connect.Text = "Connect YouTube Music"; connect.FlatStyle = FlatStyle.Flat; connect.Visible = false;
+            connect.TabIndex = 1;
             connect.Click += delegate { OpenTide(true); };
-            Controls.AddRange(new Control[] { brand, logo, heading, description, status, progress, action, close, connect, errorDetails, chrome, extensionLabel, extensionId, guide });
+            Controls.AddRange(new Control[] { brand, logo, heading, description, status, progress, action, close, connect, errorDetails });
             heading.Text = "Music ready for your next game";
-            description.Text = "Install Tide and its private playback tools. No administrator access needed.\n\nFor Chrome login, load the companion from the guide, then enable its connection below. Existing accounts are kept on update.";
+            description.Text = "Install Tide and its playback tools for your Windows account. No administrator access is needed.\n\nYour existing account and preferences stay in place when updating.";
             status.Text = preview ? "Installer preview · no changes will be made" : "Windows x64 · internet required · unsigned preview";
             action.Text = "Install Tide"; action.Click += delegate { if (completed) OpenTide(false); else Install(); };
             close.Click += delegate { Close(); };
@@ -306,24 +280,21 @@ namespace TideSetup {
             worker.ProgressChanged += delegate(object sender, ProgressChangedEventArgs args) { progress.Style = ProgressBarStyle.Continuous; progress.Value = Math.Max(0, Math.Min(100, args.ProgressPercentage)); status.Text = (string)args.UserState; };
             worker.DoWork += RunInstall;
             worker.RunWorkerCompleted += delegate(object sender, RunWorkerCompletedEventArgs args) {
-                busy = false; action.Enabled = true; close.Enabled = true; guide.Enabled = true;
+                busy = false; action.Enabled = true; close.Enabled = true;
                 if (args.Error != null) {
                     if (args.Error is OperationCanceledException) { Close(); return; }
                     if (update != null && update.ReportPreflightFailure(args.Error)) { Close(); return; }
                     RevealUpdateError();
                     heading.Text = "Setup couldn't finish"; status.Text = "Your saved account and preferences were not removed.";
                     description.Text = "Close Tide if it is running, check your connection, then try again.";
-                    description.Height = 28; chrome.Visible = true; chrome.Enabled = true;
-                    extensionLabel.Visible = true; extensionId.Visible = true; extensionId.Enabled = chrome.Checked;
+                    description.Height = 28;
                     errorDetails.Text = args.Error.Message; errorDetails.Visible = true; errorDetails.BringToFront();
                     action.Text = "Try again"; progress.Visible = false;
                 } else {
                     completed = true; installed = (string)args.Result; progress.Value = 100; heading.Text = "Tide is ready";
                     status.Text = preview ? "Preview only · nothing was installed or registered" : "Find Tide in Start. Remove it through Windows Settings → Apps.";
-                    description.Height = 180;
-                    description.Text = options.Chrome
-                        ? "Chrome's local helper is registered for the extension ID you supplied.\n\nIn Chrome, open YouTube Music and select your account. In Tide's extension, choose Check local connection, then Import selected tab. Click Library in YouTube Music to finish the import.\n\nOpen Tide to use your library. Never share session headers in chat."
-                        : "Open Tide to start listening. Existing account connections are preserved.\n\nFor a new Chrome connection, follow the guide, load Tide's extension, then run this installer again with Enable Chrome companion connection selected.\n\nConnect YouTube Music opens Account in Tide. Firefox/Zen automatic connection and public extension-store distribution remain unavailable.";
+                    description.Height = 84;
+                    description.Text = "Open Tide to start listening. To connect a YouTube Music account, choose Connect YouTube Music.";
                     action.Text = "Open Tide"; close.Text = "Finish";
                     connect.Visible = true;
                     if (update != null) OpenTide(false);
@@ -331,12 +302,9 @@ namespace TideSetup {
             };
         }
         void Install() {
-            try { options = new InstallOptions(chrome.Checked, extensionId.Text); }
-            catch (ArgumentException error) { MessageBox.Show(this, error.Message, "Chrome extension ID"); extensionId.Focus(); return; }
             busy = true; action.Enabled = false; close.Enabled = false; progress.Visible = true;
-            guide.Enabled = false; chrome.Visible = false; extensionLabel.Visible = false; extensionId.Visible = false;
             errorDetails.Visible = false;
-            description.Height = 180;
+            description.Height = 84;
             progress.Style = ProgressBarStyle.Marquee; heading.Text = "Installing Tide";
             description.Text = "Setup is checking the application and preparing its private playback tools. Downloads can take a few minutes.\n\nYour saved account and preferences will stay in place.";
             status.Text = "Preparing setup…"; worker.RunWorkerAsync();
@@ -426,7 +394,7 @@ namespace TideSetup {
             }
         }
         internal static int RunUnattended(string root, string version) {
-            var start = new InstallOptions(false, null).StartInfo(Path.Combine(root, "scripts", "install-windows.ps1"));
+            var start = new InstallOptions().StartInfo(Path.Combine(root, "scripts", "install-windows.ps1"));
             start.Arguments = InstallArguments(root, version);
             using (var process = new Process { StartInfo = start }) {
                 process.OutputDataReceived += delegate(object sender, DataReceivedEventArgs line) { if (line.Data != null) Console.Out.WriteLine(line.Data); };

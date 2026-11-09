@@ -76,10 +76,11 @@ pub(super) fn start(s: &mut State, ui: &AppWindow, tx: &Sender, query: String, i
     let Some(kind) = kind(index) else {
         return;
     };
-    if s.search_worker.is_some() {
+    if s.search_worker.is_some() || !ui.get_account_connected() {
         return;
     }
     ui.set_forward_collection(false);
+    ui.set_search_retryable(false);
     if query.trim().is_empty() || query.len() > 512 || query.chars().any(char::is_control) {
         ui.set_search_open(true);
         ui.set_detail_open(false);
@@ -88,9 +89,13 @@ pub(super) fn start(s: &mut State, ui: &AppWindow, tx: &Sender, query: String, i
     }
     s.search_generation += 1;
     let generation = s.search_generation;
+    let same_search = s.search_query == query && ui.get_search_kind() == index;
     s.search_query = query.clone();
-    s.search_tracks.clear();
-    s.search_cards.clear();
+    if !same_search {
+        s.search_tracks.clear();
+        s.search_cards.clear();
+        ui.set_search_artwork_y(0.0);
+    }
     let cancel = Arc::new(AtomicBool::new(false));
     s.search_cancel = cancel.clone();
     let provider = s
@@ -98,7 +103,6 @@ pub(super) fn start(s: &mut State, ui: &AppWindow, tx: &Sender, query: String, i
         .clone()
         .filter(|_| s.account_verified && s.pending_saved_connection.is_none());
     ui.set_search_kind(index);
-    ui.set_search_artwork_y(0.0);
     ui.set_search_open(true);
     ui.set_detail_open(false);
     ui.set_search_busy(true);
@@ -115,6 +119,7 @@ pub(super) fn invalidate(s: &mut State, ui: &AppWindow) {
     s.search_tracks.clear();
     s.search_cards.clear();
     s.search_query.clear();
+    ui.set_search_retryable(false);
     ui.set_search_busy(false);
     ui.set_search_note("".into());
     ui.set_search_rows(ModelRc::new(VecModel::default()));

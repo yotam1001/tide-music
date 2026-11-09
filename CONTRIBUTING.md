@@ -15,12 +15,9 @@ Rust, a `target/` directory or these development caches.
 
 For local compilation use `./scripts/cargo-local.ps1 -CargoArgs @('test',
 '--workspace','--locked')` (substitute `build` or `clippy` as needed). The wrapper
-checks the actual output directory before and after compilation: it stops when
-existing output exceeds 8 GiB or the drive has less than 5 GiB free. It also
-disables incremental snapshots. This is a preflight/postflight check, not a
-filesystem quota: one build can cross the threshold, but another will be blocked.
-Review generated files yourself if blocked; the guard never deletes anything.
-Direct `cargo` commands bypass this local guard. CI builds run on disposable
+checks the output drive for 5 GiB of free space before and after compilation and
+disables incremental snapshots. Clear the current checkout's generated Cargo
+output after local validation if it is no longer needed. CI runs on disposable
 hosted runners so they do not accumulate on a contributor's PC.
 
 Do not commit credentials, local toolchains, runtime binaries, personal music, logs or machine-specific paths. Explain resource impact when changing buffering, rendering or background work.

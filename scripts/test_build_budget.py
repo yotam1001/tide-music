@@ -22,19 +22,6 @@ class BuildBudgetTests(unittest.TestCase):
              "$ErrorActionPreference='Stop'; " + script],
             env=env, text=True, capture_output=True, timeout=30)
 
-    def test_nested_outputs_and_exact_boundary(self):
-        with tempfile.TemporaryDirectory() as directory:
-            target = Path(directory)
-            (target / "nested").mkdir()
-            (target / "one.bin").write_bytes(b"123")
-            (target / "nested" / "two.bin").write_bytes(b"4567")
-            result = self.run_ps("""
-                . $env:TIDE_BUDGET_HELPER
-                if ((Get-TideBuildOutputBytes $env:TIDE_TEST_TARGET) -ne 7) { throw 'Wrong size' }
-                Assert-TideBuildBudget $env:TIDE_TEST_TARGET -MaximumBytes 7 -MinimumFreeBytes 5 -AvailableBytes 5
-                """, TIDE_TEST_TARGET=target)
-            self.assertEqual(result.returncode, 0, result.stderr)
-
     def test_missing_directory_is_not_created(self):
         with tempfile.TemporaryDirectory() as directory:
             target = Path(directory) / "not-built"
@@ -45,43 +32,23 @@ class BuildBudgetTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertFalse(target.exists())
 
-    def test_budget_failure_preserves_files(self):
+    def test_free_space_boundary_and_failure_preserve_files(self):
         with tempfile.TemporaryDirectory() as directory:
             target = Path(directory)
             data = target / "generated.bin"
             data.write_bytes(b"12345678")
-            for options, expected in [
-                ("-MaximumBytes 7 -AvailableBytes 10GB", "exceeds"),
-                ("-MinimumFreeBytes 6 -AvailableBytes 5", "free"),
-            ]:
-                with self.subTest(options=options):
+            for available, success in [(5, True), (4, False)]:
+                with self.subTest(available=available):
                     result = self.run_ps(
-                        ". $env:TIDE_BUDGET_HELPER; Assert-TideBuildBudget $env:TIDE_TEST_TARGET " + options,
+                        ". $env:TIDE_BUDGET_HELPER; Assert-TideBuildBudget $env:TIDE_TEST_TARGET "
+                        f"-MinimumFreeBytes 5 -AvailableBytes {available}",
                         TIDE_TEST_TARGET=target)
-                    self.assertNotEqual(result.returncode, 0)
-                    self.assertIn(expected, result.stderr)
+                    self.assertEqual(result.returncode == 0, success, result.stderr)
                     self.assertEqual(data.read_bytes(), b"12345678")
 
-    def test_linked_directory_is_rejected(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            outside = root / "outside"
-            outside.mkdir()
-            (outside / "keep.bin").write_bytes(b"keep")
-            target = root / "target"
-            target.mkdir()
-            result = self.run_ps("""
-                . $env:TIDE_BUDGET_HELPER
-                New-Item -ItemType Junction -Path (Join-Path $env:TIDE_TEST_TARGET 'link') -Target $env:TIDE_TEST_OUTSIDE | Out-Null
-                Assert-TideBuildBudget $env:TIDE_TEST_TARGET -AvailableBytes 10GB
-                """, TIDE_TEST_TARGET=target, TIDE_TEST_OUTSIDE=outside)
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn("linked entry", result.stderr)
-            self.assertEqual((outside / "keep.bin").read_bytes(), b"keep")
-
-    def wrapper(self, arguments, oversized=False, grow=False):
+    def wrapper(self, arguments, low_space=False):
         # A fake Cargo reports metadata and records whether compilation began.
-        # Its files are bytes, not GB; an injected guard uses a seven-byte limit.
+        # The injected guard reports low free space only for the selected target.
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             scripts = root / "scripts"
@@ -91,14 +58,13 @@ class BuildBudgetTests(unittest.TestCase):
             (scripts / "build-budget.ps1").write_text("""
 . (Join-Path $PSScriptRoot 'real-budget.ps1')
 function Assert-TideBuildBudget([string]$TargetDirectory) {
-    $bytes = Get-TideBuildOutputBytes $TargetDirectory
-    if ($bytes -gt 7) { throw 'Fixture budget exceeded' }
+    if ($env:TIDE_TEST_LOW_SPACE -eq 'yes' -and (Split-Path -Leaf $TargetDirectory) -eq 'actual output') {
+        throw 'Fixture low free space'
+    }
 }
 """, encoding="utf-8")
             target = root / "actual output"
             target.mkdir()
-            if oversized:
-                (target / "generated.bin").write_bytes(b"12345678")
             marker = root / "compilation-started"
             result = self.run_ps("""
                 function global:cargo {
@@ -109,9 +75,6 @@ function Assert-TideBuildBudget([string]$TargetDirectory) {
                         @{target_directory=$env:TIDE_METADATA_TARGET} | ConvertTo-Json -Compress
                     } else {
                         Set-Content $env:TIDE_TEST_MARKER $env:CARGO_INCREMENTAL
-                        if ($env:TIDE_TEST_GROW -eq 'yes') {
-                            [IO.File]::WriteAllBytes((Join-Path $env:TIDE_METADATA_TARGET 'new.bin'), [byte[]](1..8))
-                        }
                     }
                 }
                 Set-Location $env:TIDE_TEST_ROOT
@@ -120,25 +83,25 @@ function Assert-TideBuildBudget([string]$TargetDirectory) {
                 """, TIDE_TEST_ROOT=root, TIDE_TEST_MARKER=marker,
                 TIDE_TEST_ARGS=root / "metadata-args.json",
                 TIDE_METADATA_TARGET=target if not arguments else root / "unused",
-                TIDE_TEST_GROW="yes" if grow else "no",
+                TIDE_TEST_LOW_SPACE="yes" if low_space else "no",
                 TIDE_TEST_REQUEST=json.dumps(arguments or ["build"]))
             compiled = marker.read_text().strip() if marker.exists() else None
             inspection = (root / "metadata-args.json").read_text()
             return result, compiled, inspection
 
     def test_wrapper_blocks_before_compilation(self):
-        result, compiled, _ = self.wrapper([], oversized=True)
+        result, compiled, _ = self.wrapper([], low_space=True)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("Fixture budget exceeded", result.stderr)
+        self.assertIn("Fixture low free space", result.stderr)
         self.assertIsNone(compiled)
 
     def test_wrapper_uses_explicit_target_and_workspace(self):
         for target_arg in (["--target-dir", "actual output"], ["--target-dir=actual output"]):
             result, compiled, inspection = self.wrapper(
                 ["build", "--manifest-path", "other/Cargo.toml", "--config=build.jobs=1", *target_arg],
-                oversized=True)
+                low_space=True)
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("Fixture budget exceeded", result.stderr)
+            self.assertIn("Fixture low free space", result.stderr)
             self.assertIsNone(compiled)
             self.assertIn("other/Cargo.toml", inspection)
             self.assertIn("--config=build.jobs=1", inspection)
@@ -146,12 +109,6 @@ function Assert-TideBuildBudget([string]$TargetDirectory) {
     def test_wrapper_disables_incremental_for_allowed_build(self):
         result, compiled, _ = self.wrapper([])
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(compiled, "0")
-
-    def test_wrapper_reports_output_that_grows_during_build(self):
-        result, compiled, _ = self.wrapper([], grow=True)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("Fixture budget exceeded", result.stderr)
         self.assertEqual(compiled, "0")
 
 

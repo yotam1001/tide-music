@@ -45,6 +45,7 @@ struct Room {
     peer: Option<u64>,
     host: Secret,
     invite: Secret,
+    short_code: Option<String>,
     born: u64,
     updated: u64,
     timeline: Option<Timeline>,
@@ -58,6 +59,9 @@ pub struct Store {
     rooms: HashMap<String, Room>,
     creates: VecDeque<u64>,
     peer_creates: HashMap<u64, VecDeque<u64>>,
+    code_window: u64,
+    code_attempts: usize,
+    peer_code_attempts: HashMap<u64, usize>,
 }
 impl Store {
     fn clean(&mut self, now: u64) {
@@ -86,6 +90,57 @@ impl Store {
             self.creates.pop_front();
         }
     }
+    fn new_short_code(&self) -> Result<String, Failure> {
+        for _ in 0..16 {
+            let mut random = [0u8; 4];
+            getrandom::fill(&mut random).map_err(|_| internal(""))?;
+            let mut value = u32::from_le_bytes(random);
+            let code: String = (0..4)
+                .map(|_| {
+                    let letter = (b'A' + (value % 26) as u8) as char;
+                    value /= 26;
+                    letter
+                })
+                .collect();
+            if !self
+                .rooms
+                .values()
+                .any(|room| room.short_code.as_deref() == Some(&code))
+            {
+                return Ok(code);
+            }
+        }
+        Err(internal(""))
+    }
+
+    fn join_short(&mut self, code: &str, peer: u64, now: u64) -> Result<CodeJoined, Failure> {
+        if self.code_window != now / 60_000 {
+            self.code_window = now / 60_000;
+            self.code_attempts = 0;
+            self.peer_code_attempts.clear();
+        }
+        if self.code_attempts >= 96 {
+            return Err((StatusCode::TOO_MANY_REQUESTS, "Join code limit reached"));
+        }
+        let attempts = self.peer_code_attempts.entry(peer).or_default();
+        if *attempts >= 6 {
+            return Err((StatusCode::TOO_MANY_REQUESTS, "Join code limit reached"));
+        }
+        *attempts += 1;
+        self.code_attempts += 1;
+        self.clean(now);
+        let (id, room) = self
+            .rooms
+            .iter_mut()
+            .find(|(_, room)| room.short_code.as_deref() == Some(code))
+            .ok_or(MISSING)?;
+        let joined = Self::admit(room, now)?;
+        Ok(CodeJoined {
+            room: id.clone(),
+            member: joined.member,
+        })
+    }
+
     pub fn create(&mut self, now: u64) -> Result<Created, Failure> {
         self.create_inner(None, now)
     }
@@ -127,6 +182,7 @@ impl Store {
             host: Secret::random().map_err(internal)?,
             invite: Secret::random().map_err(internal)?,
         };
+        let short_code = peer.map(|_| self.new_short_code()).transpose()?;
         self.rooms.insert(
             result.room.clone(),
             Room {
@@ -135,6 +191,7 @@ impl Store {
                 peer,
                 host: result.host.clone(),
                 invite: result.invite.clone(),
+                short_code,
                 born: now,
                 updated: now,
                 timeline: None,
@@ -156,6 +213,9 @@ impl Store {
         if !room.invite.matches(invite) {
             return Err(MISSING);
         }
+        Self::admit(room, now)
+    }
+    fn admit(room: &mut Room, now: u64) -> Result<Joined, Failure> {
         if !room.open {
             return Err((StatusCode::CONFLICT, "Room is locked"));
         }
@@ -208,7 +268,11 @@ impl Store {
         now: u64,
     ) -> Result<RotatedInvite, Failure> {
         let room = self.hosted(id, host, now)?;
+        let short_code = room.short_code.is_some();
+        let next_code = short_code.then(|| self.new_short_code()).transpose()?;
+        let room = self.rooms.get_mut(id).ok_or(MISSING)?;
         room.invite = Secret::random().map_err(internal)?;
+        room.short_code = next_code;
         Ok(RotatedInvite {
             invite: room.invite.clone(),
         })
@@ -226,13 +290,17 @@ impl Store {
             .iter()
             .position(|member| member.id == member_id)
             .ok_or(MISSING)?;
+        let short_code = room.short_code.is_some();
+        let next_code = short_code.then(|| self.new_short_code()).transpose()?;
         let replacement = Secret::random().map_err(internal)?;
+        let room = self.rooms.get_mut(id).ok_or(MISSING)?;
         room.members.remove(index);
         room.pending.retain(|p| p.member != member_id);
         if room.skip.as_ref().is_some_and(|(id, _)| *id == member_id) {
             room.skip = None;
         }
         room.invite = replacement;
+        room.short_code = next_code;
         Ok(RotatedInvite {
             invite: room.invite.clone(),
         })
@@ -611,6 +679,39 @@ async fn join(
     let auth = token(&headers)?;
     s.with(|store, now| store.join(&id, &auth, now)).map(Json)
 }
+async fn room_code(
+    State(s): State<Shared>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<ShortCode>, Failure> {
+    checked_id(&id)?;
+    let host = token(&headers)?;
+    s.with(|store, now| {
+        let code = store
+            .hosted(&id, &host, now)?
+            .short_code
+            .clone()
+            .ok_or(MISSING)?;
+        Ok(Json(ShortCode { code }))
+    })
+}
+
+async fn join_code(
+    State(s): State<Shared>,
+    headers: HeaderMap,
+    Json(value): Json<ShortCode>,
+) -> Result<Json<CodeJoined>, Failure> {
+    if !s.shared_relay
+        || headers.contains_key(header::AUTHORIZATION)
+        || !valid_short_code(&value.code)
+    {
+        return Err(MISSING);
+    }
+    let peer = s.peer_hash.hash_one(checked_peer(&headers)?);
+    s.with(|store, now| store.join_short(&value.code, peer, now))
+        .map(Json)
+}
+
 async fn enqueue(
     State(s): State<Shared>,
     Path(id): Path<String>,
@@ -848,6 +949,8 @@ async fn serve_inner(
     };
     let router = Router::new()
         .route("/v1/rooms", post(create))
+        .route("/v1/join-code", post(join_code))
+        .route("/v1/rooms/{id}/code", get(room_code))
         .route("/v1/rooms/{id}/join", post(join))
         .route("/v1/rooms/{id}/requests", get(requests).post(enqueue))
         .route("/v1/rooms/{id}/skip", get(skip_request).post(request_skip))

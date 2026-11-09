@@ -44,22 +44,8 @@ archives, Python license and wheel license metadata remain in the owned release.
 
 ## Optional browser companion
 
-For Chrome, follow the [companion beta guide](BROWSER_COMPANION_BETA.md): load the
-matching Chromium extension in Chrome first, then run **TideSetup.exe** and select
-**Enable Chrome companion connection (optional)**. Paste the **actual extension ID
-displayed by Chrome** into the ID field before choosing **Install Tide**. This
-option starts unchecked and registers the local helper only when explicitly
-selected. It accepts exactly 32 lowercase letters `a` through `p`; it never
-guesses an ID or grants wildcard origins. An existing different Tide native-host
-registration is preserved and causes setup to stop.
-
-Setup does not ask for request headers or install an unsigned extension into the
-browser automatically. **Connect YouTube Music** opens Account; it does not
-import a session. After setup, use the companion's **Check local connection**,
-then explicitly **Import selected tab** as the guide describes. Successful
-registration alone does not prove account access. The new graphical registration
-path still needs a live Chrome setup/import check. Signed companion distribution
-and Zen lookup remain unresolved.
+Use **Connect YouTube Music** to sign in through Tide. For the advanced
+browser fallback, see the [companion beta guide](BROWSER_COMPANION_BETA.md).
 
 In the advanced ZIP launcher, if the ZIP includes `tide-session-host.exe`, setup can register the native helper
 for one selected browser under the current user's registry. Install the separate

@@ -62,13 +62,8 @@ internal static class PayloadTests {
                 .ReportPreflightFailure(new IOException("Windows uninstall entry mismatch; private-path-and-value")) ? 0 : 1;
         }
         using (var form = new SetupWindow(true)) {
-            var chromeControl = (CheckBox)form.Controls["chromeConnection"];
-            var idControl = (TextBox)form.Controls["chromeExtensionId"];
-            if (chromeControl.Checked || idControl.Enabled) throw new Exception("Chrome registration must require explicit opt-in.");
-            chromeControl.Checked = true;
-            if (!idControl.Enabled) throw new Exception("Extension ID entry did not enable after opt-in.");
-            chromeControl.Checked = false;
-            if (idControl.Enabled) throw new Exception("Extension ID entry remained active without opt-in.");
+            if (form.Controls["chromeConnection"] != null || form.Controls["chromeExtensionId"] != null)
+                throw new Exception("The standard installer must not offer browser registration.");
             foreach (Control control in form.Controls) {
                 if (control.Left < 0 || control.Top < 0 || control.Right > form.ClientSize.Width || control.Bottom > form.ClientSize.Height)
                     throw new Exception("Installer control is outside its client area: " + control.GetType().Name);
@@ -132,9 +127,9 @@ internal static class PayloadTests {
                 if (!child.HasExited || child.ExitCode != 0) throw new Exception("Setup did not wait for normal Tide shutdown.");
             }
         } finally { File.Delete(childPath); Directory.Delete(handoffRoot); }
-        var plain = new InstallOptions(false, "ignored untrusted input");
+        var plain = new InstallOptions();
         if (!plain.Arguments(script).Contains("-AppVersion 0.1.0-preview.1")) throw new Exception("Update version not forwarded.");
-        if (plain.Chrome || plain.Arguments(script).Contains("-Browser") || !plain.Arguments(script).Contains("-File \"" + script + "\""))
+        if (plain.Arguments(script).Contains("-Browser") || !plain.Arguments(script).Contains("-File \"" + script + "\""))
             throw new Exception("Default installer arguments changed browser consent or path quoting.");
         if (plain.StartInfo(script).Arguments.Contains("-CloseRunningPlayers")
             || plain.StartInfo(script, true).Arguments.Contains("-CloseRunningPlayers")
@@ -142,14 +137,6 @@ internal static class PayloadTests {
             throw new Exception("Closing other player windows must be restricted to committed updates.");
         try { plain.StartInfo(script, true, true); throw new Exception("Preflight accepted player shutdown."); }
         catch (ArgumentException) { }
-        var chrome = new InstallOptions(true, "  ABCDEFGHIJKLMNOPABCDEFGHIJKLMNOP  ");
-        if (!chrome.Chrome || chrome.ExtensionId != "abcdefghijklmnopabcdefghijklmnop"
-            || !chrome.Arguments(script).EndsWith(" -Browser Chrome -ChromiumExtensionId abcdefghijklmnopabcdefghijklmnop", StringComparison.Ordinal))
-            throw new Exception("Exact Chrome extension ID was not propagated.");
-        foreach (var value in new string[] { null, "", "short", new String('q', 32), new String('a', 31), new String('a', 33), new String('a', 32) + " -Mode Uninstall", "\"; exit" }) {
-            try { new InstallOptions(true, value); throw new Exception("Invalid Chrome ID accepted."); }
-            catch (ArgumentException) { }
-        }
         var scratch = Path.Combine(Path.GetTempPath(), "tide setup process " + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(scratch);
         var failedPlayer = Path.Combine(scratch, "startup-failure.exe");
@@ -188,9 +175,9 @@ internal static class PayloadTests {
         var previousModules = Environment.GetEnvironmentVariable("PSModulePath");
         try {
             var fixtureScript = Path.Combine(scratch, "fixture.ps1");
-            File.WriteAllText(fixtureScript, "param($Mode,$Browser,$ChromiumExtensionId,$AppVersion)\n$ErrorActionPreference='Stop'\nGet-FileHash -LiteralPath $PSCommandPath | Out-Null\nif ($Mode -ne 'Install' -or $Browser -ne 'Chrome' -or $ChromiumExtensionId -ne 'abcdefghijklmnopabcdefghijklmnop' -or $AppVersion -ne '0.1.0-preview.1') { throw 'Argument transfer failed' }\nWrite-Output 'PASS native setup process arguments and system modules'\n");
+            File.WriteAllText(fixtureScript, "param($Mode,$Browser,$ChromiumExtensionId,$AppVersion)\n$ErrorActionPreference='Stop'\nGet-FileHash -LiteralPath $PSCommandPath | Out-Null\nif ($Mode -ne 'Install' -or $Browser -or $ChromiumExtensionId -or $AppVersion -ne '0.1.0-preview.1') { throw 'Argument transfer failed' }\nWrite-Output 'PASS native setup process arguments and system modules'\n");
             Environment.SetEnvironmentVariable("PSModulePath", Path.Combine(scratch, "nonexistent-pwsh-modules"));
-            using (var process = Process.Start(chrome.StartInfo(fixtureScript))) {
+            using (var process = Process.Start(plain.StartInfo(fixtureScript))) {
                 var stdout = process.StandardOutput.ReadToEndAsync();
                 var stderr = process.StandardError.ReadToEndAsync();
                 // Cold PowerShell startup on a busy hosted runner can exceed 15 seconds.

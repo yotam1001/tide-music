@@ -1249,10 +1249,10 @@ def run(client, request):
                     data = client.get_watch_playlist(playlistId=playlist, limit=50)
                     songs = data.get("tracks") if isinstance(data, dict) else None
                     if not isinstance(songs, list):
-                        return {"type": "error", "code": "supermix_unavailable"}
+                        continue
                     selected = tracks(songs, MAX_TRACKS, (), True)
                     if not selected:
-                        return {"type": "error", "code": "supermix_unavailable"}
+                        continue
                     return {"type": "tracks", "tracks": selected, "truncated": len(songs) > MAX_TRACKS}
             return {"type": "error", "code": "supermix_unavailable"}
         except Exception as error:

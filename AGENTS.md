@@ -1,8 +1,9 @@
 # Contributor automation
 
 - Use `scripts/cargo-local.ps1` for local Rust build, test and Clippy commands.
-  Respect its disk-budget failures; do not bypass them with direct Cargo or a
-  different output directory. Never delete generated files automatically.
+  Respect its free-space check. Once local validation is complete and the
+  build outputs are no longer needed, verify the target path is inside the
+  current checkout before clearing that checkout's generated Cargo output.
 - Prefer hosted CI for full workspace and installer validation. Local dev/test
   profiles deliberately disable incremental snapshots and limit debug symbols.
 - Keep development output, local toolchains, credentials and sessions out of

@@ -397,6 +397,33 @@ fn neither_relay_mode_accepts_a_non_loopback_listener() {
 }
 
 #[test]
+fn shared_short_code_respects_guest_permissions_locking_rotation_and_rate_limits() {
+    let proxy = Proxy::start_shared();
+    let client = proxy.client();
+    let room = client.create_shared().unwrap();
+    let code = client.room_code(&room.room, &room.host).unwrap();
+    assert!(valid_short_code(&code));
+    assert!(client.room_code(&room.room, &room.invite).is_err());
+    let joined = client.join_code(&code).unwrap();
+    assert_eq!(joined.room, room.room);
+    assert!(client.room_code(&room.room, &joined.member).is_err());
+    client.set_admission(&room.room, &room.host, false).unwrap();
+    assert!(client.join_code(&code).is_err());
+    client.set_admission(&room.room, &room.host, true).unwrap();
+    client.rotate_invite(&room.room, &room.host).unwrap();
+    assert!(client.join_code(&code).is_err());
+    let replacement = client.room_code(&room.room, &room.host).unwrap();
+    assert_ne!(replacement, code);
+    for _ in 0..3 {
+        assert!(client.join_code(&replacement).is_ok());
+    }
+    assert!(matches!(
+        client.join_code(&replacement),
+        Err(Error::Limited)
+    ));
+}
+
+#[test]
 fn shared_https_needs_no_operator_secret_and_keeps_host_guest_roles() {
     let proxy = Proxy::start_shared();
     let client = proxy.client();
