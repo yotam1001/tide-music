@@ -1,0 +1,159 @@
+// The persistent player bar (full, compact and mini).
+import { Button } from "std-widgets.slint";
+import { ControlMotion, Theme, LayoutMetrics, VolumeMark, TideSlider, TransportButtons, LibraryButton } from "theme.slint";
+import { Cover, ArtistLink, RatingButton } from "components.slint";
+
+export component PlayerBar inherits Rectangle {
+    // Colour sampled from the current cover; it glows behind the now-playing area.
+    in property <color> tint;
+    in property <bool> tinted: false;
+    in property <bool> now-playing-open: false;
+    callback expand();
+    private property <color> glow: root.tinted ? root.tint : Theme.accent;
+    animate glow { duration: ControlMotion.enabled ? 420ms : 0ms; easing: ease-in-out; }
+    in property <bool> transport-enabled: true;
+    in property <bool> skip-enabled: root.transport-enabled;
+    in property <bool> window-minimized: false;
+    private property <int> input-revision: 0;
+    private property <bool> repaint-phase: false;
+    changed window-minimized => { root.input-revision += 1; }
+    changed track-title => { root.input-revision += 1; }
+    changed collapsed => { root.input-revision += 1; }
+    // A changed label can otherwise survive in a reused Windows software
+    // surface until resize. Invalidate only this small bar on live updates.
+    changed volume => { root.repaint-phase = !root.repaint-phase; }
+    changed position => { root.repaint-phase = !root.repaint-phase; }
+    changed playback-hint => { root.repaint-phase = !root.repaint-phase; }
+    changed audio-quality => { root.repaint-phase = !root.repaint-phase; }
+    in property <bool> light-mode;
+    in property <bool> compact;
+    in property <bool> collapsed;
+    in property <bool> queue-open;
+    in property <bool> lyrics-open;
+    callback toggle-lyrics;
+    in property <bool> repeat-enabled;
+    callback toggle-repeat();
+    callback shuffle-queue();
+    in property <string> track-title;
+    in property <string> track-artist;
+    in property <bool> artist-enabled;
+    in property <string> audio-quality;
+    in property <string> playback-hint;
+    callback artist();
+    in property <int> rating: 0;
+    in property <bool> rating-enabled: false;
+    in property <bool> rating-busy: false;
+    callback rate(int);
+    in property <image> artwork;
+    in property <float> position;
+    in property <float> duration;
+    in property <bool> paused;
+    in property <float> volume;
+    callback toggle-pause();
+    callback next-track();
+    callback previous-track();
+    callback seek(float);
+    in property <float> volume-step: 2;
+    callback change-volume(float);
+    callback restore();
+    callback toggle-queue();
+    callback mini();
+    in property <bool> mini-pinned;
+    callback toggle-mini-pin();
+    private property <color> foreground: Theme.text;
+    private property <color> secondary: Theme.muted;
+    background: Theme.chrome;
+    border-width: 1px;
+    border-color: Theme.outline;
+    Rectangle { x: 1px; y: 1px; width: max(0px, parent.width - 2px); height: max(0px, parent.height - 2px); background: Theme.chrome; visible: root.repaint-phase; }
+    if !root.collapsed && root.track-title != "" : Rectangle {
+        x: 1px;
+        y: 1px;
+        width: max(0px, parent.width * 0.42);
+        height: max(0px, parent.height - 2px);
+        background: @linear-gradient(90deg, root.glow.with-alpha(Theme.light ? 0.16 : 0.22) 0%, root.glow.with-alpha(0) 100%);
+    }
+    pure function format-time(seconds: float) -> string {
+        let total: int = max(0, seconds);
+        let minutes: int = total / 60;
+        let remainder: int = total - (minutes * 60);
+        return minutes + ":" + (remainder < 10 ? "0" + remainder : remainder);
+    }
+
+    VerticalLayout {
+        padding-left: 18px;
+        padding-right: 18px;
+        padding-top: 10px;
+        padding-bottom: 10px;
+        spacing: 5px;
+        Rectangle {
+            height: 52px;
+            HorizontalLayout {
+                x: 0px;
+                width: max(120px, parent.width / 2 - (root.width >= 980px && !root.collapsed ? 148px : 94px));
+                height: parent.height;
+                spacing: 12px;
+                cross-axis-alignment: center;
+                Rectangle {
+                    width: 44px; height: 44px;
+                    Cover { width: parent.width; height: parent.height; artwork: root.artwork; light-mode: root.light-mode; seed: root.track-title; drop-shadow-blur: 10px; drop-shadow-offset-y: 2px; drop-shadow-color: Theme.shadow; }
+                    if !root.collapsed && root.track-title != "" : expand-area := TouchArea {
+                        mouse-cursor: pointer;
+                        Rectangle {
+                            border-radius: 7px;
+                            background: expand-area.has-hover || expand-button.has-focus ? #00000070 : transparent;
+                            border-width: expand-button.has-focus ? 2px : 0px;
+                            border-color: Theme.focus;
+                            Path {
+                                x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+                                width: 18px; height: 18px; viewbox-width: 24; viewbox-height: 24;
+                                fill: transparent; stroke: #ffffff; stroke-width: 2px;
+                                opacity: expand-area.has-hover || expand-button.has-focus ? 1 : 0;
+                                commands: root.now-playing-open ? "M 5 9 L 12 16 L 19 9" : "M 5 15 L 12 8 L 19 15";
+                            }
+                        }
+                        expand-button := Button {
+                            width: parent.width; height: parent.height; opacity: 0; text: "";
+                            accessible-label: root.now-playing-open ? "Close Now Playing" : "Open Now Playing";
+                            clicked => { root.expand(); }
+                        }
+                    }
+                }
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    spacing: 1px;
+                    Text { text: root.track-title == "" ? "Nothing playing" : root.track-title; color: root.foreground; font-size: 14px; font-weight: 600; overflow: elide; }
+                    ArtistLink { artist: root.track-artist; enabled: root.artist-enabled; light-mode: root.light-mode; activated => { root.artist(); } }
+                    if root.playback-hint != "" : Text { text: root.playback-hint; color: Theme.accent-ink; font-size: 10px; overflow: elide; accessible-live-region: polite; }
+                    if root.playback-hint == "" && root.audio-quality != "" : Text { text: root.audio-quality; color: root.secondary; font-size: 10px; overflow: elide; }
+                }
+            }
+            TransportButtons { enabled: root.transport-enabled; next-enabled: root.skip-enabled; x: (parent.width - self.width) / 2; y: 2px; width: root.width >= 980px && !root.collapsed ? 250px : 150px; height: 48px; paused: root.paused; light-mode: root.light-mode; repeat-enabled: root.repeat-enabled; show-repeat: root.width >= 980px && !root.collapsed; show-shuffle: root.width >= 980px && !root.collapsed; toggle-repeat => { root.toggle-repeat(); } shuffle-queue => { root.shuffle-queue(); } toggle-pause => { root.toggle-pause(); } previous-track => { root.previous-track(); } next-track => { root.next-track(); } }
+            HorizontalLayout {
+                x: parent.width - self.width;
+                y: 8px;
+                width: root.collapsed ? 150px : root.width >= 900px ? LayoutMetrics.footer-actions-width : 204px;
+                height: 36px;
+                spacing: root.collapsed ? 4px : 8px;
+                RatingButton { width: 32px; height: 36px; enabled: root.rating-enabled && !root.rating-busy; light-mode: root.light-mode; active: root.rating == 1; label: root.rating == 1 ? "Remove like" : "Like this song on YouTube Music"; clicked => { root.rate(root.rating == 1 ? 0 : 1); } }
+                RatingButton { width: 32px; height: 36px; negative: true; enabled: root.rating-enabled && !root.rating-busy; light-mode: root.light-mode; active: root.rating == -1; label: root.rating == -1 ? "Remove dislike" : "Dislike this song on YouTube Music"; clicked => { root.rate(root.rating == -1 ? 0 : -1); } }
+                if !root.collapsed : LibraryButton { width: root.width >= 900px ? 80px : 36px; height: 36px; show-tooltip: true; light-mode: root.light-mode; caption: root.width >= 900px ? "Lyrics" : ""; leading-icon: root.width >= 900px ? "M 9 5 A 3 3 0 0 1 15 5 L 15 11 A 3 3 0 0 1 9 11 Z M 5 10 L 5 11 A 7 7 0 0 0 19 11 L 19 10 M 12 18 L 12 22 M 8 22 L 16 22" : ""; icon-path: root.width < 900px ? "M 9 5 A 3 3 0 0 1 15 5 L 15 11 A 3 3 0 0 1 9 11 Z M 5 10 L 5 11 A 7 7 0 0 0 19 11 L 19 10 M 12 18 L 12 22 M 8 22 L 16 22" : ""; label: root.lyrics-open ? "Close lyrics" : "Open lyrics"; active: root.lyrics-open; clicked => { root.toggle-lyrics(); } }
+                if !root.collapsed : LibraryButton { width: 36px; height: 36px; show-tooltip: true; light-mode: root.light-mode; icon-path: "M 4 6 L 20 6 M 4 12 L 14 12 M 4 18 L 14 18 M 18 12 L 23 15 L 18 18 Z"; label: root.queue-open ? "Close queue" : "Open queue"; active: root.queue-open; clicked => { root.toggle-queue(); } }
+                if !root.collapsed : LibraryButton { width: 36px; height: 36px; show-tooltip: true; light-mode: root.light-mode; icon-path: "M 3 4 L 21 4 L 21 20 L 3 20 Z M 12 12 L 19 12 L 19 18 L 12 18 Z"; label: "Open mini player"; clicked => { root.mini(); } }
+                if root.collapsed : LibraryButton { width: 36px; light-mode: root.light-mode; caption: "Pin"; label: root.mini-pinned ? "Unpin mini player" : "Pin mini player above other windows"; active: root.mini-pinned; clicked => { root.toggle-mini-pin(); } }
+                if root.collapsed : LibraryButton { width: 38px; light-mode: root.light-mode; caption: "↗"; label: "Expand to full Tide window"; clicked => { root.restore(); } }
+            }
+        }
+        HorizontalLayout {
+            height: 25px;
+            spacing: 9px;
+            cross-axis-alignment: center;
+            Text { width: 38px; text: root.format-time(root.position); color: root.secondary; font-size: 11px; horizontal-alignment: right; }
+            TideSlider { reset-revision: root.input-revision; light-mode: root.light-mode; horizontal-stretch: 1; minimum: 0; maximum: max(1, root.duration); value: root.position; enabled: root.transport-enabled && root.duration > 0; label: "Playback position"; value-text: root.format-time(root.position); released(value) => { root.seek(value); } }
+            Text { width: 38px; text: root.format-time(root.duration); color: root.secondary; font-size: 11px; }
+            VolumeMark { ink: root.secondary; }
+            TideSlider { reset-revision: root.input-revision; light-mode: root.light-mode; width: root.compact || root.collapsed ? 105px : 150px; minimum: 0; maximum: 100; value: root.volume; step: root.volume-step; wheel-adjustable: true; label: "Volume"; value-text: root.volume.to-fixed(0) + "%"; changed(value) => { root.change-volume(value); } }
+            Text { width: 38px; text: root.volume.to-fixed(0) + "%"; color: root.secondary; font-size: 11px; horizontal-alignment: right; }
+        }
+    }
+}

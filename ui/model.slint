@@ -1,0 +1,44 @@
+// Data exchanged with the Rust application.
+
+
+export struct TrackRow {
+    title: string,
+    artist: string,
+    artist-enabled: bool,
+    album: string,
+    duration: string,
+    recommended: bool,
+    artwork: image,
+}
+
+export struct JamMemberRow { id: int, name: string }
+
+export struct ArtistRow { id: string, name: string }
+
+export struct PlaylistRow {
+    id: string,
+    cover-variant: int,
+    title: string,
+    subtitle: string,
+    artwork: image,
+}
+
+export struct RecommendationRow {
+    id: string,
+    cover-variant: int,
+    title: string,
+    subtitle: string,
+    artwork: image,
+    kind: string,
+    shelf: string,
+}
+
+export struct LyricRow { text: string, word-timed: bool }
+
+export struct HomeBrowseRow { start: int, count: int, title: string, layout: string }
+
+export struct MenuAction {
+    title: string,
+    code: int,
+    enabled: bool,
+}
