@@ -13,9 +13,7 @@ mini player when you want it out of the way.
    **CHROME_SETUP.md** first, or the [online connection guide](https://github.com/yotam1001/tide-music/blob/main/docs/BROWSER_COMPANION_BETA.md).
    Load the companion so you can enter its extension ID during setup.
 2. Download **TideSetup.exe** from this release and choose **Install Tide**.
-   For local files only, you can skip the companion and start with this step.
 3. Open Tide from Start. Connect your account, then choose a song or playlist.
-   Local files work without an account through **Settings → Open audio file**.
 
 You need Windows x64 and internet access. No Rust, system Python or API key is
 required. GitHub's Source code archives are for contributors, not normal setup.

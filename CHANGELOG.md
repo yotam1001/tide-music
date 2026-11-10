@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Give the interface depth: one theme palette, a raised content panel and a glow
+  tinted by the current artwork, also behind the player.
+- Show gradient art for songs without covers and level bars on the playing song.
+- Lift tile covers and reveal a play badge on hover; right-click a song for its menu.
+- Add a rounded search field with recent searches, large headers for Liked Songs
+  and song radio, a Now Playing view from the player cover, and page fades.
+- Remove the Open audio file action.
+
 ## 0.4.14 - 2026-11-05
 
 - Refresh Home and playlist layouts with larger covers and more legible track rows.
