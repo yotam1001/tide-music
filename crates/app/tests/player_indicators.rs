@@ -10,8 +10,8 @@ slint::include_modules!();
 
 const WIDTH: usize = 700;
 const HEIGHT: usize = 132;
-const ACCENT: Rgb8Pixel = Rgb8Pixel::new(179, 61, 96);
-const RAIL: Rgb8Pixel = Rgb8Pixel::new(68, 70, 77);
+const ACCENT: Rgb8Pixel = Rgb8Pixel::new(207, 65, 106);
+const RAIL: Rgb8Pixel = Rgb8Pixel::new(59, 63, 72);
 
 struct TestPlatform(Rc<MinimalSoftwareWindow>);
 impl slint::platform::Platform for TestPlatform {
@@ -111,6 +111,8 @@ fn native_sliders_keep_external_playback_updates_and_paint_volume_without_resize
     let window = MinimalSoftwareWindow::new(RepaintBufferType::ReusedBuffer);
     slint::platform::set_platform(Box::new(TestPlatform(window.clone()))).unwrap();
     let ui = AppWindow::new().unwrap();
+    // Pixel assertions need settled frames, not mid-transition ones.
+    ui.set_motion(false);
     window.set_size(PhysicalSize::new(WIDTH as u32, HEIGHT as u32));
     ui.set_collapsed(true);
     ui.set_light_mode(false);
@@ -164,7 +166,11 @@ fn native_sliders_keep_external_playback_updates_and_paint_volume_without_resize
     let full = full_reference(&window);
     export("progress-after-seek-full", &full);
     let full_right = bounds(&full, y, 50, 500, ACCENT).1;
-    let expected = left as f32 + (right + 1 - left) as f32 * (40.0 / 180.0) + 6.0;
+    // After the native click the thumb has keyboard focus. Its 2px focus ring
+    // is not accent-colored, so the last accent pixel is ~5px past the fill
+    // end (7px thumb overhang minus the ring), less one antialiased pixel.
+    const THUMB_ACCENT_OVERHANG: f32 = 4.0;
+    let expected = left as f32 + (right + 1 - left) as f32 * (40.0 / 180.0) + THUMB_ACCENT_OVERHANG;
     if (partial_right as f32 - expected).abs() > 4.0 || (full_right as f32 - expected).abs() > 4.0 {
         failures.push(format!("progress binding lost after native MAX seek: root={}, expected thumb right~{expected:.1}, partial={partial_right}, full={full_right}", ui.get_position()));
     }
@@ -226,7 +232,9 @@ fn native_sliders_keep_external_playback_updates_and_paint_volume_without_resize
             ui.set_position(position);
             draw(&window, &mut pixels);
             let thumb = bounds(&pixels, y, 50, 500, ACCENT).1;
-            let expected = left as f32 + (right + 1 - left) as f32 * position / duration + 6.0;
+            let expected = left as f32
+                + (right + 1 - left) as f32 * position / duration
+                + THUMB_ACCENT_OVERHANG;
             assert!(
                 (thumb as f32 - expected).abs() <= 4.0,
                 "progress stopped following the clock at handoff {song}, position {position}/{duration}: thumb={thumb}, expected={expected}, model={}", ui.get_position()

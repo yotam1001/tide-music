@@ -11,7 +11,7 @@ The earlier screen mixed account setup, library browsing and playback, showed ov
 
 ## Artwork cost
 
-The memory-only cache holds at most 48 thumbnails, each 96 by 96 RGB pixels: 1,327,104 bytes (about 1.27 MiB) of decoded cache pixels. Downloads and decoding add temporary buffers. Fetching runs on one worker, with a 1 MiB response limit, decoder dimensions bounded to one million source pixels, five-second timeout and no redirects or account cookies. Only approved HTTPS image CDNs are accepted. Current/nearby queue tracks and the first twelve library/recommendation cards are prioritized. Missing or uncached images use a small neutral tile rather than invented album covers. The cache clears on account changes.
+The memory-only cache holds at most 56 thumbnails, each 160 by 160 RGB pixels: 4,300,800 bytes (about 4.1 MiB) of decoded cache pixels. The helper chooses the smallest provider thumbnail of at least 160 px so cards and the playlist cover stay sharp. Downloads and decoding add temporary buffers. Fetching runs on one worker, with a 1 MiB response limit, decoder dimensions bounded to one million source pixels, five-second timeout and no redirects or account cookies. Only approved HTTPS image CDNs are accepted. Current/nearby queue tracks and the first twelve library/recommendation cards are prioritized. Missing or uncached images use a small neutral tile rather than invented album covers. The cache clears on account changes.
 
 ## Brand
 
@@ -45,3 +45,29 @@ Restore button; its accessible label describes returning to the full window.
 Account and compact Queue backdrops are explicitly anchored to the content area's
 left/top edges. Slint's default centering of their narrower rectangles previously
 left an unintended undimmed strip and a visible rectangular boundary.
+
+
+## Modern interface and explicit UI state (claude-fixes-ui)
+
+### Implicit state machines made explicit
+
+| Before | After |
+| --- | --- |
+| Four booleans (`home-open`, `library-open`, `detail-open`, `search-open`) with an implied priority order; Back depended on which flags happened to be left set. | `Page { home, library, playlist, search }` plus a `section` root. Back always returns to the section; Escape closes settings, then the queue, then the page. |
+| `account-busy` meant "any provider request", so the Account panel said "Connecting…" and the whole library was disabled while radio recommendations loaded. | `provider-busy` (any request) and `account-connecting` (an account change) feed one derived `AccountState { disconnected, saved, verifying, connected }`, shown consistently in the top bar dot, Account sheet, Home and Library. |
+| The banner's action came from `error-is-account`/`error-retryable` flags; `report_error` left a previous account flag set, so an unrelated playback error could offer "Account settings". | `ErrorAction { dismiss, retry, account }` is derived in one place; every new error resets the account flag, and every banner has a Dismiss control backed by `dismiss-error`. |
+| Each song row owned a `menu-open` flag, so several inline menus could be open at once and rows changed height. | Song actions open in a popup menu: at most one exists and rows keep a fixed height. |
+| Loading was only visible as the "Loading…" status string. | A `loading` property drives the player subtitle and accessible play-button label. |
+| Clearing the queue was a single click. | It asks for confirmation inline; the confirmation expires after a few seconds. |
+
+### Visual system
+
+`ui/theme.slint` defines one palette per theme (`Theme` global) and the shared controls; `components.slint`, `queue.slint` and `player.slint` hold content, queue and player components; `main.slint` composes the window. Buttons use a `Hit` surface (standard Button for keyboard and accessibility, TouchArea for hover and pointer clicks), so every control now has hover and press feedback.
+
+### Motion
+
+All durations come from `Theme.fast`/`medium`/`slow`. They become zero when **Animations** is off in Account settings, a choice saved with the other preferences. Animations exist only while something changes: hover and press transitions, page enter (fade and rise), the Account sheet and narrow-window queue sliding in over a fading scrim, the toast and error banner, the segmented control and switches, card hover lift, and equalizer bars on the playing song, which stop when paused. Native pixel tests turn motion off to compare settled frames.
+
+### Dynamic color
+
+The app samples one representative color from the current cover and the open playlist's cover (`artwork_tint`), favoring colorful pixels and normalizing brightness. Page heroes and the player glow cross-fade to that tint.

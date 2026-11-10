@@ -26,6 +26,8 @@ fn restore_repaints_a_cleared_reused_buffer_without_resizing() {
     let window = MinimalSoftwareWindow::new(RepaintBufferType::ReusedBuffer);
     slint::platform::set_platform(Box::new(TestPlatform(window.clone()))).unwrap();
     let ui = AppWindow::new().unwrap();
+    // Pixel assertions need settled frames, not mid-transition ones.
+    ui.set_motion(false);
     window.set_size(PhysicalSize::new(780, 720));
     ui.show().unwrap();
     let mut pixels = vec![Rgb8Pixel::default(); 780 * 720];
@@ -36,7 +38,17 @@ fn restore_repaints_a_cleared_reused_buffer_without_resizing() {
         for _ in 0..3 {
             draw(&window, &mut pixels, 780);
         }
-        let expected = pixels.clone();
+        // Compare against a complete render of the same scene. Incremental
+        // frames after a theme switch can differ from it by a few antialiased
+        // icon pixels; restore must produce the correct image either way.
+        let mut expected = vec![Rgb8Pixel::default(); 780 * 720];
+        window.request_redraw();
+        assert!(window.draw_if_needed(|renderer| {
+            renderer.set_repaint_buffer_type(RepaintBufferType::NewBuffer);
+            renderer.render(&mut expected, 780);
+            renderer.set_repaint_buffer_type(RepaintBufferType::ReusedBuffer);
+        }));
+        pixels.copy_from_slice(&expected);
         for _ in 0..4 {
             window.set_minimized(true);
             slint::platform::update_timers_and_animations();
@@ -47,7 +59,18 @@ fn restore_repaints_a_cleared_reused_buffer_without_resizing() {
             window.set_minimized(false);
             draw(&window, &mut pixels, 780);
             assert_eq!(window.size(), PhysicalSize::new(780, 720));
-            assert!(pixels == expected, "Restore left cleared or stale pixels");
+            let differing: Vec<usize> = (0..pixels.len())
+                .filter(|&i| pixels[i] != expected[i])
+                .collect();
+            assert!(
+                differing.is_empty(),
+                "Restore left cleared or stale pixels: {} differ, light={light}, from ({}, {}) to ({}, {})",
+                differing.len(),
+                differing.first().map_or(0, |i| i % 780),
+                differing.first().map_or(0, |i| i / 780),
+                differing.last().map_or(0, |i| i % 780),
+                differing.last().map_or(0, |i| i / 780),
+            );
         }
     }
 }

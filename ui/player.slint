@@ -1,0 +1,232 @@
+// The persistent player. Full/compact windows use a three-column layout with
+// the timeline under the transport; the mini player keeps its two-row layout
+// (time · position · time · volume), which the native slider test measures.
+import { Theme, Icon, IconButton, PlayButton, TextButton } from "theme.slint";
+import { TideSlider, Cover, EqualizerBars } from "components.slint";
+
+component Transport inherits HorizontalLayout {
+    in property <bool> locked;
+    in property <bool> has-track;
+    in property <bool> paused;
+    in property <bool> loading;
+    in property <bool> repeat-enabled;
+    in property <bool> extended: true;
+    in property <length> play-size: 40px;
+    callback toggle-pause();
+    callback next-track();
+    callback previous-track();
+    callback toggle-repeat();
+    callback shuffle-queue();
+    spacing: 10px;
+    alignment: center;
+    cross-axis-alignment: center;
+    if root.extended : IconButton { width: 34px; height: 34px; round: true; quiet: true; enabled: !root.locked && root.has-track; icon: "shuffle"; icon-size: 17px; label: "Shuffle upcoming tracks"; clicked => { root.shuffle-queue(); } }
+    IconButton { width: 38px; height: 38px; round: true; quiet: true; ink: Theme.text; enabled: !root.locked && root.has-track; icon: "previous"; icon-size: 18px; label: "Previous track"; clicked => { root.previous-track(); } }
+    PlayButton {
+        width: root.play-size;
+        height: root.play-size;
+        inverted: !Theme.light;
+        playing: !root.paused;
+        enabled: !root.locked && root.has-track;
+        label: root.loading ? "Loading. Pause" : root.paused ? "Play" : "Pause";
+        clicked => { root.toggle-pause(); }
+    }
+    IconButton { width: 38px; height: 38px; round: true; quiet: true; ink: Theme.text; enabled: !root.locked && root.has-track; icon: "next"; icon-size: 18px; label: "Next track"; clicked => { root.next-track(); } }
+    if root.extended : Rectangle {
+        width: 34px;
+        height: 34px;
+        IconButton { width: 34px; height: 34px; round: true; quiet: true; ink: root.repeat-enabled ? Theme.accent : Theme.muted; enabled: !root.locked; icon: "repeat"; icon-size: 17px; label: root.repeat-enabled ? "Turn repeat off" : "Turn repeat on"; clicked => { root.toggle-repeat(); } }
+        if root.repeat-enabled : Rectangle { x: (parent.width - 4px) / 2; y: parent.height - 3px; width: 4px; height: 4px; border-radius: 2px; background: Theme.accent; }
+    }
+}
+
+export component PlayerBar inherits Rectangle {
+    in property <bool> following-jam: false;
+    in property <bool> window-minimized: false;
+    private property <int> input-revision: 0;
+    private property <bool> repaint-phase: false;
+    changed window-minimized => { root.input-revision += 1; }
+    changed track-title => { root.input-revision += 1; }
+    changed collapsed => { root.input-revision += 1; }
+    // A changed label can otherwise survive in a reused Windows software
+    // surface until resize. Invalidate only this small bar on live updates.
+    changed volume => { root.repaint-phase = !root.repaint-phase; }
+    changed position => { root.repaint-phase = !root.repaint-phase; }
+    in property <bool> compact;
+    in property <bool> collapsed;
+    in property <bool> queue-open;
+    in property <bool> has-track;
+    in property <bool> loading;
+    // Color sampled from the current cover; it glows behind the full player.
+    in property <color> tint;
+    private property <color> glow: root.tint;
+    animate glow { duration: Theme.slow; easing: ease-in-out; }
+    in property <bool> repeat-enabled;
+    in property <string> track-title;
+    in property <string> track-artist;
+    in property <image> artwork;
+    in property <float> position;
+    in property <float> duration;
+    in property <bool> paused;
+    in property <float> volume;
+    callback toggle-pause();
+    callback next-track();
+    callback previous-track();
+    callback toggle-repeat();
+    callback shuffle-queue();
+    callback seek(float);
+    callback change-volume(float);
+    callback restore();
+    callback toggle-queue();
+    callback mini();
+    // Side columns of the full player. The right column must hold its four
+    // controls (queue, mini, mute, volume) without overlapping.
+    private property <length> side-width: max(root.compact ? 210px : 240px, (root.width - 64px) * 0.3);
+    // Remembered locally so the speaker button can unmute to the prior level.
+    private property <float> unmute-volume: 70;
+    private property <string> subtitle: root.following-jam ? "Following the jam host"
+        : root.loading ? "Loading…"
+        : root.has-track ? (root.track-artist == "" ? " " : root.track-artist) : "Search, paste a link or open a file";
+    background: Theme.chrome;
+    if !root.collapsed && root.has-track : Rectangle {
+        x: 0px;
+        y: 0px;
+        width: parent.width * 0.45;
+        height: parent.height;
+        background: @linear-gradient(90deg, root.glow.with-alpha(Theme.light ? 0.16 : 0.22) 0%, root.glow.with-alpha(0) 100%);
+    }
+    Rectangle { x: 0px; y: 0px; width: parent.width; height: 1px; background: Theme.outline; }
+    Rectangle { x: 0px; y: 1px; width: parent.width; height: max(0px, parent.height - 1px); background: Theme.chrome; visible: root.repaint-phase; }
+    pure function format-time(seconds: float) -> string {
+        let total: int = max(0, seconds);
+        let minutes: int = total / 60;
+        let remainder: int = total - (minutes * 60);
+        return minutes + ":" + (remainder < 10 ? "0" + remainder : remainder);
+    }
+    function toggle-mute() {
+        if root.volume > 0 { root.unmute-volume = root.volume; root.change-volume(0); }
+        else { root.change-volume(root.unmute-volume > 0 ? root.unmute-volume : 70); }
+    }
+
+    // Full and compact windows.
+    if !root.collapsed : HorizontalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        spacing: 16px;
+        cross-axis-alignment: center;
+        // Now playing
+        HorizontalLayout {
+            width: root.side-width;
+            spacing: 12px;
+            cross-axis-alignment: center;
+            Cover { width: 56px; height: 56px; border-radius: 6px; artwork: root.artwork; seed: root.has-track ? root.track-title : ""; drop-shadow-blur: 12px; drop-shadow-offset-y: 3px; drop-shadow-color: Theme.shadow; }
+            VerticalLayout {
+                horizontal-stretch: 1;
+                min-width: 0px;
+                spacing: 3px;
+                alignment: center;
+                HorizontalLayout {
+                    spacing: 8px;
+                    if root.has-track && !root.paused && !root.loading : EqualizerBars { width: 14px; height: 12px; }
+                    Text { horizontal-stretch: 1; text: root.has-track ? root.track-title : "Nothing playing"; color: root.has-track ? Theme.text : Theme.muted; font-size: 14px; font-weight: 600; overflow: elide; }
+                }
+                Text { text: root.subtitle; color: root.following-jam || root.loading ? Theme.selected-ink : Theme.muted; font-size: 12px; overflow: elide; }
+            }
+        }
+        // Transport and timeline
+        VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: 4px;
+            alignment: center;
+            Transport {
+                height: 42px;
+                locked: root.following-jam;
+                has-track: root.has-track;
+                paused: root.paused;
+                loading: root.loading;
+                repeat-enabled: root.repeat-enabled;
+                extended: !root.compact;
+                play-size: 38px;
+                toggle-pause => { root.toggle-pause(); }
+                previous-track => { root.previous-track(); }
+                next-track => { root.next-track(); }
+                toggle-repeat => { root.toggle-repeat(); }
+                shuffle-queue => { root.shuffle-queue(); }
+            }
+            HorizontalLayout {
+                height: 20px;
+                spacing: 6px;
+                cross-axis-alignment: center;
+                Text { width: 40px; text: root.duration > 0 ? root.format-time(root.position) : "–:––"; color: Theme.faint; font-size: 11px; horizontal-alignment: right; vertical-alignment: center; }
+                TideSlider { reset-revision: root.input-revision; horizontal-stretch: 1; minimum: 0; maximum: max(1, root.duration); value: root.position; enabled: root.duration > 0 && !root.following-jam; label: "Playback position"; value-text: root.format-time(root.position); released(value) => { root.seek(value); } }
+                Text { width: 40px; text: root.duration > 0 ? root.format-time(root.duration) : "–:––"; color: Theme.faint; font-size: 11px; vertical-alignment: center; }
+            }
+        }
+        // Queue, mini player and volume
+        HorizontalLayout {
+            width: root.side-width;
+            spacing: 4px;
+            alignment: end;
+            cross-axis-alignment: center;
+            IconButton { width: 34px; height: 34px; quiet: !root.queue-open; ink: root.queue-open ? Theme.accent : Theme.muted; icon: "queue"; label: root.queue-open ? "Close queue drawer" : "Open queue drawer"; clicked => { root.toggle-queue(); } }
+            IconButton { width: 34px; height: 34px; quiet: true; icon: "mini"; label: "Collapse to mini player"; clicked => { root.mini(); } }
+            IconButton { width: 34px; height: 34px; quiet: true; icon: root.volume <= 0 ? "mute" : "volume"; icon-size: 18px; label: root.volume <= 0 ? "Unmute" : "Mute"; clicked => { root.toggle-mute(); } }
+            TideSlider { reset-revision: root.input-revision; width: root.compact ? 90px : 120px; minimum: 0; maximum: 100; value: root.volume; label: "Volume"; value-text: root.volume.to-fixed(0) + "%"; changed(value) => { root.change-volume(value); } }
+        }
+    }
+
+    // Mini player.
+    if root.collapsed : VerticalLayout {
+        padding-left: 18px;
+        padding-right: 18px;
+        padding-top: 10px;
+        padding-bottom: 10px;
+        spacing: 5px;
+        Rectangle {
+            height: 52px;
+            HorizontalLayout {
+                x: 0px;
+                width: max(120px, parent.width / 2 - 104px);
+                height: parent.height;
+                spacing: 12px;
+                cross-axis-alignment: center;
+                Cover { width: 44px; height: 44px; artwork: root.artwork; seed: root.has-track ? root.track-title : ""; }
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    min-width: 0px;
+                    spacing: 3px;
+                    alignment: center;
+                    Text { text: root.has-track ? root.track-title : "Nothing playing"; color: root.has-track ? Theme.text : Theme.muted; font-size: 14px; font-weight: 600; overflow: elide; }
+                    Text { text: root.subtitle; color: root.following-jam || root.loading ? Theme.selected-ink : Theme.muted; font-size: 12px; overflow: elide; }
+                }
+            }
+            Transport {
+                x: (parent.width - 170px) / 2;
+                width: 170px;
+                height: parent.height;
+                locked: root.following-jam;
+                has-track: root.has-track;
+                paused: root.paused;
+                loading: root.loading;
+                repeat-enabled: root.repeat-enabled;
+                extended: false;
+                play-size: 44px;
+                toggle-pause => { root.toggle-pause(); }
+                previous-track => { root.previous-track(); }
+                next-track => { root.next-track(); }
+            }
+            IconButton { x: parent.width - self.width; y: 9px; width: 34px; height: 34px; quiet: true; icon: "expand"; label: "Expand to full Tide window"; clicked => { root.restore(); } }
+        }
+        HorizontalLayout {
+            height: 25px;
+            spacing: 9px;
+            cross-axis-alignment: center;
+            Text { width: 38px; text: root.duration > 0 ? root.format-time(root.position) : "–:––"; color: Theme.muted; font-size: 11px; horizontal-alignment: right; vertical-alignment: center; }
+            TideSlider { reset-revision: root.input-revision; horizontal-stretch: 1; minimum: 0; maximum: max(1, root.duration); value: root.position; enabled: root.duration > 0 && !root.following-jam; label: "Playback position"; value-text: root.format-time(root.position); released(value) => { root.seek(value); } }
+            Text { width: 38px; text: root.duration > 0 ? root.format-time(root.duration) : "–:––"; color: Theme.muted; font-size: 11px; vertical-alignment: center; }
+            IconButton { width: 26px; height: 25px; quiet: true; icon: root.volume <= 0 ? "mute" : "volume"; icon-size: 17px; label: root.volume <= 0 ? "Unmute" : "Mute"; clicked => { root.toggle-mute(); } }
+            TideSlider { reset-revision: root.input-revision; width: 105px; minimum: 0; maximum: 100; value: root.volume; label: "Volume"; value-text: root.volume.to-fixed(0) + "%"; changed(value) => { root.change-volume(value); } }
+            Text { width: 38px; text: root.volume.to-fixed(0) + "%"; color: Theme.muted; font-size: 11px; horizontal-alignment: right; vertical-alignment: center; }
+        }
+    }
+}

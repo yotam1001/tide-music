@@ -13,9 +13,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-const CACHE_CAPACITY: usize = 48;
+const CACHE_CAPACITY: usize = 56;
 const PENDING_CAPACITY: usize = 32;
-const SIDE: u32 = 96;
+// 160px keeps cards and the playlist header sharp; 56 entries is ~4.3 MB.
+const SIDE: u32 = 160;
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 const MAX_SOURCE_PIXELS: u64 = 1_000_000;
 const MAX_URL_BYTES: usize = 4096;

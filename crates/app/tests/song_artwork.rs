@@ -36,6 +36,8 @@ fn changing_songs_clears_old_cover_until_the_selected_cover_arrives() {
     let window = MinimalSoftwareWindow::new(RepaintBufferType::ReusedBuffer);
     slint::platform::set_platform(Box::new(TestPlatform(window.clone()))).unwrap();
     let ui = AppWindow::new().unwrap();
+    // Pixel assertions need settled frames, not mid-transition ones.
+    ui.set_motion(false);
     window.set_size(PhysicalSize::new(780, 720));
     ui.show().unwrap();
     let red = Rgb8Pixel::new(255, 0, 0);

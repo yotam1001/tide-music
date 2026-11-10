@@ -1,0 +1,422 @@
+// Tide design tokens and the small set of controls every screen is built from.
+import { Button } from "std-widgets.slint";
+
+// One palette for every component. Colors are defined once per theme rather
+// than as light/dark ternaries scattered through each element.
+export global Theme {
+    in-out property <bool> light: false;
+    // Motion can be turned off (accessibility, or minimal CPU use). Every
+    // animation in the interface takes its duration from these tokens.
+    in-out property <bool> motion: true;
+    out property <duration> fast: root.motion ? 130ms : 0ms;
+    out property <duration> medium: root.motion ? 240ms : 0ms;
+    out property <duration> slow: root.motion ? 420ms : 0ms;
+    out property <color> window: root.light ? #f6f1ea : #0e1014;
+    out property <color> chrome: root.light ? #efe7dd : #13161b;
+    out property <color> surface: root.light ? #fbf8f3 : #181b21;
+    out property <color> raised: root.light ? #f3ece4 : #1d2128;
+    out property <color> card: root.light ? #f1e9e0 : #171a20;
+    out property <color> hover: root.light ? #e8ded3 : #23272f;
+    out property <color> pressed: root.light ? #ddcfc5 : #2b2830;
+    out property <color> outline: root.light ? #e0d3c8 : #2a2f38;
+    out property <color> divider: root.light ? #e6dcd2 : #1f232a;
+    out property <color> text: root.light ? #2f2529 : #f4f2f3;
+    out property <color> muted: root.light ? #6b6170 : #a3a7b0;
+    out property <color> faint: root.light ? #8b8290 : #737884;
+    out property <color> accent: root.light ? #b8473f : #cf416a;
+    out property <color> accent-hover: root.light ? #a63f38 : #dc5379;
+    out property <color> accent-pressed: root.light ? #933731 : #b5365b;
+    out property <color> accent-soft: root.light ? #b8473f2e : #cf416a33;
+    out property <color> on-accent: #fffaf8;
+    out property <color> selected: root.light ? #ead6cc : #2c1f29;
+    out property <color> selected-ink: root.light ? #8d3f37 : #f2b4c6;
+    out property <color> focus: root.light ? #6a4660 : #ec86a3;
+    out property <color> cover: root.light ? #e4d6cd : #24222a;
+    out property <color> cover-ink: root.light ? #9a6a60 : #c4879a;
+    out property <color> rail: root.light ? #c9b9ae : #3b3f48;
+    out property <color> rail-disabled: root.light ? #d6cac1 : #2f323a;
+    out property <color> notice: root.light ? #f3ddd3 : #35212a;
+    out property <color> success: root.light ? #3f7a4c : #6fcf86;
+    out property <color> warning: root.light ? #a26c1f : #e5b25d;
+    out property <color> scrim: #0000007a;
+    out property <color> shadow: root.light ? #2f252930 : #00000090;
+    // Brand gradient used for Liked Songs and page heroes.
+    out property <brush> brand: @linear-gradient(135deg, #cf416a 0%, #7a4bb3 100%);
+    out property <brush> hero: root.light
+        ? @linear-gradient(180deg, #b8473f30 0%, #f6f1ea00 100%)
+        : @linear-gradient(180deg, #cf416a3a 0%, #0e101400 100%);
+    // Artwork placeholders: a stable gradient per title instead of a grey box.
+    public pure function art(seed: int) -> brush {
+        return seed == 0 ? @linear-gradient(140deg, #cf416a 0%, #6a3fb5 100%)
+            : seed == 1 ? @linear-gradient(140deg, #2f6fd6 0%, #45b8e0 100%)
+            : seed == 2 ? @linear-gradient(140deg, #f0904a 0%, #d9475a 100%)
+            : seed == 3 ? @linear-gradient(140deg, #0f7f73 0%, #4cb98a 100%)
+            : seed == 4 ? @linear-gradient(140deg, #8a55e0 0%, #4570dc 100%)
+            : @linear-gradient(140deg, #b8667f 0%, #3a5d7c 100%);
+    }
+}
+
+// Vector icons drawn in a 24-unit box. Transport marks and the heart are filled.
+export component Icon inherits Path {
+    in property <string> name;
+    in property <color> ink: Theme.text;
+    in property <length> size: 20px;
+    private property <bool> solid: root.name == "play" || root.name == "pause"
+        || root.name == "previous" || root.name == "next" || root.name == "heart";
+    width: root.size;
+    height: root.size;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    fill: root.solid ? root.ink : Colors.transparent;
+    stroke: root.ink;
+    stroke-width: 1.7px;
+    commands: root.name == "play" ? "M 7 4 L 20 12 L 7 20 Z"
+        : root.name == "pause" ? "M 6 5 L 9.5 5 L 9.5 19 L 6 19 Z M 14.5 5 L 18 5 L 18 19 L 14.5 19 Z"
+        : root.name == "previous" ? "M 6 5 L 6 19 M 18 5 L 9 12 L 18 19 Z"
+        : root.name == "next" ? "M 18 5 L 18 19 M 6 5 L 15 12 L 6 19 Z"
+        : root.name == "repeat" ? "M 17 3 L 21 7 L 17 11 M 21 7 L 7 7 C 4 7 3 9 3 12 M 7 21 L 3 17 L 7 13 M 3 17 L 17 17 C 20 17 21 15 21 12"
+        : root.name == "shuffle" ? "M 3 6 L 7 6 C 11 6 13 18 17 18 L 21 18 M 17 14 L 21 18 L 17 22 M 3 18 L 7 18 C 11 18 13 6 17 6 L 21 6 M 17 2 L 21 6 L 17 10"
+        : root.name == "expand" ? "M 14 4 L 20 4 L 20 10 M 20 4 L 10 14 M 10 5 L 5 5 L 5 19 L 19 19 L 19 14"
+        : root.name == "mini" ? "M 3 5 L 21 5 L 21 19 L 3 19 Z M 11 12 L 18 12 L 18 16 L 11 16 Z"
+        : root.name == "queue" ? "M 4 6 L 15 6 M 4 11 L 15 11 M 4 16 L 10 16 M 14 14 L 14 21 L 20 17.5 Z"
+        : root.name == "clear" ? "M 6 7 L 18 7 L 17 21 L 7 21 Z M 4 7 L 20 7 M 9 7 L 9 3 L 15 3 L 15 7 M 10 10 L 10 18 M 14 10 L 14 18"
+        : root.name == "add" ? "M 12 5 L 12 19 M 5 12 L 19 12"
+        : root.name == "close" ? "M 6 6 L 18 18 M 18 6 L 6 18"
+        : root.name == "more" ? "M 5 11 A 1 1 0 1 0 5 13 A 1 1 0 1 0 5 11 Z M 12 11 A 1 1 0 1 0 12 13 A 1 1 0 1 0 12 11 Z M 19 11 A 1 1 0 1 0 19 13 A 1 1 0 1 0 19 11 Z"
+        : root.name == "back" ? "M 15 5 L 8 12 L 15 19"
+        : root.name == "chevron" ? "M 9 5 L 16 12 L 9 19"
+        : root.name == "search" ? "M 17 10 A 7 7 0 1 0 3 10 A 7 7 0 1 0 17 10 Z M 15 15 L 21 21"
+        : root.name == "volume" ? "M 3 9 L 7 9 L 12 5 L 12 19 L 7 15 L 3 15 Z M 16 8 C 19 10 19 14 16 16 M 19 5 C 24 9 24 15 19 19"
+        : root.name == "mute" ? "M 3 9 L 7 9 L 12 5 L 12 19 L 7 15 L 3 15 Z M 16 9 L 22 15 M 22 9 L 16 15"
+        : root.name == "home" ? "M 3 10 L 12 3 L 21 10 M 5 9 L 5 21 L 10 21 L 10 14 L 14 14 L 14 21 L 19 21 L 19 9"
+        : root.name == "library" ? "M 4 4 L 4 20 M 9 4 L 9 20 M 14 5 L 19 4 L 22 19 L 17 20 Z"
+        : root.name == "jam" ? "M 9 3 A 3 3 0 1 0 9 9 A 3 3 0 1 0 9 3 Z M 3 20 C 3 14 15 14 15 20 M 17 5 A 2.5 2.5 0 1 0 17 10 A 2.5 2.5 0 1 0 17 5 Z M 17 13 C 20 13 22 15 22 19"
+        : root.name == "file" ? "M 6 3 L 14 3 L 19 8 L 19 21 L 6 21 Z M 14 3 L 14 8 L 19 8 M 11 17 L 11 11 L 15 10"
+        : root.name == "account" ? "M 12 4 A 4 4 0 1 0 12 12 A 4 4 0 1 0 12 4 Z M 4 21 C 4 15 20 15 20 21"
+        : root.name == "refresh" ? "M 20 12 A 8 8 0 1 1 17.7 6.3 M 20 3 L 20 8 L 15 8"
+        : root.name == "radio" ? "M 12 10 A 2 2 0 1 0 12 14 A 2 2 0 1 0 12 10 Z M 7.8 7.8 A 6 6 0 0 0 7.8 16.2 M 16.2 7.8 A 6 6 0 0 1 16.2 16.2 M 4.9 4.9 A 10 10 0 0 0 4.9 19.1 M 19.1 4.9 A 10 10 0 0 1 19.1 19.1"
+        : root.name == "heart" ? "M 12 20 C 4 14 2 10 4 7 C 6 4 10 4 12 8 C 14 4 18 4 20 7 C 22 10 20 14 12 20 Z"
+        : root.name == "check" ? "M 5 12 L 10 17 L 19 7"
+        : root.name == "warning" ? "M 12 3 L 22 20 L 2 20 Z M 12 9 L 12 14 M 12 16.5 L 12 17.5"
+        : root.name == "bars" ? "M 5 20 L 5 13 M 10 20 L 10 5 M 15 20 L 15 10 M 20 20 L 20 15"
+        : root.name == "clock" ? "M 21 12 A 9 9 0 1 0 3 12 A 9 9 0 1 0 21 12 Z M 12 7 L 12 12 L 15 14"
+        : root.name == "playlist" ? "M 3 6 L 14 6 M 3 11 L 14 11 M 3 16 L 9 16 M 17 4 L 17 16 M 17 4 L 21 3 M 17 16 C 17 19 12 19 12 17 C 12 15 17 14 17 16 Z"
+        : root.name == "note" ? "M 9 18 L 9 5 L 20 3 L 20 16 M 9 8 L 20 6 M 9 18 C 9 22 3 22 3 19 C 3 16 9 15 9 18 Z M 20 16 C 20 20 14 20 14 17 C 14 14 20 13 20 16 Z"
+        : "M 4 12 L 20 12 M 14 6 L 20 12 L 14 18";
+}
+
+// Shared input surface. Slint's standard Button supplies keyboard activation,
+// focus and accessibility; the TouchArea supplies hover and pointer clicks.
+// Place it before visual content: text and paths do not capture the pointer,
+// while interactive children declared later stay on top of it.
+export component Hit inherits Rectangle {
+    in property <string> label;
+    in property <bool> enabled: true;
+    out property <bool> hovered: root.enabled && touch.has-hover;
+    out property <bool> pressed: root.enabled && (touch.pressed || control.pressed);
+    out property <bool> focused: control.has-focus;
+    callback clicked;
+    forward-focus: control;
+    control := Button {
+        width: parent.width;
+        height: parent.height;
+        text: "";
+        opacity: 0;
+        enabled: root.enabled;
+        accessible-label: root.label;
+        clicked => { root.clicked(); }
+    }
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// Text button with optional leading icon. `primary` is the single strongest
+// action in a region; `active` marks a toggled destination such as Queue.
+export component TextButton inherits Rectangle {
+    in property <string> text;
+    in property <string> icon;
+    in property <string> label: root.text;
+    in property <bool> primary: false;
+    in property <bool> active: false;
+    in property <bool> quiet: false;
+    in property <bool> enabled: true;
+    in property <bool> pill: false;
+    in property <length> font-size: 12px;
+    callback clicked;
+    forward-focus: hit;
+    private property <bool> strong: root.primary || root.active;
+    private property <color> ink: root.strong ? Theme.on-accent : Theme.text;
+    height: 34px;
+    border-radius: root.pill ? self.height / 2 : 8px;
+    background: root.strong
+        ? (hit.pressed ? Theme.accent-pressed : hit.hovered ? Theme.accent-hover : Theme.accent)
+        : (hit.pressed ? Theme.pressed : hit.hovered ? Theme.hover : root.quiet ? Colors.transparent : Theme.raised);
+    border-width: hit.focused ? 2px : (root.strong || root.quiet) ? 0px : 1px;
+    border-color: hit.focused ? Theme.focus : Theme.outline;
+    opacity: root.enabled ? 1 : 0.45;
+    animate background { duration: Theme.fast; }
+    hit := Hit {
+        width: parent.width;
+        height: parent.height;
+        label: root.label;
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
+    HorizontalLayout {
+        padding-left: root.text == "" ? 0px : 14px;
+        padding-right: root.text == "" ? 0px : 14px;
+        spacing: 7px;
+        alignment: center;
+        cross-axis-alignment: center;
+        if root.icon != "" : Icon { name: root.icon; ink: root.ink; size: 16px; }
+        if root.text != "" : Text {
+            text: root.text;
+            color: root.ink;
+            font-size: root.font-size;
+            font-weight: 600;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
+}
+
+// Square or round icon-only button. Its label is required for screen readers.
+export component IconButton inherits Rectangle {
+    in property <string> icon;
+    in property <string> label;
+    in property <bool> active: false;
+    in property <bool> quiet: false;
+    in property <bool> round: false;
+    in property <bool> enabled: true;
+    in property <length> icon-size: 18px;
+    in property <color> ink: root.quiet ? Theme.muted : Theme.text;
+    out property <bool> hovered: hit.hovered || hit.focused;
+    callback clicked;
+    forward-focus: hit;
+    width: 32px;
+    height: 32px;
+    border-radius: root.round ? self.height / 2 : 8px;
+    background: root.active
+        ? (hit.pressed ? Theme.accent-pressed : hit.hovered ? Theme.accent-hover : Theme.accent)
+        : (hit.pressed ? Theme.pressed : hit.hovered ? Theme.hover : root.quiet ? Colors.transparent : Theme.raised);
+    border-width: hit.focused ? 2px : (root.active || root.quiet) ? 0px : 1px;
+    border-color: hit.focused ? Theme.focus : Theme.outline;
+    opacity: root.enabled ? 1 : 0.4;
+    animate background { duration: Theme.fast; }
+    hit := Hit {
+        width: parent.width;
+        height: parent.height;
+        label: root.label;
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
+    Icon {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        name: root.icon;
+        size: root.icon-size;
+        ink: root.active ? Theme.on-accent : (hit.hovered ? Theme.text : root.ink);
+    }
+}
+
+// The big circular play/pause control used in the player bar and page heroes.
+export component PlayButton inherits Rectangle {
+    in property <bool> playing: false;
+    in property <string> label;
+    in property <bool> enabled: true;
+    in property <bool> inverted: false;
+    out property <bool> hovered: hit.hovered || hit.focused;
+    callback clicked;
+    forward-focus: hit;
+    width: 48px;
+    height: 48px;
+    opacity: root.enabled ? 1 : 0.45;
+    private property <length> inset: hit.pressed ? 4px : hit.hovered ? 0px : 2px;
+    animate inset { duration: Theme.fast; easing: ease-out; }
+    disc := Rectangle {
+        x: root.inset;
+        y: root.inset;
+        width: root.width - 2 * root.inset;
+        height: root.height - 2 * root.inset;
+        border-radius: self.height / 2;
+        background: root.inverted
+            ? (hit.pressed ? #e6e2e3 : #ffffff)
+            : (hit.pressed ? Theme.accent-pressed : hit.hovered ? Theme.accent-hover : Theme.accent);
+        border-width: hit.focused ? 2px : 0px;
+        border-color: Theme.focus;
+        drop-shadow-blur: hit.hovered ? 16px : 8px;
+        drop-shadow-offset-y: 3px;
+        drop-shadow-color: Theme.shadow;
+        animate background { duration: Theme.fast; }
+    }
+    hit := Hit { width: parent.width; height: parent.height; label: root.label; enabled: root.enabled; clicked => { root.clicked(); } }
+    Icon {
+        x: (parent.width - self.width) / 2 + (root.playing ? 0px : root.height * 0.04);
+        y: (parent.height - self.height) / 2;
+        name: root.playing ? "pause" : "play";
+        ink: root.inverted ? #17151a : Theme.on-accent;
+        size: root.height * 0.42;
+    }
+}
+
+// Labelled on/off switch with the state announced in its accessible label.
+export component Toggle inherits Rectangle {
+    in property <string> text;
+    in property <bool> on;
+    in property <bool> enabled: true;
+    callback toggled;
+    forward-focus: hit;
+    height: 34px;
+    border-radius: 8px;
+    background: hit.pressed ? Theme.pressed : hit.hovered ? Theme.hover : Colors.transparent;
+    border-width: hit.focused ? 2px : 0px;
+    border-color: Theme.focus;
+    opacity: root.enabled ? 1 : 0.45;
+    animate background { duration: Theme.fast; }
+    hit := Hit {
+        width: parent.width;
+        height: parent.height;
+        label: root.text + (root.on ? ", on. Turn off" : ", off. Turn on");
+        enabled: root.enabled;
+        clicked => { root.toggled(); }
+    }
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        spacing: 8px;
+        alignment: space-between;
+        cross-axis-alignment: center;
+        Text { text: root.text; color: Theme.text; font-size: 12px; vertical-alignment: center; overflow: elide; }
+        Rectangle {
+            width: 34px;
+            height: 20px;
+            border-radius: 10px;
+            background: root.on ? Theme.accent : Theme.rail;
+            animate background { duration: Theme.medium; }
+            Rectangle {
+                animate x { duration: Theme.medium; easing: cubic-bezier(0.3, 1.4, 0.5, 1); }
+                x: root.on ? 16px : 2px;
+                y: 2px;
+                width: 16px;
+                height: 16px;
+                border-radius: 8px;
+                background: #fffaf8;
+            }
+        }
+    }
+}
+
+// Two-option segmented control for exclusive settings such as theme.
+export component Segmented inherits Rectangle {
+    in property <string> first;
+    in property <string> second;
+    in property <bool> second-selected;
+    in property <string> label;
+    callback choose(bool);
+    height: 32px;
+    width: 176px;
+    border-radius: 16px;
+    background: Theme.raised;
+    border-width: 1px;
+    border-color: Theme.outline;
+    Rectangle {
+        x: root.second-selected ? root.width / 2 + 1.5px : 3px;
+        y: 3px;
+        width: root.width / 2 - 4.5px;
+        height: root.height - 6px;
+        border-radius: 13px;
+        background: Theme.accent;
+        animate x { duration: Theme.medium; easing: cubic-bezier(0.2, 0.9, 0.3, 1); }
+    }
+    HorizontalLayout {
+        padding: 3px;
+        spacing: 3px;
+        Rectangle {
+            border-radius: 13px;
+            background: !root.second-selected || !a-hit.hovered ? Colors.transparent : Theme.hover;
+            border-width: a-hit.focused ? 2px : 0px;
+            border-color: Theme.focus;
+            a-hit := Hit { width: parent.width; height: parent.height; label: root.label + ": " + root.first + (root.second-selected ? "" : ", selected"); clicked => { root.choose(false); } }
+            Text { text: root.first; color: !root.second-selected ? Theme.on-accent : Theme.text; font-size: 12px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+        }
+        Rectangle {
+            border-radius: 13px;
+            background: root.second-selected || !b-hit.hovered ? Colors.transparent : Theme.hover;
+            border-width: b-hit.focused ? 2px : 0px;
+            border-color: Theme.focus;
+            b-hit := Hit { width: parent.width; height: parent.height; label: root.label + ": " + root.second + (root.second-selected ? ", selected" : ""); clicked => { root.choose(true); } }
+            Text { text: root.second; color: root.second-selected ? Theme.on-accent : Theme.text; font-size: 12px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+        }
+    }
+}
+
+// Small activity indicator. It only exists (and only ticks) while loading.
+export component LoadingDots inherits Rectangle {
+    private property <int> phase: 0;
+    width: 40px;
+    height: 10px;
+    Timer {
+        interval: 320ms;
+        running: true;
+        triggered => { root.phase = root.phase >= 2 ? 0 : root.phase + 1; }
+    }
+    for dot in 3 : Rectangle {
+        x: dot * 15px + 1px;
+        y: 1px;
+        width: 8px;
+        height: 8px;
+        border-radius: 4px;
+        background: Theme.accent;
+        opacity: dot == root.phase ? 1 : 0.3;
+    }
+}
+
+export component SectionTitle inherits Text {
+    color: Theme.faint;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.8px;
+    vertical-alignment: center;
+}
+
+// One entry in a popup menu.
+export component MenuItem inherits Rectangle {
+    in property <string> icon;
+    in property <string> text;
+    in property <string> label: root.text;
+    callback clicked;
+    height: 34px;
+    border-radius: 6px;
+    background: hit.pressed ? Theme.pressed : hit.hovered ? Theme.hover : Colors.transparent;
+    animate background { duration: Theme.fast; }
+    border-width: hit.focused ? 2px : 0px;
+    border-color: Theme.focus;
+    hit := Hit { width: parent.width; height: parent.height; label: root.label; clicked => { root.clicked(); } }
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 10px;
+        cross-axis-alignment: center;
+        Icon { name: root.icon; ink: Theme.muted; size: 16px; }
+        Text { horizontal-stretch: 1; text: root.text; color: Theme.text; font-size: 13px; overflow: elide; }
+    }
+}
+
+// Popup surface shared by every context menu.
+export component MenuSurface inherits Rectangle {
+    background: Theme.raised;
+    border-radius: 10px;
+    border-width: 1px;
+    border-color: Theme.outline;
+    drop-shadow-blur: 22px;
+    drop-shadow-offset-y: 6px;
+    drop-shadow-color: Theme.shadow;
+    VerticalLayout {
+        padding: 6px;
+        spacing: 2px;
+        @children
+    }
+}

@@ -472,8 +472,11 @@ def identifier(value, video=False):
     return value if re.fullmatch(pattern, value) else ""
 
 
+ARTWORK_MIN_SIDE = 160
+
+
 def artwork_url(item):
-    """Choose a small public image without forwarding any account headers."""
+    """Choose a card-sized public image without forwarding any account headers."""
     thumbnails = item.get("thumbnails") or item.get("thumbnail") or []
     if not isinstance(thumbnails, list):
         return None
@@ -497,7 +500,9 @@ def artwork_url(item):
         width, height = thumbnail.get("width"), thumbnail.get("height")
         size = max(width, height) if (type(width) is int and type(height) is int
                                      and 0 < width <= 8192 and 0 < height <= 8192) else 8192
-        candidates.append((abs(size - 120), size, url))
+        # Prefer the smallest image that stays sharp on a 160px card; when every
+        # candidate is smaller, take the largest available.
+        candidates.append((0, size, url) if size >= ARTWORK_MIN_SIDE else (1, -size, url))
     return min(candidates)[2] if candidates else None
 
 

@@ -1,14 +1,10 @@
-import { AboutSlint, Button, ComboBox, LineEdit, ListView, Palette, ScrollView, Slider } from "std-widgets.slint";
+import { AboutSlint, ComboBox, ListView, Palette, ScrollView } from "std-widgets.slint";
+import { Theme, Icon, Hit, TextButton, IconButton, PlayButton, Toggle, Segmented, LoadingDots, SectionTitle } from "theme.slint";
+import { TrackRow, Cover, EmptyState, SongRow, MediaCard, NavigationButton, SidebarPlaylist } from "components.slint";
+import { QueueDrawer } from "queue.slint";
+import { PlayerBar } from "player.slint";
 export { TideJamWindow, JamChoice } from "jams.slint";
-
-export struct TrackRow {
-    title: string,
-    artist: string,
-    album: string,
-    duration: string,
-    recommended: bool,
-    artwork: image,
-}
+export { TrackRow, Theme }
 
 export struct PlaylistRow {
     id: string,
@@ -26,910 +22,44 @@ export struct RecommendationRow {
     shelf: string,
 }
 
-component SearchMark inherits Path {
-    in property <color> ink;
-    width: 18px;
-    height: 18px;
-    viewbox-width: 24;
-    viewbox-height: 24;
-    fill: Colors.transparent;
-    stroke: root.ink;
-    stroke-width: 1.6px;
-    commands: "M 18 10 A 8 8 0 1 0 2 10 A 8 8 0 1 0 18 10 Z M 16 16 L 22 22";
+// Home recommendations grouped by YouTube Music shelf. `first` is the index of
+// the shelf's first card in the flat recommendation list used by callbacks.
+export struct HomeShelf {
+    title: string,
+    first: int,
+    items: [RecommendationRow],
 }
 
-component VolumeMark inherits Path {
-    in property <color> ink;
-    width: 18px;
-    height: 18px;
-    viewbox-width: 24;
-    viewbox-height: 24;
-    fill: Colors.transparent;
-    stroke: root.ink;
-    stroke-width: 1.5px;
-    commands: "M 3 9 L 7 9 L 12 5 L 12 19 L 7 15 L 3 15 Z M 16 8 C 19 10 19 14 16 16 M 19 5 C 24 9 24 15 19 19";
-}
+// The browsing surface is one explicit state. `section` is the navigation root
+// (Home or Library) that Back returns to from a playlist or search results.
+export enum Page { home, library, playlist, search }
 
-// The native slider supplies pointer, keyboard, focus and accessibility actions.
-// Its value drives a tiny code-native treatment in the approved accent colors.
-component TideSlider inherits Rectangle {
-    in property <float> minimum: 0;
-    in property <float> maximum: 100;
-    in property <float> value: 0;
-    in property <int> reset-revision: 0;
-    // Native input must never assign the externally owned value: doing so
-    // breaks its binding to the live clock/volume. Keep a local drag preview.
-    private property <float> input-value: root.value;
-    private property <bool> interacting: false;
-    private property <bool> input-focused: native.has-focus;
-    changed value => { if !root.interacting { root.input-value = root.value; } }
-    changed maximum => { root.interacting = false; root.input-value = root.value; }
-    changed reset-revision => { root.interacting = false; root.input-value = root.value; }
-    changed enabled => { if !root.enabled { root.interacting = false; root.input-value = root.value; } }
-    changed input-focused => { if !root.input-focused { root.interacting = false; root.input-value = root.value; } }
-    in property <bool> enabled: true;
-    in property <bool> light-mode: false;
-    in property <string> label;
-    in property <string> value-text;
-    callback changed(float);
-    callback released(float);
-    private property <float> fraction: root.maximum > root.minimum
-        ? min(1, max(0, (root.input-value - root.minimum) / (root.maximum - root.minimum))) : 0;
-    private property <color> accent: root.light-mode ? #b45448 : #b33d60;
+// Derived account presentation. The application supplies the underlying facts;
+// the interface renders exactly one of these states.
+export enum AccountState { disconnected, saved, verifying, connected }
 
-    min-width: 40px;
-    min-height: 20px;
-    horizontal-stretch: 1;
-    forward-focus: native;
-    // Accessibility adjustments are complete actions and have no pointer/key release.
-    function commit-accessible(value: float) {
-        if root.enabled {
-            root.interacting = false;
-            root.input-value = min(root.maximum, max(root.minimum, value));
-            root.changed(root.input-value);
-            root.released(root.input-value);
-            root.input-value = root.value;
-        }
-    }
+// What the single error banner offers. Derived from the error facts below.
+export enum ErrorAction { dismiss, retry, account }
 
-    Rectangle {
-        x: 10px;
-        y: (root.height - 4px) / 2;
-        width: max(0px, root.width - 20px);
-        height: 4px;
-        border-radius: 2px;
-        background: root.light-mode ? #b7a599 : #44464d;
-    }
-    Rectangle {
-        x: 10px;
-        y: (root.height - 4px) / 2;
-        width: max(0px, root.width - 20px) * root.fraction;
-        height: 4px;
-        border-radius: 2px;
-        background: root.enabled ? root.accent : (root.light-mode ? #c1b3aa : #4b4950);
-    }
-    Rectangle {
-        x: 3px + max(0px, root.width - 20px) * root.fraction;
-        y: (root.height - 14px) / 2;
-        width: 14px;
-        height: 14px;
-        border-radius: 7px;
-        border-width: native.has-focus ? 2px : 0px;
-        border-color: root.light-mode ? #68465d : #f2bccb;
-        background: root.enabled ? root.accent : (root.light-mode ? #c1b3aa : #4b4950);
-    }
-    native := Slider {
-        width: parent.width;
-        height: parent.height;
-        opacity: 0;
-        minimum: root.minimum;
-        maximum: root.maximum;
-        value <=> root.input-value;
-        enabled: root.enabled;
-        accessible-label: root.label;
-        accessible-value: root.value-text;
-        accessible-action-set-value(value) => {
-            if value.is-float() { root.commit-accessible(value.to-float()); }
-        }
-        accessible-action-increment => { root.commit-accessible(root.value + 1); }
-        accessible-action-decrement => { root.commit-accessible(root.value - 1); }
-        changed(value) => { root.interacting = true; root.changed(value); }
-        released(value) => {
-            root.interacting = false;
-            root.released(value);
-            // A rejected/no-op seek need not change the owner's value, so a
-            // changed-value callback alone cannot end the local preview.
-            root.input-value = root.value;
-        }
-    }
-}
-
-// Buttons use Slint's standard Button for keyboard and accessibility behavior,
-// while the surrounding rectangle supplies Tide's compact visual treatment.
-component TideButton inherits Rectangle {
-    in property <string> label;
-    in property <string> caption;
-    in property <color> surface-color;
-    in property <color> text-color;
-    in property <color> accent-color;
-    in property <color> accent-text-color;
-    in property <color> outline-color;
-    in property <color> focus-color;
-    in property <color> pressed-color;
-    in property <bool> active: false;
-    in property <bool> round: false;
-    in property <bool> enabled: true;
-    in property <length> caption-size: 14px;
-    callback clicked;
-    forward-focus: control;
-
-    private property <string> icon-kind:
-        root.caption == "⏮" ? "previous" : root.caption == "⏭" ? "next"
-        : root.caption == "▶" ? "play" : root.caption == "Ⅱ" ? "pause"
-        : root.caption == "↻" ? "repeat" : root.caption == "⌄" ? "collapse"
-        : root.caption == "↗" ? "expand" : root.caption == "◐" || root.caption == "☼" ? "mode"
-        : root.caption == "⌫" ? "clear" : root.caption == "＋" ? "add"
-        : root.caption == "⇄" ? "shuffle" : root.caption == "→" ? "send"
-        : root.caption == "..." ? "more" : root.caption == "×" ? "close" : "";
-    private property <color> icon-color: root.active ? root.accent-text-color : root.text-color;
-
-    border-radius: root.round ? self.height / 2 : 9px;
-    border-width: control.has-focus ? 2px : root.active ? 0px : 1px;
-    border-color: control.has-focus ? root.focus-color : root.outline-color;
-    background: root.active ? root.accent-color
-        : control.pressed ? root.pressed-color : root.surface-color;
-    opacity: root.enabled ? 1 : 0.45;
-
-    control := Button {
-        width: parent.width;
-        height: parent.height;
-        text: "";
-        opacity: 0;
-        accessible-label: root.label;
-        enabled: root.enabled;
-        clicked => { root.clicked(); }
-    }
-
-    Text {
-        width: parent.width;
-        height: parent.height;
-        text: root.icon-kind == "" ? root.caption : "";
-        color: root.active ? root.accent-text-color : root.text-color;
-        font-size: root.caption-size;
-        font-weight: 600;
-        horizontal-alignment: center;
-        vertical-alignment: center;
-        overflow: elide;
-    }
-    if root.icon-kind != "" : Path {
-        x: (root.width - 20px) / 2;
-        y: (root.height - 20px) / 2;
-        width: 20px;
-        height: 20px;
-        viewbox-width: 24;
-        viewbox-height: 24;
-        fill: root.icon-kind == "play" || root.icon-kind == "pause" || root.icon-kind == "previous" || root.icon-kind == "next" ? root.icon-color : Colors.transparent;
-        stroke: root.icon-color;
-        stroke-width: 1.5px;
-        commands: root.icon-kind == "play" ? "M 7 4 L 20 12 L 7 20 Z"
-            : root.icon-kind == "pause" ? "M 6 5 L 9 5 L 9 19 L 6 19 Z M 15 5 L 18 5 L 18 19 L 15 19 Z"
-            : root.icon-kind == "previous" ? "M 6 5 L 6 19 M 18 5 L 9 12 L 18 19 Z"
-            : root.icon-kind == "next" ? "M 18 5 L 18 19 M 6 5 L 15 12 L 6 19 Z"
-            : root.icon-kind == "repeat" ? "M 17 3 L 21 7 L 17 11 M 21 7 L 7 7 C 4 7 3 9 3 12 M 7 21 L 3 17 L 7 13 M 3 17 L 17 17 C 20 17 21 15 21 12"
-            : root.icon-kind == "shuffle" ? "M 3 6 L 7 6 C 11 6 13 18 17 18 L 21 18 M 17 14 L 21 18 L 17 22 M 3 18 L 7 18 C 11 18 13 6 17 6 L 21 6 M 17 2 L 21 6 L 17 10"
-            : root.icon-kind == "collapse" ? "M 5 9 L 12 16 L 19 9"
-            : root.icon-kind == "expand" ? "M 14 4 L 20 4 L 20 10 M 20 4 L 10 14 M 10 5 L 5 5 L 5 19 L 19 19 L 19 14"
-            : root.icon-kind == "mode" ? "M 12 3 A 9 9 0 1 0 12 21 A 9 9 0 1 0 12 3 Z M 12 3 L 12 21 M 12 6 L 17 6 M 12 9 L 19 9 M 12 12 L 20 12 M 12 15 L 19 15 M 12 18 L 17 18"
-            : root.icon-kind == "clear" ? "M 6 7 L 18 7 L 17 21 L 7 21 Z M 4 7 L 20 7 M 9 7 L 9 3 L 15 3 L 15 7 M 10 10 L 10 18 M 14 10 L 14 18"
-            : root.icon-kind == "add" ? "M 12 5 L 12 19 M 5 12 L 19 12"
-            : root.icon-kind == "close" ? "M 6 6 L 18 18 M 18 6 L 6 18"
-            : root.icon-kind == "more" ? "M 5 11 A 1 1 0 1 0 5 13 A 1 1 0 1 0 5 11 Z M 12 11 A 1 1 0 1 0 12 13 A 1 1 0 1 0 12 11 Z M 19 11 A 1 1 0 1 0 19 13 A 1 1 0 1 0 19 11 Z"
-            : "M 4 12 L 20 12 M 14 6 L 20 12 L 14 18";
-    }
-}
-
-// Code-native abstract cover art avoids loading and retaining large artwork in
-// the lightweight layouts. The parent can replace this component once artwork
-// becomes part of the shared track model.
-component TransportButtons inherits Rectangle {
-    in property <bool> locked: false;
-    in property <bool> paused;
-    in property <bool> repeat-enabled;
-    in property <bool> light-mode: false;
-    in property <bool> show-repeat: true;
-    in property <bool> show-shuffle: true;
-    callback previous-track;
-    callback toggle-pause;
-    callback next-track;
-    callback toggle-repeat;
-    callback shuffle-queue;
-
-    private property <color> surface: root.light-mode ? #eaded9 : #1c2027;
-    private property <color> foreground: root.light-mode ? #432d45 : #f3eff2;
-    private property <color> accent: root.light-mode ? #b45448 : #b33d60;
-    private property <color> accent-foreground: #fff8f6;
-    private property <color> outline: root.light-mode ? #cfbdb7 : #2d333d;
-    private property <color> focus-ring: root.light-mode ? #6e4b61 : #e1768b;
-    private property <color> pressed: root.light-mode ? #dbc9c2 : #2c2730;
-
+// Column header for track tables, aligned with SongRow's columns.
+component TrackTableHeader inherits Rectangle {
+    in property <bool> show-number: true;
+    in property <bool> show-album: true;
+    height: 34px;
     HorizontalLayout {
-        spacing: 9px;
-        alignment: center;
-
-        if root.show-shuffle : TideButton { enabled: !root.locked;
-            width: 36px;
-            height: 36px;
-            label: "Shuffle upcoming tracks";
-            caption: "⇄";
-            surface-color: root.surface;
-            text-color: root.foreground;
-            accent-color: root.accent;
-            accent-text-color: root.accent-foreground;
-            outline-color: root.outline;
-            focus-color: root.focus-ring;
-            pressed-color: root.pressed;
-            clicked => { root.shuffle-queue(); }
-        }
-
-        TideButton { enabled: !root.locked;
-            width: 42px;
-            height: 40px;
-            label: "Previous track";
-            caption: "⏮";
-            surface-color: root.surface;
-            text-color: root.foreground;
-            accent-color: root.accent;
-            accent-text-color: root.accent-foreground;
-            outline-color: root.outline;
-            focus-color: root.focus-ring;
-            pressed-color: root.pressed;
-            clicked => { root.previous-track(); }
-        }
-
-        TideButton { enabled: !root.locked;
-            width: 48px;
-            height: 44px;
-            label: root.paused ? "Play" : "Pause";
-            caption: root.paused ? "▶" : "Ⅱ";
-            active: true;
-            round: true;
-            caption-size: 17px;
-            surface-color: root.surface;
-            text-color: root.foreground;
-            accent-color: root.accent;
-            accent-text-color: root.accent-foreground;
-            outline-color: root.outline;
-            focus-color: root.focus-ring;
-            pressed-color: root.pressed;
-            clicked => { root.toggle-pause(); }
-        }
-
-        TideButton { enabled: !root.locked;
-            width: 42px;
-            height: 40px;
-            label: "Next track";
-            caption: "⏭";
-            surface-color: root.surface;
-            text-color: root.foreground;
-            accent-color: root.accent;
-            accent-text-color: root.accent-foreground;
-            outline-color: root.outline;
-            focus-color: root.focus-ring;
-            pressed-color: root.pressed;
-            clicked => { root.next-track(); }
-        }
-
-        if root.show-repeat : TideButton { enabled: !root.locked;
-            width: 38px;
-            height: 38px;
-            label: root.repeat-enabled ? "Turn repeat off" : "Turn repeat on";
-            caption: "↻";
-            active: root.repeat-enabled;
-            surface-color: root.surface;
-            text-color: root.foreground;
-            accent-color: root.accent;
-            accent-text-color: root.accent-foreground;
-            outline-color: root.outline;
-            focus-color: root.focus-ring;
-            pressed-color: root.pressed;
-            clicked => { root.toggle-repeat(); }
-        }
-    }
-}
-
-component LibraryButton inherits TideButton {
-    in property <bool> light-mode: false;
-    height: 36px;
-    caption-size: 12px;
-    surface-color: root.light-mode ? #f4ede5 : #1c2027;
-    text-color: root.light-mode ? #432d45 : #e7e8ec;
-    accent-color: root.light-mode ? #b45448 : #b33d60;
-    accent-text-color: #fff8f6;
-    outline-color: root.light-mode ? #ded0c4 : #2d333d;
-    focus-color: root.light-mode ? #68465d : #e1768b;
-    pressed-color: root.light-mode ? #d4bfb8 : #2c2730;
-}
-
-// A quiet selected navigation treatment keeps the playback action dominant.
-component NavigationButton inherits Rectangle {
-    in property <bool> light-mode;
-    in property <bool> active;
-    in property <bool> library;
-    in property <bool> enabled: true;
-    callback clicked;
-    height: 40px;
-    border-radius: 9px;
-    background: root.active ? (root.light-mode ? #e8d5cb : #30232e)
-        : control.pressed ? (root.light-mode ? #e5dbd2 : #242831) : Colors.transparent;
-    border-width: control.has-focus ? 2px : 0px;
-    border-color: root.light-mode ? #8e594e : #db7f9d;
-    private property <color> ink: root.active ? (root.light-mode ? #88463e : #edb5c6)
-        : (root.light-mode ? #716773 : #a1a5ae);
-    control := Button {
-        width: parent.width;
-        height: parent.height;
-        opacity: 0;
-        enabled: root.enabled;
-        accessible-label: root.library ? "Open your Library" : "Open Home";
-        clicked => { root.clicked(); }
-    }
-    HorizontalLayout {
-        padding-left: 12px;
-        padding-right: 10px;
-        spacing: 8px;
-        cross-axis-alignment: center;
-        Path {
-            width: 16px;
-            height: 16px;
-            viewbox-width: 24;
-            viewbox-height: 24;
-            fill: Colors.transparent;
-            stroke: root.ink;
-            stroke-width: 1.7px;
-            commands: root.library ? "M 4 4 L 4 20 M 9 4 L 9 20 M 14 5 L 19 4 L 22 19 L 17 20 Z"
-                : "M 3 10 L 12 3 L 21 10 M 5 9 L 5 21 L 10 21 L 10 14 L 14 14 L 14 21 L 19 21 L 19 9";
-        }
-        Text {
-            horizontal-stretch: 1;
-            text: root.library ? "Library" : "Home";
-            color: root.ink;
-            font-size: 12px;
-            font-weight: root.active ? 600 : 500;
-        }
-    }
-}
-
-// Artwork is provided by the music source. An absent cover is a small music note.
-component Cover inherits Rectangle {
-    in property <image> artwork;
-    in property <bool> light-mode;
-    border-radius: 7px;
-    background: root.light-mode ? #e0d1c9 : #29262d;
-    clip: true;
-    if root.artwork.width > 0 && root.artwork.height > 0 : Image {
-        width: parent.width;
-        height: parent.height;
-        source: root.artwork;
-        image-fit: cover;
-    }
-    if root.artwork.width == 0 || root.artwork.height == 0 : Path {
-        x: (parent.width - 22px) / 2;
-        y: (parent.height - 22px) / 2;
-        width: 22px;
-        height: 22px;
-        viewbox-width: 24;
-        viewbox-height: 24;
-        fill: Colors.transparent;
-        stroke: root.light-mode ? #956a61 : #bd8496;
-        stroke-width: 1.5px;
-        commands: "M 9 18 L 9 5 L 20 3 L 20 16 M 9 8 L 20 6 M 9 18 C 9 22 3 22 3 19 C 3 16 9 15 9 18 Z M 20 16 C 20 20 14 20 14 17 C 14 14 20 13 20 16 Z";
-    }
-}
-
-component EmptyState inherits Rectangle {
-    in property <bool> light-mode;
-    in property <string> heading;
-    in property <string> detail;
-    background: root.light-mode ? #f9f4ee : #191c22;
-    border-radius: 10px;
-    border-color: root.light-mode ? #ded0c4 : #292e37;
-    border-width: 1px;
-    VerticalLayout {
-        padding: 28px;
-        spacing: 10px;
-        alignment: center;
-        Text { text: root.heading; color: root.light-mode ? #392e33 : #f0eeef; font-size: 20px; font-weight: 650; horizontal-alignment: center; }
-        Text { text: root.detail; color: root.light-mode ? #716773 : #a1a5ae; font-size: 13px; horizontal-alignment: center; wrap: word-wrap; }
-    }
-}
-
-component SongRow inherits Rectangle {
-    in property <TrackRow> track;
-    in property <int> index;
-    in property <bool> current: false;
-    in property <bool> light-mode;
-    in property <bool> removable: false;
-    in property <bool> draggable: false;
-    in property <bool> dragging: false;
-    in property <bool> drag-in-progress: false;
-    in property <bool> show-menu: true;
-    in property <bool> enabled: true;
-    in property <bool> show-duration: true;
-    callback select();
-    callback remove();
-    callback queue(bool);
-    callback radio();
-    private property <bool> menu-open: false;
-    height: root.menu-open ? (root.removable && !root.current ? 102px : 140px) : 66px;
-    opacity: root.dragging ? 0.55 : 1;
-    changed drag-in-progress => { if root.drag-in-progress { root.menu-open = false; } }
-    border-radius: 7px;
-    background: root.current ? (root.light-mode ? #e8d5cb : #30232e)
-        : action.pressed ? (root.light-mode ? #e9e0d6 : #20252d) : Colors.transparent;
-    border-width: action.has-focus ? 2px : 0px;
-    border-color: root.light-mode ? #985955 : #d16b89;
-    action := Button {
-        width: parent.width;
-        height: 66px;
-        text: "";
-        opacity: 0;
-        enabled: root.enabled && !root.drag-in-progress;
-        accessible-label: "Play " + root.track.title + " by " + root.track.artist;
-        clicked => { root.select(); }
-    }
-    VerticalLayout {
         padding-left: 10px;
         padding-right: 10px;
-        spacing: 0px;
-        HorizontalLayout {
-            height: 66px;
-            spacing: 10px;
-            cross-axis-alignment: center;
-            if root.removable : Rectangle {
-                width: 20px;
-                height: 40px;
-                if root.draggable : Rectangle {
-                    accessible-role: text;
-                    accessible-label: "Drag handle for " + root.track.title;
-                    for dot in 6 : Rectangle {
-                        x: (dot - floor(dot / 2) * 2) * 6px + 5px;
-                        y: floor(dot / 2) * 6px + 12px;
-                        width: 3px;
-                        height: 3px;
-                        border-radius: 1.5px;
-                        background: root.light-mode ? #956a61 : #bd8496;
-                    }
-                }
-            }
-            Cover { width: 42px; height: 42px; artwork: root.track.artwork; light-mode: root.light-mode; }
-            Rectangle {
-                horizontal-stretch: 1;
-                min-width: 0px;
-                height: 36px;
-                // Mixed-direction glyphs can paint outside an elided Text's
-                // bounds. Clip metadata only, keeping row focus/actions intact.
-                clip: true;
-                VerticalLayout {
-                    width: parent.width;
-                    height: parent.height;
-                    spacing: 4px;
-                    Text { min-width: 0px; text: root.track.title; color: root.light-mode ? #392e33 : #f0eeef; font-size: 14px; font-weight: root.current ? 600 : 500; overflow: elide; }
-                    Text { min-width: 0px; text: (root.current ? "Now playing · " : "") + root.track.artist; color: root.light-mode ? #716773 : #a1a5ae; font-size: 11px; overflow: elide; }
-                }
-            }
-            if root.show-duration && root.track.duration != "" && root.track.duration != "—" : Text { width: 42px; text: root.track.duration; color: root.light-mode ? #716773 : #a1a5ae; font-size: 11px; horizontal-alignment: right; }
-            if root.show-menu : LibraryButton { width: 30px; height: 30px; caption: "..."; label: "Actions for " + root.track.title; light-mode: root.light-mode; enabled: root.enabled && !root.drag-in-progress; active: root.menu-open; clicked => { root.menu-open = !root.menu-open; } }
-            if root.removable : LibraryButton { width: 28px; height: 30px; caption: "×"; label: "Remove " + root.track.title + " from queue"; light-mode: root.light-mode; enabled: root.enabled && !root.drag-in-progress; clicked => { root.remove(); } }
-        }
-        if root.menu-open : VerticalLayout {
-            height: root.removable && !root.current ? 36px : 70px;
-            spacing: 4px;
-            if !root.removable || root.current : HorizontalLayout {
-                height: 32px;
-                spacing: 6px;
-                LibraryButton { width: 78px; height: 30px; caption: root.removable ? "Repeat next" : "Play next"; label: "Play " + root.track.title + " next"; light-mode: root.light-mode; enabled: root.enabled; clicked => { root.queue(true); root.menu-open = false; } }
-                LibraryButton { width: 96px; height: 30px; caption: root.removable ? "Repeat later" : "Add to queue"; label: "Add " + root.track.title + " to queue"; light-mode: root.light-mode; enabled: root.enabled; clicked => { root.queue(false); root.menu-open = false; } }
-                Rectangle { horizontal-stretch: 1; }
-            }
-            LibraryButton { height: 30px; caption: "Replace upcoming with song radio"; label: "Replace upcoming tracks with a radio from " + root.track.title; light-mode: root.light-mode; enabled: root.enabled; clicked => { root.radio(); root.menu-open = false; } }
-        }
-    }
-    if !root.current && !root.menu-open : Rectangle {
-        x: root.removable ? 72px : 62px;
-        y: parent.height - 1px;
-        height: 1px;
-        width: max(0px, parent.width - self.x - 10px);
-        background: root.light-mode ? #e1d7ce : #242932;
-    }
-}
-
-component LibraryEntry inherits Rectangle {
-    in property <image> artwork;
-    in property <string> title;
-    in property <string> subtitle;
-    in property <bool> light-mode;
-    in property <bool> enabled: true;
-    in property <bool> navigable: true;
-    in property <string> unavailable-label: "Unavailable";
-    callback open();
-    height: 76px;
-    border-radius: 9px;
-    background: action.pressed ? (root.light-mode ? #e9e0d6 : #20252d) : Colors.transparent;
-    border-width: action.has-focus ? 2px : 0px;
-    border-color: root.light-mode ? #985955 : #d16b89;
-    action := Button { width: parent.width; height: parent.height; text: ""; opacity: 0; enabled: root.enabled && root.navigable; accessible-label: root.navigable ? "Open " + root.title : root.title + ", " + root.unavailable-label; clicked => { root.open(); } }
-    HorizontalLayout {
-        padding: 12px;
-        spacing: 14px;
-        cross-axis-alignment: center;
-        Cover { width: 50px; height: 50px; artwork: root.artwork; light-mode: root.light-mode; }
-        VerticalLayout {
-            horizontal-stretch: 1;
-            min-width: 80px;
-            spacing: 4px;
-            Text { text: root.title; color: root.light-mode ? #392e33 : #f0eeef; font-weight: 600; overflow: elide; }
-            Text { text: root.subtitle; color: root.light-mode ? #716773 : #a1a5ae; font-size: 12px; overflow: elide; }
-        }
-        if root.navigable : Text { width: 20px; text: "›"; color: root.light-mode ? #716773 : #a1a5ae; font-size: 20px; horizontal-alignment: center; }
-        if !root.navigable : Text { width: 116px; text: root.unavailable-label; color: root.light-mode ? #716773 : #a1a5ae; font-size: 11px; horizontal-alignment: right; }
-    }
-    Rectangle {
-        x: 76px;
-        y: parent.height - 1px;
-        height: 1px;
-        width: max(0px, parent.width - 88px);
-        background: root.light-mode ? #e1d7ce : #242932;
-    }
-}
-
-// Each row tests the captured pointer against its actual bounds, including section
-// headings. Coordinates are window-relative so scrolling does not shift the pointer.
-component QueueItem inherits Rectangle {
-    in property <bool> enabled: true;
-    in property <TrackRow> track;
-    in property <int> index;
-    in property <int> current-index;
-    in property <bool> heading;
-    in property <bool> light-mode;
-    in property <int> drag-source: -1;
-    in property <bool> drag-recommended;
-    in property <bool> drag-in-list;
-    in property <length> drag-x;
-    in property <length> drag-y;
-    in property <int> drag-revision;
-    in property <bool> press-active;
-    in property <length> press-x;
-    in property <length> press-y;
-    callback select();
-    callback remove();
-    callback requeue(bool);
-    callback radio();
-    callback hit(int, bool);
-    callback hover(int, int);
-    private property <bool> press-hit: root.press-active && root.index > root.current-index
-        && root.press-x >= song.absolute-position.x && root.press-x < song.absolute-position.x + 44px
-        && root.press-y >= song.absolute-position.y && root.press-y < song.absolute-position.y + 66px;
-    changed press-hit => { if root.press-hit { root.hit(root.index, root.track.recommended); } }
-    private property <int> hover-half: root.drag-in-list && root.drag-source >= 0 && root.index > root.current-index && root.track.recommended == root.drag-recommended
-        && root.drag-x >= self.absolute-position.x && root.drag-x < self.absolute-position.x + self.width
-        && root.drag-y >= self.absolute-position.y && root.drag-y < self.absolute-position.y + self.height
-        ? (root.drag-y < song.absolute-position.y + 33px ? 0 : 1) : -1;
-    private property <int> insertion-index: root.index + root.hover-half;
-    private property <int> final-index: root.insertion-index - (root.insertion-index > root.drag-source ? 1 : 0);
-    private property <{ revision: int, half: int }> hover-state: { revision: root.drag-revision, half: root.hover-half };
-    changed hover-state => { root.hover(root.index, root.hover-half); }
-    height: song.height + (root.heading ? 28px : 0px);
-    VerticalLayout {
-        spacing: 0px;
-        if root.heading : Text {
-            height: 28px;
-            text: root.index == root.current-index ? "NOW PLAYING" : root.track.recommended ? "AUTOPLAY" : "UP NEXT";
-            color: root.light-mode ? #956a61 : #bd8496;
-            font-size: 10px;
-            font-weight: 650;
-            vertical-alignment: center;
-        }
-        song := SongRow {
-            enabled: root.enabled;
-            track: root.track;
-            index: root.index;
-            current: root.index == root.current-index;
-            light-mode: root.light-mode;
-            removable: true;
-            draggable: root.index > root.current-index;
-            dragging: root.drag-source == root.index;
-            drag-in-progress: root.drag-source >= 0;
-            show-duration: true;
-            select => { root.select(); }
-            remove => { root.remove(); }
-            queue(next) => { root.requeue(next); }
-            radio => { root.radio(); }
-        }
-    }
-    if root.hover-half >= 0 && root.final-index != root.drag-source : Rectangle {
-        y: root.hover-half == 0 ? song.y : parent.height - 3px;
-        height: 3px;
-        background: root.light-mode ? #985955 : #e493ad;
-        border-radius: 1.5px;
-    }
-}
-
-component QueueDrawer inherits Rectangle {
-    in-out property <length> artwork-scroll-y;
-    in-out property <length> artwork-view-height;
-    in property <bool> enabled: true;
-    in property <[TrackRow]> rows;
-    in property <int> current-index;
-    in property <bool> light-mode;
-    in property <bool> autoplay-enabled;
-    in property <bool> repeat-enabled;
-    callback close();
-    callback select(int);
-    callback remove(int);
-    callback requeue(int, bool);
-    callback reorder(int, int);
-    callback radio(int);
-    callback toggle-autoplay();
-    callback toggle-repeat();
-    callback shuffle();
-    callback clear();
-    private property <bool> overflow-open: false;
-    private property <int> drag-source: -1;
-    private property <bool> drag-recommended: false;
-    private property <length> drag-x;
-    private property <length> drag-y;
-    private property <int> hover-row: -1;
-    private property <int> hover-half: -1;
-    private property <bool> release-pending: false;
-    private property <bool> press-active: false;
-    private property <length> press-x;
-    private property <length> press-y;
-    private property <int> drag-revision: 0;
-    function cancel-drag() {
-        root.drag-source = -1;
-        root.release-pending = false;
-        root.hover-row = -1;
-        root.hover-half = -1;
-        root.press-active = false;
-    }
-    function update-drag-pointer(x: length, y: length) {
-        root.drag-x = x;
-        root.drag-y = y;
-        root.hover-row = -1;
-        root.hover-half = -1;
-        root.drag-revision += 1;
-    }
-    changed rows => { root.cancel-drag(); }
-    changed current-index => { root.cancel-drag(); root.artwork-scroll-y = 0px; }
-    changed visible => { if !root.visible { root.cancel-drag(); } }
-    background: root.light-mode ? #eee5db : #15181d;
-    border-width: 1px;
-    border-color: root.light-mode ? #ded0c4 : #292e37;
-    TouchArea { }
-    VerticalLayout {
-        padding: 14px;
         spacing: 10px;
-        HorizontalLayout {
-            height: 34px;
-            spacing: 7px;
-            cross-axis-alignment: center;
-            Text { horizontal-stretch: 1; text: "Queue"; color: root.light-mode ? #392e33 : #f0eeef; font-size: 20px; font-weight: 600; }
-            LibraryButton { width: 30px; height: 30px; enabled: root.enabled; caption: "..."; label: "More queue actions"; light-mode: root.light-mode; active: root.overflow-open; clicked => { root.overflow-open = !root.overflow-open; } }
-            LibraryButton { width: 30px; height: 30px; enabled: root.enabled; caption: "×"; label: "Close queue drawer"; light-mode: root.light-mode; clicked => { root.cancel-drag(); root.close(); } }
-        }
-        if root.overflow-open : HorizontalLayout {
-            height: 34px;
-            spacing: 6px;
-            LibraryButton { horizontal-stretch: 1; light-mode: root.light-mode; caption: "Shuffle upcoming"; label: "Shuffle the upcoming queue"; enabled: root.enabled && root.rows.length > 1; clicked => { root.shuffle(); root.overflow-open = false; } }
-            LibraryButton { width: 98px; light-mode: root.light-mode; caption: "Clear queue"; label: "Clear the playback queue"; enabled: root.enabled && root.rows.length > 0; clicked => { root.clear(); root.overflow-open = false; } }
-        }
-        // The fixed rail owns pointer capture while ListView recycles song rows.
-        if root.rows.length > 0 : queue-area := Rectangle {
-            vertical-stretch: 1;
-            private property <bool> drag-in-list: root.drag-x >= self.absolute-position.x && root.drag-x < self.absolute-position.x + queue-list.visible-width
-                && root.drag-y >= self.absolute-position.y && root.drag-y < self.absolute-position.y + queue-list.visible-height;
-            Timer {
-                interval: 30ms;
-                running: root.drag-source >= 0 && queue-area.drag-in-list && !root.release-pending;
-                triggered => {
-                    if root.drag-y < queue-list.absolute-position.y + 40px {
-                        queue-list.content-y = min(0px, queue-list.content-y + 14px);
-                    } else if root.drag-y > queue-list.absolute-position.y + queue-list.visible-height - 40px {
-                        queue-list.content-y = max(min(0px, queue-list.visible-height - queue-list.content-height), queue-list.content-y - 14px);
-                    }
-                    root.update-drag-pointer(root.drag-x, root.drag-y);
-                }
-            }
-            Timer {
-                interval: 1ms;
-                running: root.release-pending;
-                triggered => {
-                    let source = root.drag-source;
-                    let insertion = root.hover-row + root.hover-half;
-                    let target = insertion - (insertion > source ? 1 : 0);
-                    let valid = source >= 0 && queue-area.drag-in-list && root.hover-row >= 0 && root.hover-half >= 0;
-                    root.cancel-drag();
-                    if valid && target != source { root.reorder(source, target); }
-                }
-            }
-            queue-list := ListView {
-                content-y <=> root.artwork-scroll-y;
-                changed visible-height => { root.artwork-view-height = self.visible-height; }
-                width: parent.width;
-                height: parent.height;
-                accessible-label: "Playback queue including manual choices and autoplay";
-                mouse-drag-pan-enabled: false;
-                horizontal-scrollbar-policy: always-off;
-                for visible-index in max(0, root.rows.length - max(0, root.current-index)) : QueueItem {
-                    width: queue-list.visible-width;
-                    enabled: root.enabled;
-                    index: visible-index + max(0, root.current-index);
-                    track: root.rows[self.index];
-                    current-index: root.current-index;
-                    light-mode: root.light-mode;
-                    heading: self.index == max(0, root.current-index) || self.index == root.current-index + 1 || self.track.recommended != root.rows[max(0, self.index - 1)].recommended;
-                    drag-source: root.drag-source;
-                    drag-recommended: root.drag-recommended;
-                    drag-in-list: queue-area.drag-in-list;
-                    drag-x: root.drag-x;
-                    drag-y: root.drag-y;
-                    drag-revision: root.drag-revision;
-                    press-active: root.press-active;
-                    press-x: root.press-x;
-                    press-y: root.press-y;
-                    select => { root.select(self.index); }
-                    remove => { root.remove(self.index); }
-                    requeue(next) => { root.requeue(self.index, next); }
-                    radio => { root.radio(self.index); }
-                    hover(row-index, half) => {
-                        if half >= 0 { root.hover-row = row-index; root.hover-half = half; }
-                        else if root.hover-row == row-index { root.hover-row = -1; root.hover-half = -1; }
-                    }
-                    hit(row-index, recommended) => {
-                        if root.press-active && root.drag-source < 0 {
-                            root.drag-source = row-index;
-                            root.drag-recommended = recommended;
-                            root.press-active = false;
-                        }
-                    }
-                }
-            }
-            rail := TouchArea {
-                enabled: root.enabled;
-                x: 0px;
-                y: 0px;
-                width: min(44px, parent.width);
-                height: queue-list.visible-height;
-                mouse-cursor: self.pressed && root.drag-source >= 0 ? grabbing : grab;
-                accessible-role: button;
-                accessible-label: "Drag upcoming songs by their handles to reorder within their queue section";
-                pointer-event(event) => {
-                    if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
-                        root.cancel-drag();
-                        root.press-x = self.absolute-position.x + self.mouse-x;
-                        root.press-y = self.absolute-position.y + self.mouse-y;
-                        root.update-drag-pointer(root.press-x, root.press-y);
-                        root.press-active = true;
-                    } else if event.kind == PointerEventKind.up && event.button == PointerEventButton.left {
-                        root.update-drag-pointer(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
-                        root.release-pending = true;
-                    } else if event.kind == PointerEventKind.cancel {
-                        root.cancel-drag();
-                    }
-                }
-                moved => {
-                    if self.pressed { root.update-drag-pointer(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y); }
-                }
-                scroll-event(event) => {
-                    if root.drag-source < 0 {
-                        queue-list.content-y = max(min(0px, queue-list.visible-height - queue-list.content-height), min(0px, queue-list.content-y + event.delta-y));
-                    }
-                    return accept;
-                }
-            }
-        }
-        if root.rows.length == 0 : EmptyState { vertical-stretch: 1; light-mode: root.light-mode; heading: "Queue is empty"; detail: "Choose a song or playlist to start listening."; }
-        HorizontalLayout {
-            height: 34px;
-            spacing: 8px;
-            cross-axis-alignment: center;
-            Text { horizontal-stretch: 1; text: "Autoplay"; color: root.light-mode ? #716773 : #a1a5ae; font-size: 12px; }
-            LibraryButton { width: 58px; light-mode: root.light-mode; enabled: root.enabled; caption: root.autoplay-enabled ? "On" : "Off"; label: root.autoplay-enabled ? "Turn autoplay off" : "Turn autoplay on"; active: root.autoplay-enabled; clicked => { root.toggle-autoplay(); } }
-            LibraryButton { width: 82px; light-mode: root.light-mode; enabled: root.enabled; caption: "Repeat"; label: root.repeat-enabled ? "Turn repeat off" : "Turn repeat on"; active: root.repeat-enabled; clicked => { root.toggle-repeat(); } }
-        }
+        if root.show-number : SectionTitle { width: 26px; text: "#"; horizontal-alignment: center; }
+        SectionTitle { width: 42px; text: ""; }
+        SectionTitle { horizontal-stretch: 2; min-width: 0px; preferred-width: 0px; text: "TITLE"; }
+        if root.show-album : SectionTitle { horizontal-stretch: 1; min-width: 0px; preferred-width: 0px; text: "ALBUM"; }
+        Rectangle { width: 42px; Icon { x: parent.width - self.width; y: (parent.height - self.height) / 2; name: "clock"; ink: Theme.faint; size: 14px; } }
+        Rectangle { width: 30px; }
     }
+    Rectangle { x: 0px; y: parent.height - 1px; width: parent.width; height: 1px; background: Theme.divider; }
 }
 
-component PlayerBar inherits Rectangle {
-    in property <bool> following-jam: false;
-    in property <bool> window-minimized: false;
-    private property <int> input-revision: 0;
-    private property <bool> repaint-phase: false;
-    changed window-minimized => { root.input-revision += 1; }
-    changed track-title => { root.input-revision += 1; }
-    changed collapsed => { root.input-revision += 1; }
-    // A changed label can otherwise survive in a reused Windows software
-    // surface until resize. Invalidate only this small bar on live updates.
-    changed volume => { root.repaint-phase = !root.repaint-phase; }
-    changed position => { root.repaint-phase = !root.repaint-phase; }
-    in property <bool> light-mode;
-    in property <bool> compact;
-    in property <bool> collapsed;
-    in property <bool> queue-open;
-    in property <string> track-title;
-    in property <string> track-artist;
-    in property <image> artwork;
-    in property <float> position;
-    in property <float> duration;
-    in property <bool> paused;
-    in property <float> volume;
-    callback toggle-pause();
-    callback next-track();
-    callback previous-track();
-    callback seek(float);
-    callback change-volume(float);
-    callback restore();
-    callback toggle-queue();
-    callback mini();
-    private property <color> foreground: root.light-mode ? #392e33 : #f0eeef;
-    private property <color> secondary: root.light-mode ? #716773 : #a1a5ae;
-    background: root.light-mode ? #eee5db : #15181d;
-    border-width: 1px;
-    border-color: root.light-mode ? #ded0c4 : #292e37;
-    Rectangle { x: 1px; y: 1px; width: max(0px, parent.width - 2px); height: max(0px, parent.height - 2px); background: root.light-mode ? #eee5db : #15181d; visible: root.repaint-phase; }
-    pure function format-time(seconds: float) -> string {
-        let total: int = max(0, seconds);
-        let minutes: int = total / 60;
-        let remainder: int = total - (minutes * 60);
-        return minutes + ":" + (remainder < 10 ? "0" + remainder : remainder);
-    }
-    VerticalLayout {
-        padding-left: 18px;
-        padding-right: 18px;
-        padding-top: 10px;
-        padding-bottom: 10px;
-        spacing: 5px;
-        Rectangle {
-            height: 52px;
-            HorizontalLayout {
-                x: 0px;
-                width: max(120px, parent.width / 2 - 94px);
-                height: parent.height;
-                spacing: 12px;
-                cross-axis-alignment: center;
-                Cover { width: 44px; height: 44px; artwork: root.artwork; light-mode: root.light-mode; }
-                VerticalLayout {
-                    horizontal-stretch: 1;
-                    spacing: 4px;
-                    Text { text: root.track-title == "" ? "Nothing playing" : root.track-title; color: root.foreground; font-size: 14px; font-weight: 600; overflow: elide; }
-                    Text { text: root.track-artist; color: root.secondary; font-size: 12px; overflow: elide; }
-                }
-            }
-            TransportButtons { locked: root.following-jam; x: (parent.width - self.width) / 2; y: 2px; width: 150px; height: 48px; paused: root.paused; light-mode: root.light-mode; show-repeat: false; show-shuffle: false; toggle-pause => { root.toggle-pause(); } previous-track => { root.previous-track(); } next-track => { root.next-track(); } }
-            HorizontalLayout {
-                x: parent.width - self.width;
-                y: 8px;
-                width: root.collapsed ? 38px : 148px;
-                height: 36px;
-                spacing: 12px;
-                if !root.collapsed : LibraryButton { width: 80px; light-mode: root.light-mode; caption: "Queue"; label: root.queue-open ? "Close queue drawer" : "Open queue drawer"; active: root.queue-open; clicked => { root.toggle-queue(); } }
-                if !root.collapsed : LibraryButton { width: 56px; light-mode: root.light-mode; caption: "Mini"; label: "Collapse to mini player"; clicked => { root.mini(); } }
-                if root.collapsed : LibraryButton { width: 38px; light-mode: root.light-mode; caption: "↗"; label: "Expand to full Tide window"; clicked => { root.restore(); } }
-            }
-        }
-        HorizontalLayout {
-            height: 25px;
-            spacing: 9px;
-            cross-axis-alignment: center;
-            Text { width: 38px; text: root.format-time(root.position); color: root.secondary; font-size: 11px; horizontal-alignment: right; }
-            TideSlider { reset-revision: root.input-revision; light-mode: root.light-mode; horizontal-stretch: 1; minimum: 0; maximum: max(1, root.duration); value: root.position; enabled: root.duration > 0 && !root.following-jam; label: "Playback position"; value-text: root.format-time(root.position); released(value) => { root.seek(value); } }
-            Text { width: 38px; text: root.format-time(root.duration); color: root.secondary; font-size: 11px; }
-            VolumeMark { ink: root.secondary; }
-            TideSlider { reset-revision: root.input-revision; light-mode: root.light-mode; width: root.compact || root.collapsed ? 105px : 150px; minimum: 0; maximum: 100; value: root.volume; label: "Volume"; value-text: root.volume.to-fixed(0) + "%"; changed(value) => { root.change-volume(value); } }
-            Text { width: 38px; text: root.volume.to-fixed(0) + "%"; color: root.secondary; font-size: 11px; horizontal-alignment: right; }
-        }
-    }
-}
 export component AppWindow inherits Window {
     in-out property <length> library-artwork-y;
     in-out property <length> library-artwork-height;
@@ -949,20 +79,31 @@ export component AppWindow inherits Window {
     callback media-command(int, float);
     in property <[PlaylistRow]> library-playlists;
     in property <[RecommendationRow]> recommendations;
+    in property <[HomeShelf]> home-shelves;
+    // Account facts. `provider-busy` means any account/library request is in
+    // flight; `account-connecting` means that request is an account change.
     in property <bool> account-connected;
     in property <bool> account-verified;
-    in property <bool> error-retryable;
-    in property <bool> account-busy;
+    in property <bool> account-connecting;
+    in property <bool> provider-busy;
     in property <string> account-name;
     in property <string> account-status;
-    in-out property <bool> library-open: false;
-    in-out property <bool> home-open: true;
+    out property <AccountState> account-state:
+        root.account-connecting || (root.provider-busy && root.account-connected && !root.account-verified) ? AccountState.verifying
+        : root.account-verified ? AccountState.connected
+        : root.account-connected ? AccountState.saved
+        : AccountState.disconnected;
+    // Navigation: `page` is what is shown; `section` is the Home/Library root.
+    in-out property <Page> page: Page.home;
+    in-out property <Page> section: Page.home;
     in-out property <bool> queue-open: false;
     in-out property <bool> compact-mode: false;
     in property <bool> autoplay-enabled: false;
     callback toggle-compact();
     callback toggle-autoplay();
     callback shuffle-playlist(int);
+    // context 0: Library playlist, 1: Home card. Plays without opening it.
+    callback play-playlist(int, int);
     callback play-radio();
     callback remove-queue-track(int);
     callback import-account();
@@ -982,10 +123,20 @@ export component AppWindow inherits Window {
     in property <float> position;
     in property <float> duration;
     in property <bool> paused;
+    in property <bool> loading;
     in property <float> volume;
     in property <string> status-text;
     in-out property <string> source-input;
-    in property <bool> light-mode;
+    in property <string> search-query;
+    in-out property <bool> light-mode <=> Theme.light;
+    in-out property <bool> motion <=> Theme.motion;
+    callback toggle-motion();
+    // Colors sampled from artwork by the app: the open playlist's cover and
+    // the current song's cover. Pages and the player take on these tints.
+    in property <color> detail-tint;
+    in property <bool> has-detail-tint;
+    in property <color> now-tint;
+    in property <bool> has-now-tint;
     in property <bool> collapsed;
     in property <bool> repeat-enabled;
     callback add-source(string);
@@ -1005,18 +156,20 @@ export component AppWindow inherits Window {
     in property <bool> jam-applying: false;
     callback clear-queue();
 
-    in property <bool> detail-open;
     in property <string> detail-title;
+    in property <string> detail-subtitle;
+    in property <image> detail-artwork;
+    in property <bool> detail-liked;
     in property <[TrackRow]> detail-rows;
     in property <bool> detail-busy;
-    in property <bool> search-open;
     in property <[TrackRow]> search-rows;
     in property <bool> search-busy;
     in property <string> error-message;
     in property <bool> error-is-account;
+    in property <bool> error-retryable;
+    out property <ErrorAction> error-action: root.error-is-account ? ErrorAction.account
+        : root.error-retryable ? ErrorAction.retry : ErrorAction.dismiss;
     in-out property <bool> settings-open: false;
-    callback close-detail();
-    callback close-search();
     callback play-detail();
     callback shuffle-detail();
     callback select-detail-track(int);
@@ -1028,14 +181,63 @@ export component AppWindow inherits Window {
     callback reorder-queue-track(int, int);
     callback start-track-radio(int, int);
     callback retry-error();
-    private property <color> foreground: root.light-mode ? #392e33 : #f0eeef;
-    private property <color> secondary: root.light-mode ? #716773 : #a1a5ae;
-    private property <color> surface: root.light-mode ? #f9f4ee : #191c22;
-    private property <color> outline: root.light-mode ? #ded0c4 : #292e37;
+    callback dismiss-error();
+
     private property <image> current-artwork: root.track-artwork;
+    private property <bool> has-track: root.current-index >= 0 && root.current-index < root.rows.length;
+    // Window-width facts are written from `changed width` rather than bound,
+    // because the window's own size depends on its layout.
+    private property <length> window-width: 1140px;
     private property <bool> wide: true;
+    private property <bool> roomy: true;
     private property <bool> advanced-open: false;
     private property <bool> browsing-enabled: !root.settings-open && !(root.queue-open && !root.wide);
+    private property <bool> account-ready: root.account-connected && !root.provider-busy;
+    private property <length> sidebar-width: root.roomy ? 232px : 72px;
+    private property <length> page-padding: root.compact-mode ? 20px : 28px;
+    // Card grid geometry shared by Home and Library, and read by the app to
+    // load only the artwork a scrolled grid shows.
+    private property <length> grid-gap: 12px;
+    private property <length> content-width: root.window-width - root.sidebar-width - 8px
+        - (root.queue-open && root.wide ? 340px : 8px) - 2 * root.page-padding - 14px;
+    out property <int> grid-columns: max(2, floor((root.content-width + root.grid-gap) / (164px + root.grid-gap)));
+    private property <length> card-width: (root.content-width - root.grid-gap * (root.grid-columns - 1)) / root.grid-columns;
+    out property <length> card-height: root.card-width + 40px;
+    private property <bool> table-album: root.content-width > 620px;
+    private property <color> hero-color: root.page == Page.playlist && root.has-detail-tint ? root.detail-tint
+        : root.page != Page.playlist && root.has-now-tint ? root.now-tint : Theme.accent;
+    animate hero-color { duration: Theme.slow; easing: ease-in-out; }
+    // Pages fade and rise in when navigating; the first page simply appears.
+    private property <bool> page-motion: false;
+    private property <length> enter-offset: root.page-motion && Theme.motion ? 16px : 0px;
+    private property <float> enter-opacity: root.page-motion && Theme.motion ? 0 : 1;
+    // Transient confirmation ("Added to your queue"). Routine playback states
+    // are already visible in the player and are not repeated here.
+    private property <string> toast-text;
+    private property <bool> toast-visible: false;
+    changed status-text => {
+        if root.status-text != "" && root.status-text != "Playing" && root.status-text != "Paused"
+            && root.status-text != "Loading…" && root.status-text != "Ready" && root.error-message == "" {
+            root.toast-text = root.status-text;
+            root.toast-visible = true;
+        }
+    }
+    Timer { interval: 500ms; running: !root.page-motion; triggered => { root.page-motion = true; } }
+    pure function playing-row(row: TrackRow) -> bool {
+        return root.has-track && row.title == root.track-title && row.artist == root.track-artist;
+    }
+    function navigate(target: Page) {
+        root.section = target;
+        root.page = target;
+    }
+    function back() {
+        root.page = root.section;
+    }
+    function measure() {
+        root.window-width = root.width;
+        root.wide = root.width >= 1050px;
+        root.roomy = root.width >= 960px;
+    }
     title: "Tide";
     icon: @image-url("assets/tide-icon.png");
     default-font-family: "Segoe UI";
@@ -1044,9 +246,9 @@ export component AppWindow inherits Window {
     preferred-height: root.collapsed ? 132px : root.compact-mode ? 720px : 800px;
     min-width: 650px;
     min-height: root.collapsed ? 112px : 420px;
-    background: root.light-mode ? #f4eee6 : #111318;
-    init => { Palette.color-scheme = root.light-mode ? light : dark; root.wide = root.width >= 1050px; }
-    changed width => { root.wide = root.width >= 1050px; }
+    background: Theme.window;
+    init => { Palette.color-scheme = root.light-mode ? light : dark; root.measure(); }
+    changed width => { root.measure(); }
     changed settings-open => {
         if root.settings-open { app-focus.focus(); }
         else { root.advanced-open = false; }
@@ -1074,149 +276,517 @@ export component AppWindow inherits Window {
             if event.text == Key.Escape {
                 if root.settings-open { root.settings-open = false; return accept; }
                 if root.queue-open { root.queue-open = false; return accept; }
+                if root.page != root.section { root.back(); return accept; }
             }
             return reject;
         }
         VerticalLayout {
             spacing: 0px;
+            // ───────────── Top bar ─────────────
             if !root.collapsed : Rectangle {
                 height: 64px;
-                background: root.light-mode ? #eee5db : #15181d;
+                background: Theme.chrome;
                 HorizontalLayout {
-                    padding-left: 18px;
-                    padding-right: 18px;
-                    spacing: 10px;
+                    padding-left: 16px;
+                    padding-right: 16px;
+                    spacing: 12px;
                     cross-axis-alignment: center;
-                    Image { width: 28px; height: 28px; source: @image-url("assets/tide-icon.png"); image-fit: contain; }
-                    Text { width: 56px; text: "Tide"; color: root.foreground; font-size: 21px; font-weight: 700; }
-                    SearchMark { ink: root.secondary; }
-                    LineEdit { horizontal-stretch: 1; enabled: root.browsing-enabled; text <=> root.source-input; placeholder-text: "Search music or paste a link"; accessible-label: "Search music or paste a YouTube link"; accepted(value) => { if value != "" { root.add-source(value); } } }
-                    LibraryButton { width: 74px; light-mode: root.light-mode; enabled: root.browsing-enabled; caption: "Search"; label: "Search for music or open the pasted link"; clicked => { if root.source-input != "" { root.add-source(root.source-input); } } }
-                    LibraryButton { width: 92px; light-mode: root.light-mode; caption: "Account"; label: "Open account and settings"; active: root.settings-open; clicked => { root.settings-open = !root.settings-open; } }
+                    HorizontalLayout {
+                        width: root.sidebar-width - 16px - 12px + 8px;
+                        spacing: 10px;
+                        cross-axis-alignment: center;
+                        alignment: root.roomy ? start : center;
+                        Image { width: 30px; height: 30px; source: @image-url("assets/tide-icon.png"); image-fit: contain; }
+                        if root.roomy : Text { text: "Tide"; color: Theme.text; font-size: 20px; font-weight: 700; vertical-alignment: center; }
+                    }
+                    IconButton { width: 36px; height: 36px; round: true; quiet: true; enabled: root.browsing-enabled && root.page != root.section; icon: "back"; label: root.section == Page.library ? "Back to Library" : "Back to Home"; clicked => { root.back(); } }
+                    search := Rectangle {
+                        horizontal-stretch: 1;
+                        max-width: 520px;
+                        height: 40px;
+                        border-radius: 20px;
+                        background: input.has-focus ? Theme.surface : search-touch.has-hover ? Theme.hover : Theme.raised;
+                        border-width: input.has-focus ? 2px : 1px;
+                        border-color: input.has-focus ? Theme.focus : Theme.outline;
+                        opacity: root.browsing-enabled ? 1 : 0.6;
+                        search-touch := TouchArea { mouse-cursor: text; clicked => { input.focus(); } }
+                        HorizontalLayout {
+                            padding-left: 14px;
+                            padding-right: 6px;
+                            spacing: 10px;
+                            cross-axis-alignment: center;
+                            Icon { name: "search"; ink: input.has-focus ? Theme.text : Theme.muted; size: 17px; }
+                            Rectangle {
+                                horizontal-stretch: 1;
+                                height: 40px;
+                                clip: true;
+                                input := TextInput {
+                                    width: parent.width;
+                                    height: parent.height;
+                                    vertical-alignment: center;
+                                    single-line: true;
+                                    color: Theme.text;
+                                    selection-background-color: Theme.accent-soft;
+                                    font-size: 13px;
+                                    enabled: root.browsing-enabled;
+                                    text <=> root.source-input;
+                                    accessible-role: text-input;
+                                    accessible-label: "Search music or paste a YouTube link";
+                                    accepted => { if self.text != "" { root.add-source(self.text); } }
+                                }
+                                if root.source-input == "" : Text {
+                                    width: parent.width;
+                                    height: parent.height;
+                                    text: "What do you want to listen to?";
+                                    color: Theme.faint;
+                                    font-size: 13px;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                }
+                            }
+                            if root.source-input != "" : IconButton { width: 28px; height: 28px; round: true; quiet: true; icon: "close"; icon-size: 14px; label: "Clear search"; clicked => { root.source-input = ""; input.focus(); } }
+                        }
+                    }
+                    Rectangle { horizontal-stretch: 0.01; }
+                    if root.roomy && root.account-state == AccountState.connected && root.account-name != "" : Text {
+                        max-width: 180px;
+                        text: root.account-name;
+                        color: Theme.muted;
+                        font-size: 12px;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                    Rectangle {
+                        width: 40px;
+                        height: 40px;
+                        IconButton {
+                            width: 40px;
+                            height: 40px;
+                            round: true;
+                            active: root.settings-open;
+                            icon: "account";
+                            label: "Open account and settings. " + (root.account-state == AccountState.connected ? "YouTube Music connected"
+                                : root.account-state == AccountState.verifying ? "Verifying account"
+                                : root.account-state == AccountState.saved ? "Saved session not verified" : "Not connected");
+                            clicked => { root.settings-open = !root.settings-open; }
+                        }
+                        Rectangle {
+                            x: parent.width - 11px;
+                            y: 0px;
+                            width: 12px;
+                            height: 12px;
+                            border-radius: 6px;
+                            border-width: 2px;
+                            border-color: Theme.chrome;
+                            background: root.account-state == AccountState.connected ? Theme.success
+                                : root.account-state == AccountState.disconnected ? Theme.faint : Theme.warning;
+                        }
+                    }
                 }
             }
-            if !root.collapsed : content-area := Rectangle {
+            // ───────────── Body ─────────────
+            if !root.collapsed : body := Rectangle {
                 vertical-stretch: 1;
                 min-width: 0px;
                 preferred-width: 0px;
                 max-width: 10000px;
                 horizontal-stretch: 1;
+                background: Theme.chrome;
                 HorizontalLayout {
-                    spacing: 0px;
-                    Rectangle {
-                        width: 112px;
-                        background: root.light-mode ? #eee5db : #15181d;
-                        VerticalLayout {
-                            padding-left: 10px;
-                            padding-right: 10px;
-                            padding-top: 18px;
-                            spacing: 8px;
-                            NavigationButton { light-mode: root.light-mode; enabled: root.browsing-enabled; active: !root.library-open; library: false; clicked => { root.library-open = false; root.home-open = true; root.close-detail(); root.close-search(); } }
-                            NavigationButton { light-mode: root.light-mode; enabled: root.browsing-enabled; active: root.library-open; library: true; clicked => { root.library-open = true; root.home-open = false; root.close-detail(); root.close-search(); } }
-                            LibraryButton { height: 42px; light-mode: root.light-mode; caption: "Shared jam"; label: "Listen with Tide and Grove friends"; clicked => { root.open-jam(); } }
-                            Rectangle { vertical-stretch: 1; }
+                    padding-bottom: 8px;
+                    padding-right: root.queue-open && root.wide ? 0px : 8px;
+                    spacing: 8px;
+                    // Sidebar
+                    VerticalLayout {
+                        width: root.sidebar-width;
+                        padding-left: 8px;
+                        padding-right: 0px;
+                        padding-top: 6px;
+                        spacing: 2px;
+                        NavigationButton { icon-only: !root.roomy; enabled: root.browsing-enabled; active: root.section == Page.home; icon: "home"; text: "Home"; label: "Open Home"; clicked => { root.navigate(Page.home); } }
+                        NavigationButton { icon-only: !root.roomy; enabled: root.browsing-enabled; active: root.section == Page.library; icon: "library"; text: "Your library"; label: "Open your Library"; clicked => { root.navigate(Page.library); } }
+                        NavigationButton { icon-only: !root.roomy; enabled: root.browsing-enabled; active: false; icon: "jam"; text: "Shared jam"; label: "Listen together with Tide and Grove friends"; clicked => { root.open-jam(); } }
+                        NavigationButton { icon-only: !root.roomy; enabled: root.browsing-enabled; active: false; icon: "file"; text: "Open file"; label: "Open a local audio file"; clicked => { root.open-file(); } }
+                        if root.roomy : Rectangle { height: 17px; Rectangle { x: 10px; y: 8px; width: parent.width - 20px; height: 1px; background: Theme.divider; } }
+                        if root.roomy && root.account-connected : SectionTitle { height: 26px; text: "   PLAYLISTS"; }
+                        if root.roomy && root.account-connected : SidebarPlaylist {
+                            title: "Liked Songs";
+                            subtitle: "Playlist · Auto";
+                            liked: true;
+                            active: root.page == Page.playlist && root.detail-liked;
+                            enabled: root.browsing-enabled && root.account-ready;
+                            open => { root.play-liked(); }
                         }
+                        if root.roomy && root.account-connected : ListView {
+                            vertical-stretch: 1;
+                            accessible-label: "Your playlists";
+                            for row[index] in root.library-playlists : SidebarPlaylist {
+                                title: row.title;
+                                subtitle: row.subtitle;
+                                active: root.page == Page.playlist && !root.detail-liked && root.detail-title == row.title;
+                                enabled: root.browsing-enabled && root.account-ready;
+                                open => { root.select-library-playlist(index); }
+                            }
+                        }
+                        if !root.roomy || !root.account-connected : Rectangle { vertical-stretch: 1; }
                     }
-                    Rectangle {
+                    // Content panel
+                    panel := Rectangle {
                         horizontal-stretch: 1;
-                        VerticalLayout {
-                            padding: root.compact-mode ? 16px : 22px;
-                            spacing: 12px;
-                            if root.error-message != "" : Rectangle {
-                                height: 58px;
-                                border-radius: 8px;
-                                background: root.light-mode ? #ecd7cc : #39252a;
+                        min-width: 0px;
+                        background: Theme.surface;
+                        border-radius: 12px;
+                        clip: true;
+                        Rectangle {
+                            x: 0px;
+                            y: 0px;
+                            width: parent.width;
+                            height: root.page == Page.playlist ? 360px : 300px;
+                            background: @linear-gradient(180deg, root.hero-color.with-alpha(Theme.light ? 0.22 : 0.34) 0%, root.hero-color.with-alpha(0) 100%);
+                            animate height { duration: Theme.slow; }
+                        }
+
+                        // ── Home ──
+                        if root.page == Page.home : home-scroll := ScrollView {
+                            y: root.enter-offset;
+                            opacity: root.enter-opacity;
+                            animate y, opacity { duration: Theme.medium; easing: cubic-bezier(0.2, 0.8, 0.2, 1); }
+                            init => { self.y = 0; self.opacity = 1; }
+                            width: parent.width;
+                            height: parent.height;
+                            content-y <=> root.home-artwork-y;
+                            changed visible-height => { root.home-artwork-height = self.visible-height; }
+                            horizontal-scrollbar-policy: always-off;
+                            VerticalLayout {
+                                width: home-scroll.visible-width;
+                                padding: root.page-padding;
+                                spacing: 26px;
                                 HorizontalLayout {
-                                    padding: 10px;
+                                    spacing: 12px;
+                                    cross-axis-alignment: center;
+                                    VerticalLayout {
+                                        horizontal-stretch: 1;
+                                        spacing: 4px;
+                                        Text { text: root.account-connected ? "For you" : "Welcome to Tide"; color: Theme.text; font-size: 30px; font-weight: 800; overflow: elide; }
+                                        Text { text: root.account-connected ? "Picks from your YouTube Music Home" : "A lightweight player that leaves your PC free for games."; color: Theme.muted; font-size: 13px; overflow: elide; }
+                                    }
+                                    if root.account-connected : TextButton { pill: true; width: 108px; icon: "refresh"; text: "Refresh"; label: "Show a different selection of recommendations"; enabled: root.browsing-enabled && root.account-ready; clicked => { root.refresh-recommendations(); } }
+                                }
+                                for shelf in root.home-shelves : VerticalLayout {
                                     spacing: 10px;
-                                    cross-axis-alignment: center;
-                                    Text { horizontal-stretch: 1; text: root.error-message; color: root.foreground; font-size: 12px; wrap: word-wrap; overflow: elide; accessible-live-region: assertive; }
-                                    LibraryButton { width: root.error-is-account ? 128px : 70px; light-mode: root.light-mode; caption: root.error-is-account ? "Account settings" : root.error-retryable ? "Retry" : "Dismiss"; enabled: root.browsing-enabled; label: root.error-is-account ? "Open account settings to resolve the connection problem" : root.error-retryable ? "Retry interrupted playback or recommendations" : "Dismiss this error"; clicked => { root.retry-error(); } }
-                                }
-                            }
-                            if root.detail-open : VerticalLayout {
-                                spacing: 12px;
-                                HorizontalLayout {
-                                    height: 48px;
-                                    spacing: 10px;
-                                    cross-axis-alignment: center;
-                                    VerticalLayout { horizontal-stretch: 1; spacing: 4px; Text { text: root.detail-title; color: root.foreground; font-size: 26px; font-weight: 600; overflow: elide; } Text { text: root.detail-busy ? "Loading tracks…" : "" + root.detail-rows.length + " tracks"; color: root.secondary; font-size: 12px; } }
-                                    LibraryButton { width: 62px; light-mode: root.light-mode; enabled: root.browsing-enabled; caption: "Back"; label: "Close playlist details"; clicked => { root.close-detail(); } }
-                                }
-                                HorizontalLayout {
-                                    height: 36px;
-                                    spacing: 8px;
-                                    LibraryButton { width: 84px; light-mode: root.light-mode; caption: "Play"; label: "Play " + root.detail-title; active: true; enabled: root.browsing-enabled && !root.detail-busy && root.detail-rows.length > 0; clicked => { root.play-detail(); } }
-                                    LibraryButton { width: 84px; light-mode: root.light-mode; caption: "Shuffle"; label: "Shuffle " + root.detail-title; enabled: root.browsing-enabled && !root.detail-busy && root.detail-rows.length > 0; clicked => { root.shuffle-detail(); } }
-                                    Rectangle { horizontal-stretch: 1; }
-                                }
-                                if root.detail-rows.length > 0 : ListView {
-                                    content-y <=> root.detail-artwork-y;
-                                    changed visible-height => { root.detail-artwork-height = self.visible-height; }
-                                    vertical-stretch: 1;
-                                    accessible-label: "Tracks in " + root.detail-title;
-                                    for row[index] in root.detail-rows : SongRow { enabled: root.browsing-enabled; track: row; index: index; light-mode: root.light-mode; select => { root.select-detail-track(index); } queue(next) => { root.queue-detail-track(index, next); } radio => { root.start-track-radio(1, index); } }
-                                }
-                                if root.detail-rows.length == 0 : EmptyState { vertical-stretch: 1; light-mode: root.light-mode; heading: root.detail-busy ? "Loading tracks…" : "No tracks to show"; detail: root.detail-busy ? "Your playlist will appear here shortly." : "Choose another playlist from your Library."; }
-                            }
-                            if root.search-open && !root.detail-open : VerticalLayout {
-                                spacing: 12px;
-                                HorizontalLayout {
-                                    height: 48px;
-                                    spacing: 10px;
-                                    cross-axis-alignment: center;
-                                    VerticalLayout { horizontal-stretch: 1; spacing: 4px; Text { text: "Search results"; color: root.foreground; font-size: 26px; font-weight: 600; } Text { text: root.search-busy ? "Searching…" : "" + root.search-rows.length + " songs"; color: root.secondary; font-size: 12px; } }
-                                    LibraryButton { width: 62px; light-mode: root.light-mode; enabled: root.browsing-enabled; caption: "Back"; label: "Close search results"; clicked => { root.close-search(); } }
-                                }
-                                if root.search-rows.length > 0 : ListView {
-                                    content-y <=> root.search-artwork-y;
-                                    changed visible-height => { root.search-artwork-height = self.visible-height; }
-                                    vertical-stretch: 1;
-                                    accessible-label: "Music search results";
-                                    for row[index] in root.search-rows : SongRow { enabled: root.browsing-enabled; track: row; index: index; light-mode: root.light-mode; select => { root.select-search-track(index); } queue(next) => { root.queue-search-track(index, next); } radio => { root.start-track-radio(2, index); } }
-                                }
-                                if root.search-rows.length == 0 : EmptyState { vertical-stretch: 1; light-mode: root.light-mode; heading: root.search-busy ? "Searching…" : "No results yet"; detail: root.search-busy ? "Finding music for your search." : "Try another song title or artist in the search box."; }
-                            }
-                            if root.library-open && !root.detail-open && !root.search-open : VerticalLayout {
-                                spacing: 12px;
-                                HorizontalLayout {
-                                    height: 48px;
-                                    cross-axis-alignment: center;
-                                    Text { horizontal-stretch: 1; text: "Your library"; color: root.foreground; font-size: 28px; font-weight: 600; }
-                                    LibraryButton { width: 78px; light-mode: root.light-mode; caption: "Refresh"; label: "Refresh your playlists"; enabled: root.browsing-enabled && root.account-connected && !root.account-busy; clicked => { root.refresh-library(); } }
-                                }
-                                LibraryEntry { title: "Liked Songs"; subtitle: "Your favorites in one place"; light-mode: root.light-mode; enabled: root.browsing-enabled && root.account-connected && !root.account-busy; open => { root.play-liked(); } }
-                                if root.library-playlists.length > 0 : ListView {
-                                    content-y <=> root.library-artwork-y;
-                                    changed visible-height => { root.library-artwork-height = self.visible-height; }
-                                    vertical-stretch: 1;
-                                    accessible-label: "Your saved playlists";
-                                    for row[index] in root.library-playlists : LibraryEntry { title: row.title; subtitle: row.subtitle; artwork: row.artwork; light-mode: root.light-mode; enabled: root.browsing-enabled && root.account-connected && !root.account-busy; open => { root.select-library-playlist(index); } }
-                                }
-                                if root.library-playlists.length == 0 : EmptyState { vertical-stretch: 1; light-mode: root.light-mode; heading: root.account-busy ? "Loading your library…" : "Your playlists"; detail: root.account-connected ? "Refresh to load your saved playlists." : "Open Account to connect your YouTube Music session and load your library."; }
-                            }
-                            if !root.library-open && !root.detail-open && !root.search-open : VerticalLayout {
-                                spacing: 12px;
-                                HorizontalLayout {
-                                    height: 48px;
-                                    spacing: 10px;
-                                    cross-axis-alignment: center;
-                                    VerticalLayout { horizontal-stretch: 1; spacing: 4px; Text { text: "For you"; color: root.foreground; font-size: 28px; font-weight: 600; } Text { text: "Music from your YouTube Music Home"; color: root.secondary; font-size: 12px; overflow: elide; } }
-                                    if root.current-index >= 0 && root.paused : LibraryButton { width: 78px; light-mode: root.light-mode; enabled: root.browsing-enabled; caption: "Resume"; label: "Resume your current queue"; clicked => { root.toggle-pause(); } }
-                                    LibraryButton { width: 78px; light-mode: root.light-mode; caption: "Refresh"; label: "Refresh your recommendations"; enabled: root.browsing-enabled && root.account-connected && !root.account-busy; clicked => { root.refresh-recommendations(); } }
-                                }
-                                if root.recommendations.length > 0 : ListView {
-                                    content-y <=> root.home-artwork-y;
-                                    changed visible-height => { root.home-artwork-height = self.visible-height; }
-                                    vertical-stretch: 1;
-                                    accessible-label: "Home recommendations";
-                                    for row[index] in root.recommendations : VerticalLayout {
-                                        spacing: 0px;
-                                        if row.kind == "song" : SongRow { track: { title: row.title, artist: row.subtitle, album: row.shelf, duration: "", artwork: row.artwork, recommended: false }; index: index; light-mode: root.light-mode; show-duration: false; enabled: root.browsing-enabled && root.account-connected && !root.account-busy; select => { root.select-recommendation(index); } queue(next) => { root.queue-recommendation(index, next); } radio => { root.start-track-radio(3, index); } }
-                                        if row.kind != "song" : LibraryEntry { navigable: row.kind == "playlist"; unavailable-label: row.kind == "album" ? "Album unavailable" : "Unavailable"; title: row.title; subtitle: row.subtitle + (row.shelf == "" ? "" : " · " + row.shelf); artwork: row.artwork; light-mode: root.light-mode; enabled: root.browsing-enabled && root.account-connected && !root.account-busy && row.kind == "playlist"; open => { root.select-recommendation(index); } }
+                                    Text { text: shelf.title == "" ? "Recommended" : shelf.title; color: Theme.text; font-size: 19px; font-weight: 700; overflow: elide; }
+                                    Rectangle {
+                                        height: ceil(shelf.items.length / root.grid-columns) * (root.card-height + root.grid-gap) - root.grid-gap;
+                                        for item[i] in shelf.items : MediaCard {
+                                            x: (i - floor(i / root.grid-columns) * root.grid-columns) * (root.card-width + root.grid-gap) - 10px;
+                                            y: floor(i / root.grid-columns) * (root.card-height + root.grid-gap);
+                                            width: root.card-width + 20px;
+                                            height: root.card-height;
+                                            artwork: item.artwork;
+                                            title: item.title;
+                                            subtitle: item.kind == "song" ? "Song · " + item.subtitle : item.subtitle;
+                                            song: item.kind == "song";
+                                            playing: item.kind == "song" && root.has-track && item.title == root.track-title;
+                                            placeholder: item.kind == "song" ? "note" : item.kind == "album" ? "radio" : "playlist";
+                                            available: item.kind == "song" || item.kind == "playlist";
+                                            unavailable-label: item.kind == "album" ? "Album · coming soon" : "Not playable yet";
+                                            enabled: root.browsing-enabled && root.account-ready;
+                                            open => { root.select-recommendation(shelf.first + i); }
+                                            play => {
+                                                if item.kind == "song" { root.select-recommendation(shelf.first + i); }
+                                                else { root.play-playlist(1, shelf.first + i); }
+                                            }
+                                            queue(next) => { root.queue-recommendation(shelf.first + i, next); }
+                                            radio => { root.start-track-radio(3, shelf.first + i); }
+                                        }
                                     }
                                 }
-                                if root.recommendations.length == 0 : EmptyState { vertical-stretch: 1; light-mode: root.light-mode; heading: root.account-busy ? "Loading your music…" : root.account-connected ? "Your recommendations" : "Welcome to Tide"; detail: root.account-connected ? "Refresh to load recommendations, or search for a song above." : "Search above to start listening. Open Account to connect YouTube Music and see your recommendations."; }
+                                if root.home-shelves.length == 0 : EmptyState {
+                                    min-height: 360px;
+                                    loading: root.account-connected && root.provider-busy;
+                                    icon: root.account-connected ? "radio" : "note";
+                                    heading: !root.account-connected ? "Start listening"
+                                        : root.provider-busy ? "Loading your music…" : "No recommendations yet";
+                                    detail: !root.account-connected ? "Search above, paste a YouTube link or open a file. Connect YouTube Music for your playlists and personal picks."
+                                        : root.provider-busy ? "Your YouTube Music picks will appear here shortly." : "Refresh to load picks from your YouTube Music Home, or search above.";
+                                    action: !root.account-connected ? "Connect YouTube Music" : root.provider-busy ? "" : "Refresh";
+                                    secondary-action: !root.account-connected ? "Open audio file" : "";
+                                    act => { if root.account-connected { root.refresh-recommendations(); } else { root.settings-open = true; } }
+                                    act-secondary => { root.open-file(); }
+                                }
+                            }
+                        }
+
+                        // ── Library ──
+                        if root.page == Page.library : library-scroll := ScrollView {
+                            y: root.enter-offset;
+                            opacity: root.enter-opacity;
+                            animate y, opacity { duration: Theme.medium; easing: cubic-bezier(0.2, 0.8, 0.2, 1); }
+                            init => { self.y = 0; self.opacity = 1; }
+                            width: parent.width;
+                            height: parent.height;
+                            content-y <=> root.library-artwork-y;
+                            changed visible-height => { root.library-artwork-height = self.visible-height; }
+                            horizontal-scrollbar-policy: always-off;
+                            VerticalLayout {
+                                width: library-scroll.visible-width;
+                                padding: root.page-padding;
+                                spacing: 22px;
+                                HorizontalLayout {
+                                    height: 60px;
+                                    spacing: 12px;
+                                    cross-axis-alignment: center;
+                                    VerticalLayout {
+                                        horizontal-stretch: 1;
+                                        spacing: 4px;
+                                        alignment: center;
+                                        Text { text: "Your library"; color: Theme.text; font-size: 30px; font-weight: 800; overflow: elide; }
+                                        Text {
+                                            text: root.account-state == AccountState.connected
+                                                ? (root.library-playlists.length == 1 ? "1 playlist" : root.library-playlists.length + " playlists") + " · Liked Songs"
+                                                : root.account-state == AccountState.verifying ? "Checking your account…" : "Playlists from YouTube Music";
+                                            color: Theme.muted;
+                                            font-size: 13px;
+                                        }
+                                    }
+                                    if root.account-connected : TextButton { pill: true; width: 108px; icon: "refresh"; text: "Refresh"; label: "Refresh your playlists"; enabled: root.browsing-enabled && root.account-ready; clicked => { root.refresh-library(); } }
+                                }
+                                if root.account-connected : Rectangle {
+                                    height: ceil((root.library-playlists.length + 1) / root.grid-columns) * (root.card-height + root.grid-gap) - root.grid-gap;
+                                    MediaCard {
+                                        x: -10px;
+                                        y: 0px;
+                                        width: root.card-width + 20px;
+                                        height: root.card-height;
+                                        title: "Liked Songs";
+                                        subtitle: "Playlist · Auto";
+                                        brand: true;
+                                        placeholder: "heart";
+                                        enabled: root.browsing-enabled && root.account-ready;
+                                        open => { root.play-liked(); }
+                                        play => { root.play-liked(); }
+                                    }
+                                    for row[index] in root.library-playlists : MediaCard {
+                                        x: (index + 1 - floor((index + 1) / root.grid-columns) * root.grid-columns) * (root.card-width + root.grid-gap) - 10px;
+                                        y: floor((index + 1) / root.grid-columns) * (root.card-height + root.grid-gap);
+                                        width: root.card-width + 20px;
+                                        height: root.card-height;
+                                        artwork: row.artwork;
+                                        title: row.title;
+                                        subtitle: row.subtitle;
+                                        enabled: root.browsing-enabled && root.account-ready;
+                                        open => { root.select-library-playlist(index); }
+                                        play => { root.play-playlist(0, index); }
+                                    }
+                                }
+                                if !root.account-connected : EmptyState {
+                                    min-height: 360px;
+                                    icon: "library";
+                                    heading: "Connect to see your library";
+                                    detail: "Connect your YouTube Music account to browse your playlists and Liked Songs.";
+                                    action: "Connect YouTube Music";
+                                    act => { root.settings-open = true; }
+                                }
+                                if root.account-connected && root.library-playlists.length == 0 && root.provider-busy : HorizontalLayout { alignment: center; LoadingDots { } }
+                            }
+                        }
+
+                        // ── Playlist ──
+                        if root.page == Page.playlist : VerticalLayout {
+                            y: root.enter-offset;
+                            opacity: root.enter-opacity;
+                            animate y, opacity { duration: Theme.medium; easing: cubic-bezier(0.2, 0.8, 0.2, 1); }
+                            init => { self.y = 0; self.opacity = 1; }
+                            width: parent.width;
+                            height: parent.height;
+                            padding-left: root.page-padding;
+                            padding-right: root.page-padding;
+                            padding-top: root.page-padding;
+                            spacing: 18px;
+                            HorizontalLayout {
+                                height: root.compact-mode ? 150px : 184px;
+                                spacing: 24px;
+                                Cover {
+                                    width: root.compact-mode ? 150px : 184px;
+                                    height: self.width;
+                                    border-radius: 10px;
+                                    artwork: root.detail-artwork;
+                                    brand: root.detail-liked;
+                                    seed: root.detail-title;
+                                    placeholder: root.detail-liked ? "heart" : "playlist";
+                                    drop-shadow-blur: 24px;
+                                    drop-shadow-offset-y: 8px;
+                                    drop-shadow-color: Theme.shadow;
+                                }
+                                VerticalLayout {
+                                    horizontal-stretch: 1;
+                                    min-width: 0px;
+                                    spacing: 6px;
+                                    alignment: end;
+                                    SectionTitle { text: "PLAYLIST"; font-size: 11px; color: Theme.muted; }
+                                    Text { text: root.detail-title; color: Theme.text; font-size: root.compact-mode ? 28px : 38px; font-weight: 800; overflow: elide; }
+                                    Text {
+                                        text: (root.detail-subtitle == "" ? "" : root.detail-subtitle + " · ")
+                                            + (root.detail-busy ? "Loading tracks…" : root.detail-rows.length == 1 ? "1 song" : root.detail-rows.length + " songs");
+                                        color: Theme.muted;
+                                        font-size: 13px;
+                                        overflow: elide;
+                                    }
+                                    Rectangle { height: 6px; }
+                                    HorizontalLayout {
+                                        spacing: 14px;
+                                        alignment: start;
+                                        cross-axis-alignment: center;
+                                        PlayButton { width: 52px; height: 52px; label: "Play " + root.detail-title; enabled: root.browsing-enabled && !root.detail-busy && root.detail-rows.length > 0; clicked => { root.play-detail(); } }
+                                        IconButton { width: 40px; height: 40px; round: true; quiet: true; icon: "shuffle"; icon-size: 22px; label: "Shuffle " + root.detail-title; enabled: root.browsing-enabled && !root.detail-busy && root.detail-rows.length > 0; clicked => { root.shuffle-detail(); } }
+                                    }
+                                }
+                            }
+                            if root.detail-rows.length > 0 : VerticalLayout {
+                                vertical-stretch: 1;
+                                spacing: 4px;
+                                TrackTableHeader { show-album: root.table-album; }
+                                ListView {
+                                    vertical-stretch: 1;
+                                    content-y <=> root.detail-artwork-y;
+                                    changed visible-height => { root.detail-artwork-height = self.visible-height; }
+                                    accessible-label: "Tracks in " + root.detail-title;
+                                    for row[index] in root.detail-rows : SongRow {
+                                        enabled: root.browsing-enabled;
+                                        track: row;
+                                        index: index;
+                                        number: index + 1;
+                                        show-album: root.table-album;
+                                        playing: root.playing-row(row);
+                                        live: !root.paused;
+                                        select => { root.select-detail-track(index); }
+                                        queue(next) => { root.queue-detail-track(index, next); }
+                                        radio => { root.start-track-radio(1, index); }
+                                    }
+                                }
+                            }
+                            if root.detail-rows.length == 0 : EmptyState {
+                                vertical-stretch: 1;
+                                loading: root.detail-busy;
+                                icon: "playlist";
+                                heading: root.detail-busy ? "Loading tracks…" : "No playable songs";
+                                detail: root.detail-busy ? "Your playlist will appear here shortly." : "This playlist has no songs Tide can play. Choose another one.";
+                                action: root.detail-busy ? "" : "Go back";
+                                act => { root.back(); }
+                            }
+                        }
+
+                        // ── Search ──
+                        if root.page == Page.search : VerticalLayout {
+                            y: root.enter-offset;
+                            opacity: root.enter-opacity;
+                            animate y, opacity { duration: Theme.medium; easing: cubic-bezier(0.2, 0.8, 0.2, 1); }
+                            init => { self.y = 0; self.opacity = 1; }
+                            width: parent.width;
+                            height: parent.height;
+                            padding-left: root.page-padding;
+                            padding-right: root.page-padding;
+                            padding-top: root.page-padding;
+                            spacing: 16px;
+                            VerticalLayout {
+                                spacing: 4px;
+                                SectionTitle { text: "SEARCH RESULTS"; font-size: 11px; color: Theme.muted; }
+                                Text { text: root.search-query == "" ? "Songs" : "“" + root.search-query + "”"; color: Theme.text; font-size: 30px; font-weight: 800; overflow: elide; }
+                                Text { text: root.search-busy ? "Searching YouTube…" : root.search-rows.length == 1 ? "1 song" : root.search-rows.length + " songs"; color: Theme.muted; font-size: 13px; }
+                            }
+                            if root.search-rows.length > 0 : VerticalLayout {
+                                vertical-stretch: 1;
+                                spacing: 4px;
+                                TrackTableHeader { show-album: false; }
+                                ListView {
+                                    vertical-stretch: 1;
+                                    content-y <=> root.search-artwork-y;
+                                    changed visible-height => { root.search-artwork-height = self.visible-height; }
+                                    accessible-label: "Music search results";
+                                    for row[index] in root.search-rows : SongRow {
+                                        enabled: root.browsing-enabled;
+                                        track: row;
+                                        index: index;
+                                        number: index + 1;
+                                        playing: root.playing-row(row);
+                                        live: !root.paused;
+                                        select => { root.select-search-track(index); }
+                                        queue(next) => { root.queue-search-track(index, next); }
+                                        radio => { root.start-track-radio(2, index); }
+                                    }
+                                }
+                            }
+                            if root.search-rows.length == 0 : EmptyState {
+                                vertical-stretch: 1;
+                                loading: root.search-busy;
+                                icon: "search";
+                                heading: root.search-busy ? "Searching…" : "No songs found";
+                                detail: root.search-busy ? "Finding music for your search." : "Try a different song title or artist, or paste a link.";
+                            }
+                        }
+
+                        // Error banner floats over the page so it never shifts content.
+                        if root.error-message != "" : Rectangle {
+                            x: 16px;
+                            y: Theme.motion ? -64px : 16px;
+                            init => { self.y = 16px; }
+                            animate y { duration: Theme.medium; easing: cubic-bezier(0.2, 0.9, 0.3, 1.2); }
+                            width: parent.width - 32px;
+                            height: 56px;
+                            border-radius: 12px;
+                            background: Theme.notice;
+                            border-width: 1px;
+                            border-color: Theme.outline;
+                            drop-shadow-blur: 18px;
+                            drop-shadow-offset-y: 4px;
+                            drop-shadow-color: Theme.shadow;
+                            HorizontalLayout {
+                                padding-left: 16px;
+                                padding-right: 10px;
+                                spacing: 12px;
+                                cross-axis-alignment: center;
+                                Icon { name: "warning"; ink: Theme.selected-ink; size: 20px; }
+                                Text { horizontal-stretch: 1; text: root.error-message; color: Theme.text; font-size: 13px; vertical-alignment: center; wrap: word-wrap; overflow: elide; accessible-live-region: assertive; }
+                                if root.error-action != ErrorAction.dismiss : TextButton {
+                                    pill: true;
+                                    primary: true;
+                                    text: root.error-action == ErrorAction.account ? "Account settings" : "Retry";
+                                    enabled: !root.settings-open;
+                                    label: root.error-action == ErrorAction.account ? "Open account settings to resolve the connection problem" : "Retry interrupted playback or recommendations";
+                                    clicked => { root.retry-error(); }
+                                }
+                                IconButton { round: true; quiet: true; icon: "close"; icon-size: 16px; label: "Dismiss this message"; clicked => { root.dismiss-error(); } }
+                            }
+                        }
+
+                        // Toast for brief confirmations.
+                        if root.toast-visible : Rectangle {
+                            property <length> rise: Theme.motion ? 24px : 0px;
+                            init => { self.rise = 0; self.opacity = 1; }
+                            animate rise, opacity { duration: Theme.medium; easing: cubic-bezier(0.2, 0.9, 0.3, 1.2); }
+                            opacity: Theme.motion ? 0 : 1;
+                            x: (parent.width - self.width) / 2;
+                            y: parent.height - self.height - 20px + self.rise;
+                            width: min(parent.width - 40px, toast-label.preferred-width + 40px);
+                            height: 40px;
+                            border-radius: 20px;
+                            background: Theme.light ? #2f2529 : #f4f2f3;
+                            drop-shadow-blur: 18px;
+                            drop-shadow-offset-y: 4px;
+                            drop-shadow-color: Theme.shadow;
+                            Timer { interval: 3200ms; running: true; triggered => { root.toast-visible = false; } }
+                            toast-label := Text {
+                                x: 20px;
+                                width: parent.width - 40px;
+                                height: parent.height;
+                                text: root.toast-text;
+                                color: Theme.light ? #fbf8f3 : #17151a;
+                                font-size: 13px;
+                                font-weight: 600;
+                                vertical-alignment: center;
+                                horizontal-alignment: center;
+                                overflow: elide;
+                                accessible-live-region: polite;
                             }
                         }
                     }
@@ -1227,9 +797,9 @@ export component AppWindow inherits Window {
                         width: 340px;
                         rows: root.rows;
                         current-index: root.current-index;
-                        light-mode: root.light-mode;
                         autoplay-enabled: root.autoplay-enabled;
                         repeat-enabled: root.repeat-enabled;
+                        live: !root.paused;
                         close => { root.queue-open = false; }
                         select(index) => { root.select-track(index); }
                         remove(index) => { root.remove-queue-track(index); }
@@ -1242,22 +812,35 @@ export component AppWindow inherits Window {
                         clear => { root.clear-queue(); }
                     }
                 }
+                // Narrow windows: the queue overlays the content with a scrim.
                 if root.queue-open && !root.wide : Rectangle {
+                    x: 0px;
+                    y: 0px;
                     width: parent.width;
                     height: parent.height;
-                    Rectangle { x: 0px; y: 0px; width: max(0px, parent.width - 340px); height: parent.height; background: #00000060; TouchArea { clicked => { root.queue-open = false; } } }
+                    Rectangle {
+                        x: 0px; y: 0px; width: max(0px, parent.width - 340px); height: parent.height; background: Theme.scrim;
+                        opacity: Theme.motion ? 0 : 1;
+                        init => { self.opacity = 1; }
+                        animate opacity { duration: Theme.medium; }
+                        TouchArea { clicked => { root.queue-open = false; } }
+                    }
                     QueueDrawer {
+                        property <length> slide: Theme.motion ? 340px : 0px;
+                        init => { self.slide = 0; }
+                        animate slide { duration: Theme.medium; easing: cubic-bezier(0.2, 0.9, 0.3, 1); }
                         artwork-scroll-y <=> root.queue-artwork-y;
                         artwork-view-height <=> root.queue-artwork-height;
                         enabled: !root.settings-open;
-                        x: max(0px, parent.width - 340px);
+                        x: max(0px, parent.width - 340px) + self.slide;
+                        y: 0px;
                         width: 340px;
                         height: parent.height;
                         rows: root.rows;
                         current-index: root.current-index;
-                        light-mode: root.light-mode;
                         autoplay-enabled: root.autoplay-enabled;
                         repeat-enabled: root.repeat-enabled;
+                        live: !root.paused;
                         close => { root.queue-open = false; }
                         select(index) => { root.select-track(index); }
                         remove(index) => { root.remove-queue-track(index); }
@@ -1270,68 +853,194 @@ export component AppWindow inherits Window {
                         clear => { root.clear-queue(); }
                     }
                 }
+                // Account & settings sheet.
                 if root.settings-open : Rectangle {
+                    x: 0px;
+                    y: 0px;
                     width: parent.width;
                     height: parent.height;
-                    Rectangle { x: 0px; y: 0px; width: max(0px, parent.width - 420px); height: parent.height; background: #00000060; TouchArea { clicked => { root.settings-open = false; } } }
                     Rectangle {
-                        x: max(0px, parent.width - 420px);
+                        x: 0px; y: 0px; width: max(0px, parent.width - 420px); height: parent.height; background: Theme.scrim;
+                        opacity: Theme.motion ? 0 : 1;
+                        init => { self.opacity = 1; }
+                        animate opacity { duration: Theme.medium; }
+                        TouchArea { clicked => { root.settings-open = false; } }
+                    }
+                    Rectangle {
+                        property <length> slide: Theme.motion ? 420px : 0px;
+                        init => { self.slide = 0; }
+                        animate slide { duration: Theme.medium; easing: cubic-bezier(0.2, 0.9, 0.3, 1); }
+                        drop-shadow-blur: 30px;
+                        drop-shadow-color: Theme.shadow;
+                        x: max(0px, parent.width - 420px) + self.slide;
+                        y: 0px;
                         width: 420px;
                         height: parent.height;
-                        background: root.surface;
+                        background: Theme.surface;
                         border-width: 1px;
-                        border-color: root.outline;
+                        border-color: Theme.outline;
                         TouchArea { }
                         ScrollView {
                             width: parent.width;
                             height: parent.height;
                             horizontal-scrollbar-policy: always-off;
                             VerticalLayout {
-                            padding: 20px;
-                            spacing: 10px;
-                            HorizontalLayout { height: 34px; cross-axis-alignment: center; Text { horizontal-stretch: 1; text: "Account & settings"; color: root.foreground; font-size: 20px; font-weight: 650; } LibraryButton { width: 30px; height: 30px; light-mode: root.light-mode; caption: "×"; label: "Close account and settings"; clicked => { root.settings-open = false; } } }
-                            Text { height: 25px; text: root.account-busy ? "Connecting…" : root.account-verified ? "Connected" + (root.account-name == "" ? "" : " · " + root.account-name) : root.account-connected ? "Saved session · not verified" : "Connect YouTube Music"; color: root.foreground; font-size: 14px; font-weight: 600; overflow: elide; }
-                            Text { height: 42px; text: root.account-status; color: root.secondary; font-size: 11px; wrap: word-wrap; overflow: elide; accessible-live-region: polite; }
-                            HorizontalLayout { height: 34px; spacing: 8px; ComboBox { horizontal-stretch: 1; model: ["Account 1", "Account 2", "Account 3", "Account 4", "Account 5", "Account 6", "Account 7", "Account 8", "Account 9", "Account 10"]; current-index <=> root.account-index; enabled: root.account-connected && !root.account-busy; } LibraryButton { width: 76px; light-mode: root.light-mode; caption: "Switch"; label: "Connect selected Google account"; enabled: root.account-connected && !root.account-busy; clicked => { root.switch-account(root.account-index); } } }
-                            HorizontalLayout {
-                                height: 36px;
-                                spacing: 8px;
-                                LibraryButton { horizontal-stretch: 1; light-mode: root.light-mode; caption: root.account-connected ? "Reconnect" : "Connect account"; label: "Connect your local YouTube Music session"; enabled: !root.account-busy; active: !root.account-connected; clicked => { root.connect-account(); } }
-                                if root.account-busy : LibraryButton { width: 76px; light-mode: root.light-mode; caption: "Cancel"; label: "Cancel account request"; clicked => { root.cancel-account(); } }
-                            }
-                            Rectangle { height: 1px; background: root.outline; }
-                            HorizontalLayout { height: 36px; cross-axis-alignment: center; Text { horizontal-stretch: 1; text: "Appearance"; color: root.secondary; font-size: 12px; } LibraryButton { width: 116px; light-mode: root.light-mode; caption: root.light-mode ? "Use dark" : "Use light"; label: "Switch color theme"; clicked => { root.switch-mode(); } } }
-                            HorizontalLayout { height: 36px; cross-axis-alignment: center; Text { horizontal-stretch: 1; text: "Window size"; color: root.secondary; font-size: 12px; } LibraryButton { width: 116px; light-mode: root.light-mode; caption: root.compact-mode ? "Full size" : "Compact"; label: "Switch window size"; clicked => { root.toggle-compact(); } } }
-                            LibraryButton { height: 36px; light-mode: root.light-mode; caption: "Open audio file"; label: "Open a local audio file"; clicked => { root.open-file(); root.settings-open = false; } }
-                            LibraryButton { height: 36px; light-mode: root.light-mode; caption: "Shared jam · Tide + Grove"; label: "Open shared jams"; clicked => { root.open-jam(); root.settings-open = false; } }
-                            LibraryButton { height: 34px; light-mode: root.light-mode; caption: root.advanced-open ? "Advanced -" : "Advanced +"; label: root.advanced-open ? "Hide advanced account options" : "Show advanced account options"; active: root.advanced-open; clicked => { root.advanced-open = !root.advanced-open; } }
-                            if root.advanced-open : HorizontalLayout {
-                                height: 34px;
-                                spacing: 8px;
-                                LibraryButton { width: 124px; light-mode: root.light-mode; caption: "Import session"; label: "Import session from a local file"; enabled: !root.account-busy; clicked => { root.import-account(); } }
-                                LibraryButton { horizontal-stretch: 1; light-mode: root.light-mode; caption: "Disconnect"; label: "Disconnect YouTube Music account"; enabled: root.account-connected && !root.account-busy; clicked => { root.disconnect-account(); } }
-                                LibraryButton { width: 70px; light-mode: root.light-mode; caption: "Help"; label: "Help connecting your account"; clicked => { root.open-account-help(); } }
-                            }
-                            Rectangle { height: 12px; }
-                            Rectangle { height: 1px; background: root.outline; }
-                            Text { text: "About Tide · 0.1.0 preview"; color: root.secondary; font-size: 12px; }
-                            AboutSlint { height: 112px; horizontal-stretch: 0; }
+                                padding: 20px;
+                                spacing: 14px;
+                                HorizontalLayout {
+                                    height: 36px;
+                                    cross-axis-alignment: center;
+                                    Text { horizontal-stretch: 1; text: "Account & settings"; color: Theme.text; font-size: 20px; font-weight: 700; vertical-alignment: center; }
+                                    IconButton { width: 32px; height: 32px; round: true; quiet: true; icon: "close"; icon-size: 16px; label: "Close account and settings"; clicked => { root.settings-open = false; } }
+                                }
+
+                                // YouTube Music connection
+                                Rectangle {
+                                    border-radius: 12px;
+                                    background: Theme.window;
+                                    border-width: 1px;
+                                    border-color: Theme.outline;
+                                    VerticalLayout {
+                                        padding: 16px;
+                                        spacing: 10px;
+                                        SectionTitle { height: 14px; text: "YOUTUBE MUSIC"; }
+                                        HorizontalLayout {
+                                            height: 44px;
+                                            spacing: 12px;
+                                            cross-axis-alignment: center;
+                                            Rectangle {
+                                                width: 40px;
+                                                height: 40px;
+                                                border-radius: 20px;
+                                                background: root.account-state == AccountState.connected ? Theme.brand : Theme.cover;
+                                                Icon { x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2; name: "account"; ink: root.account-state == AccountState.connected ? #ffffff : Theme.cover-ink; size: 20px; }
+                                            }
+                                            VerticalLayout {
+                                                horizontal-stretch: 1;
+                                                min-width: 0px;
+                                                alignment: center;
+                                                spacing: 2px;
+                                                Text {
+                                                    text: root.account-state == AccountState.verifying ? "Verifying account…"
+                                                        : root.account-state == AccountState.connected ? (root.account-name == "" ? "Connected" : root.account-name)
+                                                        : root.account-state == AccountState.saved ? "Saved session" : "Not connected";
+                                                    color: Theme.text;
+                                                    font-size: 14px;
+                                                    font-weight: 600;
+                                                    overflow: elide;
+                                                }
+                                                HorizontalLayout {
+                                                    spacing: 6px;
+                                                    cross-axis-alignment: center;
+                                                    Rectangle {
+                                                        width: 8px;
+                                                        height: 8px;
+                                                        border-radius: 4px;
+                                                        background: root.account-state == AccountState.connected ? Theme.success
+                                                            : root.account-state == AccountState.disconnected ? Theme.faint : Theme.warning;
+                                                    }
+                                                    Text {
+                                                        horizontal-stretch: 1;
+                                                        text: root.account-state == AccountState.connected ? "Connected"
+                                                            : root.account-state == AccountState.verifying ? "Checking access"
+                                                            : root.account-state == AccountState.saved ? "Not verified yet" : "Optional · for playlists and picks";
+                                                        color: Theme.muted;
+                                                        font-size: 12px;
+                                                    }
+                                                }
+                                            }
+                                            if root.account-state == AccountState.verifying : LoadingDots { }
+                                        }
+                                        Text { text: root.account-status; color: Theme.muted; font-size: 11px; wrap: word-wrap; accessible-live-region: polite; }
+                                        HorizontalLayout {
+                                            height: 38px;
+                                            spacing: 8px;
+                                            TextButton { horizontal-stretch: 1; height: 38px; pill: true; icon: root.account-connected ? "refresh" : "account"; text: root.account-connected ? "Reconnect" : "Connect YouTube Music"; label: "Connect your local YouTube Music session"; enabled: !root.provider-busy; primary: !root.account-connected; clicked => { root.connect-account(); } }
+                                            if root.provider-busy : TextButton { width: 88px; height: 38px; pill: true; text: "Cancel"; label: "Cancel the account request"; clicked => { root.cancel-account(); } }
+                                        }
+                                        if root.account-connected : HorizontalLayout {
+                                            height: 34px;
+                                            spacing: 8px;
+                                            cross-axis-alignment: center;
+                                            Text { text: "Google account"; color: Theme.muted; font-size: 12px; vertical-alignment: center; }
+                                            ComboBox { horizontal-stretch: 1; model: ["Account 1", "Account 2", "Account 3", "Account 4", "Account 5", "Account 6", "Account 7", "Account 8", "Account 9", "Account 10"]; current-index <=> root.account-index; enabled: root.account-ready; }
+                                            TextButton { width: 74px; text: "Switch"; label: "Use the selected Google account"; enabled: root.account-ready; clicked => { root.switch-account(root.account-index); } }
+                                        }
+                                    }
+                                }
+
+                                // Appearance
+                                Rectangle {
+                                    border-radius: 12px;
+                                    background: Theme.window;
+                                    border-width: 1px;
+                                    border-color: Theme.outline;
+                                    VerticalLayout {
+                                        padding: 16px;
+                                        spacing: 12px;
+                                        SectionTitle { height: 14px; text: "APPEARANCE"; }
+                                        HorizontalLayout {
+                                            height: 32px;
+                                            cross-axis-alignment: center;
+                                            Text { horizontal-stretch: 1; text: "Theme"; color: Theme.text; font-size: 13px; vertical-alignment: center; }
+                                            Segmented { first: "Dark"; second: "Light"; label: "Color theme"; second-selected: root.light-mode; choose(light) => { if light != root.light-mode { root.switch-mode(); } } }
+                                        }
+                                        HorizontalLayout {
+                                            height: 32px;
+                                            cross-axis-alignment: center;
+                                            Text { horizontal-stretch: 1; text: "Window size"; color: Theme.text; font-size: 13px; vertical-alignment: center; }
+                                            Segmented { first: "Full"; second: "Compact"; label: "Window size"; second-selected: root.compact-mode; choose(compact) => { if compact != root.compact-mode { root.toggle-compact(); } } }
+                                        }
+                                        Toggle { text: "Animations"; on: root.motion; toggled => { root.toggle-motion(); } }
+                                    }
+                                }
+
+                                // Playback
+                                Rectangle {
+                                    border-radius: 12px;
+                                    background: Theme.window;
+                                    border-width: 1px;
+                                    border-color: Theme.outline;
+                                    VerticalLayout {
+                                        padding: 16px;
+                                        spacing: 6px;
+                                        SectionTitle { height: 18px; text: "PLAYBACK"; }
+                                        Toggle { text: "Autoplay similar songs when the queue ends"; on: root.autoplay-enabled; toggled => { root.toggle-autoplay(); } }
+                                        Toggle { text: "Repeat the queue"; on: root.repeat-enabled; toggled => { root.toggle-repeat(); } }
+                                    }
+                                }
+
+                                TextButton { height: 34px; quiet: true; icon: root.advanced-open ? "back" : "chevron"; text: root.advanced-open ? "Hide advanced options" : "Advanced options"; label: root.advanced-open ? "Hide advanced account options" : "Show advanced account options"; clicked => { root.advanced-open = !root.advanced-open; } }
+                                if root.advanced-open : VerticalLayout {
+                                    spacing: 8px;
+                                    Text { text: "Import a session file if browser connection is unavailable. Disconnect removes the saved session from this computer."; color: Theme.muted; font-size: 11px; wrap: word-wrap; }
+                                    HorizontalLayout {
+                                        height: 34px;
+                                        spacing: 8px;
+                                        TextButton { horizontal-stretch: 1; text: "Import session"; label: "Import session from a local file"; enabled: !root.provider-busy; clicked => { root.import-account(); } }
+                                        TextButton { horizontal-stretch: 1; text: "Disconnect"; label: "Disconnect YouTube Music account and remove the saved session"; enabled: root.account-ready; clicked => { root.disconnect-account(); } }
+                                        TextButton { width: 70px; text: "Help"; label: "Help connecting your account"; clicked => { root.open-account-help(); } }
+                                    }
+                                }
+                                Rectangle { height: 1px; background: Theme.divider; }
+                                Text { text: "Tide 0.1.0 preview · not affiliated with YouTube"; color: Theme.faint; font-size: 11px; }
+                                AboutSlint { height: 112px; horizontal-stretch: 0; }
                             }
                         }
                     }
                 }
             }
-            if !root.collapsed && root.error-message == "" && root.status-text != "" : Rectangle {
-                height: 24px;
-                Text { x: 130px; width: max(0px, parent.width - 150px); height: parent.height; text: root.status-text; color: root.secondary; font-size: 11px; overflow: elide; vertical-alignment: center; accessible-live-region: polite; }
-            }
             PlayerBar {
                 following-jam: root.following-jam;
                 window-minimized: root.minimized;
-                preferred-height: 110px;
-                min-height: 110px;
-                max-height: root.collapsed ? 1000px : 110px;
+                preferred-height: root.collapsed ? 110px : 88px;
+                min-height: root.collapsed ? 110px : 88px;
+                max-height: root.collapsed ? 1000px : 88px;
                 vertical-stretch: root.collapsed ? 1 : 0;
+                has-track: root.has-track;
+                loading: root.loading;
+                tint: root.has-now-tint ? root.now-tint : Theme.accent;
+                repeat-enabled: root.repeat-enabled;
                 track-title: root.track-title;
                 track-artist: root.track-artist;
                 artwork: root.current-artwork;
@@ -1339,13 +1048,14 @@ export component AppWindow inherits Window {
                 duration: root.duration;
                 paused: root.paused;
                 volume: root.volume;
-                light-mode: root.light-mode;
                 compact: root.compact-mode;
                 collapsed: root.collapsed;
                 queue-open: root.queue-open;
                 toggle-pause => { root.toggle-pause(); }
                 next-track => { root.next-track(); }
                 previous-track => { root.previous-track(); }
+                toggle-repeat => { root.toggle-repeat(); }
+                shuffle-queue => { root.shuffle-queue(); }
                 seek(value) => { root.seek(value); }
                 change-volume(value) => { root.change-volume(value); }
                 restore => { root.collapse-player(); }

@@ -39,6 +39,16 @@ fn click(ui: &AppWindow, x: f32, y: f32) {
         position,
         button: PointerEventButton::Left,
     });
+    // Rows and buttons now show hover feedback. Leave the pointer outside the
+    // queue so each comparison measures layout rather than hover state.
+    ui.window().dispatch_event(WindowEvent::PointerMoved {
+        position: LogicalPosition::new(1.0, 1.0),
+    });
+}
+fn cover() -> slint::Image {
+    let mut buffer = slint::SharedPixelBuffer::<Rgb8Pixel>::new(96, 96);
+    buffer.make_mut_slice().fill(Rgb8Pixel::new(40, 90, 160));
+    slint::Image::from_rgb8(buffer)
 }
 fn rows(title: &str, artist: &str) -> slint::ModelRc<TrackRow> {
     Rc::new(slint::VecModel::from(vec![
@@ -46,6 +56,9 @@ fn rows(title: &str, artist: &str) -> slint::ModelRc<TrackRow> {
             title: title.into(),
             artist: artist.into(),
             duration: "12:34".into(),
+            // Real cover art: placeholders take a per-title gradient, which
+            // would differ between the metadata variants compared here.
+            artwork: cover(),
             ..Default::default()
         };
         3
@@ -69,6 +82,8 @@ fn long_queue_metadata_keeps_duration_and_remove_controls_in_place() {
     let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
     slint::platform::set_platform(Box::new(TestPlatform(window.clone()))).unwrap();
     let ui = AppWindow::new().unwrap();
+    // Pixel assertions need settled frames, not mid-transition ones.
+    ui.set_motion(false);
     ui.set_queue_open(true);
     ui.set_current_index(0);
     let removed = Rc::new(Cell::new(-1));

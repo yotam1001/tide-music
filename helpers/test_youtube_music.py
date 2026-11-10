@@ -152,12 +152,14 @@ class ProviderTests(unittest.TestCase):
             self.assertEqual(run(client, {"action": "radio", "video_id": "K4DyBUG242c"}),
                              {"type": "error", "code": "request"})
 
-    def test_artwork_chooses_small_safe_public_thumbnail_and_watch_variant(self):
+    def test_artwork_chooses_card_sized_safe_public_thumbnail_and_watch_variant(self):
         candidates = [{"url": "https://i.ytimg.com/large.jpg", "width": 512, "height": 512},
                       {"url": "https://lh3.googleusercontent.com/small", "width": 96, "height": 96},
-                      {"url": "https://yt3.ggpht.com/exact", "width": 120, "height": 120}]
+                      {"url": "https://yt3.ggpht.com/medium", "width": 120, "height": 120},
+                      {"url": "https://yt3.ggpht.com/exact", "width": 226, "height": 226}]
         self.assertEqual(artwork_url({"thumbnails": candidates}), "https://yt3.ggpht.com/exact")
-        self.assertEqual(artwork_url({"thumbnail": candidates[:2]}), "https://lh3.googleusercontent.com/small")
+        self.assertEqual(artwork_url({"thumbnail": candidates[1:3]}), "https://yt3.ggpht.com/medium")
+        self.assertEqual(artwork_url({"thumbnail": candidates[:2]}), "https://i.ytimg.com/large.jpg")
         self.assertEqual(tracks([{"videoId": "K4DyBUG242c", "thumbnail": candidates}])[0]["artwork_url"],
                          "https://yt3.ggpht.com/exact")
         client = FakeClient()

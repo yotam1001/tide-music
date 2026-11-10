@@ -1,0 +1,268 @@
+// The queue drawer. Drag geometry (row heights, rail width, header height) is
+// relied on by the native drag smoke test and the queue layout test.
+import { ListView } from "std-widgets.slint";
+import { Theme, Icon, IconButton, TextButton, Toggle, SectionTitle } from "theme.slint";
+import { TrackRow, SongRow, EmptyState } from "components.slint";
+
+// Each row tests the captured pointer against its actual bounds, including section
+// headings. Coordinates are window-relative so scrolling does not shift the pointer.
+export component QueueItem inherits Rectangle {
+    in property <bool> enabled: true;
+    in property <bool> live: false;
+    in property <TrackRow> track;
+    in property <int> index;
+    in property <int> current-index;
+    in property <bool> heading;
+    in property <int> drag-source: -1;
+    in property <bool> drag-recommended;
+    in property <bool> drag-in-list;
+    in property <length> drag-x;
+    in property <length> drag-y;
+    in property <int> drag-revision;
+    in property <bool> press-active;
+    in property <length> press-x;
+    in property <length> press-y;
+    callback select();
+    callback remove();
+    callback requeue(bool);
+    callback radio();
+    callback hit(int, bool);
+    callback hover(int, int);
+    private property <bool> press-hit: root.press-active && root.index > root.current-index
+        && root.press-x >= song.absolute-position.x && root.press-x < song.absolute-position.x + 44px
+        && root.press-y >= song.absolute-position.y && root.press-y < song.absolute-position.y + 66px;
+    changed press-hit => { if root.press-hit { root.hit(root.index, root.track.recommended); } }
+    private property <int> hover-half: root.drag-in-list && root.drag-source >= 0 && root.index > root.current-index && root.track.recommended == root.drag-recommended
+        && root.drag-x >= self.absolute-position.x && root.drag-x < self.absolute-position.x + self.width
+        && root.drag-y >= self.absolute-position.y && root.drag-y < self.absolute-position.y + self.height
+        ? (root.drag-y < song.absolute-position.y + 33px ? 0 : 1) : -1;
+    private property <int> insertion-index: root.index + root.hover-half;
+    private property <int> final-index: root.insertion-index - (root.insertion-index > root.drag-source ? 1 : 0);
+    private property <{ revision: int, half: int }> hover-state: { revision: root.drag-revision, half: root.hover-half };
+    changed hover-state => { root.hover(root.index, root.hover-half); }
+    height: song.height + (root.heading ? 28px : 0px);
+    VerticalLayout {
+        spacing: 0px;
+        if root.heading : SectionTitle {
+            height: 28px;
+            text: root.index == root.current-index ? "NOW PLAYING" : root.track.recommended ? "AUTOPLAY · SIMILAR SONGS" : "UP NEXT";
+            color: root.index == root.current-index ? Theme.cover-ink : Theme.faint;
+        }
+        song := SongRow {
+            enabled: root.enabled;
+            track: root.track;
+            index: root.index;
+            current: root.index == root.current-index;
+            removable: true;
+            draggable: root.index > root.current-index;
+            dragging: root.drag-source == root.index;
+            drag-in-progress: root.drag-source >= 0;
+            show-duration: true;
+            row-height: 66px;
+            playing: root.index == root.current-index;
+            live: root.live;
+            select => { root.select(); }
+            remove => { root.remove(); }
+            queue(next) => { root.requeue(next); }
+            radio => { root.radio(); }
+        }
+    }
+    if root.hover-half >= 0 && root.final-index != root.drag-source : Rectangle {
+        y: root.hover-half == 0 ? song.y : parent.height - 3px;
+        height: 3px;
+        background: Theme.accent;
+        border-radius: 1.5px;
+    }
+}
+
+export component QueueDrawer inherits Rectangle {
+    in-out property <length> artwork-scroll-y;
+    in-out property <length> artwork-view-height;
+    in property <bool> enabled: true;
+    in property <[TrackRow]> rows;
+    in property <int> current-index;
+    in property <bool> autoplay-enabled;
+    in property <bool> repeat-enabled;
+    in property <bool> live: false;
+    callback close();
+    callback select(int);
+    callback remove(int);
+    callback requeue(int, bool);
+    callback reorder(int, int);
+    callback radio(int);
+    callback toggle-autoplay();
+    callback toggle-repeat();
+    callback shuffle();
+    callback clear();
+    // Clearing the queue cannot be undone, so it takes two deliberate clicks.
+    // The confirmation expires on its own rather than lingering.
+    private property <bool> confirm-clear: false;
+    private property <int> upcoming: max(0, root.rows.length - max(0, root.current-index) - 1);
+    private property <int> drag-source: -1;
+    private property <bool> drag-recommended: false;
+    private property <length> drag-x;
+    private property <length> drag-y;
+    private property <int> hover-row: -1;
+    private property <int> hover-half: -1;
+    private property <bool> release-pending: false;
+    private property <bool> press-active: false;
+    private property <length> press-x;
+    private property <length> press-y;
+    private property <int> drag-revision: 0;
+    function cancel-drag() {
+        root.drag-source = -1;
+        root.release-pending = false;
+        root.hover-row = -1;
+        root.hover-half = -1;
+        root.press-active = false;
+    }
+    function update-drag-pointer(x: length, y: length) {
+        root.drag-x = x;
+        root.drag-y = y;
+        root.hover-row = -1;
+        root.hover-half = -1;
+        root.drag-revision += 1;
+    }
+    changed rows => { root.cancel-drag(); }
+    changed current-index => { root.cancel-drag(); root.artwork-scroll-y = 0px; }
+    changed visible => { if !root.visible { root.cancel-drag(); root.confirm-clear = false; } }
+    background: Theme.chrome;
+    border-width: 1px;
+    border-color: Theme.outline;
+    TouchArea { }
+    Timer { interval: 3500ms; running: root.confirm-clear; triggered => { root.confirm-clear = false; } }
+    VerticalLayout {
+        padding: 14px;
+        spacing: 10px;
+        HorizontalLayout {
+            height: 34px;
+            spacing: 6px;
+            cross-axis-alignment: center;
+            VerticalLayout {
+                horizontal-stretch: 1;
+                alignment: center;
+                spacing: 1px;
+                Text { text: "Queue"; color: Theme.text; font-size: 18px; font-weight: 650; }
+                Text { text: root.rows.length == 0 ? "Nothing queued" : root.upcoming == 0 ? "Nothing up next" : root.upcoming == 1 ? "1 song up next" : root.upcoming + " songs up next"; color: Theme.muted; font-size: 11px; }
+            }
+            IconButton { width: 30px; height: 30px; quiet: true; enabled: root.enabled && root.upcoming > 1; icon: "shuffle"; icon-size: 16px; label: "Shuffle the upcoming queue"; clicked => { root.shuffle(); } }
+            if !root.confirm-clear : IconButton { width: 30px; height: 30px; quiet: true; enabled: root.enabled && root.rows.length > 0; icon: "clear"; icon-size: 16px; label: "Clear the playback queue"; clicked => { root.confirm-clear = true; } }
+            if root.confirm-clear : TextButton { height: 30px; primary: true; text: "Clear all?"; label: "Confirm: clear the whole playback queue"; enabled: root.enabled; clicked => { root.confirm-clear = false; root.clear(); } }
+            IconButton { width: 30px; height: 30px; quiet: true; enabled: root.enabled; icon: "close"; icon-size: 16px; label: "Close queue drawer"; clicked => { root.cancel-drag(); root.close(); } }
+        }
+        // The fixed rail owns pointer capture while ListView recycles song rows.
+        if root.rows.length > 0 : queue-area := Rectangle {
+            vertical-stretch: 1;
+            private property <bool> drag-in-list: root.drag-x >= self.absolute-position.x && root.drag-x < self.absolute-position.x + queue-list.visible-width
+                && root.drag-y >= self.absolute-position.y && root.drag-y < self.absolute-position.y + queue-list.visible-height;
+            Timer {
+                interval: 30ms;
+                running: root.drag-source >= 0 && queue-area.drag-in-list && !root.release-pending;
+                triggered => {
+                    if root.drag-y < queue-list.absolute-position.y + 40px {
+                        queue-list.content-y = min(0px, queue-list.content-y + 14px);
+                    } else if root.drag-y > queue-list.absolute-position.y + queue-list.visible-height - 40px {
+                        queue-list.content-y = max(min(0px, queue-list.visible-height - queue-list.content-height), queue-list.content-y - 14px);
+                    }
+                    root.update-drag-pointer(root.drag-x, root.drag-y);
+                }
+            }
+            Timer {
+                interval: 1ms;
+                running: root.release-pending;
+                triggered => {
+                    let source = root.drag-source;
+                    let insertion = root.hover-row + root.hover-half;
+                    let target = insertion - (insertion > source ? 1 : 0);
+                    let valid = source >= 0 && queue-area.drag-in-list && root.hover-row >= 0 && root.hover-half >= 0;
+                    root.cancel-drag();
+                    if valid && target != source { root.reorder(source, target); }
+                }
+            }
+            queue-list := ListView {
+                content-y <=> root.artwork-scroll-y;
+                changed visible-height => { root.artwork-view-height = self.visible-height; }
+                width: parent.width;
+                height: parent.height;
+                accessible-label: "Playback queue including manual choices and autoplay";
+                mouse-drag-pan-enabled: false;
+                horizontal-scrollbar-policy: always-off;
+                for visible-index in max(0, root.rows.length - max(0, root.current-index)) : QueueItem {
+                    width: queue-list.visible-width;
+                    enabled: root.enabled;
+                    index: visible-index + max(0, root.current-index);
+                    track: root.rows[self.index];
+                    current-index: root.current-index;
+                    live: root.live;
+                    heading: self.index == max(0, root.current-index) || self.index == root.current-index + 1 || self.track.recommended != root.rows[max(0, self.index - 1)].recommended;
+                    drag-source: root.drag-source;
+                    drag-recommended: root.drag-recommended;
+                    drag-in-list: queue-area.drag-in-list;
+                    drag-x: root.drag-x;
+                    drag-y: root.drag-y;
+                    drag-revision: root.drag-revision;
+                    press-active: root.press-active;
+                    press-x: root.press-x;
+                    press-y: root.press-y;
+                    select => { root.select(self.index); }
+                    remove => { root.remove(self.index); }
+                    requeue(next) => { root.requeue(self.index, next); }
+                    radio => { root.radio(self.index); }
+                    hover(row-index, half) => {
+                        if half >= 0 { root.hover-row = row-index; root.hover-half = half; }
+                        else if root.hover-row == row-index { root.hover-row = -1; root.hover-half = -1; }
+                    }
+                    hit(row-index, recommended) => {
+                        if root.press-active && root.drag-source < 0 {
+                            root.drag-source = row-index;
+                            root.drag-recommended = recommended;
+                            root.press-active = false;
+                        }
+                    }
+                }
+            }
+            rail := TouchArea {
+                enabled: root.enabled;
+                x: 0px;
+                y: 0px;
+                width: min(44px, parent.width);
+                height: queue-list.visible-height;
+                mouse-cursor: self.pressed && root.drag-source >= 0 ? grabbing : grab;
+                accessible-role: button;
+                accessible-label: "Drag upcoming songs by their handles to reorder within their queue section";
+                pointer-event(event) => {
+                    if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
+                        root.cancel-drag();
+                        root.press-x = self.absolute-position.x + self.mouse-x;
+                        root.press-y = self.absolute-position.y + self.mouse-y;
+                        root.update-drag-pointer(root.press-x, root.press-y);
+                        root.press-active = true;
+                    } else if event.kind == PointerEventKind.up && event.button == PointerEventButton.left {
+                        root.update-drag-pointer(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                        root.release-pending = true;
+                    } else if event.kind == PointerEventKind.cancel {
+                        root.cancel-drag();
+                    }
+                }
+                moved => {
+                    if self.pressed { root.update-drag-pointer(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y); }
+                }
+                scroll-event(event) => {
+                    if root.drag-source < 0 {
+                        queue-list.content-y = max(min(0px, queue-list.visible-height - queue-list.content-height), min(0px, queue-list.content-y + event.delta-y));
+                    }
+                    return accept;
+                }
+            }
+        }
+        if root.rows.length == 0 : EmptyState { vertical-stretch: 1; icon: "queue"; heading: "Your queue is empty"; detail: "Play a song or playlist, or choose Add to queue from any song's menu."; }
+        Rectangle { height: 1px; background: Theme.divider; }
+        HorizontalLayout {
+            height: 32px;
+            spacing: 8px;
+            Toggle { horizontal-stretch: 1; text: "Autoplay"; on: root.autoplay-enabled; enabled: root.enabled; toggled => { root.toggle-autoplay(); } }
+            Toggle { horizontal-stretch: 1; text: "Repeat"; on: root.repeat-enabled; enabled: root.enabled; toggled => { root.toggle-repeat(); } }
+        }
+    }
+}
+
