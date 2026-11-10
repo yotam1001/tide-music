@@ -81,3 +81,50 @@ mod tests {
         assert_eq!(legacy.duration_seconds, None);
     }
 }
+
+/// Total length of a track list for a playlist header, e.g. "1 hr 32 min".
+/// Empty when no track reports a duration.
+pub fn format_total_duration(tracks: &[tide_core::Track]) -> String {
+    let seconds: u64 = tracks
+        .iter()
+        .filter_map(|track| track.duration_seconds)
+        .sum();
+    if seconds == 0 {
+        return String::new();
+    }
+    let minutes = seconds.div_ceil(60);
+    match (minutes / 60, minutes % 60) {
+        (0, minutes) => format!("{minutes} min"),
+        (hours, 0) => format!("{hours} hr"),
+        (hours, minutes) => format!("{hours} hr {minutes} min"),
+    }
+}
+
+#[cfg(test)]
+mod total_duration_tests {
+    use super::*;
+
+    #[test]
+    fn totals_read_like_a_playlist_header() {
+        let track = |seconds| tide_core::Track {
+            title: String::new(),
+            artist: String::new(),
+            album: String::new(),
+            source: String::new(),
+            duration_seconds: seconds,
+            artwork_url: None,
+            recommended: false,
+        };
+        assert_eq!(format_total_duration(&[]), "");
+        assert_eq!(format_total_duration(&[track(None)]), "");
+        assert_eq!(
+            format_total_duration(&[track(Some(200)), track(Some(100))]),
+            "5 min"
+        );
+        assert_eq!(
+            format_total_duration(&[track(Some(3600)), track(Some(1900))]),
+            "1 hr 32 min"
+        );
+        assert_eq!(format_total_duration(&[track(Some(7200))]), "2 hr");
+    }
+}

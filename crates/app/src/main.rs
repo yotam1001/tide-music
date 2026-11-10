@@ -36,6 +36,9 @@ struct Settings {
     /// Interface animations; off for reduced motion or minimal CPU use.
     #[serde(default = "enabled_by_default")]
     motion: bool,
+    /// Most recent search queries, newest first (at most eight).
+    #[serde(default)]
+    recent_searches: Vec<String>,
     #[serde(skip)]
     transient: bool,
 }
@@ -49,6 +52,7 @@ impl Default for Settings {
             volume: None,
             repeat: false,
             motion: true,
+            recent_searches: Vec::new(),
             transient: false,
         }
     }
@@ -124,6 +128,9 @@ struct State {
     // opening its track list.
     play_request: bool,
     detail_artwork_url: Option<String>,
+    /// Indices into `library_playlists` in the order the Library shows them
+    /// after its filter and sort. Interface indices always go through this.
+    library_view: RefCell<Vec<usize>>,
     radio_requests: radio::RadioRequests,
     radio_resume_when_ready: bool,
     volume_save_pending: bool,
@@ -282,6 +289,7 @@ fn request_library(
         s.detail_artwork_url = artwork;
         u.set_detail_liked(matches!(request, tide_provider::Request::Liked));
         u.set_detail_subtitle(subtitle.into());
+        u.set_detail_duration("".into());
         u.set_detail_artwork(slint::Image::default());
         u.set_detail_title(title.clone().into());
         u.set_detail_artwork_y(0.0);
@@ -767,25 +775,53 @@ fn set_provider_busy(u: &AppWindow, busy: bool, connecting: bool) {
     u.set_account_connecting(busy && connecting);
 }
 
+/// Library order after the interface's filter text and A-Z choice.
+fn library_order(
+    playlists: &[tide_provider::Playlist],
+    filter: &str,
+    alphabetical: bool,
+) -> Vec<usize> {
+    let filter = filter.trim().to_lowercase();
+    let mut order: Vec<usize> = playlists
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| filter.is_empty() || p.title.to_lowercase().contains(&filter))
+        .map(|(index, _)| index)
+        .collect();
+    if alphabetical {
+        order.sort_by_cached_key(|&index| playlists[index].title.to_lowercase());
+    }
+    order
+}
+
+/// The playlist at an index of the Library as currently shown.
+fn library_playlist(s: &State, index: i32) -> Option<tide_provider::Playlist> {
+    let index = usize::try_from(index).ok()?;
+    let source = *s.library_view.borrow().get(index)?;
+    s.library_playlists.get(source).cloned()
+}
+
 fn refresh_library_models(s: &State, u: &AppWindow) {
     let mut artwork = s.artwork.borrow_mut();
+    let filter = u.get_library_filter();
+    let order = library_order(&s.library_playlists, &filter, u.get_library_sort_alpha());
     let playlist_images = artwork_view::grid_visible_range(
         u.get_library_artwork_y(),
         u.get_library_artwork_height(),
-        s.library_playlists.len(),
+        order.len(),
         artwork_view::Grid {
             columns: u.get_grid_columns().max(1) as usize,
             row_height: u.get_card_height() + 12.0,
             top: LIBRARY_GRID_TOP,
-            leading: 1,
+            leading: usize::from(filter.trim().is_empty()),
         },
     );
     // Home shows a bounded selection (at most 24 cards), so every card's
     // artwork is requested while Home is visible.
     let home_images = 0..s.recommendations.len().min(40);
-    let playlists: Vec<PlaylistRow> = s
-        .library_playlists
+    let playlists: Vec<PlaylistRow> = order
         .iter()
+        .map(|&source| &s.library_playlists[source])
         .enumerate()
         .map(|(index, p)| PlaylistRow {
             id: p.id.clone().into(),
@@ -800,6 +836,7 @@ fn refresh_library_models(s: &State, u: &AppWindow) {
         })
         .collect();
     u.set_library_playlists(update_model(u.get_library_playlists(), playlists));
+    *s.library_view.borrow_mut() = order;
     let cards: Vec<RecommendationRow> = s
         .recommendations
         .iter()
@@ -856,6 +893,39 @@ fn update_model<T: Clone + PartialEq + 'static>(model: ModelRc<T>, rows: Vec<T>)
     }
     ModelRc::new(VecModel::from(rows))
 }
+fn remember_search(settings: &mut Settings, query: &str) {
+    let query = query.trim();
+    if query.is_empty() {
+        return;
+    }
+    settings
+        .recent_searches
+        .retain(|previous| !previous.eq_ignore_ascii_case(query));
+    settings
+        .recent_searches
+        .insert(0, query.chars().take(200).collect());
+    settings.recent_searches.truncate(8);
+}
+fn recent_model(settings: &Settings) -> ModelRc<slint::SharedString> {
+    ModelRc::new(VecModel::from(
+        settings
+            .recent_searches
+            .iter()
+            .map(|query| query.as_str().into())
+            .collect::<Vec<slint::SharedString>>(),
+    ))
+}
+/// Time-of-day greeting for Home; None keeps a neutral heading.
+fn greeting(hour: Option<u8>) -> &'static str {
+    match hour {
+        Some(5..=11) => "Good morning",
+        Some(12..=17) => "Good afternoon",
+        Some(18..=23) => "Good evening",
+        Some(_) => "Up late",
+        None => "Welcome back",
+    }
+}
+
 fn settings_path() -> Option<PathBuf> {
     settings_location::settings_path(|key| std::env::var_os(key).map(PathBuf::from))
 }
@@ -1658,6 +1728,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         shuffle_request: false,
         play_request: false,
         detail_artwork_url: None,
+        library_view: RefCell::new(Vec::new()),
         radio_requests: radio::RadioRequests::default(),
         radio_resume_when_ready: false,
         volume_save_pending: false,
@@ -1685,6 +1756,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ui.set_light_mode(state.borrow().settings.light_mode);
     ui.set_compact_mode(state.borrow().settings.compact_mode);
     ui.set_motion(state.borrow().settings.motion);
+    ui.set_recent_searches(recent_model(&state.borrow().settings));
+    ui.set_greeting(greeting(tide_windows::local_hour()).into());
     ui.set_autoplay_enabled(state.borrow().settings.autoplay);
     ui.set_volume(state.borrow().settings.volume.unwrap_or(70.0) as f32);
     ui.set_repeat_enabled(state.borrow().settings.repeat);
@@ -1727,11 +1800,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if s.library_worker.is_some() {
                     return;
                 }
-                if let Some(playlist) = usize::try_from(index)
-                    .ok()
-                    .and_then(|index| s.library_playlists.get(index))
-                    .cloned()
-                {
+                if let Some(playlist) = library_playlist(&s, index) {
                     s.shuffle_request = true;
                     request_library(
                         &mut s,
@@ -1756,7 +1825,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 let index = usize::try_from(index).ok();
                 let id = index.and_then(|index| match context {
-                    0 => s.library_playlists.get(index).map(|p| p.id.clone()),
+                    0 => library_playlist(&s, index as i32).map(|p| p.id),
                     1 => s
                         .recommendations
                         .get(index)
@@ -1949,11 +2018,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ui.on_select_library_playlist(move |index| {
             if let Some(u) = weak.upgrade() {
                 let mut s = state.borrow_mut();
-                if let Some(p) = usize::try_from(index)
-                    .ok()
-                    .and_then(|i| s.library_playlists.get(i))
-                    .cloned()
-                {
+                if let Some(p) = library_playlist(&s, index) {
                     request_library(
                         &mut s,
                         &u,
@@ -2295,6 +2360,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ui.set_status_text("A search is already running. Please wait.".into());
                     return;
                 }
+                remember_search(&mut state.settings, input);
+                ui.set_recent_searches(recent_model(&state.settings));
+                save(&state.settings);
                 state.search_generation += 1;
                 let generation = state.search_generation;
                 let query = input.to_string();
@@ -2424,6 +2492,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     bind!(on_toggle_motion, |s, u| {
         s.settings.motion = !u.get_motion();
         u.set_motion(s.settings.motion);
+        save(&s.settings);
+    });
+    bind!(on_clear_recent_searches, |s, u| {
+        s.settings.recent_searches.clear();
+        u.set_recent_searches(recent_model(&s.settings));
         save(&s.settings);
     });
     bind!(on_toggle_compact, |s, u| {
@@ -2748,6 +2821,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let library_tx = library_tx.clone();
         let mut last_content_view = None;
         let mut last_volume_save = Instant::now();
+        let mut last_greeting_check = Instant::now();
         let mut connection_monitor = connection::Monitor::new();
         let picker_busy = picker_busy.clone();
         timer.start(
@@ -2769,6 +2843,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let content_view = (
                     u.get_page(),
                     u.get_queue_open(),
+                    (u.get_library_filter(), u.get_library_sort_alpha()),
                     [
                         (u.get_library_artwork_y(), u.get_library_artwork_height()),
                         (u.get_home_artwork_y(), u.get_home_artwork_height()),
@@ -2777,12 +2852,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         (u.get_search_artwork_y(), u.get_search_artwork_height()),
                     ],
                 );
+                if last_greeting_check.elapsed() >= Duration::from_secs(60) {
+                    last_greeting_check = Instant::now();
+                    u.set_greeting(greeting(tide_windows::local_hour()).into());
+                }
                 if s.volume_save_pending && last_volume_save.elapsed() >= Duration::from_secs(1) {
                     s.volume_save_pending = false;
                     save(&s.settings);
                     last_volume_save = Instant::now();
                 }
-                if last_content_view != Some(content_view) {
+                if last_content_view.as_ref() != Some(&content_view) {
                     refresh(&u, &s);
                     refresh_library_models(&s, &u);
                     refresh_content_models(&s, &u);
@@ -2950,6 +3029,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 continue;
                             }
                             if matches!(s.library_action, LibraryAction::Preview { .. }) {
+                                u.set_detail_duration(metadata::format_total_duration(&tracks).into());
                                 s.detail_tracks = tracks;
                                 u.set_detail_busy(false);
                                 refresh_content_models(&s, &u);
@@ -3573,7 +3653,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     7 => "settings.png",
                     8 => "library.png",
                     9 => "collapsed.png",
-                    _ => "restored.png",
+                    10 => "restored.png",
+                    _ => "now-playing.png",
                 };
                 if let Ok(pixels) = u.window().take_snapshot() {
                     if let Some(image) = image::RgbaImage::from_raw(
@@ -3716,6 +3797,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     9 => {
                         u.invoke_collapse_player();
                         navigate(&u, Page::Home);
+                    }
+                    10 => {
+                        u.set_settings_open(false);
+                        u.set_queue_open(false);
+                        u.set_now_playing_open(true);
                     }
                     _ => {
                         let _ = u.hide();
@@ -3949,6 +4035,41 @@ mod tests {
         assert!(!action.accepts_response(4, Some("fixture0001"), true));
         assert!(!action.accepts_response(3, Some("fixture0002"), true));
         assert!(!action.accepts_response(3, Some("fixture0001"), false));
+    }
+
+    #[test]
+    fn library_filter_and_sort_map_back_to_provider_order() {
+        let playlist = |title: &str| tide_provider::Playlist {
+            id: title.into(),
+            title: title.into(),
+            subtitle: String::new(),
+            artwork_url: None,
+        };
+        let playlists = [
+            playlist("Zen focus"),
+            playlist("Road trip"),
+            playlist("Late night focus"),
+        ];
+        assert_eq!(library_order(&playlists, "", false), [0, 1, 2]);
+        assert_eq!(library_order(&playlists, "", true), [2, 1, 0]);
+        assert_eq!(library_order(&playlists, " FOCUS ", false), [0, 2]);
+        assert_eq!(library_order(&playlists, "focus", true), [2, 0]);
+        assert!(library_order(&playlists, "jazz", false).is_empty());
+    }
+
+    #[test]
+    fn recent_searches_are_unique_newest_first_and_bounded() {
+        let mut settings = Settings::default();
+        for query in ["a", "b", "A", "  ", "c", "d", "e", "f", "g", "h", "i"] {
+            remember_search(&mut settings, query);
+        }
+        assert_eq!(
+            settings.recent_searches,
+            ["i", "h", "g", "f", "e", "d", "c", "A"]
+        );
+        assert_eq!(greeting(Some(9)), "Good morning");
+        assert_eq!(greeting(Some(2)), "Up late");
+        assert_eq!(greeting(None), "Welcome back");
     }
 
     #[test]

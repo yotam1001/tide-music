@@ -44,6 +44,18 @@ pub fn open_web_page(_url: &str) -> Result<(), String> {
     Err("Browser integration is currently available on Windows".into())
 }
 
+/// The local wall-clock hour (0-23), used for the Home greeting.
+#[cfg(windows)]
+pub fn local_hour() -> Option<u8> {
+    let time = unsafe { windows::Win32::System::SystemInformation::GetLocalTime() };
+    u8::try_from(time.wHour).ok().filter(|hour| *hour < 24)
+}
+
+#[cfg(not(windows))]
+pub fn local_hour() -> Option<u8> {
+    None
+}
+
 /// Current monitor work area, excluding the taskbar. Defer fitting while minimized.
 #[cfg(windows)]
 pub fn window_work_area(hwnd: *mut c_void) -> Result<[i32; 4], String> {

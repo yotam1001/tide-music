@@ -1,7 +1,7 @@
 // The persistent player. Full/compact windows use a three-column layout with
 // the timeline under the transport; the mini player keeps its two-row layout
 // (time · position · time · volume), which the native slider test measures.
-import { Theme, Icon, IconButton, PlayButton, TextButton } from "theme.slint";
+import { Theme, Icon, Hit, IconButton, PlayButton, TextButton } from "theme.slint";
 import { TideSlider, Cover, EqualizerBars } from "components.slint";
 
 component Transport inherits HorizontalLayout {
@@ -79,6 +79,8 @@ export component PlayerBar inherits Rectangle {
     callback restore();
     callback toggle-queue();
     callback mini();
+    callback expand();
+    in property <bool> now-playing-open: false;
     // Side columns of the full player. The right column must hold its four
     // controls (queue, mini, mute, volume) without overlapping.
     private property <length> side-width: max(root.compact ? 210px : 240px, (root.width - 64px) * 0.3);
@@ -114,9 +116,24 @@ export component PlayerBar inherits Rectangle {
         padding-right: 16px;
         spacing: 16px;
         cross-axis-alignment: center;
-        // Now playing
-        HorizontalLayout {
-            width: root.side-width;
+        // Now playing (click to open the large Now Playing view)
+        Rectangle {
+          width: root.side-width;
+          height: 64px;
+          border-radius: 8px;
+          background: now-hit.hovered ? Theme.hover : Colors.transparent;
+          animate background { duration: Theme.fast; }
+          now-hit := Hit {
+            width: parent.width;
+            height: parent.height;
+            enabled: root.has-track;
+            label: root.now-playing-open ? "Close Now Playing" : "Open Now Playing for " + root.track-title;
+            clicked => { root.expand(); }
+          }
+          HorizontalLayout {
+            width: parent.width;
+            height: parent.height;
+            padding-left: 4px;
             spacing: 12px;
             cross-axis-alignment: center;
             Cover { width: 56px; height: 56px; border-radius: 6px; artwork: root.artwork; seed: root.has-track ? root.track-title : ""; drop-shadow-blur: 12px; drop-shadow-offset-y: 3px; drop-shadow-color: Theme.shadow; }
@@ -132,6 +149,7 @@ export component PlayerBar inherits Rectangle {
                 }
                 Text { text: root.subtitle; color: root.following-jam || root.loading ? Theme.selected-ink : Theme.muted; font-size: 12px; overflow: elide; }
             }
+        }
         }
         // Transport and timeline
         VerticalLayout {

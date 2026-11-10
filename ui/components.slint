@@ -243,6 +243,7 @@ export component SongRow inherits Rectangle {
         enabled: root.enabled && !root.drag-in-progress;
         label: (root.current ? "Now playing: " : "Play ") + root.track.title + (root.track.artist == "" ? "" : " by " + root.track.artist);
         clicked => { root.select(); }
+        context-requested => { more.open-menu(); }
     }
     HorizontalLayout {
         padding-left: 10px;
@@ -301,6 +302,7 @@ export component SongRow inherits Rectangle {
             // Lists reveal the action on hover; the queue always shows it.
             opacity: !self.enabled ? 0.4 : (root.engaged || root.removable || root.current) ? 1 : 0;
             clicked => { menu.show(); }
+            public function open-menu() { if self.enabled { menu.show(); } }
             menu := PopupWindow {
                 x: parent.width - 220px;
                 y: parent.height + 4px;
@@ -353,6 +355,7 @@ export component MediaCard inherits Rectangle {
         enabled: root.enabled && root.available;
         label: !root.available ? root.title + ", " + root.unavailable-label : (root.song ? "Play " : "Open ") + root.title;
         clicked => { root.open(); }
+        context-requested => { if root.song && root.available { card-menu.show(); } }
     }
     Cover {
         x: 10px;
@@ -499,5 +502,180 @@ export component SidebarPlaylist inherits Rectangle {
             Text { text: root.title; color: root.active ? Theme.selected-ink : Theme.text; font-size: 12px; font-weight: 600; overflow: elide; }
             if root.subtitle != "" : Text { text: root.subtitle; color: Theme.faint; font-size: 11px; overflow: elide; }
         }
+    }
+}
+
+// Rounded search field. Escape hands focus back to the window so keyboard
+// shortcuts work again; Enter submits.
+export component SearchField inherits Rectangle {
+    in-out property <string> text;
+    in property <string> placeholder;
+    in property <string> label;
+    in property <bool> enabled: true;
+    out property <bool> focused: input.has-focus;
+    callback accepted(string);
+    callback escaped();
+    public function focus-input() { input.focus(); }
+    height: 40px;
+    border-radius: self.height / 2;
+    background: input.has-focus ? Theme.surface : touch.has-hover ? Theme.hover : Theme.raised;
+    border-width: input.has-focus ? 2px : 1px;
+    border-color: input.has-focus ? Theme.focus : Theme.outline;
+    opacity: root.enabled ? 1 : 0.6;
+    animate background { duration: Theme.fast; }
+    touch := TouchArea { mouse-cursor: MouseCursor.text; clicked => { input.focus(); } }
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 6px;
+        spacing: 10px;
+        cross-axis-alignment: center;
+        Icon { name: "search"; ink: input.has-focus ? Theme.text : Theme.muted; size: 17px; }
+        Rectangle {
+            horizontal-stretch: 1;
+            height: root.height;
+            clip: true;
+            FocusScope {
+                width: parent.width;
+                height: parent.height;
+                key-pressed(event) => {
+                    if event.text == Key.Escape { root.escaped(); return accept; }
+                    return reject;
+                }
+                input := TextInput {
+                    width: parent.width;
+                    height: parent.height;
+                    vertical-alignment: center;
+                    single-line: true;
+                    color: Theme.text;
+                    selection-background-color: Theme.accent-soft;
+                    font-size: 13px;
+                    enabled: root.enabled;
+                    text <=> root.text;
+                    accessible-role: text-input;
+                    accessible-label: root.label;
+                    accepted => { if self.text != "" { root.accepted(self.text); } }
+                }
+            }
+            if root.text == "" : Text {
+                width: parent.width;
+                height: parent.height;
+                text: root.placeholder;
+                color: Theme.faint;
+                font-size: 13px;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+        }
+        if root.text != "" : IconButton { width: 28px; height: 28px; round: true; quiet: true; icon: "close"; icon-size: 14px; label: "Clear"; clicked => { root.text = ""; input.focus(); } }
+    }
+}
+
+// Wide shortcut tile for Home's quick-access grid.
+export component QuickTile inherits Rectangle {
+    in property <string> title;
+    in property <image> artwork;
+    in property <bool> liked: false;
+    in property <bool> enabled: true;
+    callback open();
+    callback play();
+    private property <bool> engaged: hit.hovered || play.hovered;
+    height: 56px;
+    border-radius: 8px;
+    clip: true;
+    background: hit.pressed ? Theme.pressed : root.engaged ? Theme.hover : Theme.raised;
+    border-width: hit.focused ? 2px : 0px;
+    border-color: Theme.focus;
+    opacity: root.enabled ? 1 : 0.5;
+    animate background { duration: Theme.fast; }
+    hit := Hit { width: parent.width; height: parent.height; enabled: root.enabled; label: "Open " + root.title; clicked => { root.open(); } }
+    Cover { x: 0px; y: 0px; width: root.height; height: root.height; border-radius: 0px; artwork: root.artwork; brand: root.liked; seed: root.title; placeholder: root.liked ? "heart" : "playlist"; }
+    Text {
+        x: root.height + 12px;
+        width: root.width - root.height - 64px;
+        height: root.height;
+        text: root.title;
+        color: Theme.text;
+        font-size: 13px;
+        font-weight: 600;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    play := PlayButton {
+        x: root.width - 46px;
+        y: (root.height - self.height) / 2;
+        width: 36px;
+        height: 36px;
+        visible: root.enabled;
+        opacity: root.engaged ? 1 : 0;
+        animate opacity { duration: Theme.medium; }
+        label: "Play " + root.title;
+        clicked => { root.play(); }
+    }
+}
+
+// Loading placeholders shaped like the content they stand in for.
+export component Skeleton inherits Rectangle {
+    private property <bool> bright: false;
+    background: Theme.hover;
+    opacity: self.bright ? 0.9 : 0.45;
+    animate opacity { duration: Theme.motion ? 750ms : 0ms; easing: ease-in-out; }
+    Timer { interval: 760ms; running: Theme.motion; triggered => { root.bright = !root.bright; } }
+}
+
+export component SkeletonCard inherits Rectangle {
+    VerticalLayout {
+        padding: 10px;
+        spacing: 10px;
+        Skeleton { height: root.width - 20px; border-radius: 8px; }
+        Skeleton { height: 12px; width: (root.width - 20px) * 0.75; border-radius: 6px; }
+        Skeleton { height: 10px; width: (root.width - 20px) * 0.5; border-radius: 5px; }
+    }
+}
+
+export component SkeletonRow inherits Rectangle {
+    height: 56px;
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 10px;
+        cross-axis-alignment: center;
+        Skeleton { width: 26px; height: 10px; border-radius: 5px; }
+        Skeleton { width: 42px; height: 42px; border-radius: 5px; }
+        VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: 8px;
+            alignment: center;
+            Skeleton { height: 12px; width: 220px; border-radius: 6px; }
+            Skeleton { height: 10px; width: 140px; border-radius: 5px; }
+        }
+    }
+}
+
+// Compact up-next entry for the Now Playing view.
+export component UpNextRow inherits Rectangle {
+    in property <TrackRow> track;
+    callback select();
+    height: 52px;
+    border-radius: 8px;
+    background: hit.pressed ? Theme.pressed : hit.hovered ? #ffffff14 : Colors.transparent;
+    border-width: hit.focused ? 2px : 0px;
+    border-color: Theme.focus;
+    animate background { duration: Theme.fast; }
+    hit := Hit { width: parent.width; height: parent.height; label: "Play " + root.track.title + " now"; clicked => { root.select(); } }
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        spacing: 12px;
+        cross-axis-alignment: center;
+        Cover { width: 40px; height: 40px; border-radius: 5px; artwork: root.track.artwork; seed: root.track.title; }
+        VerticalLayout {
+            horizontal-stretch: 1;
+            min-width: 0px;
+            spacing: 2px;
+            alignment: center;
+            Text { text: root.track.title; color: Theme.text; font-size: 13px; font-weight: 600; overflow: elide; }
+            Text { text: root.track.artist == "" ? "Unknown artist" : root.track.artist; color: Theme.muted; font-size: 12px; overflow: elide; }
+        }
+        Text { text: root.track.duration == "—" ? "" : root.track.duration; color: Theme.muted; font-size: 12px; vertical-alignment: center; }
     }
 }

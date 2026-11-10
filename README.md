@@ -17,6 +17,8 @@ host timing. See [setup and current limits](docs/CROSS_SERVICE_JAMS.md).
 
 - Home and Library as the two main destinations, with a pill search field in the top bar, your playlists in the sidebar and an optional Queue drawer.
 - Artwork-first Home shelves and Library grid, a playlist page with a large cover and track table, and a three-column player bar.
+- A Now Playing view (click the song in the player bar) with large artwork and what plays next, a time-of-day Home greeting with quick-access tiles, Library filter and A–Z sort, recent searches and right-click song menus.
+- Keyboard shortcuts: Space play/pause, Ctrl+F or / search, Ctrl+←/→ previous/next, Ctrl+↑/↓ volume, Alt+← back, Esc closes the top panel.
 - Short, purposeful motion (page transitions, sliding sheets, hover lift, live equalizer bars) with an **Animations** switch in Account settings. Pages and the player take their tint from the current artwork.
 - Independent dark/light themes and full/compact sizing; the light palette uses warm grey, terracotta and muted purple.
 - A mini player with an expand icon using the same queue and playback engine.

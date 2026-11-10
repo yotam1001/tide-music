@@ -71,3 +71,23 @@ All durations come from `Theme.fast`/`medium`/`slow`. They become zero when **An
 ### Dynamic color
 
 The app samples one representative color from the current cover and the open playlist's cover (`artwork_tint`), favoring colorful pixels and normalizing brightness. Page heroes and the player glow cross-fade to that tint.
+
+### Benchmark against desktop music clients
+
+Scores out of 10, judged from each client's current desktop app. "Start" is Tide before this branch.
+
+| Area | Spotify | Apple Music | YouTube Music | Tidal | Tide start | Tide now |
+| --- | --- | --- | --- | --- | --- | --- |
+| Visual polish | 9 | 9 | 8 | 9 | 6 | 8 |
+| Home and discovery | 9 | 8 | 9 | 8 | 4 | 7 |
+| Library | 9 | 8 | 7 | 8 | 5 | 8 |
+| Playlist page | 9 | 9 | 8 | 9 | 5 | 8 |
+| Search | 9 | 8 | 9 | 8 | 5 | 6 |
+| Now Playing | 9 | 9 | 8 | 9 | 2 | 7 |
+| Queue | 8 | 8 | 8 | 7 | 7 | 9 |
+| Player bar | 9 | 9 | 8 | 9 | 6 | 8 |
+| Motion and feedback | 8 | 9 | 7 | 8 | 3 | 8 |
+| Keyboard and accessibility | 8 | 8 | 6 | 7 | 4 | 8 |
+| Resource use | 4 | 6 | 3 | 5 | 10 | 9 |
+
+Remaining gaps depend on provider data rather than interface work: lyrics, artist and album pages, liking songs, and search beyond eight song results.

@@ -1,6 +1,6 @@
 import { AboutSlint, ComboBox, ListView, Palette, ScrollView } from "std-widgets.slint";
-import { Theme, Icon, Hit, TextButton, IconButton, PlayButton, Toggle, Segmented, LoadingDots, SectionTitle } from "theme.slint";
-import { TrackRow, Cover, EmptyState, SongRow, MediaCard, NavigationButton, SidebarPlaylist } from "components.slint";
+import { Theme, Icon, Hit, TextButton, IconButton, PlayButton, Toggle, Segmented, LoadingDots, SectionTitle, MenuSurface, MenuItem } from "theme.slint";
+import { TrackRow, Cover, EmptyState, SongRow, MediaCard, NavigationButton, SidebarPlaylist, SearchField, QuickTile, SkeletonCard, SkeletonRow, UpNextRow, EqualizerBars } from "components.slint";
 import { QueueDrawer } from "queue.slint";
 import { PlayerBar } from "player.slint";
 export { TideJamWindow, JamChoice } from "jams.slint";
@@ -128,6 +128,16 @@ export component AppWindow inherits Window {
     in property <string> status-text;
     in-out property <string> source-input;
     in property <string> search-query;
+    in property <[string]> recent-searches;
+    callback clear-recent-searches();
+    in property <string> greeting: "Welcome back";
+    in-out property <string> library-filter;
+    in-out property <bool> library-sort-alpha: false;
+    in property <string> detail-duration;
+    // The large Now Playing view over the browsing area.
+    in-out property <bool> now-playing-open: false;
+    private property <int> search-request: 0;
+    private property <bool> search-focused: false;
     in-out property <bool> light-mode <=> Theme.light;
     in-out property <bool> motion <=> Theme.motion;
     callback toggle-motion();
@@ -272,12 +282,29 @@ export component AppWindow inherits Window {
     }
 
     app-focus := FocusScope {
+        init => { self.focus(); }
+        // Desktop-player shortcuts. Text fields consume their own keys first.
         key-pressed(event) => {
             if event.text == Key.Escape {
                 if root.settings-open { root.settings-open = false; return accept; }
+                if root.now-playing-open { root.now-playing-open = false; return accept; }
                 if root.queue-open { root.queue-open = false; return accept; }
                 if root.page != root.section { root.back(); return accept; }
             }
+            if event.modifiers.control && (event.text == "f" || event.text == "F" || event.text == "l" || event.text == "L") {
+                if !root.collapsed { root.search-request += 1; }
+                return accept;
+            }
+            if event.text == "/" && !root.collapsed { root.search-request += 1; return accept; }
+            if event.text == " " && !event.modifiers.control && root.has-track && !root.following-jam {
+                root.toggle-pause();
+                return accept;
+            }
+            if event.modifiers.control && event.text == Key.RightArrow && root.has-track { root.next-track(); return accept; }
+            if event.modifiers.control && event.text == Key.LeftArrow && root.has-track { root.previous-track(); return accept; }
+            if event.modifiers.control && event.text == Key.UpArrow { root.change-volume(min(100, root.volume + 5)); return accept; }
+            if event.modifiers.control && event.text == Key.DownArrow { root.change-volume(max(0, root.volume - 5)); return accept; }
+            if event.modifiers.alt && event.text == Key.LeftArrow && root.page != root.section { root.back(); return accept; }
             return reject;
         }
         VerticalLayout {
@@ -300,52 +327,18 @@ export component AppWindow inherits Window {
                         if root.roomy : Text { text: "Tide"; color: Theme.text; font-size: 20px; font-weight: 700; vertical-alignment: center; }
                     }
                     IconButton { width: 36px; height: 36px; round: true; quiet: true; enabled: root.browsing-enabled && root.page != root.section; icon: "back"; label: root.section == Page.library ? "Back to Library" : "Back to Home"; clicked => { root.back(); } }
-                    search := Rectangle {
+                    search := SearchField {
                         horizontal-stretch: 1;
                         max-width: 520px;
-                        height: 40px;
-                        border-radius: 20px;
-                        background: input.has-focus ? Theme.surface : search-touch.has-hover ? Theme.hover : Theme.raised;
-                        border-width: input.has-focus ? 2px : 1px;
-                        border-color: input.has-focus ? Theme.focus : Theme.outline;
-                        opacity: root.browsing-enabled ? 1 : 0.6;
-                        search-touch := TouchArea { mouse-cursor: text; clicked => { input.focus(); } }
-                        HorizontalLayout {
-                            padding-left: 14px;
-                            padding-right: 6px;
-                            spacing: 10px;
-                            cross-axis-alignment: center;
-                            Icon { name: "search"; ink: input.has-focus ? Theme.text : Theme.muted; size: 17px; }
-                            Rectangle {
-                                horizontal-stretch: 1;
-                                height: 40px;
-                                clip: true;
-                                input := TextInput {
-                                    width: parent.width;
-                                    height: parent.height;
-                                    vertical-alignment: center;
-                                    single-line: true;
-                                    color: Theme.text;
-                                    selection-background-color: Theme.accent-soft;
-                                    font-size: 13px;
-                                    enabled: root.browsing-enabled;
-                                    text <=> root.source-input;
-                                    accessible-role: text-input;
-                                    accessible-label: "Search music or paste a YouTube link";
-                                    accepted => { if self.text != "" { root.add-source(self.text); } }
-                                }
-                                if root.source-input == "" : Text {
-                                    width: parent.width;
-                                    height: parent.height;
-                                    text: "What do you want to listen to?";
-                                    color: Theme.faint;
-                                    font-size: 13px;
-                                    vertical-alignment: center;
-                                    overflow: elide;
-                                }
-                            }
-                            if root.source-input != "" : IconButton { width: 28px; height: 28px; round: true; quiet: true; icon: "close"; icon-size: 14px; label: "Clear search"; clicked => { root.source-input = ""; input.focus(); } }
-                        }
+                        text <=> root.source-input;
+                        placeholder: "What do you want to listen to?   (Ctrl+F)";
+                        label: "Search music or paste a YouTube link";
+                        enabled: root.browsing-enabled;
+                        property <int> request: root.search-request;
+                        changed request => { self.focus-input(); }
+                        changed focused => { root.search-focused = self.focused; }
+                        accepted(value) => { root.add-source(value); app-focus.focus(); }
+                        escaped => { app-focus.focus(); }
                     }
                     Rectangle { horizontal-stretch: 0.01; }
                     if root.roomy && root.account-state == AccountState.connected && root.account-name != "" : Text {
@@ -467,10 +460,38 @@ export component AppWindow inherits Window {
                                     VerticalLayout {
                                         horizontal-stretch: 1;
                                         spacing: 4px;
-                                        Text { text: root.account-connected ? "For you" : "Welcome to Tide"; color: Theme.text; font-size: 30px; font-weight: 800; overflow: elide; }
+                                        Text { text: root.account-connected ? root.greeting : "Welcome to Tide"; color: Theme.text; font-size: 30px; font-weight: 800; overflow: elide; }
                                         Text { text: root.account-connected ? "Picks from your YouTube Music Home" : "A lightweight player that leaves your PC free for games."; color: Theme.muted; font-size: 13px; overflow: elide; }
                                     }
                                     if root.account-connected : TextButton { pill: true; width: 108px; icon: "refresh"; text: "Refresh"; label: "Show a different selection of recommendations"; enabled: root.browsing-enabled && root.account-ready; clicked => { root.refresh-recommendations(); } }
+                                }
+                                // Quick access: Liked Songs and the first playlists.
+                                if root.account-connected && root.library-playlists.length > 0 : Rectangle {
+                                    property <int> tile-columns: root.content-width >= 720px ? 3 : 2;
+                                    property <int> tile-count: min(self.tile-columns * 2, root.library-playlists.length + 1);
+                                    property <length> tile-width: (root.content-width - 8px * (self.tile-columns - 1)) / self.tile-columns;
+                                    height: ceil(self.tile-count / self.tile-columns) * 64px - 8px;
+                                    QuickTile {
+                                        x: 0px;
+                                        y: 0px;
+                                        width: parent.tile-width;
+                                        title: "Liked Songs";
+                                        liked: true;
+                                        enabled: root.browsing-enabled && root.account-ready;
+                                        open => { root.play-liked(); }
+                                        play => { root.play-liked(); }
+                                    }
+                                    for row[index] in root.library-playlists : QuickTile {
+                                        visible: index + 1 < parent.tile-count;
+                                        x: (index + 1 - floor((index + 1) / parent.tile-columns) * parent.tile-columns) * (parent.tile-width + 8px);
+                                        y: floor((index + 1) / parent.tile-columns) * 64px;
+                                        width: parent.tile-width;
+                                        title: row.title;
+                                        artwork: row.artwork;
+                                        enabled: root.browsing-enabled && root.account-ready;
+                                        open => { root.select-library-playlist(index); }
+                                        play => { root.play-playlist(0, index); }
+                                    }
                                 }
                                 for shelf in root.home-shelves : VerticalLayout {
                                     spacing: 10px;
@@ -501,9 +522,20 @@ export component AppWindow inherits Window {
                                         }
                                     }
                                 }
-                                if root.home-shelves.length == 0 : EmptyState {
+                                if root.home-shelves.length == 0 && root.account-connected && root.provider-busy : VerticalLayout {
+                                    spacing: 10px;
+                                    Rectangle { height: 22px; width: 180px; border-radius: 6px; background: Theme.hover; }
+                                    Rectangle {
+                                        height: root.card-height;
+                                        for slot in root.grid-columns : SkeletonCard {
+                                            x: slot * (root.card-width + root.grid-gap) - 10px;
+                                            width: root.card-width + 20px;
+                                            height: root.card-height;
+                                        }
+                                    }
+                                }
+                                if root.home-shelves.length == 0 && !(root.account-connected && root.provider-busy) : EmptyState {
                                     min-height: 360px;
-                                    loading: root.account-connected && root.provider-busy;
                                     icon: root.account-connected ? "radio" : "note";
                                     heading: !root.account-connected ? "Start listening"
                                         : root.provider-busy ? "Loading your music…" : "No recommendations yet";
@@ -551,9 +583,37 @@ export component AppWindow inherits Window {
                                     }
                                     if root.account-connected : TextButton { pill: true; width: 108px; icon: "refresh"; text: "Refresh"; label: "Refresh your playlists"; enabled: root.browsing-enabled && root.account-ready; clicked => { root.refresh-library(); } }
                                 }
-                                if root.account-connected : Rectangle {
-                                    height: ceil((root.library-playlists.length + 1) / root.grid-columns) * (root.card-height + root.grid-gap) - root.grid-gap;
-                                    MediaCard {
+                                if root.account-connected : HorizontalLayout {
+                                    spacing: 10px;
+                                    SearchField {
+                                        width: min(320px, root.content-width - 190px);
+                                        height: 36px;
+                                        text <=> root.library-filter;
+                                        placeholder: "Search in Your library";
+                                        label: "Filter your playlists";
+                                        enabled: root.browsing-enabled;
+                                        escaped => { root.library-filter = ""; app-focus.focus(); }
+                                    }
+                                    Rectangle { horizontal-stretch: 1; }
+                                    Segmented { width: 176px; first: "Recent"; second: "A–Z"; label: "Sort playlists"; second-selected: root.library-sort-alpha; choose(alpha) => { root.library-sort-alpha = alpha; } }
+                                }
+                                if root.account-connected && root.library-filter != "" && root.library-playlists.length == 0 : Text {
+                                    text: "No playlists match “" + root.library-filter + "”.";
+                                    color: Theme.muted;
+                                    font-size: 13px;
+                                }
+                                if root.account-connected && root.library-playlists.length == 0 && root.provider-busy : Rectangle {
+                                    height: root.card-height;
+                                    for slot in root.grid-columns : SkeletonCard {
+                                        x: slot * (root.card-width + root.grid-gap) - 10px;
+                                        width: root.card-width + 20px;
+                                        height: root.card-height;
+                                    }
+                                }
+                                if root.account-connected && !(root.library-playlists.length == 0 && root.provider-busy) : Rectangle {
+                                    property <int> lead: root.library-filter == "" ? 1 : 0;
+                                    height: max(0px, ceil((root.library-playlists.length + self.lead) / root.grid-columns) * (root.card-height + root.grid-gap) - root.grid-gap);
+                                    if self.lead == 1 : MediaCard {
                                         x: -10px;
                                         y: 0px;
                                         width: root.card-width + 20px;
@@ -567,8 +627,8 @@ export component AppWindow inherits Window {
                                         play => { root.play-liked(); }
                                     }
                                     for row[index] in root.library-playlists : MediaCard {
-                                        x: (index + 1 - floor((index + 1) / root.grid-columns) * root.grid-columns) * (root.card-width + root.grid-gap) - 10px;
-                                        y: floor((index + 1) / root.grid-columns) * (root.card-height + root.grid-gap);
+                                        x: (index + parent.lead - floor((index + parent.lead) / root.grid-columns) * root.grid-columns) * (root.card-width + root.grid-gap) - 10px;
+                                        y: floor((index + parent.lead) / root.grid-columns) * (root.card-height + root.grid-gap);
                                         width: root.card-width + 20px;
                                         height: root.card-height;
                                         artwork: row.artwork;
@@ -587,7 +647,6 @@ export component AppWindow inherits Window {
                                     action: "Connect YouTube Music";
                                     act => { root.settings-open = true; }
                                 }
-                                if root.account-connected && root.library-playlists.length == 0 && root.provider-busy : HorizontalLayout { alignment: center; LoadingDots { } }
                             }
                         }
 
@@ -627,7 +686,8 @@ export component AppWindow inherits Window {
                                     Text { text: root.detail-title; color: Theme.text; font-size: root.compact-mode ? 28px : 38px; font-weight: 800; overflow: elide; }
                                     Text {
                                         text: (root.detail-subtitle == "" ? "" : root.detail-subtitle + " · ")
-                                            + (root.detail-busy ? "Loading tracks…" : root.detail-rows.length == 1 ? "1 song" : root.detail-rows.length + " songs");
+                                            + (root.detail-busy ? "Loading tracks…" : root.detail-rows.length == 1 ? "1 song" : root.detail-rows.length + " songs")
+                                            + (root.detail-duration == "" || root.detail-busy ? "" : ", " + root.detail-duration);
                                         color: Theme.muted;
                                         font-size: 13px;
                                         overflow: elide;
@@ -665,9 +725,14 @@ export component AppWindow inherits Window {
                                     }
                                 }
                             }
-                            if root.detail-rows.length == 0 : EmptyState {
+                            if root.detail-rows.length == 0 && root.detail-busy : VerticalLayout {
                                 vertical-stretch: 1;
-                                loading: root.detail-busy;
+                                TrackTableHeader { show-album: root.table-album; }
+                                for slot in 7 : SkeletonRow { }
+                                Rectangle { vertical-stretch: 1; }
+                            }
+                            if root.detail-rows.length == 0 && !root.detail-busy : EmptyState {
+                                vertical-stretch: 1;
                                 icon: "playlist";
                                 heading: root.detail-busy ? "Loading tracks…" : "No playable songs";
                                 detail: root.detail-busy ? "Your playlist will appear here shortly." : "This playlist has no songs Tide can play. Choose another one.";
@@ -851,6 +916,81 @@ export component AppWindow inherits Window {
                         toggle-repeat => { root.toggle-repeat(); }
                         shuffle => { root.shuffle-queue(); }
                         clear => { root.clear-queue(); }
+                    }
+                }
+                // Now Playing: large artwork, tinted backdrop and what plays next.
+                if root.now-playing-open : np := Rectangle {
+                    property <length> rise: Theme.motion ? 48px : 0px;
+                    init => { self.rise = 0; self.opacity = 1; }
+                    animate rise, opacity { duration: Theme.medium; easing: cubic-bezier(0.2, 0.9, 0.3, 1); }
+                    opacity: Theme.motion ? 0 : 1;
+                    x: 0px;
+                    y: self.rise;
+                    width: parent.width;
+                    height: parent.height;
+                    background: Theme.window;
+                    TouchArea { }
+                    Rectangle {
+                        background: @linear-gradient(160deg, root.hero-color.with-alpha(Theme.light ? 0.38 : 0.55) 0%, root.hero-color.with-alpha(0.08) 55%, root.hero-color.with-alpha(0) 100%);
+                    }
+                    property <length> art: max(160px, min(440px, min(self.height - 96px, (self.width - 120px) * 0.46)));
+                    property <int> upcoming: max(0, root.rows.length - root.current-index - 1);
+                    HorizontalLayout {
+                        padding-left: 48px;
+                        padding-right: 48px;
+                        padding-top: 56px;
+                        padding-bottom: 32px;
+                        spacing: 48px;
+                        alignment: center;
+                        Cover {
+                            width: np.art;
+                            height: np.art;
+                            border-radius: 14px;
+                            artwork: root.current-artwork;
+                            seed: root.has-track ? root.track-title : "";
+                            drop-shadow-blur: 48px;
+                            drop-shadow-offset-y: 18px;
+                            drop-shadow-color: Theme.shadow;
+                        }
+                        VerticalLayout {
+                            width: min(460px, max(240px, np.width - np.art - 144px));
+                            spacing: 8px;
+                            alignment: center;
+                            HorizontalLayout {
+                                spacing: 8px;
+                                if root.has-track && !root.paused && !root.loading : EqualizerBars { width: 14px; height: 12px; }
+                                SectionTitle { text: root.following-jam ? "FOLLOWING THE JAM HOST" : root.loading ? "LOADING" : root.paused ? "PAUSED" : "NOW PLAYING"; color: Theme.selected-ink; font-size: 11px; }
+                            }
+                            Text { text: root.has-track ? root.track-title : "Nothing playing"; color: Theme.text; font-size: 34px; font-weight: 800; wrap: word-wrap; max-height: 130px; overflow: elide; }
+                            Text { text: root.has-track ? (root.track-artist == "" ? "Unknown artist" : root.track-artist) : "Search, paste a link or open a file."; color: Theme.muted; font-size: 17px; overflow: elide; }
+                            if root.track-album != "" : Text { text: root.track-album; color: Theme.faint; font-size: 13px; overflow: elide; }
+                            Rectangle { height: 18px; }
+                            HorizontalLayout {
+                                SectionTitle { horizontal-stretch: 1; text: "UP NEXT"; font-size: 11px; }
+                                TextButton { height: 28px; quiet: true; text: "Open queue"; icon: "queue"; clicked => { root.now-playing-open = false; root.queue-open = true; } }
+                            }
+                            for offset in min(4, np.upcoming) : UpNextRow {
+                                track: root.rows[root.current-index + 1 + offset];
+                                select => { root.select-track(root.current-index + 1 + offset); }
+                            }
+                            if np.upcoming == 0 : Text {
+                                text: root.autoplay-enabled ? "Nothing queued. Autoplay will add similar songs." : "Nothing queued. Add songs from any song's menu.";
+                                color: Theme.muted;
+                                font-size: 13px;
+                                wrap: word-wrap;
+                            }
+                        }
+                    }
+                    IconButton {
+                        x: 16px;
+                        y: 14px;
+                        width: 36px;
+                        height: 36px;
+                        round: true;
+                        quiet: true;
+                        icon: "down";
+                        label: "Close Now Playing";
+                        clicked => { root.now-playing-open = false; }
                     }
                 }
                 // Account & settings sheet.
@@ -1060,7 +1200,27 @@ export component AppWindow inherits Window {
                 change-volume(value) => { root.change-volume(value); }
                 restore => { root.collapse-player(); }
                 mini => { root.collapse-player(); }
-                toggle-queue => { root.queue-open = !root.queue-open; }
+                toggle-queue => { root.now-playing-open = false; root.queue-open = !root.queue-open; }
+                expand => { root.settings-open = false; root.now-playing-open = !root.now-playing-open; }
+                now-playing-open: root.now-playing-open;
+            }
+        }
+        // Recent searches under the search field while it is focused and empty.
+        if root.search-focused && root.source-input == "" && root.recent-searches.length > 0 && !root.collapsed : MenuSurface {
+            x: root.sidebar-width + 48px;
+            y: 56px;
+            width: min(520px, root.width - root.sidebar-width - 120px);
+            HorizontalLayout {
+                height: 30px;
+                padding-left: 10px;
+                SectionTitle { horizontal-stretch: 1; text: "RECENT SEARCHES"; }
+                TextButton { height: 28px; quiet: true; text: "Clear"; label: "Clear recent searches"; clicked => { root.clear-recent-searches(); } }
+            }
+            for query in root.recent-searches : MenuItem {
+                icon: "clock";
+                text: query;
+                label: "Search again for " + query;
+                clicked => { root.source-input = query; root.add-source(query); app-focus.focus(); }
             }
         }
     }
