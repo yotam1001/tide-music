@@ -89,6 +89,8 @@ struct Settings {
     normalize_volume: bool,
     audio_device: String,
     repeat: bool,
+    /// Most recent search queries, newest first (at most eight).
+    recent_searches: Vec<String>,
     #[serde(skip)]
     transient: bool,
 }
@@ -118,6 +120,7 @@ impl Default for Settings {
             normalize_volume: false,
             audio_device: "auto".into(),
             repeat: false,
+            recent_searches: Vec::new(),
             transient: false,
         }
     }
@@ -1703,6 +1706,30 @@ fn set_tint(image: &slint::Image, set: impl FnOnce(slint::Color), present: impl 
     }
 }
 
+fn remember_search(settings: &mut Settings, query: &str) {
+    let query = query.trim();
+    if query.is_empty() || settings.transient {
+        return;
+    }
+    settings
+        .recent_searches
+        .retain(|previous| !previous.eq_ignore_ascii_case(query));
+    settings
+        .recent_searches
+        .insert(0, query.chars().take(200).collect());
+    settings.recent_searches.truncate(8);
+}
+
+fn recent_model(settings: &Settings) -> ModelRc<slint::SharedString> {
+    ModelRc::new(VecModel::from(
+        settings
+            .recent_searches
+            .iter()
+            .map(|query| query.as_str().into())
+            .collect::<Vec<slint::SharedString>>(),
+    ))
+}
+
 fn report_error(state: &mut State, ui: &AppWindow, error: String) {
     ui.set_playback_error_action("".into());
     state.library_retry = None;
@@ -2464,6 +2491,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ui.set_light_mode(preferred_light_mode(&state.borrow().settings));
     ui.set_windows_theme_supported(cfg!(windows) && !test_mode);
     ui.set_follow_windows_theme(state.borrow().settings.follow_windows_theme);
+    ui.set_recent_searches(recent_model(&state.borrow().settings));
     ui.set_compact_mode(state.borrow().settings.compact_mode);
     ui.set_library_grid(state.borrow().settings.library_grid);
     ui.set_autoplay_enabled(state.borrow().settings.autoplay);
@@ -3331,6 +3359,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             } else if input.contains("://") {
                 ui.set_status_text("Only http/https links and local files are supported".into());
             } else {
+                remember_search(&mut state.settings, input);
+                ui.set_recent_searches(recent_model(&state.settings));
+                save(&state.settings);
                 search_results::start(&mut state, &ui, &tx, input.to_owned(), ui.get_search_kind());
             }
         });
@@ -3369,6 +3400,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             });
         }};
     }
+    bind!(on_clear_recent_searches, |s, u| {
+        s.settings.recent_searches.clear();
+        u.set_recent_searches(recent_model(&s.settings));
+        save(&s.settings);
+    });
     bind!(on_toggle_pause, |s, u| {
         if s.connection_resume.is_none() && !s.active_playback && s.settings.queue.current.is_some()
         {
@@ -4834,6 +4870,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 t.recommended = true;
             }
             ui.set_detail_title("Late night focus".into());
+            ui.set_detail_has_cover(true);
             refresh(&ui, &s);
             refresh_content_models(&s, &ui);
         }
@@ -5071,7 +5108,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     7 => "settings.png",
                     8 => "library.png",
                     9 => "collapsed.png",
-                    _ => "restored.png",
+                    10 => "restored.png",
+                    _ => "now-playing.png",
                 };
                 if let Ok(pixels) = u.window().take_snapshot() {
                     if let Some(image) = image::RgbaImage::from_raw(
@@ -5218,6 +5256,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         u.invoke_collapse_player();
                         u.set_library_open(false);
                         u.set_home_open(true);
+                    }
+                    10 => {
+                        u.set_settings_open(false);
+                        u.set_queue_open(false);
+                        u.set_now_playing_open(true);
                     }
                     _ => {
                         let _ = u.hide();

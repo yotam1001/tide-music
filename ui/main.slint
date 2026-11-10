@@ -652,10 +652,10 @@ component Cover inherits Rectangle {
         image-fit: root.preserve-artwork ? contain : cover;
     }
     if (root.artwork.width == 0 || root.artwork.height == 0) && !root.playlist : Path {
-        x: (parent.width - 22px) / 2;
-        y: (parent.height - 22px) / 2;
-        width: 22px;
-        height: 22px;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: max(22px, min(72px, parent.width * 0.22));
+        height: self.width;
         viewbox-width: 24;
         viewbox-height: 24;
         fill: Colors.transparent;
@@ -1574,6 +1574,8 @@ component PlayerBar inherits Rectangle {
     // Colour sampled from the current cover; it glows behind the now-playing area.
     in property <color> tint;
     in property <bool> tinted: false;
+    in property <bool> now-playing-open: false;
+    callback expand();
     private property <color> glow: root.tinted ? root.tint : Theme.accent;
     animate glow { duration: ControlMotion.enabled ? 420ms : 0ms; easing: ease-in-out; }
     in property <bool> transport-enabled: true;
@@ -1659,7 +1661,31 @@ component PlayerBar inherits Rectangle {
                 height: parent.height;
                 spacing: 12px;
                 cross-axis-alignment: center;
-                Cover { width: 44px; height: 44px; artwork: root.artwork; light-mode: root.light-mode; seed: root.track-title; drop-shadow-blur: 10px; drop-shadow-offset-y: 2px; drop-shadow-color: Theme.shadow; }
+                Rectangle {
+                    width: 44px; height: 44px;
+                    Cover { width: parent.width; height: parent.height; artwork: root.artwork; light-mode: root.light-mode; seed: root.track-title; drop-shadow-blur: 10px; drop-shadow-offset-y: 2px; drop-shadow-color: Theme.shadow; }
+                    if !root.collapsed && root.track-title != "" : expand-area := TouchArea {
+                        mouse-cursor: pointer;
+                        Rectangle {
+                            border-radius: 7px;
+                            background: expand-area.has-hover || expand-button.has-focus ? #00000070 : transparent;
+                            border-width: expand-button.has-focus ? 2px : 0px;
+                            border-color: Theme.focus;
+                            Path {
+                                x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+                                width: 18px; height: 18px; viewbox-width: 24; viewbox-height: 24;
+                                fill: transparent; stroke: #ffffff; stroke-width: 2px;
+                                opacity: expand-area.has-hover || expand-button.has-focus ? 1 : 0;
+                                commands: root.now-playing-open ? "M 5 9 L 12 16 L 19 9" : "M 5 15 L 12 8 L 19 15";
+                            }
+                        }
+                        expand-button := Button {
+                            width: parent.width; height: parent.height; opacity: 0; text: "";
+                            accessible-label: root.now-playing-open ? "Close Now Playing" : "Open Now Playing";
+                            clicked => { root.expand(); }
+                        }
+                    }
+                }
                 VerticalLayout {
                     horizontal-stretch: 1;
                     spacing: 1px;
@@ -2078,6 +2104,21 @@ export component AppWindow inherits Window {
     in-out property <string> source-input;
     private property <int> search-focus-revision: 0;
     in-out property <bool> light-mode <=> Theme.light;
+    // Most recent searches, newest first, shown under the empty search field.
+    in property <[string]> recent-searches;
+    callback clear-recent-searches();
+    private property <bool> recents-visible: root.search-field-focused && root.source-input == ""
+        && root.recent-searches.length > 0 && root.account-connected
+        && !root.collapsed && !root.lyrics-open && !root.settings-open && !root.account-open
+        && !root.jam-open && !root.update-panel-open;
+    // The large, artwork-first view of the current song.
+    in-out property <bool> now-playing-open: false;
+    out property <bool> now-playing-presented: root.now-playing-open && !root.collapsed && !root.minimized
+        && !root.lyrics-open && !root.settings-open && !root.account-open && !root.jam-open;
+    // Short fade between browsing pages; runs only when Windows animations are on.
+    private property <int> page-key: root.detail-open ? 3 : root.search-open ? 2 : root.library-open ? 1 : 0;
+    private property <bool> page-curtain: false;
+    changed page-key => { if ControlMotion.enabled { root.page-curtain = true; } }
     // Colours sampled from artwork by the app: the open collection's cover and
     // the current song's cover. The content glow and player take these tints.
     in property <color> detail-tint;
@@ -2125,7 +2166,8 @@ export component AppWindow inherits Window {
     in property <image> detail-cover;
     in property <int> detail-cover-variant;
     in property <bool> detail-has-cover;
-    private property <bool> detail-cover-visible: root.detail-has-cover && !root.detail-is-artist && root.sidebar-profile;
+    private property <bool> detail-cover-visible: (root.detail-has-cover || root.detail-navigation == "liked" || root.detail-navigation == "radio")
+        && !root.detail-is-artist && root.sidebar-profile;
     out property <string> active-navigation: root.jam-open ? "jams" : root.detail-open ? (root.detail-is-artist ? "" : root.detail-navigation) : root.search-open ? "" : root.library-open ? "library" : "home";
     in property <string> detail-note;
     in property <[TrackRow]> detail-rows;
@@ -2240,7 +2282,7 @@ export component AppWindow inherits Window {
     changed jam-open => { if root.jam-open { root.suggestions-open = false; root.playlist-picker-open = false; root.settings-open = false; root.account-open = false; app-focus.focus(); } }
     changed playlist-picker-open => { if root.playlist-picker-open { root.settings-open = false; root.account-open = false; root.jam-open = false; root.artist-picker-open = false; app-focus.focus(); } }
     changed queue-open => { if !root.queue-open { root.related-open = false; } if root.queue-open { root.lyrics-open = false; if !root.wide { app-focus.focus(); } } }
-    changed lyrics-open => { if root.lyrics-open { root.suggestions-open = false; root.update-panel-open = false; root.queue-open = false; root.settings-open = false; root.account-open = false; root.jam-open = false; root.artist-picker-open = false; root.playlist-picker-open = false; app-focus.focus(); } }
+    changed lyrics-open => { if root.lyrics-open { root.now-playing-open = false; root.suggestions-open = false; root.update-panel-open = false; root.queue-open = false; root.settings-open = false; root.account-open = false; root.jam-open = false; root.artist-picker-open = false; root.playlist-picker-open = false; app-focus.focus(); } }
     changed wide => { if !root.wide && (root.queue-open || root.lyrics-open) { app-focus.focus(); } }
     changed light-mode => { Palette.color-scheme = root.light-mode ? light : dark; }
 
@@ -2309,6 +2351,7 @@ export component AppWindow inherits Window {
                 if root.settings-open { root.settings-open = false; return accept; }
                 if root.account-open { root.account-open = false; return accept; }
                 if root.lyrics-open { root.lyrics-open = false; return accept; }
+                if root.now-playing-open { root.now-playing-open = false; return accept; }
                 if root.queue-open { root.queue-open = false; return accept; }
                 if root.playlist-manage-mode != 0 { root.playlist-manage-mode = 0; return accept; }
                 if root.detail-open {
@@ -2350,7 +2393,53 @@ export component AppWindow inherits Window {
                     cross-axis-alignment: center;
                     Image { width: 32px; height: 32px; source: @image-url("assets/tide-icon.png"); image-fit: contain; }
                     if root.header-branding : Text { width: 56px; text: "Tide"; color: root.foreground; font-size: 21px; font-weight: 700; }
-                    if root.account-connected : LineEdit { in property <int> focus-revision: root.search-focus-revision; changed focus-revision => { self.focus(); } horizontal-stretch: 1; height: 36px; font-size: 13px; enabled: root.browsing-enabled; text <=> root.source-input; placeholder-text: "Search music or paste a link"; accessible-label: "Search music or paste a YouTube link"; changed has-focus => { root.search-field-focused = self.has-focus; } edited(value) => { root.suggestion-index = -1; root.suggestions-open = true; root.suggest-search(value); } accepted(value) => { root.submit-source(value); } }
+                    if root.account-connected : search-pill := Rectangle {
+                        in property <int> focus-revision: root.search-focus-revision;
+                        changed focus-revision => { search-input.focus(); }
+                        horizontal-stretch: 1;
+                        height: 38px;
+                        border-radius: self.height / 2;
+                        background: search-input.has-focus ? Theme.surface : search-hover.has-hover ? Theme.hover : Theme.raised;
+                        border-width: search-input.has-focus ? 2px : 1px;
+                        border-color: search-input.has-focus ? Theme.focus : Theme.outline;
+                        opacity: root.browsing-enabled ? 1 : 0.6;
+                        animate background { duration: ControlMotion.feedback; easing: ease-out; }
+                        search-hover := TouchArea { mouse-cursor: MouseCursor.text; clicked => { search-input.focus(); } }
+                        Path {
+                            x: 14px; y: (parent.height - self.height) / 2; width: 17px; height: 17px;
+                            viewbox-width: 24; viewbox-height: 24; fill: transparent;
+                            stroke: search-input.has-focus ? Theme.text : Theme.muted; stroke-width: 1.8px;
+                            commands: "M 10.5 3 A 7.5 7.5 0 1 0 10.5 18 A 7.5 7.5 0 1 0 10.5 3 Z M 16 16 L 22 22";
+                        }
+                        Rectangle {
+                            x: 42px; width: max(0px, parent.width - self.x - (root.source-input != "" ? 40px : 14px)); height: parent.height;
+                            clip: true;
+                            search-input := TextInput {
+                                width: parent.width; height: parent.height;
+                                vertical-alignment: center; single-line: true;
+                                color: Theme.text; selection-background-color: Theme.accent.with-alpha(0.3);
+                                font-size: 13px;
+                                enabled: root.browsing-enabled;
+                                text <=> root.source-input;
+                                accessible-role: text-input;
+                                accessible-label: "Search music or paste a YouTube link";
+                                changed has-focus => { root.search-field-focused = self.has-focus; }
+                                edited => { root.suggestion-index = -1; root.suggestions-open = true; root.suggest-search(self.text); }
+                                accepted => { root.submit-source(self.text); }
+                            }
+                            if root.source-input == "" : Text {
+                                width: parent.width; height: parent.height;
+                                text: "What do you want to listen to?"; color: Theme.muted; font-size: 13px;
+                                vertical-alignment: center; overflow: elide;
+                            }
+                        }
+                        if root.source-input != "" : LibraryButton {
+                            x: parent.width - self.width - 5px; y: (parent.height - self.height) / 2;
+                            width: 28px; height: 28px; round: true; caption: "×"; label: "Clear search";
+                            light-mode: root.light-mode;
+                            clicked => { root.source-input = ""; root.suggestions-open = false; search-input.focus(); }
+                        }
+                    }
                     if !root.account-connected : Rectangle { horizontal-stretch: 1; }
                     if root.account-connected : LibraryButton { width: 36px; height: 36px; show-tooltip: true; light-mode: root.light-mode; enabled: root.music-search-enabled; icon-path: "M 10.5 3 A 7.5 7.5 0 1 0 10.5 18 A 7.5 7.5 0 1 0 10.5 3 Z M 16 16 L 22 22"; label: "Search for music or open the pasted link"; clicked => { root.submit-source(root.source-input); } }
                     LibraryButton { width: 36px; height: 36px; show-tooltip: true; enabled: !root.artist-picker-open; light-mode: root.light-mode; icon-kind: root.light-mode ? "moon" : "sun"; label: root.light-mode ? "Switch to dark theme" : "Switch to light theme"; clicked => { root.switch-mode(); } }
@@ -2416,6 +2505,9 @@ export component AppWindow inherits Window {
                             height: 300px;
                             background: @linear-gradient(180deg, root.hero-color.with-alpha(Theme.light ? 0.2 : 0.3) 0%, root.hero-color.with-alpha(0) 100%);
                         }
+                        // Covers the panel for one frame when the page changes, then
+                        // fades away so the new page appears smoothly. No input.
+                        Timer { interval: 16ms; running: root.page-curtain; triggered => { root.page-curtain = false; } }
                         VerticalLayout {
                             x: 0px;
                             width: parent.width;
@@ -2457,7 +2549,18 @@ export component AppWindow inherits Window {
                                     height: root.detail-cover-visible ? 180px : 48px;
                                     spacing: 16px;
                                     cross-axis-alignment: center;
-                                    if root.detail-cover-visible : Cover { width: 168px; height: 168px; artwork: root.detail-cover; variant: root.detail-cover-variant; playlist: true; light-mode: root.light-mode; }
+                                    if root.detail-cover-visible && root.detail-navigation != "liked" : Cover { width: 168px; height: 168px; artwork: root.detail-cover; variant: root.detail-cover-variant; playlist: true; light-mode: root.light-mode; drop-shadow-blur: 24px; drop-shadow-offset-y: 8px; drop-shadow-color: Theme.shadow; }
+                                    if root.detail-cover-visible && root.detail-navigation == "liked" : Rectangle {
+                                        width: 168px; height: 168px; border-radius: 7px;
+                                        background: @linear-gradient(135deg, #c43f68 0%, #6a3fb5 100%);
+                                        drop-shadow-blur: 24px; drop-shadow-offset-y: 8px; drop-shadow-color: Theme.shadow;
+                                        Path {
+                                            x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+                                            width: 64px; height: 64px; viewbox-width: 24; viewbox-height: 24;
+                                            fill: #ffffff; stroke: #ffffff;
+                                            commands: "M 12 20 C 4 14 2 10 4 7 C 6 4 10 4 12 8 C 14 4 18 4 20 7 C 22 10 20 14 12 20 Z";
+                                        }
+                                    }
                                     VerticalLayout {
                                         horizontal-stretch: 1; min-width: 0px; spacing: 10px; alignment: center;
                                         Text { text: root.detail-title; color: root.foreground; font-size: root.detail-cover-visible ? 42px : 26px; font-weight: 650; overflow: elide; } Text { text: root.detail-busy ? (root.detail-is-artist ? "Loading top songs…" : root.detail-navigation == "supermix" ? "Finding your mix on YouTube Music…" : "Loading tracks…") : root.detail-is-artist ? "Top songs · " + root.detail-rows.length + " songs" : root.detail-filter != "" ? "" + root.detail-matches.length + " of " + root.detail-rows.length + " tracks" : "" + root.detail-rows.length + " tracks"; color: root.secondary; font-size: 12px; }
@@ -2814,6 +2917,17 @@ export component AppWindow inherits Window {
                                 }
                             }
                         }
+                        Rectangle {
+                            width: parent.width; height: parent.height;
+                            background: Theme.surface;
+                            opacity: 0;
+                            states [
+                                covering when root.page-curtain : {
+                                    opacity: 1;
+                                    out { animate opacity { duration: 200ms; easing: ease-out; } }
+                                }
+                            ]
+                        }
                     }
 
                     if root.queue-open && root.wide : QueueDrawer {
@@ -2862,6 +2976,76 @@ export component AppWindow inherits Window {
                     playing: !root.paused; artwork: root.track-artwork; backdrop: root.lyrics-backdrop;
                     toggle-motion => { root.lyrics-motion-enabled = !root.lyrics-motion-enabled; }
                     close => { root.lyrics-open = false; } retry => { root.reload-lyrics(); } seek-line(index) => { root.seek-lyric(index); }
+                }
+                if root.now-playing-presented : np := Rectangle {
+                    width: parent.width; height: parent.height;
+                    background: Theme.window;
+                    opacity: ControlMotion.enabled ? 0 : 1;
+                    init => { self.opacity = 1; }
+                    animate opacity { duration: ControlMotion.selection; easing: ease-out; }
+                    TouchArea { }
+                    property <length> art: max(140px, min(420px, min(self.height - 120px, (self.width - 160px) * 0.45)));
+                    property <int> upcoming: max(0, root.rows.length - root.current-index - 1);
+                    Rectangle {
+                        background: @linear-gradient(160deg, root.hero-color.with-alpha(Theme.light ? 0.36 : 0.5) 0%, root.hero-color.with-alpha(0.08) 55%, root.hero-color.with-alpha(0) 100%);
+                    }
+                    HorizontalLayout {
+                        padding-left: 56px; padding-right: 56px; padding-top: 56px; padding-bottom: 32px;
+                        spacing: 48px; alignment: center;
+                        Cover {
+                            width: np.art; height: np.art; border-radius: 14px;
+                            artwork: root.track-artwork; seed: root.track-title; light-mode: root.light-mode;
+                            drop-shadow-blur: 48px; drop-shadow-offset-y: 18px; drop-shadow-color: Theme.shadow;
+                        }
+                        VerticalLayout {
+                            width: min(460px, max(220px, np.width - np.art - 160px));
+                            spacing: 8px; alignment: center;
+                            HorizontalLayout {
+                                spacing: 8px; alignment: start;
+                                if !root.paused : EqualizerBars { width: 14px; height: 12px; active: true; }
+                                Text { text: root.jam-guest ? "LISTENING WITH YOUR JAM" : root.paused ? "PAUSED" : "NOW PLAYING"; color: Theme.selected-ink; font-size: 11px; font-weight: 700; letter-spacing: 0.8px; }
+                            }
+                            Text { text: root.track-title; color: Theme.text; font-size: 34px; font-weight: 750; wrap: word-wrap; max-height: 130px; overflow: elide; }
+                            ArtistLink { height: 24px; artist: root.track-artist; enabled: root.track-artist-enabled; light-mode: root.light-mode; label-size: 17px; activated => { root.now-playing-open = false; root.open-artist(4, 0); } }
+                            if root.track-album != "" : Text { text: root.track-album; color: Theme.muted; font-size: 13px; overflow: elide; }
+                            if root.audio-quality != "" : Text { text: root.audio-quality; color: Theme.muted; font-size: 11px; overflow: elide; }
+                            Rectangle { height: 14px; }
+                            HorizontalLayout {
+                                height: 36px; spacing: 8px; alignment: start;
+                                LibraryButton { width: 96px; height: 36px; quiet: false; light-mode: root.light-mode; caption: "Lyrics"; label: "Open lyrics"; clicked => { root.now-playing-open = false; root.lyrics-open = true; } }
+                                LibraryButton { width: 96px; height: 36px; quiet: false; light-mode: root.light-mode; caption: "Queue"; label: "Open the queue"; clicked => { root.now-playing-open = false; root.queue-open = true; } }
+                            }
+                            Rectangle { height: 10px; }
+                            Text { text: "UP NEXT"; color: Theme.muted; font-size: 11px; font-weight: 700; letter-spacing: 0.8px; }
+                            for offset in min(4, np.upcoming) : Rectangle {
+                                height: 52px; border-radius: 8px;
+                                background: row-touch.has-hover ? Theme.hover : transparent;
+                                row-touch := TouchArea {
+                                    mouse-cursor: pointer;
+                                    Button { width: parent.width; height: parent.height; opacity: 0; text: ""; enabled: !root.jam-guest; accessible-label: "Play " + root.rows[root.current-index + 1 + offset].title + " now"; clicked => { root.select-track(root.current-index + 1 + offset); } }
+                                }
+                                HorizontalLayout {
+                                    padding-left: 8px; padding-right: 8px; spacing: 12px; cross-axis-alignment: center;
+                                    Cover { width: 40px; height: 40px; artwork: root.rows[root.current-index + 1 + offset].artwork; seed: root.rows[root.current-index + 1 + offset].title; light-mode: root.light-mode; }
+                                    VerticalLayout {
+                                        horizontal-stretch: 1; min-width: 0px; spacing: 2px; alignment: center;
+                                        Text { text: root.rows[root.current-index + 1 + offset].title; color: Theme.text; font-size: 13px; font-weight: 600; overflow: elide; }
+                                        Text { text: root.rows[root.current-index + 1 + offset].artist; color: Theme.muted; font-size: 12px; overflow: elide; }
+                                    }
+                                    Text { text: root.rows[root.current-index + 1 + offset].duration == "—" ? "" : root.rows[root.current-index + 1 + offset].duration; color: Theme.muted; font-size: 12px; vertical-alignment: center; }
+                                }
+                            }
+                            if np.upcoming == 0 : Text {
+                                text: root.autoplay-enabled ? "Nothing queued. Autoplay will add similar songs." : "Nothing queued. Add songs from any song's menu.";
+                                color: Theme.muted; font-size: 13px; wrap: word-wrap;
+                            }
+                        }
+                    }
+                    LibraryButton {
+                        x: 16px; y: 14px; width: 36px; height: 36px; show-tooltip: true; light-mode: root.light-mode;
+                        caption: "⌄"; label: "Close Now Playing";
+                        clicked => { root.now-playing-open = false; }
+                    }
                 }
                 if root.queue-open && !root.wide : Rectangle {
                     width: parent.width;
@@ -3195,6 +3379,8 @@ export component AppWindow inherits Window {
                 }
             }
             PlayerBar {
+                expand => { root.now-playing-open = !root.now-playing-open; }
+                now-playing-open: root.now-playing-open;
                 tint: root.now-tint;
                 tinted: root.has-now-tint;
                 window-minimized: root.minimized;
@@ -3239,6 +3425,29 @@ export component AppWindow inherits Window {
                 restore => { root.collapse-player(); }
                 mini => { root.collapse-player(); }
                 toggle-queue => { root.queue-open = !root.queue-open; }
+            }
+        }
+        if root.recents-visible : Rectangle {
+            y: 56px; width: root.width; height: root.height - self.y;
+            Rectangle {
+                x: root.header-branding ? 126px : 60px;
+                width: min(480px, root.width - self.x - 18px);
+                height: 52px + 36px * min(8, root.recent-searches.length);
+                border-radius: 12px; border-width: 1px; border-color: root.outline; background: root.surface;
+                drop-shadow-blur: 22px; drop-shadow-offset-y: 6px; drop-shadow-color: Theme.shadow;
+                VerticalLayout {
+                    padding: 8px;
+                    HorizontalLayout {
+                        height: 32px; padding-left: 8px; cross-axis-alignment: center;
+                        Text { horizontal-stretch: 1; text: "Recent searches"; color: Theme.muted; font-size: 12px; font-weight: 600; }
+                        LibraryButton { width: 64px; height: 28px; light-mode: root.light-mode; caption: "Clear"; label: "Clear recent searches"; clicked => { root.clear-recent-searches(); } }
+                    }
+                    for query in root.recent-searches : LibraryButton {
+                        height: 36px; light-mode: root.light-mode; caption: query; label: "Search again for " + query;
+                        leading-icon: "M 21 12 A 9 9 0 1 0 3 12 A 9 9 0 1 0 21 12 Z M 12 7 L 12 12 L 15 14";
+                        clicked => { root.source-input = query; root.submit-source(query); }
+                    }
+                }
             }
         }
         if root.suggestions-visible : Rectangle {

@@ -107,3 +107,17 @@ coordinates still apply. Animated transitions use `ControlMotion`, which follows
 the Windows animation setting and is off in tests; the level bars rest when
 playback is paused or motion is off. The window pixel tests (`player_indicators`,
 `queue_text`, `restore_repaint`, `song_artwork`) were removed.
+
+## Search, collection headers, Now Playing and page transitions
+
+The header search is a rounded field with a clear button. While it is focused
+and empty, it lists the eight most recent searches (saved with the other
+preferences, with a Clear action); typing still shows provider suggestions.
+Liked Songs and song-radio previews now use the same large-cover collection
+header as playlists and albums, with a gradient heart cover for Liked Songs.
+
+Clicking the cover in the player bar opens Now Playing: large artwork on a
+backdrop tinted by the cover, the song, artist and album, Lyrics and Queue
+shortcuts, and the next four songs. Escape or the chevron closes it; opening
+lyrics closes it. Browsing pages fade in when they change. The fade, like the
+other transitions, runs only when Windows animations are enabled.
