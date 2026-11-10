@@ -4,10 +4,10 @@ import json
 from pathlib import Path
 
 
-def generate(metadata):
+def generate(metadata, package_name="tide-music"):
     packages = {package["id"]: package for package in metadata["packages"]}
     nodes = {node["id"]: node for node in metadata["resolve"]["nodes"]}
-    root = next(package["id"] for package in packages.values() if package["name"] == "tide-music")
+    root = next(package["id"] for package in packages.values() if package["name"] == package_name)
     pending, selected = [root], set()
     while pending:
         package_id = pending.pop()
@@ -17,7 +17,8 @@ def generate(metadata):
         for dependency in nodes[package_id]["deps"]:
             if any(kind["kind"] != "dev" for kind in dependency["dep_kinds"]):
                 pending.append(dependency["pkg"])
-    lines = ["# Tide dependency notices", "",
+    label = "Grove" if package_name == "grove-music" else "Tide"
+    lines = [f"# {label} dependency notices", "",
              "Generated from Cargo metadata for the Windows build graph, including build tools.",
              "Some listed packages are build-only and are not included in the executable.",
              "License alternatives below reproduce upstream metadata; Slint is used under",
@@ -57,8 +58,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("metadata", type=Path)
     parser.add_argument("output", type=Path)
+    parser.add_argument("--package", default="tide-music")
     args = parser.parse_args()
-    result = generate(json.loads(args.metadata.read_text(encoding="utf-8-sig")))
+    result = generate(json.loads(args.metadata.read_text(encoding="utf-8-sig")), args.package)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(result, encoding="utf-8")
     print("Dependency notices generated; local metadata paths are not included.")

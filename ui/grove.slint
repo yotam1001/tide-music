@@ -1,0 +1,765 @@
+import { AboutSlint, Button, LineEdit, ScrollView, Slider, Palette } from "std-widgets.slint";
+
+export struct GroveTrack { title: string, artist: string, duration: string, uri: string }
+export struct GrovePlaylist { title: string, subtitle: string, uri: string }
+export struct GroveJamTrack { id: string, title: string, subtitle: string, removable: bool }
+export struct GroveFeatureTrack { title: string, artist: string, duration: string, uri: string, artist-uri: string, cover: image }
+
+global GroveTheme {
+    in-out property <bool> light: false;
+    out property <color> canvas: light ? #f4f7f4 : #141617;
+    out property <color> rail: light ? #e8efea : #0b0d0e;
+    out property <color> surface: light ? #ffffff : #1d2022;
+    out property <color> selected: light ? #dce5df : #24282a;
+    out property <color> pressed: light ? #d1ded5 : #303639;
+    out property <color> border: light ? #becdc2 : #303437;
+    out property <color> line: light ? #d2ddd5 : #292d30;
+    out property <color> text: light ? #15221b : #f5f7f8;
+    out property <color> secondary: light ? #3f5147 : #bdc3c7;
+    out property <color> muted: light ? #53675b : #a1a8ae;
+    out property <color> disabled: #777f86;
+    out property <color> accent: light ? #147b48 : #35df82;
+    out property <color> accent-pressed: #27bd6c;
+    out property <color> on-accent: light ? #ffffff : #08170f;
+    out property <color> warning: light ? #88581c : #e8bd7a;
+}
+
+component GroveSwitch inherits Rectangle {
+    in property <string> text;
+    in property <bool> checked;
+    callback toggled;
+    height: 32px;
+    horizontal-stretch: 0;
+    min-width: switch-layout.min-width;
+    accessible-role: switch;
+    accessible-label: root.text;
+    accessible-checkable: true;
+    accessible-checked: root.checked;
+    accessible-action-default => { root.toggled(); }
+    forward-focus: keyboard;
+    switch-layout := HorizontalLayout {
+        spacing: 12px;
+        alignment: start;
+        Rectangle {
+            width: 40px; height: 22px;
+            border-radius: 11px;
+            background: root.checked ? GroveTheme.accent : GroveTheme.surface;
+            border-width: 1px;
+            border-color: keyboard.has-focus ? GroveTheme.accent : root.checked ? GroveTheme.accent : GroveTheme.muted;
+            Rectangle {
+                x: root.checked ? 22px : 4px; y: 4px;
+                width: 14px; height: 14px; border-radius: 7px;
+                background: root.checked ? GroveTheme.on-accent : GroveTheme.secondary;
+                animate x { duration: 120ms; }
+            }
+        }
+        Text { text: root.text; color: GroveTheme.text; vertical-alignment: center; }
+    }
+    TouchArea { clicked => { root.toggled(); } }
+    keyboard := FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Space || event.text == Key.Return {
+                root.toggled();
+                return accept;
+            }
+            return reject;
+        }
+    }
+}
+
+component Mark inherits Path {
+    in property <string> kind;
+    in property <color> ink: GroveTheme.accent;
+    width: 22px; height: 22px;
+    viewbox-width: 24; viewbox-height: 24;
+    fill: root.kind == "play" || root.kind == "leaf" || root.kind == "heart-filled" ? root.ink : transparent;
+    stroke: root.ink; stroke-width: 1.6px;
+    commands: root.kind == "leaf" ? "M 4 21 C 6 14 9 9 18 4 M 6 16 C 0 8 12 2 21 2 C 22 12 17 21 6 16 Z"
+        : root.kind == "play" ? "M 7 4 L 20 12 L 7 20 Z"
+        : root.kind == "pause" ? "M 8 4 L 8 20 M 16 4 L 16 20"
+        : root.kind == "next" ? "M 5 5 L 16 12 L 5 19 Z M 19 5 L 19 19"
+        : root.kind == "previous" ? "M 19 5 L 8 12 L 19 19 Z M 5 5 L 5 19"
+        : root.kind == "queue" ? "M 8 5 L 22 5 M 8 12 L 22 12 M 8 19 L 22 19 M 2 5 L 4 5 M 2 12 L 4 12 M 2 19 L 4 19"
+        : root.kind == "library" ? "M 3 4 L 8 4 L 8 21 L 3 21 Z M 11 4 L 16 4 L 16 21 L 11 21 Z M 19 4 L 23 20"
+        : root.kind == "people" ? "M 14 7 A 3 3 0 1 1 8 7 A 3 3 0 1 1 14 7 M 3 21 L 3 18 C 3 12 19 12 19 18 L 19 21 Z M 18 4 C 22 4 23 10 19 11 M 20 14 C 23 14 23 17 23 20"
+        : root.kind == "listen" ? "M 3 9 L 3 15 M 7 5 L 7 19 M 12 2 L 12 22 M 17 6 L 17 18 M 22 10 L 22 14"
+        : root.kind == "link" ? "M 9 15 L 15 9 M 8 17 L 6 19 C 2 22 -1 17 2 14 L 7 9 C 9 7 12 7 14 9 M 10 15 C 12 17 15 17 17 15 L 22 10 C 25 7 21 2 18 5 L 16 7"
+        : root.kind == "home" ? "M 2 11 L 12 2 L 22 11 M 5 9 L 5 22 L 10 22 L 10 15 L 15 15 L 15 22 L 20 22 L 20 9"
+        : root.kind == "search" ? "M 17 10 A 7 7 0 1 1 3 10 A 7 7 0 1 1 17 10 M 15 15 L 23 23"
+        : root.kind == "settings" ? "M 2 5 L 22 5 M 2 12 L 22 12 M 2 19 L 22 19 M 7 2 L 7 8 M 17 9 L 17 15 M 9 16 L 9 22"
+        : root.kind == "repeat" ? "M 17 2 L 21 6 L 17 10 M 3 11 L 3 9 C 3 7.3 4.3 6 6 6 L 21 6 M 7 22 L 3 18 L 7 14 M 21 13 L 21 15 C 21 16.7 19.7 18 18 18 L 3 18"
+        : root.kind == "heart" || root.kind == "heart-filled" ? "M 20.8 4.6 A 5.5 5.5 0 0 0 13.1 4.6 L 12 5.7 L 10.9 4.6 A 5.5 5.5 0 0 0 3.2 12.4 L 12 21.2 L 20.8 12.4 A 5.5 5.5 0 0 0 20.8 4.6 Z"
+        : "M 9 18 L 9 5 L 21 2 L 21 15 M 9 5 L 21 2 M 9 18 C 9 23 1 24 1 20 C 1 17 9 15 9 18 M 21 15 C 21 20 13 21 13 17 C 13 14 21 12 21 15";
+}
+
+component GroveButton inherits Rectangle {
+    in property <string> text;
+    in property <string> icon;
+    in property <string> label;
+    in property <bool> active-icon: false;
+    in property <bool> accent: false;
+    in property <bool> selected: false;
+    in property <bool> flat: false;
+    in property <bool> round: false;
+    in property <bool> enabled: true;
+    in property <bool> navigation: false;
+    private property <color> ink: !root.enabled ? GroveTheme.disabled : root.active-icon ? GroveTheme.accent : root.accent ? GroveTheme.on-accent : root.navigation && !root.selected ? GroveTheme.secondary : GroveTheme.text;
+    callback clicked;
+    min-width: 40px; height: 40px;
+    border-radius: root.round ? 24px : 8px;
+    background: !root.enabled ? (root.flat ? transparent : GroveTheme.selected) : control.pressed ? (root.accent ? GroveTheme.accent-pressed : GroveTheme.pressed) : root.accent ? GroveTheme.accent : root.selected ? GroveTheme.surface : root.flat ? transparent : GroveTheme.surface;
+    border-width: control.has-focus ? 2px : root.flat || root.accent ? 0px : 1px;
+    border-color: control.has-focus ? GroveTheme.accent : GroveTheme.border;
+    animate background { duration: 130ms; }
+    if root.navigation && root.selected : Rectangle {
+        x: 0px; y: 10px; width: 3px; height: parent.height - 20px;
+        border-radius: 2px; background: GroveTheme.accent;
+    }
+    HorizontalLayout {
+        alignment: root.navigation ? start : center; cross-axis-alignment: center; spacing: 12px; padding-left: root.navigation ? 14px : root.text == "" ? 8px : 12px; padding-right: root.text == "" ? 8px : 12px;
+        if root.icon != "" : Mark { kind: root.icon; ink: root.ink; width: root.navigation ? 20px : 22px; height: self.width; }
+        if root.text != "" : Text { text: root.text; color: root.ink; font-size: 14px; font-weight: root.selected ? 600 : 400; vertical-alignment: center; overflow: elide; }
+    }
+    control := Button {
+        width: parent.width; height: parent.height;
+        text: root.text; accessible-label: root.label != "" ? root.label : root.text == "" ? root.icon : root.text;
+        enabled: root.enabled; opacity: 0;
+        clicked => { root.clicked(); }
+    }
+    forward-focus: control;
+}
+
+component Rule inherits Rectangle { height: 1px; background: GroveTheme.line; }
+
+component SongRow inherits Rectangle {
+    in property <GroveFeatureTrack> song;
+    in property <bool> saved: false;
+    in property <bool> can-remove: false;
+    in property <bool> can-play;
+    in property <bool> busy;
+    callback action(string,string);
+    private property <bool> expanded: false;
+    height: root.expanded ? 150px : 62px;
+    background: transparent;
+    VerticalLayout {
+        spacing: 5px;
+        HorizontalLayout {
+            spacing: 12px;
+            Rectangle {
+                width: 44px; height: 44px; border-radius: 6px; background: GroveTheme.surface; clip: true;
+                if root.song.cover.width > 0 : Image { source: root.song.cover; image-fit: cover; }
+                if root.song.cover.width == 0 : Mark { kind: "note"; width: 22px; height: 22px; x: 11px; y: 11px; ink: GroveTheme.muted; }
+            }
+            VerticalLayout {
+                alignment: center; spacing: 4px;
+                Text { text: root.song.title; color: GroveTheme.text; font-size: 14px; overflow: elide; }
+                Text { text: root.song.artist; color: GroveTheme.muted; font-size: 12px; overflow: elide; }
+            }
+            Text { text: root.song.duration; color: GroveTheme.muted; font-size: 12px; width: 36px; vertical-alignment: center; }
+            GroveButton { icon: "play"; width: 36px; enabled: root.can-play; clicked => { root.action("play",root.song.uri); } }
+            GroveButton { text: "···"; width: 38px; clicked => { root.expanded = !root.expanded; } }
+        }
+        if root.expanded : HorizontalLayout {
+            spacing: 8px; alignment: start;
+            GroveButton { text: "Play next"; width: 130px; enabled: !root.busy; clicked => { root.action("Next",root.song.uri); root.expanded = false; } }
+            GroveButton { text: "Add to queue"; width: 130px; enabled: !root.busy; clicked => { root.action("Queue",root.song.uri); root.expanded = false; } }
+            GroveButton { text: root.saved ? "Unlike" : "Like"; width: 130px; enabled: !root.busy; clicked => { root.action(root.saved ? "Unsave" : "Save",root.song.uri); root.expanded = false; } }
+        }
+        if root.expanded : HorizontalLayout {
+            spacing: 8px; alignment: start;
+            GroveButton { text: "View artist"; width: 130px; enabled: !root.busy; clicked => { root.action("Artist",root.song.uri); root.expanded = false; } }
+            GroveButton { text: "Add to playlist"; width: 130px; enabled: !root.busy; clicked => { root.action("Playlist",root.song.uri); root.expanded = false; } }
+            GroveButton { text: root.can-remove ? "Remove song" : "Hide song"; width: 130px; enabled: !root.busy; clicked => { root.action(root.can-remove ? "Remove" : "Hide",root.song.uri); root.expanded = false; } }
+        }
+    }
+}
+
+// Keep Slint's pointer, keyboard and accessibility behavior under a quiet skin.
+component GroveSlider inherits Rectangle {
+    in property <float> minimum: 0;
+    in property <float> maximum: 100;
+    in property <float> value: 0;
+    in property <bool> enabled: true;
+    in property <string> label;
+    callback released(float);
+    private property <float> preview: root.value;
+    private property <bool> interacting: false;
+    private property <bool> input-focused: native.has-focus;
+    private property <float> fraction: root.maximum > root.minimum ? min(1, max(0, (root.preview - root.minimum) / (root.maximum - root.minimum))) : 0;
+    changed value => { if !root.interacting { root.preview = root.value; } }
+    changed maximum => { root.interacting = false; root.preview = root.value; }
+    changed enabled => { root.interacting = false; root.preview = root.value; }
+    changed input-focused => { if !root.input-focused { root.interacting = false; root.preview = root.value; } }
+    min-width: 40px; min-height: 20px; horizontal-stretch: 1;
+    forward-focus: native;
+    function commit(value: float) {
+        if root.enabled {
+            root.interacting = false;
+            root.released(min(root.maximum, max(root.minimum, value)));
+            root.preview = root.value;
+        }
+    }
+    Rectangle {
+        x: 6px; y: (parent.height - 3px) / 2;
+        width: max(0px, parent.width - 12px); height: 3px;
+        background: GroveTheme.pressed; border-radius: 2px;
+    }
+    Rectangle {
+        x: 6px; y: (parent.height - 3px) / 2;
+        width: max(0px, parent.width - 12px) * root.fraction; height: 3px;
+        background: root.enabled ? GroveTheme.accent : GroveTheme.disabled; border-radius: 2px;
+    }
+    Rectangle {
+        x: 1px + max(0px, parent.width - 12px) * root.fraction; y: (parent.height - 10px) / 2;
+        width: 10px; height: 10px; border-radius: 5px;
+        background: root.enabled ? GroveTheme.text : GroveTheme.disabled;
+        border-width: native.has-focus ? 2px : 0px; border-color: GroveTheme.accent;
+    }
+    native := Slider {
+        width: parent.width; height: parent.height; opacity: 0;
+        minimum: root.minimum; maximum: root.maximum; value <=> root.preview;
+        enabled: root.enabled; accessible-label: root.label;
+        accessible-action-set-value(value) => { if value.is-float() { root.commit(value.to-float()); } }
+        accessible-action-increment => { root.commit(root.value + 1); }
+        accessible-action-decrement => { root.commit(root.value - 1); }
+        changed(value) => { root.interacting = true; }
+        released(value) => { root.commit(value); }
+    }
+}
+
+export component GroveWindow inherits Window {
+    in property <string> app-version;
+    private property <bool> show-about: false;
+    callback save-support;
+    title: "Grove";
+    icon: @image-url("../assets/grove/logo.svg");
+    preferred-width: 1200px; preferred-height: 800px;
+    min-width: root.mini ? 560px : 700px; min-height: root.mini ? 100px : 540px;
+    background: GroveTheme.canvas;
+    default-font-family: "Segoe UI";
+    default-font-size: 14px;
+    in-out property <int> page: 5;
+    private property <bool> account-options: false;
+    private property <bool> network-options: false;
+    private property <bool> show-link: false;
+    in-out property <bool> mini: false;
+    in-out property <bool> light-mode: false;
+    in property <bool> compact-mode: false;
+    in property <bool> feature-busy: false;
+    in property <string> feature-message;
+    in property <[GroveFeatureTrack]> feature-tracks;
+    in property <string> feature-title;
+    in-out property <string> search-text;
+    in property <bool> feature-more: false;
+    in property <image> current-cover;
+    in property <string> current-uri;
+    in property <bool> current-saved: false;
+    in property <bool> autoplay: false;
+    in property <bool> media-keys: true;
+    in property <bool> local-history: false;
+    in property <bool> local-active: false;
+    callback open-local;
+    callback stop-local;
+    in property <[GroveTrack]> local-queue;
+    in property <bool> playlists-more: false;
+    in-out property <string> edit-track;
+    in-out property <string> edit-playlist;
+    in property <bool> removing-from-playlist: false;
+    in property <bool> collection-owned: false;
+    callback page-changed(int);
+    callback search(string);
+    callback feature-refresh;
+    callback feature-next;
+    callback feature-back;
+    callback song-action(string,string);
+    callback appearance(string);
+    callback media-command(int,float);
+    callback playlist-edit(bool);
+    callback library-more;
+    callback queue-edit(string,int);
+    callback play-selection(bool);
+    private property <bool> narrow: false;
+    private property <bool> wide: true;
+    in-out property <string> client-id;
+    in property <bool> library-ready: false;
+    in property <string> account-name: "Not signed in";
+    in property <[GrovePlaylist]> playlists;
+    in property <[GrovePlaylist]> owned-playlists;
+    in-out property <string> collection-uri;
+    in-out property <string> collection-title;
+    in property <string> library-note;
+    in-out property <string> link;
+    in-out property <string> jam-name: "Listener";
+    in-out property <string> jam-address: "127.0.0.1";
+    in-out property <string> jam-join-invite;
+    in-out property <string> jam-track-link;
+    in-out property <string> jam-track-title;
+    in property <string> jam-invite;
+    in property <string> jam-members;
+    in property <string> jam-message;
+    in property <string> jam-sync-status: "Not in a jam";
+    in property <bool> jam-connected: false;
+    in property <bool> jam-busy: false;
+    in property <bool> jam-host: false;
+    in-out property <bool> jam-following: true;
+    in property <[GroveJamTrack]> jam-tracks;
+    in property <bool> jam-matching: false;
+    in property <bool> jam-tide-host: false;
+    in property <bool> jam-match-confirmed: false;
+    in property <string> jam-match-title;
+    in-out property <string> jam-match-link;
+    in property <[GroveFeatureTrack]> jam-matches;
+    private property <bool> following-guest: root.jam-connected && !root.jam-host && root.jam-following;
+    in property <bool> connected: false;
+    in property <bool> authenticated: false;
+    in property <bool> playing: false;
+    in property <bool> connecting: false;
+    in property <bool> can-seek: false;
+    in property <bool> can-play: false;
+    in property <bool> can-pause: false;
+    in property <bool> can-next: false;
+    in property <bool> can-previous: false;
+    in property <bool> can-queue: false;
+    in property <bool> can-shuffle: false;
+    in property <bool> can-repeat: false;
+    in property <bool> shuffle: false;
+    in property <bool> repeat: false;
+    in property <string> track-title: "Nothing playing yet";
+    in property <string> artist: "Connect Spotify to start listening";
+    in property <string> context-name: "Spotify Connect";
+    in property <string> status: "Not connected";
+    in property <string> message;
+    in property <float> position: 0;
+    in property <float> duration: 0;
+    in property <float> volume: 35;
+    in property <string> elapsed: "0:00";
+    in property <string> total: "0:00";
+    in property <[GroveTrack]> tracks;
+    callback connect-engine;
+    callback sign-in-library;
+    callback sign-out;
+    callback cancel-sign-in;
+    callback approve-playback;
+    callback refresh-library;
+    callback browse(string, string);
+    callback play-uri(string);
+    callback disconnect-engine;
+    callback play-link;
+    callback enqueue-link;
+    callback transport(string);
+    callback seek(float);
+    callback set-volume(float);
+    callback switch-mini;
+    callback jam-create;
+    callback jam-join;
+    callback jam-leave;
+    callback jam-add;
+    callback jam-remove(string);
+    callback jam-next;
+    callback jam-pair(int);
+
+    init => { Palette.color-scheme = root.light-mode ? ColorScheme.light : ColorScheme.dark; GroveTheme.light = root.light-mode; root.narrow = root.width < 880px; root.wide = root.width >= 1000px; }
+    changed light-mode => { GroveTheme.light = root.light-mode; Palette.color-scheme = root.light-mode ? ColorScheme.light : ColorScheme.dark; }
+    changed page => { root.show-link = false; root.page-changed(root.page); }
+    changed width => { root.narrow = root.width < 880px; root.wide = root.width >= 1000px; }
+
+    VerticalLayout {
+        spacing: 0; padding: 0;
+        if !root.mini : HorizontalLayout {
+            spacing: 0;
+            Rectangle {
+                width: root.narrow ? 170px : 194px;
+                background: GroveTheme.rail;
+                VerticalLayout {
+                    padding: root.narrow ? 12px : 18px; spacing: root.narrow ? 6px : 12px;
+                    HorizontalLayout {
+                        height: root.narrow ? 42px : 60px; spacing: 12px; cross-axis-alignment: center;
+                        Image { source: @image-url("../assets/grove/logo.svg"); width: 32px; height: 32px; image-fit: contain; }
+                        Text { text: "Grove"; color: GroveTheme.text; font-size: 27px; font-weight: 650; vertical-alignment: center; }
+                    }
+                    ScrollView {
+                        VerticalLayout {
+                            spacing: root.narrow ? 4px : 6px; padding: 0;
+                            for item in [{label:"Home",page:5,icon:"home"},{label:"Search",page:6,icon:"search"},{label:"Library",page:3,icon:"library"},{label:"Now playing",page:0,icon:"listen"},{label:"Queue",page:1,icon:"queue"},{label:"Shared jams",page:4,icon:"people"}] : GroveButton {
+                                text: item.label; icon: item.icon; navigation: true;
+                                selected: root.page == item.page; flat: true; height: root.narrow ? 34px : 40px;
+                                clicked => { root.page = item.page; }
+                            }
+                        }
+                    }
+                    Rule {}
+                    GroveButton { text: "Settings"; icon: "settings"; navigation: true; selected: root.page == 8; flat: true; height: root.narrow ? 34px : 40px; clicked => { root.page = 8; } }
+                    GroveButton { text: "Account"; icon: "link"; navigation: true; selected: root.page == 2; flat: true; height: root.narrow ? 34px : 40px; clicked => { root.page = 2; } }
+
+                }
+            }
+            ScrollView {
+                private property <int> shown-page: root.page;
+                changed shown-page => { self.content-y = 0px; }
+                horizontal-stretch: 1;
+                VerticalLayout {
+                    padding: root.narrow || root.compact-mode ? 24px : 38px; spacing: root.compact-mode ? 16px : 22px;
+                    HorizontalLayout {
+                        spacing: 16px; vertical-stretch: 0;
+                        VerticalLayout {
+                            spacing: 6px;
+                            Text { text: root.page == 9 ? "Listening history" : root.page == 8 ? "Settings" : root.page == 7 ? root.feature-title : root.page == 6 ? "Search" : root.page == 5 ? "Home" : root.page == 4 ? "Shared jams" : root.page == 2 ? "Spotify" : root.page == 3 ? "Your library" : root.page == 1 ? "Your queue" : "Now playing"; color: GroveTheme.text; font-size: root.narrow ? 25px : 32px; font-weight: 650; overflow: elide; }
+                            Text { text: root.page == 9 ? "Songs from this session." : root.page == 8 ? "Make yourself at home." : root.page == 7 ? "Browse this artist without interrupting playback." : root.page == 6 ? "Find music on Spotify." : root.page == 5 ? root.library-ready ? "Your favorites, ready to play." : "Your music in one place." : root.page == 4 ? "Listen together, on your own devices." : root.page == 2 ? "Your Spotify account." : root.page == 3 ? root.account-name : root.page == 1 ? "Your next songs, in order." : "Pick up where you left off."; color: GroveTheme.muted; font-size: 16px; wrap: word-wrap; }
+                        }
+                    }
+                    if root.page == 1 : GroveButton { text: root.show-link ? "Close" : "Add a song link"; width: 150px; clicked => { root.show-link = !root.show-link; } }
+                    if (root.page == 0 || root.page == 1) && root.show-link : HorizontalLayout {
+                        spacing: 12px;
+                        LineEdit { text <=> root.link; placeholder-text: root.page == 1 ? "Paste a Spotify song link" : "Paste a Spotify link"; accessible-label: "Spotify link"; height: 48px; horizontal-stretch: 1; accepted => { if root.page == 1 { root.enqueue-link(); } else { root.play-link(); } } }
+                        GroveButton { text: root.page == 1 ? "Add to queue" : "Play"; accent: true; height: 48px; width: 126px; enabled: root.page == 1 ? root.library-ready : root.authenticated && !root.following-guest; clicked => { if root.page == 1 { root.enqueue-link(); } else { root.play-link(); } } }
+                    }
+                    if root.message != "" : Text { text: root.message; color: GroveTheme.warning; font-size: 13px; wrap: word-wrap; }
+                    if root.feature-message != "" : Text { text: root.feature-message; color: GroveTheme.secondary; font-size: 13px; wrap: word-wrap; }
+                    if root.edit-track != "" : Rectangle {
+                        background: GroveTheme.surface; border-radius: 10px;
+                        VerticalLayout {
+                            padding: 16px; spacing: 10px;
+                            Text { text: root.removing-from-playlist ? "Remove song from playlist?" : "Add to playlist"; color: GroveTheme.text; font-size: 19px; font-weight: 600; }
+                            Text { text: root.removing-from-playlist ? "All copies of this song will be removed from " + root.collection-title + "." : "Choose one of your playlists, or paste a playlist link."; color: GroveTheme.muted; wrap: word-wrap; }
+                            if !root.removing-from-playlist && root.owned-playlists.length > 0 : ScrollView {
+                                height: 120px;
+                                VerticalLayout {
+                                    spacing: 4px;
+                                    for playlist in root.owned-playlists : GroveButton { text: playlist.title; height: 36px; navigation: true; selected: root.edit-playlist == playlist.uri; clicked => { root.edit-playlist = playlist.uri; } }
+                                }
+                            }
+                            if !root.removing-from-playlist : LineEdit { text <=> root.edit-playlist; placeholder-text: "Playlist link"; accessible-label: "Playlist to edit"; }
+                            HorizontalLayout {
+                                spacing: 10px; alignment: start;
+                                if !root.removing-from-playlist : GroveButton { text: "Add song"; width: 100px; accent: true; clicked => { root.playlist-edit(false); } }
+                                if root.removing-from-playlist : GroveButton { text: "Remove all copies"; width: 154px; clicked => { root.playlist-edit(true); } }
+                                GroveButton { text: "Cancel"; width: 80px; clicked => { root.edit-track = ""; } }
+                            }
+                        }
+                    }
+                    if root.page == 8 : VerticalLayout {
+                        spacing: 18px; vertical-stretch: 0;
+                        Text { text: "Make Grove yours"; color: GroveTheme.text; font-size: 23px; font-weight: 600; }
+                        HorizontalLayout {
+                            spacing: 12px; alignment: start;
+                            GroveButton { text: root.light-mode ? "Light theme" : "Dark theme"; width: 140px; clicked => { root.appearance("theme"); } }
+                            GroveButton { text: root.compact-mode ? "Compact layout" : "Full layout"; width: 150px; clicked => { root.appearance("compact"); } }
+                        }
+                        Rule {}
+                        Text { text: "Playback"; color: GroveTheme.text; font-size: 20px; font-weight: 600; }
+                        HorizontalLayout {
+                            alignment: start; spacing: 10px;
+                            GroveButton { text: "Open audio file"; width: 150px; enabled: !root.jam-connected; clicked => { root.open-local(); } }
+                            if root.local-active : GroveButton { text: "Return to Spotify"; width: 160px; clicked => { root.stop-local(); } }
+                        }
+                        GroveSwitch { text: "Use media keys"; checked: root.media-keys; toggled => { root.appearance("media"); } }
+                        Text { text: "Control Grove while other apps are open."; color: GroveTheme.muted; wrap: word-wrap; }
+                        GroveSwitch { text: "Keep music playing"; checked: root.autoplay; toggled => { root.appearance("autoplay"); } }
+                        Text { text: "Continue with songs from Home when your queue ends."; color: GroveTheme.muted; wrap: word-wrap; }
+                        Rule {}
+                        Text { text: "Listening preferences"; color: GroveTheme.text; font-size: 20px; font-weight: 600; }
+                        GroveSwitch { text: "Remember songs this session"; checked: root.local-history; toggled => { root.appearance("history"); } }
+                        Text { text: "Keep a history of the Spotify songs you listen to. It clears when you close Grove."; color: GroveTheme.muted; wrap: word-wrap; }
+                        HorizontalLayout {
+                            spacing: 10px; alignment: start;
+                            GroveButton { text: "View history"; width: 110px; clicked => { root.page = 9; } }
+                            GroveButton { text: "Clear history"; width: 110px; clicked => { root.appearance("clear-history"); } }
+                            GroveButton { text: "Show hidden songs"; width: 164px; clicked => { root.appearance("reset-hidden"); } }
+                        }
+                        Rule {}
+                        Text { text: root.app-version; color: GroveTheme.muted; font-size: 12px; }
+                        Text { text: "Shared jams are experimental. For help, save support info and send it with a description of the problem."; color: GroveTheme.muted; wrap: word-wrap; }
+                        GroveButton { text: "Save support info"; width: 160px; clicked => { root.save-support(); } }
+                        GroveButton { text: "About"; width: 100px; clicked => { root.show-about = !root.show-about; } }
+                        if root.show-about : AboutSlint { height: 112px; horizontal-stretch: 0; }
+                    }
+                    if root.page == 5 || root.page == 6 || root.page == 7 || root.page == 9 || (root.page == 3 && root.collection-uri != "") : VerticalLayout {
+                        spacing: 14px; vertical-stretch: 0;
+                        if root.page == 5 && !root.library-ready : VerticalLayout {
+                            spacing: 16px;
+                            Text { text: "Your music, in Grove."; color: GroveTheme.text; font-size: 26px; font-weight: 600; }
+                            Text { text: "Connect Spotify to find your favorites, or open an audio file."; color: GroveTheme.muted; wrap: word-wrap; }
+                            HorizontalLayout {
+                                spacing: 12px; alignment: start;
+                                GroveButton { text: "Connect Spotify"; accent: true; width: 170px; height: 44px; clicked => { root.page = 2; } }
+                                GroveButton { text: "Open a file"; width: 130px; height: 44px; clicked => { root.open-local(); } }
+                            }
+                        }
+                        if root.page == 7 : GroveButton { text: "Back"; width: 80px; clicked => { root.feature-back(); } }
+                        if root.page == 6 : HorizontalLayout {
+                            spacing: 10px;
+                            LineEdit { text <=> root.search-text; placeholder-text: "Search music or paste a Spotify link"; accessible-label: "Search Spotify"; height: 44px; accepted => { root.search(root.search-text); } }
+                            GroveButton { text: "Search"; width: 100px; height: 44px; accent: true; enabled: !root.feature-busy; clicked => { root.search(root.search-text); } }
+                        }
+                        if root.feature-tracks.length > 0 : HorizontalLayout {
+                            spacing: 10px; alignment: start;
+                            if root.page == 3 : Text { text: root.collection-title; color: GroveTheme.text; font-size: 23px; overflow: elide; }
+
+                            if root.page == 9 : Text { text: "Session history"; color: GroveTheme.text; font-size: 23px; }
+                            GroveButton { text: "Play"; width: 80px; accent: true; enabled: root.feature-tracks.length > 0 && root.authenticated && !root.jam-connected; clicked => { root.play-selection(false); } }
+                            GroveButton { text: "Shuffle"; width: 90px; enabled: root.feature-tracks.length > 0 && root.authenticated && !root.jam-connected; clicked => { root.play-selection(true); } }
+                            if root.page != 9 : GroveButton { text: "Refresh"; width: 90px; enabled: root.library-ready && !root.feature-busy; clicked => { root.feature-refresh(); } }
+                        }
+                        if root.feature-tracks.length == 0 && !root.feature-busy && (root.page != 5 || root.library-ready) : Text { text: root.page == 6 ? "Find something you love." : root.page == 9 ? root.local-history ? "Songs you listen to will appear here." : "Turn on session history in Settings to see your recent songs here." : "Your tracks will appear here."; color: GroveTheme.muted; wrap: word-wrap; }
+                        for song in root.feature-tracks : SongRow { song: song; saved: (root.page == 3 && root.collection-uri == "liked") || (song.uri == root.current-uri && root.current-saved); can-remove: root.page == 3 && root.collection-owned; can-play: root.authenticated && !root.following-guest; busy: root.feature-busy; action(kind,uri) => { root.song-action(kind,uri); } }
+                        if root.feature-more : GroveButton { text: "Load more tracks"; width: 180px; enabled: !root.feature-busy; clicked => { root.feature-next(); } }
+                        if root.feature-tracks.length == 0 && root.library-ready && !root.feature-busy && root.page != 6 && root.page != 9 : GroveButton { text: "Refresh"; width: 100px; clicked => { root.feature-refresh(); } }
+                        if root.feature-tracks.length > 500 : Text { text: "Play and Shuffle start up to 500 of the loaded songs."; color: GroveTheme.muted; wrap: word-wrap; }
+                    }
+                    if root.page == 1 && (root.local-queue.length > 0 || root.tracks.length == 0) : VerticalLayout {
+                        spacing: 12px; vertical-stretch: 0;
+                        HorizontalLayout {
+                            Text { text: "Up next"; color: GroveTheme.text; font-size: 24px; font-weight: 600; }
+                            if root.local-queue.length > 0 : GroveButton { text: "Clear"; width: 80px; clicked => { root.queue-edit("clear",0); } }
+                        }
+                        if root.local-queue.length == 0 : Text { text: "Your queue is empty. Add a song from Search or Library."; color: GroveTheme.muted; wrap: word-wrap; }
+                        for track[index] in root.local-queue : HorizontalLayout {
+                            spacing: 8px; height: 58px;
+                            VerticalLayout {
+                                alignment: center;
+                                Text { text: track.title; color: GroveTheme.text; overflow: elide; }
+                                Text { text: track.artist; color: GroveTheme.muted; font-size: 12px; overflow: elide; }
+                            }
+                            GroveButton { text: "↑"; width: 40px; enabled: index > 0; clicked => { root.queue-edit("up",index); } }
+                            GroveButton { text: "↓"; width: 40px; enabled: index + 1 < root.local-queue.length; clicked => { root.queue-edit("down",index); } }
+                            GroveButton { text: "Remove"; width: 86px; clicked => { root.queue-edit("remove",index); } }
+                        }
+                    }
+                    if root.page == 4 : VerticalLayout {
+                        spacing: 18px; vertical-stretch: 0;
+                        if root.jam-message != "" : Text { text: root.jam-message; color: GroveTheme.warning; font-size: 13px; wrap: word-wrap; }
+                        Text { text: "Experimental · Invite Tide or Grove friends on the same network. Everyone plays through their own service. Spotify listeners need Premium."; color: GroveTheme.muted; font-size: 13px; wrap: word-wrap; }
+                        if !root.jam-connected : VerticalLayout {
+                            spacing: 14px;
+                            Text { text: "Your display name"; color: GroveTheme.text; font-size: 14px; }
+                            LineEdit { text <=> root.jam-name; accessible-label: "Jam display name"; height: 40px; }
+                            GroveButton { text: "Start a jam"; enabled: !root.jam-busy; accent: true; width: 160px; height: 44px; clicked => { root.jam-create(); } }
+                            GroveButton { text: root.network-options ? "Hide network options" : "Network options"; flat: true; width: 200px; clicked => { root.network-options = !root.network-options; } }
+                            if root.jam-address == "127.0.0.1" : Text { text: "This jam stays on this computer. Choose your Wi-Fi address in Network options to invite another device."; color: GroveTheme.muted; font-size: 12px; wrap: word-wrap; }
+                            if root.network-options : LineEdit { text <=> root.jam-address; placeholder-text: "Wi-Fi address"; accessible-label: "Jam host IP address"; height: 42px; }
+                            Rule {}
+                            Text { text: "Or paste a Grove invitation"; color: GroveTheme.text; font-size: 14px; }
+                            HorizontalLayout {
+                                spacing: 12px;
+                                LineEdit { text <=> root.jam-join-invite; placeholder-text: "Paste an invite"; accessible-label: "Jam invitation"; height: 42px; }
+                                GroveButton { text: root.jam-busy ? "Connecting…" : "Join jam"; enabled: !root.jam-busy; width: 140px; height: 42px; clicked => { root.jam-join(); } }
+                            }
+                        }
+                        if root.jam-connected : VerticalLayout {
+                            spacing: 14px;
+                            HorizontalLayout {
+                                spacing: 12px;
+                                Text { text: root.jam-host ? "You’re hosting" : "Listening with the host"; color: GroveTheme.text; font-size: 23px; vertical-alignment: center; }
+                                GroveButton { text: root.jam-host ? "End jam" : "Leave jam"; width: 110px; clicked => { root.jam-leave(); } }
+                            }
+                            Text { text: root.jam-sync-status; color: GroveTheme.accent; font-size: 14px; wrap: word-wrap; }
+                            if !root.jam-host : GroveButton { text: root.jam-following ? "Stop following" : "Follow host"; width: 160px; clicked => { root.jam-following = !root.jam-following; } }
+                            if root.jam-matching && !root.jam-host && root.jam-following : VerticalLayout {
+                                spacing: 10px;
+                                Text { text: root.jam-match-confirmed ? "YouTube song matched · experimental" : "Choose the same song on Spotify"; color: GroveTheme.text; font-size: 19px; }
+                                Text { text: root.jam-match-title; color: GroveTheme.secondary; wrap: word-wrap; }
+                                Text { text: "Choose the same recording. Videos, live versions and intros can shift the timing."; color: GroveTheme.muted; wrap: word-wrap; }
+                                for song[index] in root.jam-matches : HorizontalLayout {
+                                    Text { text: song.title + " · " + song.artist + " · " + song.duration; color: GroveTheme.text; overflow: elide; vertical-alignment: center; }
+                                    GroveButton { text: "Use song"; width: 100px; clicked => { root.jam-pair(index); } }
+                                }
+                                HorizontalLayout {
+                                    LineEdit { text <=> root.jam-match-link; placeholder-text: "Or paste the matching Spotify song link"; accessible-label: "Matching Spotify song"; accepted => { root.jam-pair(-1); } }
+                                    GroveButton { text: "Use link"; width: 100px; clicked => { root.jam-pair(-1); } }
+                                }
+                            }
+                            if root.jam-host : Text { text: "Share this invite with a friend"; color: GroveTheme.muted; font-size: 12px; wrap: word-wrap; }
+                            if root.jam-host : LineEdit { text: root.jam-invite; read-only: true; accessible-label: "Share this jam invitation"; height: 42px; }
+                            Text { text: root.jam-members; color: GroveTheme.muted; font-size: 13px; wrap: word-wrap; }
+                            if root.jam-tide-host : Text { text: "Choose the next song in Tide on the host's device."; color: GroveTheme.muted; font-size: 12px; wrap: word-wrap; }
+                            if !root.jam-tide-host : VerticalLayout {
+                            spacing: 14px;
+                            Rule {}
+                            Text { text: "Shared queue"; color: GroveTheme.text; font-size: 23px; }
+                            LineEdit { text <=> root.jam-track-link; placeholder-text: "Paste a Spotify track link"; accessible-label: "Shared track link"; height: 40px; }
+                            HorizontalLayout {
+                                spacing: 12px;
+                                if root.network-options : LineEdit { text <=> root.jam-track-title; placeholder-text: "Song name (optional)"; accessible-label: "Shared track name"; height: 40px; }
+                                GroveButton { text: "Add track"; width: 125px; height: 40px; clicked => { root.jam-add(); } }
+                            }
+                            if root.jam-host : GroveButton { text: "Play next shared track"; width: 220px; accent: true; enabled: root.authenticated && root.jam-tracks.length > 0; clicked => { root.jam-next(); } }
+                            if root.jam-tracks.length == 0 : Text { text: "Everyone can add a track. The host chooses what plays next."; color: GroveTheme.muted; font-size: 13px; wrap: word-wrap; }
+                            for track in root.jam-tracks : Rectangle {
+                                height: 62px; background: transparent;
+                                HorizontalLayout {
+                                    spacing: 12px;
+                                    VerticalLayout {
+                                        alignment: center; spacing: 4px;
+                                        Text { text: track.title; color: GroveTheme.text; font-size: 14px; overflow: elide; }
+                                        Text { text: track.subtitle; color: GroveTheme.muted; font-size: 12px; overflow: elide; }
+                                    }
+                                    GroveButton { text: "Remove"; width: 90px; enabled: track.removable; clicked => { root.jam-remove(track.id); } }
+                                }
+                            }
+                            }
+                        }
+                        Text { text: "Nearby devices only."; color: GroveTheme.muted; font-size: 12px; wrap: word-wrap; }
+                    }
+                    if root.page == 0 : VerticalLayout {
+                        spacing: 26px; vertical-stretch: 0;
+                        VerticalLayout {
+                            spacing: 6px; vertical-stretch: 0;
+                            
+                            if root.context-name != "" : Text { text: root.context-name; color: GroveTheme.muted; font-size: 13px; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                        }
+                        HorizontalLayout {
+                            spacing: 26px; height: root.narrow ? 120px : 180px;
+                            Rectangle {
+                                width: root.narrow ? 120px : 180px; height: self.width;
+                                background: GroveTheme.rail; border-radius: 12px;
+                                border-width: 1px; border-color: GroveTheme.border;
+                                for fraction in [0.84, 0.69, 0.54, 0.39] : Rectangle {
+                                    width: parent.width * fraction; height: self.width;
+                                    x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+                                    border-radius: self.width / 2;
+                                    background: transparent; border-width: 1px; border-color: GroveTheme.line;
+                                }
+                                Mark { kind: "note"; width: 68px; height: 68px; x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2; }
+                            }
+                            VerticalLayout {
+                                alignment: center; spacing: 10px;
+                                Text { text: root.track-title; color: GroveTheme.text; font-size: 23px; font-weight: 600; wrap: word-wrap; }
+                                Text { text: root.artist; color: GroveTheme.secondary; font-size: 16px; wrap: word-wrap; }
+                            }
+                        }
+                        GroveButton { text: root.show-link ? "Close link" : "Open a Spotify link"; flat: true; width: 190px; clicked => { root.show-link = !root.show-link; } }
+                    }
+                    if root.page == 1 && root.tracks.length > 0 : VerticalLayout {
+                        spacing: 16px; vertical-stretch: 0;
+                        HorizontalLayout {
+                            Text { text: root.local-queue.length > 0 ? "From Spotify" : "Up next"; color: GroveTheme.text; font-size: 24px; font-weight: 600; }
+
+                        }
+
+                        for track[index] in root.tracks : Rectangle {
+                            height: 56px; background: transparent;
+                            HorizontalLayout {
+                                spacing: 18px;
+                                Text { text: index + 1; color: GroveTheme.muted; width: 24px; vertical-alignment: center; }
+                                VerticalLayout {
+                                    alignment: center; spacing: 3px;
+                                    Text { text: track.title; color: GroveTheme.text; font-size: 14px; overflow: elide; }
+                                    Text { text: track.artist; color: GroveTheme.muted; font-size: 12px; overflow: elide; }
+                                }
+                                Text { text: track.duration; color: GroveTheme.muted; width: 40px; vertical-alignment: center; }
+                            }
+                        }
+                    }
+                    if root.page == 3 : VerticalLayout {
+                        spacing: 14px; vertical-stretch: 0;
+                        if root.library-ready : HorizontalLayout {
+                            spacing: 10px;
+                            GroveButton { text: "Liked Songs"; enabled: root.library-ready; width: 130px; clicked => { root.browse("liked", "Liked Songs"); } }
+                            GroveButton { text: "Playlists"; width: 110px; clicked => { root.collection-uri = ""; root.collection-title = ""; } }
+                            GroveButton { text: "Refresh"; enabled: root.library-ready; width: 100px; clicked => { root.refresh-library(); } }
+                        }
+                        if !root.library-ready : VerticalLayout {
+                            spacing: 16px;
+                            Text { text: "Your liked songs and playlists will appear here."; color: GroveTheme.muted; wrap: word-wrap; }
+                            GroveButton { text: "Connect Spotify"; accent: true; width: 170px; clicked => { root.page = 2; } }
+                        }
+                        if root.library-note != "" : Text { text: root.library-note; color: GroveTheme.muted; font-size: 12px; wrap: word-wrap; }
+                        if root.collection-uri == "" : VerticalLayout {
+                            spacing: 6px;
+                            for playlist in root.playlists : Rectangle {
+                                height: 62px; background: transparent;
+                                HorizontalLayout {
+                                    spacing: 16px;
+                                    VerticalLayout {
+                                        alignment: center; spacing: 4px;
+                                        Text { text: playlist.title; color: GroveTheme.text; font-size: 15px; overflow: elide; }
+                                        Text { text: playlist.subtitle; color: GroveTheme.muted; font-size: 12px; overflow: elide; }
+                                    }
+                                    GroveButton { text: "Open"; width: 76px; clicked => { root.browse(playlist.uri, playlist.title); } }
+                                }
+                            }
+                        }
+                        if root.playlists-more && root.collection-uri == "" : GroveButton { text: "Load more playlists"; width: 190px; clicked => { root.library-more(); } }
+                    }
+                    if root.page == 2 : VerticalLayout {
+                        spacing: 20px; vertical-stretch: 0;
+                        if root.library-ready : Text { text: root.account-name; color: GroveTheme.text; font-size: 24px; font-weight: 600; }
+                        Text { text: !root.library-ready ? "Bring your Spotify music into Grove." : !root.authenticated ? "Your Spotify library is connected. You can browse music. Playback here requires Premium." : "You're ready to listen."; color: GroveTheme.secondary; font-size: 16px; wrap: word-wrap; }
+                        if !root.authenticated : GroveButton {
+                            text: root.connecting ? "Connecting…" : root.library-ready ? "Enable playback (Premium)" : "Connect Spotify";
+                            accent: true; width: 200px; height: 46px; enabled: !root.connecting;
+                            clicked => { if root.library-ready { root.connect-engine(); } else { root.sign-in-library(); } }
+                        }
+                        if root.connecting : GroveButton { text: "Cancel"; width: 100px; clicked => { root.cancel-sign-in(); } }
+                        if root.library-ready && !root.connecting : GroveButton { text: "Disconnect"; width: 130px; clicked => { root.sign-out(); } }
+                        Text { text: "Spotify Premium is needed to stream music. Your password stays with Spotify."; color: GroveTheme.muted; font-size: 13px; wrap: word-wrap; }
+                        GroveButton { text: root.account-options ? "Hide connection options" : "Connection options"; flat: true; width: 220px; clicked => { root.account-options = !root.account-options; } }
+                        if root.account-options : VerticalLayout {
+                            spacing: 12px;
+                            Rule {}
+                            HorizontalLayout {
+                                spacing: 10px; alignment: start;
+                                GroveButton { text: "Sign in again"; width: 130px; enabled: !root.connecting; clicked => { root.sign-in-library(); } }
+                                GroveButton { text: "Reset playback"; width: 140px; enabled: root.library-ready && !root.connecting; clicked => { root.approve-playback(); } }
+                            }
+                            GroveButton { text: "Remove saved sign-in"; width: 200px; enabled: !root.connecting; clicked => { root.sign-out(); } }
+                            Text { text: "Custom Spotify app (optional)"; color: GroveTheme.text; font-size: 13px; }
+                            LineEdit { text <=> root.client-id; placeholder-text: "Client ID"; accessible-label: "Optional Spotify app client ID"; height: 40px; }
+                            Text { text: "Leave this empty for the default connection. A custom app needs http://127.0.0.1:8989/login as its redirect address."; color: GroveTheme.muted; font-size: 12px; wrap: word-wrap; }
+                            Text { text: "Spotify may show the shared app's name during sign-in."; color: GroveTheme.muted; font-size: 12px; wrap: word-wrap; }
+                        }
+                    }
+                    Rectangle { min-height: 10px; vertical-stretch: 1; background: transparent; }
+                }
+            }
+        }
+        Rectangle {
+            height: root.mini ? 104px : 120px;
+            background: GroveTheme.rail;
+            VerticalLayout {
+                spacing: 0; padding: 0;
+                Rule {}
+                HorizontalLayout {
+                    padding: 18px; spacing: 22px;
+                    if !root.mini && !root.narrow : Rectangle {
+                        width: 58px; height: 58px; border-radius: 8px; background: GroveTheme.surface;
+                        if root.current-cover.width == 0 || root.local-active : Image { source: @image-url("../assets/grove/logo.svg"); x: 11px; y: 11px; width: 36px; height: 36px; image-fit: contain; }
+                        if root.current-cover.width > 0 && !root.local-active : Image { source: root.current-cover; width: parent.width; height: parent.height; image-fit: cover; }
+                    }
+                    VerticalLayout {
+                        width: root.mini ? 170px : root.narrow ? 160px : 210px; alignment: center; spacing: 5px;
+                        Text { text: root.authenticated || root.local-active ? root.track-title : "Grove"; color: GroveTheme.text; font-size: 16px; font-weight: 600; overflow: elide; }
+                        GroveButton { text: root.authenticated || root.local-active ? root.artist : "Waiting for Spotify"; flat: true; navigation: true; height: 24px; enabled: root.library-ready && root.current-uri != "" && !root.local-active; clicked => { root.song-action("Artist",root.current-uri); } }
+                    }
+                    VerticalLayout {
+                        horizontal-stretch: 1; spacing: 8px;
+                        HorizontalLayout {
+                            alignment: center; spacing: 10px;
+                            if !root.mini && !root.narrow : GroveButton { text: "Shuffle"; selected: root.shuffle; flat: !root.shuffle; width: 78px; enabled: root.can-shuffle && !root.following-guest; clicked => { root.transport("shuffle"); } }
+                            GroveButton { icon: "previous"; flat: true; width: 40px; enabled: root.can-previous && !root.following-guest; clicked => { root.transport("skip_prev"); } }
+                            GroveButton { icon: root.playing ? "pause" : "play"; round: true; width: 46px; height: 46px; accent: true; enabled: (root.playing ? root.can-pause : root.can-play) && !root.following-guest; clicked => { root.transport(root.playing ? "pause" : "play"); } }
+                            GroveButton { icon: "next"; flat: true; width: 40px; enabled: root.can-next && !root.following-guest; clicked => { root.transport("skip_next"); } }
+                            if !root.mini : GroveButton { icon: "repeat"; label: root.repeat ? "Disable repeat" : "Enable repeat"; active-icon: root.repeat && !root.local-active; selected: root.repeat && !root.local-active; flat: !root.repeat || root.local-active; width: 40px; enabled: root.can-repeat && !root.following-guest; clicked => { root.transport("repeat"); } }
+                            if !root.mini : GroveButton { icon: root.current-saved && !root.local-active ? "heart-filled" : "heart"; label: root.current-saved ? "Remove from saved songs" : "Save to Spotify"; active-icon: root.current-saved && !root.local-active; width: 40px; flat: true; enabled: root.library-ready && root.current-uri != "" && !root.local-active; clicked => { root.song-action(root.current-saved ? "Unsave" : "Save",root.current-uri); } }
+                        }
+                        if !root.mini : HorizontalLayout {
+                            spacing: 7px;
+                            Text { text: root.elapsed; color: GroveTheme.muted; font-size: 11px; width: 34px; vertical-alignment: center; }
+                            GroveSlider { minimum: 0; maximum: max(1, root.duration); value: root.position; enabled: root.can-seek && root.duration > 0 && !root.following-guest; label: "Playback position"; released(value) => { root.seek(value); } }
+                            Text { text: root.total; color: GroveTheme.muted; font-size: 11px; width: 34px; vertical-alignment: center; }
+                        }
+                    }
+                    VerticalLayout {
+                        width: root.mini ? 70px : root.narrow ? 170px : 190px; alignment: center; spacing: 12px;
+                        HorizontalLayout {
+                            spacing: 10px;
+                            if !root.mini : GroveSlider { minimum: 0; maximum: 100; value: root.volume; enabled: root.authenticated || root.local-active; label: "Volume"; released(value) => { root.set-volume(value); } }
+                            GroveButton { text: root.mini ? "Expand" : "Mini"; width: 70px; clicked => { root.switch-mini(); } }
+                        }
+                        if !root.mini : Text { text: root.status; color: GroveTheme.muted; font-size: 11px; overflow: elide; }
+                    }
+                }
+            }
+        }
+    }
+}

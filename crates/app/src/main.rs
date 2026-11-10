@@ -15,6 +15,7 @@ use tide_core::{PlaybackCommand, Queue, Track};
 mod artwork;
 mod artwork_view;
 mod connection;
+mod cross_jam;
 mod discovery;
 mod listening;
 mod metadata;
@@ -306,7 +307,8 @@ fn current_video_id(s: &State) -> Option<String> {
     .then_some(id)
 }
 fn request_radio(s: &mut State, u: &AppWindow, tx: &mpsc::SyncSender<LibraryResult>, force: bool) {
-    if s.library_worker.is_some()
+    if u.get_following_jam()
+        || s.library_worker.is_some()
         || s.pending_saved_connection.is_some()
         || !s.account_verified
         || (!force && !s.settings.autoplay)
@@ -1098,6 +1100,16 @@ fn upcoming_source(queue: &Queue, repeat: bool) -> Option<&str> {
 }
 
 fn send(state: &mut State, ui: &AppWindow, cmd: PlaybackCommand) -> bool {
+    if ui.get_following_jam()
+        && !ui.get_jam_applying()
+        && !matches!(
+            cmd,
+            PlaybackCommand::SetVolume(_) | PlaybackCommand::Shutdown
+        )
+    {
+        ui.set_status_text("Following the host. Open Shared jam to stop following.".into());
+        return false;
+    }
     if let Some((_, _, position, paused)) = &mut state.connection_resume {
         match &cmd {
             PlaybackCommand::TogglePause => *paused = !*paused,
@@ -1141,6 +1153,9 @@ fn submit_load(
 }
 
 fn play(state: &mut State, ui: &AppWindow) -> bool {
+    if ui.get_following_jam() && !ui.get_jam_applying() {
+        return false;
+    }
     let Some(source) = state
         .settings
         .queue
@@ -1380,6 +1395,12 @@ fn search(query: String, cancel: Arc<AtomicBool>) -> Result<Vec<Track>, String> 
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(output) = std::env::args()
+        .skip_while(|a| a != "--review-cross-jam")
+        .nth(1)
+    {
+        return cross_jam::review(output.into());
+    }
     if std::env::args().any(|arg| arg == "--smoke-ui" || arg.starts_with("--smoke-early-skip")) {
         let panic_hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
@@ -2919,7 +2940,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                         }
                     }
-                    if p.ended {
+                    if p.ended && u.get_following_jam() {
+                        s.active_playback = false;
+                        u.set_paused(true);
+                    } else if p.ended {
                         let repeat = s.settings.repeat;
                         let previous = s.settings.queue.current;
                         if s.settings.queue.next_track(repeat).is_some() {
@@ -3639,12 +3663,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(|seconds| listening::start(state.clone(), &ui, seconds, local_listening_source));
     // Sustained probes must not expose a second interactive player or compete
     // with the user's window. Keep timers running without a visible window.
+    let jam = if !state.borrow().settings.transient {
+        Some(cross_jam::install(&ui, state.clone())?)
+    } else {
+        None
+    };
     let result = if listening_seconds.is_some() || smoke_autoplay_depletion {
         ui.hide()?;
         slint::run_event_loop_until_quit()
     } else {
         ui.run()
     };
+    drop(jam);
     timer.stop();
     preparation_timer.stop();
     media_timer.stop();

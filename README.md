@@ -2,6 +2,15 @@
 
 A Windows-first native Rust music player designed to leave resources available for games.
 
+**Spotify sibling in development:** [Grove](docs/grove/README.md) is a separate
+native Rust/Slint app with a forest-green design, Web API library sign-in and
+separate librespot playback approval. Its first iteration covers library views,
+local playback controls, links and the queue; live account verification remains.
+
+**Experimental Tide + Grove jams:** updated builds can share a nearby room across
+YouTube and Spotify, with listener-confirmed recording matches and approximate
+host timing. See [setup and current limits](docs/CROSS_SERVICE_JAMS.md).
+
 **Working early prototype:** native interface, local/YouTube music playback, search, queue controls and Windows media controls. Optional account integration reads playlists, Liked Songs and recommendations and supplies your signed-in session to playback. Local signed-in library, Premium extraction and muted native playback have been verified; each installation still needs its own session. YouTube features use unofficial tooling and can fail when YouTube changes. This is not an official YouTube product.
 
 ## Design

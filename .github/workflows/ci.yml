@@ -45,7 +45,7 @@ jobs:
           ./scripts/package-preview.ps1 -Executable target/x86_64-pc-windows-msvc/release/tide-music.exe -BrowserHostExecutable target/x86_64-pc-windows-msvc/release/tide-session-host.exe -DependenciesNotice .local/DEPENDENCIES.md -StartHere docs/START_HERE.md -Destination dist/tide-windows-preview
           python scripts/check-preview-package.py dist/tide-windows-preview.zip --with-browser-host
           if ($LASTEXITCODE -ne 0) { throw 'Package validation failed' }
-          ./scripts/build-installer.ps1 -Package dist/tide-windows-preview.zip -Destination dist/TideSetup.exe
+          ./scripts/build-installer.ps1 -Package dist/tide-windows-preview.zip -Destination dist/TideSetup.exe -AppVersion 0.1.0-preview
           python scripts/package-browser-companion.py --family firefox
           if ($LASTEXITCODE -ne 0) { throw 'Firefox companion packaging failed' }
           python scripts/package-browser-companion.py --family chromium

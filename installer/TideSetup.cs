@@ -174,7 +174,7 @@ namespace TideSetup {
                 root = Payload.Extract();
                 var start = new ProcessStartInfo {
                     FileName = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe"),
-                    Arguments = "-NoLogo -NoProfile -ExecutionPolicy Bypass -File \"" + Path.Combine(root, "scripts", "install-windows.ps1") + "\" -Mode Install",
+                    Arguments = Program.InstallArguments(root, Program.SetupVersion()),
                     UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true,
                     StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8
                 };
@@ -202,11 +202,58 @@ namespace TideSetup {
         }
     }
     internal static class Program {
+        internal static string SetupVersion() {
+            using (var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("Tide.Version")) {
+                if (stream == null) throw new InvalidDataException("Missing embedded setup version.");
+                using (var reader = new StreamReader(stream)) {
+                    var version = reader.ReadToEnd().Trim();
+                    if (!Regex.IsMatch(version, @"^[0-9][A-Za-z0-9.+-]{0,63}$")) throw new InvalidDataException("Invalid embedded setup version.");
+                    return version;
+                }
+            }
+        }
+        internal static string InstallArguments(string root, string version) {
+            if (!Regex.IsMatch(version, @"^[0-9][A-Za-z0-9.+-]{0,63}$")) throw new ArgumentException("Invalid setup version.");
+            return "-NoLogo -NoProfile -ExecutionPolicy Bypass -File \"" + Path.Combine(root, "scripts", "install-windows.ps1") + "\" -Mode Install -AppVersion \"" + version + "\"";
+        }
+        internal static string Mode(string[] args) {
+            if (args.Length == 0) return "gui";
+            if (args.Length != 1) return "invalid";
+            switch (args[0]) {
+                case "--silent": return "silent";
+                case "--preview": return "preview";
+                case "--verify-payload": return "verify";
+                case "--help": return "help";
+                default: return "invalid";
+            }
+        }
+        internal static int RunUnattended(string root, string version) {
+            var start = new ProcessStartInfo {
+                FileName = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe"),
+                Arguments = InstallArguments(root, version),
+                UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true,
+                StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8
+            };
+            using (var process = new Process { StartInfo = start }) {
+                process.OutputDataReceived += delegate(object sender, DataReceivedEventArgs line) { if (line.Data != null) Console.Out.WriteLine(line.Data); };
+                process.ErrorDataReceived += delegate(object sender, DataReceivedEventArgs line) { if (line.Data != null) Console.Error.WriteLine(line.Data); };
+                process.Start(); process.BeginOutputReadLine(); process.BeginErrorReadLine(); process.WaitForExit();
+                return process.ExitCode;
+            }
+        }
         [STAThread] static int Main(string[] args) {
+            var mode = Mode(args);
+            if (mode == "invalid") { Console.Error.WriteLine("Unknown setup arguments. Use --help."); return 2; }
+            if (mode == "help") { Console.Out.WriteLine("TideSetup.exe [--silent | --preview | --verify-payload | --help]"); return 0; }
             try {
-                if (args.Length == 1 && args[0] == "--verify-payload") { var root = Payload.Extract(); Payload.Remove(root); return 0; }
+                if (mode == "verify") { var root = Payload.Extract(); Payload.Remove(root); return 0; }
+                if (mode == "silent") {
+                    string root = null;
+                    try { root = Payload.Extract(); return RunUnattended(root, SetupVersion()); }
+                    finally { if (root != null) Payload.Remove(root); }
+                }
                 Application.EnableVisualStyles(); Application.SetCompatibleTextRenderingDefault(false);
-                Application.Run(new SetupWindow(args.Length == 1 && args[0] == "--preview")); return 0;
+                Application.Run(new SetupWindow(mode == "preview")); return 0;
             } catch (Exception error) {
                 if (args.Length > 0) { Console.Error.WriteLine(error.Message); return 1; }
                 MessageBox.Show("Tide Setup could not start. Download the installer again.\n\n" + error.Message, "Tide Setup"); return 1;

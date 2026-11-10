@@ -1,0 +1,78 @@
+import { Button, LineEdit, ScrollView, Palette } from "std-widgets.slint";
+export struct JamChoice { title: string, artist: string, duration: string }
+export component TideJamWindow inherits Window {
+    title: "Tide + Grove · Shared jam";
+    preferred-width: 560px; preferred-height: 720px; min-width: 460px; min-height: 540px;
+    background: #14181d; default-font-family: "Segoe UI"; default-font-size: 14px;
+    init => { Palette.color-scheme = ColorScheme.dark; }
+    in-out property <string> name: "Tide listener";
+    in-out property <string> address;
+    in-out property <string> invite-input;
+    in-out property <string> match-link;
+    in property <string> invitation;
+    in property <string> members;
+    in property <string> status: "Start a jam or join a friend's invitation.";
+    in property <string> message;
+    in property <bool> connected: false;
+    in property <bool> host: false;
+    in property <bool> busy: false;
+    in property <bool> matching: false;
+    in property <string> song;
+    in property <[JamChoice]> choices;
+    in-out property <bool> following: true;
+    private property <bool> network: false;
+    callback host-room;
+    callback join;
+    callback leave;
+    callback pair(int);
+    ScrollView {
+        VerticalLayout {
+            padding: 26px; spacing: 16px; alignment: start;
+            Text { text: "Listen together"; color: #f5f7fa; font-size: 28px; font-weight: 650; }
+            Text { text: "Tide + Grove · Experimental"; color: #79b9ef; font-size: 15px; }
+            Text { text: "Nearby devices, each playing through their own service. Match the same recording when switching services."; color: #aebbc9; wrap: word-wrap; }
+            if root.message != "" : Text { text: root.message; color: #e8bd7a; wrap: word-wrap; accessible-live-region: polite; }
+            if !root.connected : VerticalLayout {
+                spacing: 12px;
+                Text { text: "Your name"; color: #f5f7fa; }
+                LineEdit { text <=> root.name; accessible-label: "Your jam name"; }
+                Button { text: root.busy ? "Connecting…" : "Start a jam"; enabled: !root.busy; clicked => { root.host-room(); } }
+                Button { text: root.network ? "Hide network options" : "Network options"; clicked => { root.network = !root.network; } }
+                if root.network : LineEdit { text <=> root.address; placeholder-text: "Local network address"; accessible-label: "Jam host address"; }
+                if root.address == "127.0.0.1" : Text { text: "This address works on this computer only. Choose your Wi-Fi address in Network options for other devices."; color: #aebbc9; wrap: word-wrap; }
+                Text { text: "Or join a friend"; color: #f5f7fa; font-size: 19px; }
+                LineEdit { text <=> root.invite-input; placeholder-text: "Paste a Tide or Grove invitation"; accessible-label: "Jam invitation"; }
+                Button { text: "Join jam"; enabled: !root.busy; clicked => { root.join(); } }
+            }
+            if root.connected : VerticalLayout {
+                spacing: 14px;
+                Text { text: root.host ? "You're hosting" : "Listening with the host"; color: #f5f7fa; font-size: 20px; }
+                Button { text: root.host ? "End jam" : "Leave jam"; clicked => { root.leave(); } }
+                Text { text: root.status; color: #79b9ef; wrap: word-wrap; accessible-live-region: polite; }
+                Text { text: root.members; color: #aebbc9; wrap: word-wrap; }
+                if root.host : VerticalLayout {
+                    spacing: 10px;
+                    Text { text: "Share this invitation"; color: #f5f7fa; }
+                    LineEdit { text: root.invitation; read-only: true; accessible-label: "Share this jam invitation"; }
+                    Text { text: "Choose music in Tide. Your friends follow your song, pause and seeking."; color: #aebbc9; wrap: word-wrap; }
+                }
+                if !root.host : Button { text: root.following ? "Stop following" : "Follow host"; clicked => { root.following = !root.following; } }
+                if !root.host : Text { text: "Your original Tide queue returns when you leave this jam."; color: #aebbc9; wrap: word-wrap; }
+                if root.matching && root.following && !root.host : VerticalLayout {
+                    spacing: 12px;
+                    Text { text: "Choose the same song on YouTube"; color: #f5f7fa; font-size: 19px; }
+                    Text { text: root.song; color: #aebbc9; wrap: word-wrap; }
+                    for choice[index] in root.choices : VerticalLayout {
+                        spacing: 4px;
+                        Text { text: choice.title + " · " + choice.artist + " · " + choice.duration; color: #f5f7fa; wrap: word-wrap; }
+                        Button { text: "Use this recording"; clicked => { root.pair(index); } }
+                    }
+                    LineEdit { text <=> root.match-link; placeholder-text: "Or paste the matching YouTube link"; accessible-label: "Matching YouTube song"; accepted => { root.pair(-1); } }
+                    Button { text: "Use link"; clicked => { root.pair(-1); } }
+                    Text { text: "Use the same recording. Intros, ads and different versions can shift the timing."; color: #aebbc9; wrap: word-wrap; }
+                }
+            }
+            Text { text: "Trusted local networks only. Music and account credentials are never sent to the room. Cross-service rooms follow host playback; choose songs in the host app."; color: #aebbc9; font-size: 12px; wrap: word-wrap; }
+        }
+    }
+}

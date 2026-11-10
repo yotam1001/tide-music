@@ -7,6 +7,8 @@ build = "build.rs"
 
 [dependencies]
 tide-core = { path = "../core" }
+tide-jam = { path = "../jam" }
+tokio = { version = "1", features = ["sync"] }
 tide-playback = { path = "../playback" }
 tide-windows = { path = "../windows" }
 tide-provider = { path = "../provider" }

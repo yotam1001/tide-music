@@ -1,0 +1,25 @@
+name: Grove beta checks
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'crates/grove/**'
+      - 'crates/jam/**'
+      - 'ui/grove.slint'
+      - 'scripts/*grove*'
+      - 'installer/Grove*'
+      - 'Cargo.*'
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --locked --package grove-music --package tide-jam
+      - run: cargo clippy --locked --package grove-music --package tide-jam --all-targets -- -D warnings
+      - run: python scripts/test_grove_beta.py
+      - run: cargo fmt --package grove-music --package tide-jam -- --check

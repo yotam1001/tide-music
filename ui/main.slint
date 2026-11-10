@@ -1,4 +1,5 @@
 import { AboutSlint, Button, ComboBox, LineEdit, ListView, Palette, ScrollView, Slider } from "std-widgets.slint";
+export { TideJamWindow, JamChoice } from "jams.slint";
 
 export struct TrackRow {
     title: string,
@@ -231,6 +232,7 @@ component TideButton inherits Rectangle {
 // the lightweight layouts. The parent can replace this component once artwork
 // becomes part of the shared track model.
 component TransportButtons inherits Rectangle {
+    in property <bool> locked: false;
     in property <bool> paused;
     in property <bool> repeat-enabled;
     in property <bool> light-mode: false;
@@ -254,7 +256,7 @@ component TransportButtons inherits Rectangle {
         spacing: 9px;
         alignment: center;
 
-        if root.show-shuffle : TideButton {
+        if root.show-shuffle : TideButton { enabled: !root.locked;
             width: 36px;
             height: 36px;
             label: "Shuffle upcoming tracks";
@@ -269,7 +271,7 @@ component TransportButtons inherits Rectangle {
             clicked => { root.shuffle-queue(); }
         }
 
-        TideButton {
+        TideButton { enabled: !root.locked;
             width: 42px;
             height: 40px;
             label: "Previous track";
@@ -284,7 +286,7 @@ component TransportButtons inherits Rectangle {
             clicked => { root.previous-track(); }
         }
 
-        TideButton {
+        TideButton { enabled: !root.locked;
             width: 48px;
             height: 44px;
             label: root.paused ? "Play" : "Pause";
@@ -302,7 +304,7 @@ component TransportButtons inherits Rectangle {
             clicked => { root.toggle-pause(); }
         }
 
-        TideButton {
+        TideButton { enabled: !root.locked;
             width: 42px;
             height: 40px;
             label: "Next track";
@@ -317,7 +319,7 @@ component TransportButtons inherits Rectangle {
             clicked => { root.next-track(); }
         }
 
-        if root.show-repeat : TideButton {
+        if root.show-repeat : TideButton { enabled: !root.locked;
             width: 38px;
             height: 38px;
             label: root.repeat-enabled ? "Turn repeat off" : "Turn repeat on";
@@ -839,6 +841,7 @@ component QueueDrawer inherits Rectangle {
 }
 
 component PlayerBar inherits Rectangle {
+    in property <bool> following-jam: false;
     in property <bool> window-minimized: false;
     private property <int> input-revision: 0;
     private property <bool> repaint-phase: false;
@@ -902,7 +905,7 @@ component PlayerBar inherits Rectangle {
                     Text { text: root.track-artist; color: root.secondary; font-size: 12px; overflow: elide; }
                 }
             }
-            TransportButtons { x: (parent.width - self.width) / 2; y: 2px; width: 150px; height: 48px; paused: root.paused; light-mode: root.light-mode; show-repeat: false; show-shuffle: false; toggle-pause => { root.toggle-pause(); } previous-track => { root.previous-track(); } next-track => { root.next-track(); } }
+            TransportButtons { locked: root.following-jam; x: (parent.width - self.width) / 2; y: 2px; width: 150px; height: 48px; paused: root.paused; light-mode: root.light-mode; show-repeat: false; show-shuffle: false; toggle-pause => { root.toggle-pause(); } previous-track => { root.previous-track(); } next-track => { root.next-track(); } }
             HorizontalLayout {
                 x: parent.width - self.width;
                 y: 8px;
@@ -919,7 +922,7 @@ component PlayerBar inherits Rectangle {
             spacing: 9px;
             cross-axis-alignment: center;
             Text { width: 38px; text: root.format-time(root.position); color: root.secondary; font-size: 11px; horizontal-alignment: right; }
-            TideSlider { reset-revision: root.input-revision; light-mode: root.light-mode; horizontal-stretch: 1; minimum: 0; maximum: max(1, root.duration); value: root.position; enabled: root.duration > 0; label: "Playback position"; value-text: root.format-time(root.position); released(value) => { root.seek(value); } }
+            TideSlider { reset-revision: root.input-revision; light-mode: root.light-mode; horizontal-stretch: 1; minimum: 0; maximum: max(1, root.duration); value: root.position; enabled: root.duration > 0 && !root.following-jam; label: "Playback position"; value-text: root.format-time(root.position); released(value) => { root.seek(value); } }
             Text { width: 38px; text: root.format-time(root.duration); color: root.secondary; font-size: 11px; }
             VolumeMark { ink: root.secondary; }
             TideSlider { reset-revision: root.input-revision; light-mode: root.light-mode; width: root.compact || root.collapsed ? 105px : 150px; minimum: 0; maximum: 100; value: root.volume; label: "Volume"; value-text: root.volume.to-fixed(0) + "%"; changed(value) => { root.change-volume(value); } }
@@ -997,6 +1000,9 @@ export component AppWindow inherits Window {
     callback switch-mode();
     callback collapse-player();
     callback open-file();
+    callback open-jam();
+    in property <bool> following-jam: false;
+    in property <bool> jam-applying: false;
     callback clear-queue();
 
     in property <bool> detail-open;
@@ -1107,6 +1113,7 @@ export component AppWindow inherits Window {
                             spacing: 8px;
                             NavigationButton { light-mode: root.light-mode; enabled: root.browsing-enabled; active: !root.library-open; library: false; clicked => { root.library-open = false; root.home-open = true; root.close-detail(); root.close-search(); } }
                             NavigationButton { light-mode: root.light-mode; enabled: root.browsing-enabled; active: root.library-open; library: true; clicked => { root.library-open = true; root.home-open = false; root.close-detail(); root.close-search(); } }
+                            LibraryButton { height: 42px; light-mode: root.light-mode; caption: "Shared jam"; label: "Listen with Tide and Grove friends"; clicked => { root.open-jam(); } }
                             Rectangle { vertical-stretch: 1; }
                         }
                     }
@@ -1296,6 +1303,7 @@ export component AppWindow inherits Window {
                             HorizontalLayout { height: 36px; cross-axis-alignment: center; Text { horizontal-stretch: 1; text: "Appearance"; color: root.secondary; font-size: 12px; } LibraryButton { width: 116px; light-mode: root.light-mode; caption: root.light-mode ? "Use dark" : "Use light"; label: "Switch color theme"; clicked => { root.switch-mode(); } } }
                             HorizontalLayout { height: 36px; cross-axis-alignment: center; Text { horizontal-stretch: 1; text: "Window size"; color: root.secondary; font-size: 12px; } LibraryButton { width: 116px; light-mode: root.light-mode; caption: root.compact-mode ? "Full size" : "Compact"; label: "Switch window size"; clicked => { root.toggle-compact(); } } }
                             LibraryButton { height: 36px; light-mode: root.light-mode; caption: "Open audio file"; label: "Open a local audio file"; clicked => { root.open-file(); root.settings-open = false; } }
+                            LibraryButton { height: 36px; light-mode: root.light-mode; caption: "Shared jam · Tide + Grove"; label: "Open shared jams"; clicked => { root.open-jam(); root.settings-open = false; } }
                             LibraryButton { height: 34px; light-mode: root.light-mode; caption: root.advanced-open ? "Advanced -" : "Advanced +"; label: root.advanced-open ? "Hide advanced account options" : "Show advanced account options"; active: root.advanced-open; clicked => { root.advanced-open = !root.advanced-open; } }
                             if root.advanced-open : HorizontalLayout {
                                 height: 34px;
@@ -1318,6 +1326,7 @@ export component AppWindow inherits Window {
                 Text { x: 130px; width: max(0px, parent.width - 150px); height: parent.height; text: root.status-text; color: root.secondary; font-size: 11px; overflow: elide; vertical-alignment: center; accessible-live-region: polite; }
             }
             PlayerBar {
+                following-jam: root.following-jam;
                 window-minimized: root.minimized;
                 preferred-height: 110px;
                 min-height: 110px;

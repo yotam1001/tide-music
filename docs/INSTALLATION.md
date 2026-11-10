@@ -81,7 +81,7 @@ playback/session reliability remain release validation requirements.
 On Windows, build and validate the preview ZIP first, then run:
 
 ```powershell
-pwsh -File scripts/build-installer.ps1 -Package dist/tide-windows-preview.zip
+pwsh -File scripts/build-installer.ps1 -Package dist/tide-windows-preview.zip -AppVersion 0.1.0-preview
 ```
 
 The wrapper uses the Windows .NET Framework compiler, WinForms, and the existing
@@ -89,3 +89,12 @@ installer core. No additional installer framework or player runtime is introduce
 CI builds **TideSetup.exe** alongside the advanced ZIP and verifies its embedded
 payload without installing it. `--preview` exercises only the setup screens;
 `--verify-payload` checks and removes the temporary payload without installing.
+
+Newly built installers also support `--silent`: this runs the same verified
+payload without opening setup screens, waits for installation, and returns the
+underlying install script's exit code. Close Tide before updating. `--help`
+lists supported arguments; unknown or combined arguments fail without opening
+the GUI. Always pass the actual release version as `-AppVersion` when building;
+this is embedded in setup and used for Windows Apps version detection.
+
+See [WINGET.md](WINGET.md) for manifest generation and submission checks.
