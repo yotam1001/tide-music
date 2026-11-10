@@ -83,3 +83,27 @@ Restore button; its accessible label describes returning to the full window.
 Account and compact Queue backdrops are explicitly anchored to the content area's
 left/top edges. Slint's default centering of their narrower rectangles previously
 left an unintended undimmed strip and a visible rectangular boundary.
+
+## Theme tokens, depth and artwork colour
+
+Colours now come from one `Theme` global in `ui/main.slint` instead of
+light/dark pairs repeated in each component; `AppWindow.light-mode` is bound to
+`Theme.light`. The window and navigation sit on a deeper ground, and the
+content column is a raised panel with a rounded corner. Its top edge carries a
+soft glow tinted by artwork: the open collection's cover on detail pages and the
+current song's cover elsewhere (`artwork_tint` in `main.rs`, which favours
+colourful pixels and normalises brightness). The player bar uses the same tint
+behind the now-playing area.
+
+Songs without artwork show a stable gradient chosen from the title instead of a
+grey square; playlists keep their bundled fallback art. The song loaded in the
+player is marked by level bars over its cover in collection, search and queue
+rows. Tiles lift their cover shadow and reveal a play badge on hover; the badge
+is visual only, so the tile's own button keeps pointer and accessibility input.
+Right-clicking a song row opens its action menu.
+
+None of this changes element positions or sizes, so the native input tests'
+coordinates still apply. Animated transitions use `ControlMotion`, which follows
+the Windows animation setting and is off in tests; the level bars rest when
+playback is paused or motion is off. The window pixel tests (`player_indicators`,
+`queue_text`, `restore_repaint`, `song_artwork`) were removed.

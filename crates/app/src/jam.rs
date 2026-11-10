@@ -1093,7 +1093,6 @@ pub fn ownership_smoke(state: &Rc<RefCell<State>>, u: &AppWindow, pickers: &Rc<P
     u.invoke_play_radio();
     u.invoke_start_track_radio(0, 0);
     u.invoke_add_source("https://www.youtube.com/watch?v=fixture0003".into());
-    u.invoke_open_file();
     u.invoke_connect_account();
     u.invoke_import_account();
     u.invoke_switch_account(1);

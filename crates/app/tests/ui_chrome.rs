@@ -533,7 +533,9 @@ fn settings_theme_account_and_song_menu_remain_independent() {
     click(&ui, 920.0, 467.0);
     assert!(ui.get_settings_more_open(), "More options is reachable");
     draw(&window, 1140, 1200);
-    click(&ui, 920.0, 563.0);
+    // Windows media keys is the first switch now that Advanced no longer has
+    // an Open audio file button above it.
+    click(&ui, 920.0, 517.0);
     assert!(!ui.get_media_controls_enabled());
     assert_eq!(ui.get_shortcut_toggle(), "Ctrl+Alt+P");
     assert_eq!(ui.get_shortcut_next(), "Ctrl+Alt+N");

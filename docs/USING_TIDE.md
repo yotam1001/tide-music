@@ -7,8 +7,7 @@ open Tide from the Windows Start menu.
 
 Search for a song or paste a YouTube music link into the top bar. Select a song
 to play it. Or open **Library**, choose a playlist, then use **Play** or **Shuffle**.
-YouTube playback requires a verified account connection. Local audio works without
-one: choose **Settings → Advanced → Open audio file**.
+YouTube playback requires a verified account connection.
 
 The centered player buttons handle previous, pause/play and next. The bottom
 sliders control position and volume. Windows media controls are supported;

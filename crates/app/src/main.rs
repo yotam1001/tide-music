@@ -465,6 +465,7 @@ fn request_library_view(
         u.set_detail_has_cover(cover_id.is_some());
         u.set_detail_cover_variant(artwork::fallback_variant(cover_id.unwrap_or_default()));
         u.set_detail_cover(slint::Image::default());
+        u.set_has_detail_tint(false);
         music_feedback::set_playlist(s, u, None, None);
         s.artist_origin = None;
         s.artist_album_back = None;
@@ -1374,6 +1375,11 @@ fn refresh_content_models(s: &State, u: &AppWindow) {
         .filter(|_| u.get_detail_open() && u.get_detail_has_cover() && !u.get_detail_is_artist())
         .map(|url| s.artwork.borrow_mut().get_or_request(url))
         .unwrap_or_default();
+    set_tint(
+        &cover,
+        |tint| u.set_detail_tint(tint),
+        |has| u.set_has_detail_tint(has),
+    );
     u.set_detail_cover(cover);
     search_results::refresh(s, u);
     let selected = browse_filter::matching(&s.detail_tracks, 0, &u.get_detail_filter());
@@ -1644,8 +1650,14 @@ fn refresh(ui: &AppWindow, state: &State) {
         ui.set_track_artist(t.artist.clone().into());
         ui.set_track_artist_enabled(artists::can_open(t));
         ui.set_track_album(t.album.clone().into());
+        set_tint(
+            &current_art,
+            |tint| ui.set_now_tint(tint),
+            |has| ui.set_has_now_tint(has),
+        );
         ui.set_track_artwork(current_art);
     } else {
+        ui.set_has_now_tint(false);
         ui.set_track_title("Nothing playing".into());
         ui.set_track_artist("Add a file or paste a music link".into());
         ui.set_track_artist_enabled(false);
@@ -1655,6 +1667,42 @@ fn refresh(ui: &AppWindow, state: &State) {
         ui.set_track_artwork(slint::Image::default());
     }
 }
+/// A representative colour for a cover, favouring its colourful pixels and
+/// normalised in brightness so it reads as a tint in both themes.
+fn artwork_tint(image: &slint::Image) -> Option<slint::Color> {
+    let pixels = image.to_rgb8()?;
+    let (mut red, mut green, mut blue, mut weight) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
+    for pixel in pixels.as_slice().iter().step_by(7) {
+        let (r, g, b) = (f32::from(pixel.r), f32::from(pixel.g), f32::from(pixel.b));
+        let w = 0.1 + (r.max(g).max(b) - r.min(g).min(b)) / 255.0;
+        red += r * w;
+        green += g * w;
+        blue += b * w;
+        weight += w;
+    }
+    if weight <= 0.0 {
+        return None;
+    }
+    let (r, g, b) = (red / weight, green / weight, blue / weight);
+    let scale = 210.0 / r.max(g).max(b).max(24.0);
+    let channel = |value: f32| (value * scale).clamp(0.0, 255.0) as u8;
+    Some(slint::Color::from_rgb_u8(
+        channel(r),
+        channel(g),
+        channel(b),
+    ))
+}
+
+fn set_tint(image: &slint::Image, set: impl FnOnce(slint::Color), present: impl FnOnce(bool)) {
+    match artwork_tint(image) {
+        Some(tint) => {
+            set(tint);
+            present(true);
+        }
+        None => present(false),
+    }
+}
+
 fn report_error(state: &mut State, ui: &AppWindow, error: String) {
     ui.set_playback_error_action("".into());
     state.library_retry = None;
@@ -3320,41 +3368,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             });
         }};
-    }
-    {
-        let state = state.clone();
-        let weak = ui.as_weak();
-        let picker_busy = picker_busy.clone();
-        ui.on_open_file(move || {
-            if !local_controls_allowed(&state.borrow()) {
-                return;
-            }
-            let state = Rc::downgrade(&state);
-            let weak = weak.clone();
-            let error_ui = weak.upgrade();
-            let result = spawn_picker(&picker_busy, async move {
-                if let Some(file) = rfd::AsyncFileDialog::new()
-                    .set_title("Open audio file in Tide")
-                    .add_filter(
-                        "Audio",
-                        &["mp3", "m4a", "ogg", "opus", "flac", "wav", "aac"],
-                    )
-                    .pick_file()
-                    .await
-                {
-                    if let (Some(u), Some(state)) = (weak.upgrade(), state.upgrade()) {
-                        add(
-                            &mut state.borrow_mut(),
-                            &u,
-                            file.path().to_string_lossy().into_owned(),
-                        );
-                    }
-                }
-            });
-            if let (Err(error), Some(u)) = (result, error_ui) {
-                u.set_status_text(error.into());
-            }
-        });
     }
     bind!(on_toggle_pause, |s, u| {
         if s.connection_resume.is_none() && !s.active_playback && s.settings.queue.current.is_some()

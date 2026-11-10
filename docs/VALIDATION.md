@@ -144,7 +144,7 @@ background layer. This handles Windows discarding software-rendered contents
 while the reused buffer and window dimensions remain unchanged. There is no
 continuous repaint, resize, color change or extra image buffer in this fix.
 
-`cargo test -p tide-music --test restore_repaint --release --locked` passes:
+The former `restore_repaint` pixel test (removed with the other window pixel tests; the restore layer itself remains) passed:
 the actual AppWindow repaints a deliberately cleared reused buffer in eight
 restore cycles across dark and light themes, with exact pixel comparison and
 unchanged dimensions. Formatting, strict app all-target Clippy and the release

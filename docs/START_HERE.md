@@ -27,14 +27,12 @@ the [Chrome connection guide](https://github.com/yotam1001/tide-music/blob/main/
 The companion is loaded manually rather than from the Chrome Web Store.
 See [account setup](https://github.com/yotam1001/tide-music/blob/main/docs/ACCOUNT_SETUP.md).
 
-To try Tide without an account, skip this step and play a local audio file.
 
 ## 3. Play music
 
 - After connecting, search in the top bar, choose a playlist in **Library**, or
   pick a **Home** recommendation.
 - Open **Queue** to see upcoming tracks. Drag an upcoming song's handle to reorder.
-- Use **Settings → Advanced → Open audio file** for music on your PC.
 - The sun/moon button changes theme. **More (…) → Open mini player** makes the player smaller.
 
 ## Updates and help
