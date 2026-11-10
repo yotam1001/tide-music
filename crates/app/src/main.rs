@@ -1765,7 +1765,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     refresh(&ui, &state.borrow());
     ui.set_status_text(
         error
-            .unwrap_or_else(|| "Ready · paste a link, search, or open a file".into())
+            .unwrap_or_else(|| "Ready · search or paste a link".into())
             .into(),
     );
     send(
@@ -2396,38 +2396,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             });
         }};
-    }
-    {
-        let state = state.clone();
-        let weak = ui.as_weak();
-        let picker_busy = picker_busy.clone();
-        ui.on_open_file(move || {
-            let state = Rc::downgrade(&state);
-            let weak = weak.clone();
-            let error_ui = weak.upgrade();
-            let result = spawn_picker(&picker_busy, async move {
-                if let Some(file) = rfd::AsyncFileDialog::new()
-                    .set_title("Open audio file in Tide")
-                    .add_filter(
-                        "Audio",
-                        &["mp3", "m4a", "ogg", "opus", "flac", "wav", "aac"],
-                    )
-                    .pick_file()
-                    .await
-                {
-                    if let (Some(u), Some(state)) = (weak.upgrade(), state.upgrade()) {
-                        add(
-                            &mut state.borrow_mut(),
-                            &u,
-                            file.path().to_string_lossy().into_owned(),
-                        );
-                    }
-                }
-            });
-            if let (Err(error), Some(u)) = (result, error_ui) {
-                u.set_status_text(error.into());
-            }
-        });
     }
     bind!(on_toggle_pause, |s, u| {
         if s.connection_resume.is_none() && !s.active_playback && s.settings.queue.current.is_some()

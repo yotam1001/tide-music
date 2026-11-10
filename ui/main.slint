@@ -160,7 +160,6 @@ export component AppWindow inherits Window {
     callback shuffle-queue();
     callback switch-mode();
     callback collapse-player();
-    callback open-file();
     callback open-jam();
     in property <bool> following-jam: false;
     in property <bool> jam-applying: false;
@@ -399,7 +398,6 @@ export component AppWindow inherits Window {
                         NavigationButton { icon-only: !root.roomy; enabled: root.browsing-enabled; active: root.section == Page.home; icon: "home"; text: "Home"; label: "Open Home"; clicked => { root.navigate(Page.home); } }
                         NavigationButton { icon-only: !root.roomy; enabled: root.browsing-enabled; active: root.section == Page.library; icon: "library"; text: "Your library"; label: "Open your Library"; clicked => { root.navigate(Page.library); } }
                         NavigationButton { icon-only: !root.roomy; enabled: root.browsing-enabled; active: false; icon: "jam"; text: "Shared jam"; label: "Listen together with Tide and Grove friends"; clicked => { root.open-jam(); } }
-                        NavigationButton { icon-only: !root.roomy; enabled: root.browsing-enabled; active: false; icon: "file"; text: "Open file"; label: "Open a local audio file"; clicked => { root.open-file(); } }
                         if root.roomy : Rectangle { height: 17px; Rectangle { x: 10px; y: 8px; width: parent.width - 20px; height: 1px; background: Theme.divider; } }
                         if root.roomy && root.account-connected : SectionTitle { height: 26px; text: "   PLAYLISTS"; }
                         if root.roomy && root.account-connected : SidebarPlaylist {
@@ -539,12 +537,10 @@ export component AppWindow inherits Window {
                                     icon: root.account-connected ? "radio" : "note";
                                     heading: !root.account-connected ? "Start listening"
                                         : root.provider-busy ? "Loading your music…" : "No recommendations yet";
-                                    detail: !root.account-connected ? "Search above, paste a YouTube link or open a file. Connect YouTube Music for your playlists and personal picks."
+                                    detail: !root.account-connected ? "Search above or paste a YouTube link. Connect YouTube Music for your playlists and personal picks."
                                         : root.provider-busy ? "Your YouTube Music picks will appear here shortly." : "Refresh to load picks from your YouTube Music Home, or search above.";
                                     action: !root.account-connected ? "Connect YouTube Music" : root.provider-busy ? "" : "Refresh";
-                                    secondary-action: !root.account-connected ? "Open audio file" : "";
                                     act => { if root.account-connected { root.refresh-recommendations(); } else { root.settings-open = true; } }
-                                    act-secondary => { root.open-file(); }
                                 }
                             }
                         }
@@ -962,7 +958,7 @@ export component AppWindow inherits Window {
                                 SectionTitle { text: root.following-jam ? "FOLLOWING THE JAM HOST" : root.loading ? "LOADING" : root.paused ? "PAUSED" : "NOW PLAYING"; color: Theme.selected-ink; font-size: 11px; }
                             }
                             Text { text: root.has-track ? root.track-title : "Nothing playing"; color: Theme.text; font-size: 34px; font-weight: 800; wrap: word-wrap; max-height: 130px; overflow: elide; }
-                            Text { text: root.has-track ? (root.track-artist == "" ? "Unknown artist" : root.track-artist) : "Search, paste a link or open a file."; color: Theme.muted; font-size: 17px; overflow: elide; }
+                            Text { text: root.has-track ? (root.track-artist == "" ? "Unknown artist" : root.track-artist) : "Search or paste a link to start listening."; color: Theme.muted; font-size: 17px; overflow: elide; }
                             if root.track-album != "" : Text { text: root.track-album; color: Theme.faint; font-size: 13px; overflow: elide; }
                             Rectangle { height: 18px; }
                             HorizontalLayout {

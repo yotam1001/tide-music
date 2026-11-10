@@ -88,7 +88,7 @@ export component PlayerBar inherits Rectangle {
     private property <float> unmute-volume: 70;
     private property <string> subtitle: root.following-jam ? "Following the jam host"
         : root.loading ? "Loading…"
-        : root.has-track ? (root.track-artist == "" ? " " : root.track-artist) : "Search, paste a link or open a file";
+        : root.has-track ? (root.track-artist == "" ? " " : root.track-artist) : "Search or paste a link to start";
     background: Theme.chrome;
     if !root.collapsed && root.has-track : Rectangle {
         x: 0px;

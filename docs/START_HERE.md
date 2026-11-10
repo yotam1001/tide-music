@@ -13,7 +13,7 @@ PowerShell commands are needed. See [the installation guide](docs/INSTALLATION.m
 for update behavior, Windows Settings removal and the optional advanced browser
 helper setup. The ZIP and command launcher remain an alternative for developers.
 
-Launch Tide from the Start menu. Open a local audio file, paste a music link, or
+Launch Tide from the Start menu. Paste a music link or
 search from the header. Home and Library are the main destinations; Queue opens
 the upcoming tracks. Account contains theme and window-size controls. Mini has
 an expand icon to return to the full window.
