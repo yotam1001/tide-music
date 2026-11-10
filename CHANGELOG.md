@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.4.18 - 2026-11-11
+
 - Give the interface depth: one theme palette, a raised content panel and a glow
   tinted by the current artwork, also behind the player.
 - Show gradient art for songs without covers and level bars on the playing song.
