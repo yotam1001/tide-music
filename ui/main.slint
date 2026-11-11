@@ -1262,16 +1262,21 @@ export component AppWindow inherits Window {
                         triggered => { np.drift += 0.012; }
                     }
                     Image {
-                        x: -np.width * 0.06 * (1 + sin(np.drift * 1rad)); y: -np.height * 0.06 * (1 + cos(np.drift * 0.7rad));
-                        width: np.width * 1.12; height: np.height * 1.12;
+                        // Whole pixels: fractional placement of a scaled image
+                        // leaves a seam in the software renderer.
+                        x: round(-np.width * 0.06 * (1 + sin(np.drift * 1rad)) / 1px) * 1px;
+                        y: round(-np.height * 0.06 * (1 + cos(np.drift * 0.7rad)) / 1px) * 1px;
+                        width: round(np.width * 1.12 / 1px) * 1px; height: round(np.height * 1.12 / 1px) * 1px;
                         source: root.lyrics-backdrop.width > 0 ? root.lyrics-backdrop : root.track-artwork; image-fit: cover;
                         opacity: root.lyrics-backdrop.width > 0 ? (Theme.light ? 0.35 : 0.55) : (Theme.light ? 0.14 : 0.2);
                     }
                     Rectangle {
-                        background: @linear-gradient(180deg, Theme.window.with-alpha(0.35) 0%, Theme.window.with-alpha(0.82) 60%, Theme.window 100%);
+                        // Two stops only: the software renderer draws a seam
+                        // line at an intermediate gradient stop.
+                        background: @linear-gradient(180deg, Theme.window.with-alpha(0.4) 0%, Theme.window 100%);
                     }
                     Rectangle {
-                        background: @linear-gradient(160deg, root.hero-color.with-alpha(Theme.light ? 0.36 : 0.5) 0%, root.hero-color.with-alpha(0.08) 55%, root.hero-color.with-alpha(0) 100%);
+                        background: @linear-gradient(160deg, root.hero-color.with-alpha(Theme.light ? 0.36 : 0.5) 0%, root.hero-color.with-alpha(0) 100%);
                     }
                     HorizontalLayout {
                         padding-left: 56px; padding-right: 56px; padding-top: 56px; padding-bottom: 32px;
