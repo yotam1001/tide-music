@@ -1148,9 +1148,40 @@ def run(client, request):
     if action == "search":
         kind, query = request.get("kind"), request.get("query")
         kinds = {"songs": "song", "albums": "album", "artists": "artist", "playlists": "playlist"}
-        if (not isinstance(kind, str) or kind not in kinds or not isinstance(query, str) or not query.strip()
-                or len(query.encode("utf-8")) > 512 or any(ord(c) < 32 for c in query)):
+        if (not isinstance(kind, str) or (kind not in kinds and kind != "all") or not isinstance(query, str)
+                or not query.strip() or len(query.encode("utf-8")) > 512 or any(ord(c) < 32 for c in query)):
             return {"type": "error", "code": "search_unavailable"}
+        if kind == "all":
+            # Unfiltered search: YouTube Music's own mix of a top result and
+            # a few songs, albums, artists and playlists, in its order.
+            items = client.search(query.strip(), limit=MAX_SEARCH_CARDS)
+            cards = []
+            for item in items[:MAX_SEARCH_CARDS * 2] if isinstance(items, list) else []:
+                if not isinstance(item, dict) or item.get("resultType") not in kinds.values():
+                    continue
+                item = dict(item)
+                result = item["resultType"]
+                if result == "playlist" and isinstance(item.get("browseId"), str):
+                    item["browseId"] = item["browseId"].removeprefix("VL")
+                if not item.get("artists"):
+                    author = item.get("artist") if result == "album" else item.get("author")
+                    if isinstance(author, str):
+                        item["artists"] = [{"name": author}]
+                if result == "artist" and not clean(item.get("artist")):
+                    # The top result names an artist under "artists" or "title".
+                    names = item.get("artists") if isinstance(item.get("artists"), list) else []
+                    first = names[0] if names and isinstance(names[0], dict) else {}
+                    item["artist"] = clean(first.get("name")) or clean(item.get("title"))
+                    item["browseId"] = item.get("browseId") or first.get("id")
+                section = clean(item.get("category")) or result.title() + "s"
+                for card in browse_cards([item], result, section):
+                    card["shelf"] = section
+                    if all((card["kind"], card["id"]) != (seen["kind"], seen["id"]) for seen in cards):
+                        cards.append(card)
+            # Keep each section together, in the order YouTube Music ranks them.
+            order = list(dict.fromkeys(card["shelf"] for card in cards))
+            cards.sort(key=lambda card: order.index(card["shelf"]))
+            return {"type": "search", "kind": kind, "cards": cards[:MAX_SEARCH_CARDS]}
         items = client.search(query.strip(), filter=kind, limit=MAX_SEARCH_CARDS)
         normalized = []
         for item in items[:MAX_SEARCH_CARDS] if isinstance(items, list) else []:

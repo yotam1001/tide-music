@@ -98,7 +98,7 @@ fn typed_search_tabs_and_collections_keep_actions_at_each_size() {
             };
             let left = nav + if height >= 650 { 28.0 } else { 18.0 };
             let tabs_y = if height >= 650 { 168.0 } else { 158.0 };
-            for (index, offset) in [(1, 122.0), (2, 206.0), (3, 300.0)] {
+            for (index, offset) in [(4, 28.0), (1, 186.0), (2, 270.0), (3, 364.0)] {
                 click(&ui, left + offset, tabs_y);
                 assert_eq!(
                     selected.get(),
@@ -122,7 +122,7 @@ fn typed_search_tabs_and_collections_keep_actions_at_each_size() {
             }
             ui.set_search_busy(true);
             draw(&window, width, height);
-            click(&ui, left + 122.0, tabs_y);
+            click(&ui, left + 186.0, tabs_y);
             assert_eq!(
                 ui.get_search_kind(),
                 3,

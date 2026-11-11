@@ -914,10 +914,12 @@ export component AppWindow inherits Window {
                                 }
                                 HorizontalLayout {
                                     height: 32px; spacing: 8px; alignment: start;
-                                    for title[index] in ["Songs", "Albums", "Artists", "Playlists"] : LibraryTab {
-                                        title: title; label: title + " search results"; selected: root.search-kind == index; light-mode: root.light-mode;
+                                    // "All" is kind 4, YouTube Music's unfiltered mix.
+                                    for chip in [{ title: "All", kind: 4 }, { title: "Songs", kind: 0 }, { title: "Albums", kind: 1 }, { title: "Artists", kind: 2 }, { title: "Playlists", kind: 3 }] : LibraryTab {
+                                        width: chip.kind == 4 ? 56px : chip.kind == 3 ? 88px : 76px;
+                                        title: chip.title; label: chip.title + " search results"; selected: root.search-kind == chip.kind; light-mode: root.light-mode;
                                         enabled: root.browsing-enabled && !root.search-busy && !root.account-busy;
-                                        select => { root.select-search-kind(index); }
+                                        select => { root.select-search-kind(chip.kind); }
                                     }
                                 }
                                 if root.search-note != "" : HorizontalLayout {
@@ -972,10 +974,17 @@ export component AppWindow inherits Window {
                                     content-y <=> root.search-artwork-y;
                                     changed visible-height => { root.search-artwork-height = self.visible-height; }
                                     vertical-stretch: 1; accessible-label: "Music collection search results";
-                                    for card[index] in root.search-cards : HomeCard {
-                                        height: LayoutMetrics.browse-row-height; quick: true; item: card; source-index: index;
-                                        light-mode: root.light-mode; enabled: root.browsing-enabled && !root.account-busy;
-                                        select => { root.select-search-card(index); }
+                                    for card[index] in root.search-cards : VerticalLayout {
+                                        // The All view labels each YouTube Music section once.
+                                        if card.shelf != "" : Text {
+                                            height: LayoutMetrics.search-section-height; vertical-alignment: bottom;
+                                            text: card.shelf; color: root.foreground; font-size: 20px; font-weight: 800; overflow: elide;
+                                        }
+                                        HomeCard {
+                                            height: LayoutMetrics.browse-row-height; quick: true; item: card; source-index: index;
+                                            light-mode: root.light-mode; enabled: root.browsing-enabled && !root.account-busy;
+                                            select => { root.select-search-card(index); }
+                                        }
                                     }
                                 }
                                 if root.search-busy && root.search-result-count == 0 : LoadingTracks { placeholder-color: root.outline; }
