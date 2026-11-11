@@ -574,6 +574,11 @@ pub fn set_playlist(
     u.set_detail_editable_entries(ModelRc::new(VecModel::from(entries)));
 }
 
+/// The YouTube Music id of the playlist page that is open, if any.
+pub fn open_playlist_id(s: &State) -> Option<String> {
+    s.music_feedback.playlist.as_ref().map(|p| p.id.clone())
+}
+
 pub fn take_playlist(s: &mut State, u: &AppWindow) -> Option<PlaylistDetails> {
     let context = s.music_feedback.playlist.take();
     set_playlist(s, u, None, None);

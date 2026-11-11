@@ -16,9 +16,15 @@ export component Cover inherits Rectangle {
     in property <bool> now-playing: false;
     in property <bool> live: false;
     private property <bool> missing: root.artwork.width == 0 || root.artwork.height == 0;
-    private property <bool> painted: root.missing && !root.playlist && root.seed != "";
+    // Generated covers for songs and playlists without artwork: a two-colour
+    // gradient and soft shapes chosen from the title (or playlist id), so
+    // neighbouring covers differ instead of repeating one picture.
+    private property <bool> painted: root.missing && (root.seed != "" || root.playlist);
+    private property <int> key: root.seed != "" ? root.seed.character-count * 7 + root.variant * 3 : root.variant;
+    private property <int> layout: Math.mod(floor(root.key / 6), 5);
+    private property <length> side: min(root.width, root.height);
     border-radius: 7px;
-    background: root.painted ? Theme.art(Math.mod(root.seed.character-count, 6)) : Theme.cover;
+    background: root.painted ? Theme.art(Math.mod(root.key, 6)) : Theme.cover;
     clip: true;
     if root.artwork.width > 0 && root.artwork.height > 0 : Image {
         width: parent.width;
@@ -26,12 +32,32 @@ export component Cover inherits Rectangle {
         source: root.artwork;
         image-fit: root.preserve-artwork ? contain : cover;
     }
-    if (root.artwork.width == 0 || root.artwork.height == 0) && root.playlist : Image {
-        width: parent.width; height: parent.height;
-        source: mod(root.variant, 4) == 1 ? @image-url("assets/playlist-waves.svg") : mod(root.variant, 4) == 2 ? @image-url("assets/playlist-orbit.svg") : mod(root.variant, 4) == 3 ? @image-url("assets/playlist-rhythm.svg") : @image-url("assets/playlist-default.svg");
-        image-fit: root.preserve-artwork ? contain : cover;
+    if root.painted : Rectangle {
+        width: root.side * (root.layout == 2 ? 1.3 : 0.95); height: self.width; border-radius: self.width / 2;
+        x: root.layout == 0 ? root.width * 0.35 : root.layout == 1 ? -root.width * 0.3 : root.layout == 2 ? -root.width * 0.15 : root.layout == 3 ? root.width * 0.25 : -root.width * 0.2;
+        y: root.layout == 0 ? -root.height * 0.3 : root.layout == 1 ? root.height * 0.35 : root.layout == 2 ? root.height * 0.45 : root.layout == 3 ? root.height * 0.3 : -root.height * 0.35;
+        background: #ffffff1f;
     }
-    if (root.artwork.width == 0 || root.artwork.height == 0) && !root.playlist : Path {
+    if root.painted : Rectangle {
+        width: root.side * (root.layout == 4 ? 0.7 : 0.5); height: self.width; border-radius: self.width / 2;
+        x: root.layout == 0 ? -root.width * 0.12 : root.layout == 1 ? root.width * 0.55 : root.layout == 2 ? root.width * 0.6 : root.layout == 3 ? -root.width * 0.18 : root.width * 0.45;
+        y: root.layout == 0 ? root.height * 0.55 : root.layout == 1 ? -root.height * 0.1 : root.layout == 2 ? root.height * 0.05 : root.layout == 3 ? -root.height * 0.2 : root.height * 0.5;
+        background: root.layout == 1 || root.layout == 3 ? #00000024 : #ffffff2a;
+    }
+    // A quiet mark in the corner: level bars for songs, stacked lines for playlists.
+    if root.painted && root.side >= 40px : Rectangle {
+        x: min(root.side * 0.12, 24px); y: parent.height - self.x - self.height;
+        width: min(root.side * 0.22, 40px); height: self.width * 0.8;
+        for bar in 3 : Rectangle {
+            x: root.playlist ? 0px : bar * parent.width / 3;
+            y: root.playlist ? bar * parent.height / 3 : parent.height * (bar == 1 ? 0 : bar == 0 ? 0.35 : 0.2);
+            width: root.playlist ? parent.width * (bar == 2 ? 0.6 : 1) : parent.width / 4.5;
+            height: root.playlist ? parent.height / 5 : parent.height - self.y;
+            border-radius: min(self.width, self.height) / 2;
+            background: #ffffffc8;
+        }
+    }
+    if root.missing && !root.painted : Path {
         x: (parent.width - self.width) / 2;
         y: (parent.height - self.height) / 2;
         width: max(22px, min(72px, parent.width * 0.22));
@@ -39,7 +65,7 @@ export component Cover inherits Rectangle {
         viewbox-width: 24;
         viewbox-height: 24;
         fill: Colors.transparent;
-        stroke: root.painted ? #ffffffd0 : Theme.cover-ink;
+        stroke: Theme.cover-ink;
         stroke-width: 1.5px;
         commands: "M 9 18 L 9 5 L 20 3 L 20 16 M 9 8 L 20 6 M 9 18 C 9 22 3 22 3 19 C 3 16 9 15 9 18 Z M 20 16 C 20 20 14 20 14 17 C 14 14 20 13 20 16 Z";
     }
@@ -135,7 +161,7 @@ export component PlaylistTile inherits Rectangle {
     }
     if root.featured && root.width >= 360px : HorizontalLayout {
         padding: 20px; spacing: 18px; cross-axis-alignment: center;
-        Cover { width: 140px; height: 140px; artwork: root.artwork; playlist: root.playlist-cover; variant: root.cover-variant; light-mode: root.light-mode; }
+        Cover { width: 140px; height: 140px; artwork: root.artwork; playlist: root.playlist-cover; variant: root.cover-variant; light-mode: root.light-mode; seed: root.title; }
         VerticalLayout {
             horizontal-stretch: 1; min-width: 0px; spacing: 6px; alignment: center;
             Text { height: 14px; text: root.collection-kind == "artist" ? "Artist" : root.playlist-cover ? "Playlist" : "Album"; color: Theme.muted; font-size: 11px; font-weight: 500; }
@@ -347,7 +373,7 @@ export component SongRow inherits Rectangle {
     }
     if root.featured && root.width >= 360px : HorizontalLayout {
         padding: 20px; spacing: 18px; cross-axis-alignment: center;
-        Cover { width: 140px; height: 140px; artwork: root.track.artwork; light-mode: root.light-mode; }
+        Cover { width: 140px; height: 140px; artwork: root.track.artwork; light-mode: root.light-mode; seed: root.track.title; }
         VerticalLayout {
             horizontal-stretch: 1; min-width: 0px; spacing: 6px; alignment: center;
             Text { height: 14px; text: "Song"; color: Theme.muted; font-size: 11px; font-weight: 500; }
@@ -515,7 +541,7 @@ export component LibraryEntry inherits Rectangle {
         padding: 10px;
         spacing: 10px;
         cross-axis-alignment: center;
-        if root.shortcut-icon == "" : Cover { width: 48px; height: 48px; artwork: root.artwork; playlist: root.playlist-cover; variant: root.cover-variant; light-mode: root.light-mode; }
+        if root.shortcut-icon == "" : Cover { width: 48px; height: 48px; artwork: root.artwork; playlist: root.playlist-cover; variant: root.cover-variant; light-mode: root.light-mode; seed: root.title; }
         if root.shortcut-icon != "" : Rectangle {
             width: 48px; height: 48px; border-radius: 9px; background: Theme.selected;
             Path { x: 12px; y: 12px; width: 24px; height: 24px; viewbox-width: 24; viewbox-height: 24; fill: transparent; stroke: Theme.accent-ink; stroke-width: 1.7px; commands: root.shortcut-icon; }
@@ -647,11 +673,13 @@ export component CollectionArt inherits Rectangle {
     in property <int> variant;
     in property <image> artwork;
     in property <bool> light-mode;
+    // The playlist's title, so covers without artwork differ.
+    in property <string> seed;
     border-radius: 6px;
     clip: true;
     background: root.kind == "liked" ? @linear-gradient(135deg, #c43f68 0%, #6a3fb5 100%)
         : root.kind == "mix" ? @linear-gradient(135deg, #2f6fd6 0%, #8a55e0 100%) : Theme.cover;
-    if root.kind == "playlist" : Cover { width: parent.width; height: parent.height; artwork: root.artwork; playlist: true; variant: root.variant; light-mode: root.light-mode; }
+    if root.kind == "playlist" : Cover { width: parent.width; height: parent.height; artwork: root.artwork; playlist: true; variant: root.variant; light-mode: root.light-mode; seed: root.seed; }
     if root.kind != "playlist" : Path {
         x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
         width: parent.width * 0.46; height: self.width;
@@ -687,7 +715,7 @@ export component SidebarCollection inherits Rectangle {
     }
     HorizontalLayout {
         padding-left: 8px; padding-right: 8px; spacing: 10px; cross-axis-alignment: center;
-        CollectionArt { width: 34px; height: 34px; kind: root.kind; variant: root.variant; artwork: root.artwork; light-mode: root.light-mode; }
+        CollectionArt { width: 34px; height: 34px; kind: root.kind; variant: root.variant; artwork: root.artwork; light-mode: root.light-mode; seed: root.title; }
         VerticalLayout {
             horizontal-stretch: 1; min-width: 0px; spacing: 1px; alignment: center;
             Text { text: root.title; color: root.active ? Theme.selected-ink : Theme.text; font-size: 13px; font-weight: 600; overflow: elide; }
@@ -717,7 +745,7 @@ export component QuickTile inherits Rectangle {
         enabled: root.enabled; mouse-cursor: pointer;
         control := Button { width: parent.width; height: parent.height; opacity: 0; text: ""; enabled: root.enabled; accessible-label: "Open " + root.title; clicked => { root.open(); } }
     }
-    CollectionArt { x: 0px; y: 0px; width: root.height; height: root.height; border-radius: 0px; kind: root.kind; variant: root.variant; artwork: root.artwork; light-mode: root.light-mode; }
+    CollectionArt { x: 0px; y: 0px; width: root.height; height: root.height; border-radius: 0px; kind: root.kind; variant: root.variant; artwork: root.artwork; light-mode: root.light-mode; seed: root.title; }
     Text {
         x: root.height + 14px; width: root.width - self.x - 56px; height: root.height;
         text: root.title; color: Theme.text; font-size: 14px; font-weight: 700;

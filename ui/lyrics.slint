@@ -8,6 +8,9 @@ export component LyricsPage inherits Rectangle {
     in property <bool> light-mode;
     in property <[LyricRow]> lines;
     in property <string> sung-prefix;
+    in property <string> sung-before;
+    in property <float> word-progress: 1;
+    in property <int> gap-next: -1;
     in property <int> active: -1;
     in property <bool> synced;
     in property <bool> seek-enabled;
@@ -27,8 +30,9 @@ export component LyricsPage inherits Rectangle {
     callback retry;
     callback seek-line(int);
     function follow-current() {
-        if root.following && root.active >= 0 {
-            lyric-list.content-y = -max(0px, root.active * 108px - max(0px, (lyric-list.visible-height - 108px) / 2));
+        // Between lines, keep the upcoming one in view.
+        if root.following && (root.active >= 0 || root.gap-next >= 0) {
+            lyric-list.content-y = -max(0px, (root.active >= 0 ? root.active : root.gap-next) * 108px - max(0px, (lyric-list.visible-height - 108px) / 2));
         }
     }
     background: Theme.window;
@@ -36,14 +40,16 @@ export component LyricsPage inherits Rectangle {
     callback toggle-motion;
     // The component itself is destroyed on close, Mini or minimize. No global
     // animation-tick binding or full-window blur cache survives this surface.
+    // Slow, whole-pixel steps: moving the full-window backdrop is the most
+    // expensive thing this page draws, and it must not starve the karaoke.
     Timer {
-        interval: 50ms;
+        interval: 150ms;
         running: root.effects-active && root.motion-enabled && root.playing;
-        triggered => { root.phase = mod(root.phase + 0.002, 1); }
+        triggered => { root.phase = mod(root.phase + 0.006, 1); }
     }
     if root.effects-active && root.backdrop.width > 0 : Image {
-        x: -40px + sin(root.phase * 360deg) * 24px;
-        y: -40px + cos(root.phase * 360deg) * 20px;
+        x: round(-40 + sin(root.phase * 360deg) * 24) * 1px;
+        y: round(-40 + cos(root.phase * 360deg) * 20) * 1px;
         width: parent.width + 80px; height: parent.height + 80px;
         source: root.backdrop; image-fit: cover;
         opacity: root.light-mode ? 0.32 : 0.62;
@@ -53,6 +59,7 @@ export component LyricsPage inherits Rectangle {
         background: root.light-mode ? @linear-gradient(135deg, #f4eee6b0, #f4eee6e0) : @linear-gradient(135deg, #11131866, #111318e0);
     }
     changed active => { root.follow-current(); }
+    changed gap-next => { root.follow-current(); }
     VerticalLayout {
         x: max(0px, (parent.width - 1140px) / 2);
         width: min(parent.width, 1140px); height: parent.height;
@@ -100,10 +107,26 @@ export component LyricsPage inherits Rectangle {
                     opacity: !root.synced || root.active < 0 || index == root.active ? 1 : (abs(index - root.active) <= 1 ? 0.68 : 0.48);
                     animate color, opacity { duration: root.motion-enabled ? 220ms : 0ms; easing: ease-out; }
                 }
+                // Instrumental gap: breathing dots above the line that comes next.
+                if index == root.gap-next && root.active < 0 && root.synced : HorizontalLayout {
+                    x: 20px; y: 0px; height: 14px; spacing: 8px; alignment: start;
+                    for dot in 3 : Rectangle {
+                        width: 9px; height: 9px; border-radius: 4.5px; y: 2px;
+                        background: lyric-row.sung-ink;
+                        opacity: root.motion-enabled && root.playing
+                            ? 0.3 + 0.7 * abs(sin((root.phase * 24 - dot * 0.3) * 180deg)) : 0.6;
+                    }
+                }
+                // The fill grows through the current word, gliding between the
+                // app's 100ms updates.
                 if lyric-row.karaoke : Rectangle {
-                    x: 20px; y: 10px; width: min(parent.lyric-width, prefix.preferred-width); height: 88px;
+                    x: 20px; y: 10px; height: 88px;
+                    width: min(parent.lyric-width, before.preferred-width + (prefix.preferred-width - before.preferred-width) * root.word-progress);
                     clip: true;
-                    animate width { duration: root.motion-enabled && root.playing ? 110ms : 0ms; easing: ease-out; }
+                    animate width { duration: root.motion-enabled && root.playing ? 100ms : 0ms; easing: linear; }
+                    before := Text {
+                        visible: false; text: root.sung-before; font-size: lyric-row.lyric-size; font-weight: 750;
+                    }
                     prefix := Text {
                         visible: false; text: root.sung-prefix; font-size: lyric-row.lyric-size; font-weight: 750;
                     }

@@ -1,11 +1,14 @@
 //! Local audio preferences apply equally to a host, listener or solo player.
 use super::*;
-fn options(s: &Settings) -> tide_playback::AudioOptions {
+/// The engine's options at a crossfade `gain_db` (0 outside a crossfade).
+/// A crossfade shapes both ends of a song, so fades are off while it is on.
+pub(super) fn options(s: &Settings, gain_db: f64) -> tide_playback::AudioOptions {
     tide_playback::AudioOptions {
         normalize: s.normalize_volume,
         device: s.audio_device.clone(),
         equalizer: s.equalizer,
-        fade: s.fade_transitions,
+        fade: s.fade_transitions && s.crossfade_seconds == 0,
+        gain_db,
     }
 }
 pub fn apply(s: &State, u: &AppWindow) -> bool {
@@ -13,7 +16,7 @@ pub fn apply(s: &State, u: &AppWindow) -> bool {
         .engine
         .as_ref()
         .ok_or("Playback engine unavailable".to_string())
-        .and_then(|e| e.configure_audio(options(&s.settings)))
+        .and_then(|e| e.configure_audio(options(&s.settings, s.crossfade.primary_gain_db())))
     {
         Ok(()) => true,
         Err(_) => {
@@ -43,6 +46,7 @@ pub fn refresh(s: &State, u: &AppWindow, p: &tide_core::PlaybackSnapshot) {
     u.set_normalize_volume(s.settings.normalize_volume);
     u.set_equalizer(i32::from(s.settings.equalizer));
     u.set_fade_transitions(s.settings.fade_transitions);
+    u.set_crossfade_seconds(i32::from(s.settings.crossfade_seconds));
     u.set_audio_device_index(
         devices
             .iter()
@@ -67,7 +71,7 @@ pub fn refresh(s: &State, u: &AppWindow, p: &tide_core::PlaybackSnapshot) {
 pub fn install(state: &Rc<RefCell<State>>, ui: &AppWindow) {
     {
         let mut s = state.borrow_mut();
-        if !options(&s.settings).valid() {
+        if !options(&s.settings, 0.0).valid() {
             s.settings.audio_device = "auto".into();
             s.settings.equalizer = 0;
         }
@@ -108,6 +112,26 @@ pub fn install(state: &Rc<RefCell<State>>, ui: &AppWindow) {
             } else {
                 s.settings.fade_transitions = before;
             }
+        }
+    });
+    let state_crossfade = state.clone();
+    let weak = ui.as_weak();
+    ui.on_choose_crossfade(move |seconds| {
+        let (Some(u), Ok(seconds)) = (weak.upgrade(), u8::try_from(seconds)) else {
+            return;
+        };
+        if !crate::crossfade::LENGTHS.contains(&seconds) {
+            return;
+        }
+        let mut s = state_crossfade.borrow_mut();
+        crate::crossfade::Crossfade::cancel(&mut s);
+        let before = s.settings.crossfade_seconds;
+        s.settings.crossfade_seconds = seconds;
+        if apply(&s, &u) {
+            u.set_crossfade_seconds(i32::from(seconds));
+            save(&s.settings);
+        } else {
+            s.settings.crossfade_seconds = before;
         }
     });
     let state_equalizer = state.clone();
