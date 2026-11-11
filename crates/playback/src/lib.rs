@@ -17,7 +17,7 @@ use tokio::sync::{mpsc, watch};
 use url::Url;
 
 mod audio_options;
-pub use audio_options::AudioOptions;
+pub use audio_options::{AudioOptions, EQUALIZER_PRESETS};
 mod cookie_updates;
 mod prefetch;
 pub use cookie_updates::CookieUpdate;
@@ -1458,7 +1458,7 @@ async fn apply_audio_options(player: &mut RunningPlayer, options: &AudioOptions)
     if player
         .audio_options
         .as_ref()
-        .is_none_or(|old| old.normalize != options.normalize)
+        .is_none_or(|old| options.filters_differ(old))
     {
         send_ipc_command(
             &mut player.writer,
@@ -1906,10 +1906,16 @@ mod tests {
                 generation: 1,
             })
             .unwrap();
-        for enabled in [true, false, true] {
+        // Every equalizer preset, alone and before normalization, must be
+        // accepted by the bundled mpv.
+        let steps = (0..EQUALIZER_PRESETS.len() as u8)
+            .flat_map(|equalizer| [(true, equalizer), (false, equalizer)])
+            .chain([(true, 0)]);
+        for (enabled, equalizer) in steps {
             handle
                 .configure_audio(AudioOptions {
                     normalize: enabled,
+                    equalizer,
                     ..Default::default()
                 })
                 .unwrap();
@@ -1923,6 +1929,11 @@ mod tests {
                 assert!(p.error.is_none(), "Local audio failed");
                 assert_eq!(p.volume, 0.0);
                 if !p.loading && p.position > 0.1 && p.normalization_active == enabled {
+                    thread::sleep(Duration::from_millis(300));
+                    assert!(
+                        !handle.snapshot().audio_settings_error,
+                        "Bundled mpv rejected equalizer preset {equalizer}"
+                    );
                     break;
                 }
                 assert!(

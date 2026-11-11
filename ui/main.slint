@@ -225,6 +225,12 @@ export component AppWindow inherits Window {
     in property <int> audio-device-index;
     in property <string> audio-status;
     callback toggle-normalization();
+    // Equalizer preset index (see tide_playback::EQUALIZER_PRESETS); 0 is off.
+    in property <int> equalizer: 0;
+    callback choose-equalizer(int);
+    // Remaining sleep timer, e.g. "25 min" or "End of song"; empty when off.
+    in property <string> sleep-label;
+    callback cycle-sleep-timer();
     callback choose-audio-device(int);
     in-out property <bool> settings-shortcuts-open: false;
     in-out property <bool> settings-more-open: false;
@@ -1302,6 +1308,14 @@ export component AppWindow inherits Window {
                             HorizontalLayout {
                                 height: 36px; spacing: 8px; alignment: start;
                                 LibraryButton { width: 108px; height: 36px; border-radius: 18px; quiet: false; light-mode: root.light-mode; caption: "Lyrics"; leading-icon: "M 12 3 A 3 3 0 0 1 15 6 L 15 11 A 3 3 0 0 1 9 11 L 9 6 A 3 3 0 0 1 12 3 Z M 6 11 A 6 6 0 0 0 18 11 M 12 17 L 12 21"; label: "Open lyrics"; clicked => { root.now-playing-open = false; root.lyrics-open = true; } }
+                                LibraryButton {
+                                    width: root.sleep-label == "" ? 108px : 132px; height: 36px; border-radius: 18px; quiet: false; active: root.sleep-label != "";
+                                    light-mode: root.light-mode; show-tooltip: true;
+                                    caption: root.sleep-label == "" ? "Sleep" : root.sleep-label;
+                                    leading-icon: "M 20 14 A 8 8 0 1 1 10 4 A 6 6 0 0 0 20 14 Z";
+                                    label: root.sleep-label == "" ? "Sleep timer: off. Click to stop playback in 15 minutes" : "Sleep timer: " + root.sleep-label + ". Click to change";
+                                    clicked => { root.cycle-sleep-timer(); }
+                                }
                                 LibraryButton { width: 108px; height: 36px; border-radius: 18px; quiet: false; light-mode: root.light-mode; caption: "Queue"; leading-icon: "M 4 6 L 16 6 M 4 11 L 16 11 M 4 16 L 11 16 M 15 14 L 20 17 L 15 20 Z"; label: "Open the queue"; clicked => { root.now-playing-open = false; root.queue-open = true; } }
                             }
                             Rectangle { height: 10px; }
@@ -1445,6 +1459,16 @@ export component AppWindow inherits Window {
                                     ComboBox { model: ["1%", "2%", "5%", "10%"]; current-index: root.volume-step-index; accessible-label: "Volume adjustment step"; selected(value) => { root.set-volume-step(self.current-index); } }
                                     PreferenceRow { title: "Even volume"; detail: "Smooth volume differences between songs."; checked: root.normalize-volume; light-mode: root.light-mode; toggled => { root.toggle-normalization(); } }
                                     Text { text: "Smooth out loud and quiet songs locally. This changes the sound and adds a small processing delay. Off preserves the original dynamics."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
+                                    Text { text: "Equalizer"; color: root.foreground; font-size: 15px; font-weight: 600; }
+                                    for row in 2 : HorizontalLayout {
+                                        height: 32px; spacing: 8px; alignment: start;
+                                        for name[column] in (row == 0 ? ["Off", "Bass boost", "Bass reducer"] : ["Treble boost", "Vocal", "Loudness"]) : LibraryTab {
+                                            width: 104px; title: name; label: name + " equalizer preset";
+                                            selected: root.equalizer == row * 3 + column; light-mode: root.light-mode;
+                                            select => { root.choose-equalizer(row * 3 + column); }
+                                        }
+                                    }
+                                    Text { text: "Shapes Tide's sound only. Presets that raise a band lower the overall level first, so loud songs don't distort."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
                                 }
                                 if !root.settings-shortcuts-open && !root.settings-audio-open : VerticalLayout {
                                     spacing: 10px; alignment: start;

@@ -4,6 +4,7 @@ fn options(s: &Settings) -> tide_playback::AudioOptions {
     tide_playback::AudioOptions {
         normalize: s.normalize_volume,
         device: s.audio_device.clone(),
+        equalizer: s.equalizer,
     }
 }
 pub fn apply(s: &State, u: &AppWindow) -> bool {
@@ -39,6 +40,7 @@ fn outputs(s: &State, p: &tide_core::PlaybackSnapshot) -> Vec<tide_core::AudioDe
 pub fn refresh(s: &State, u: &AppWindow, p: &tide_core::PlaybackSnapshot) {
     let devices = outputs(s, p);
     u.set_normalize_volume(s.settings.normalize_volume);
+    u.set_equalizer(i32::from(s.settings.equalizer));
     u.set_audio_device_index(
         devices
             .iter()
@@ -65,6 +67,7 @@ pub fn install(state: &Rc<RefCell<State>>, ui: &AppWindow) {
         let mut s = state.borrow_mut();
         if !options(&s.settings).valid() {
             s.settings.audio_device = "auto".into();
+            s.settings.equalizer = 0;
         }
         if s.engine.is_some() {
             apply(&s, ui);
@@ -88,6 +91,25 @@ pub fn install(state: &Rc<RefCell<State>>, ui: &AppWindow) {
             } else {
                 s.settings.normalize_volume = before;
             }
+        }
+    });
+    let state_equalizer = state.clone();
+    let weak = ui.as_weak();
+    ui.on_choose_equalizer(move |index| {
+        let (Some(u), Ok(index)) = (weak.upgrade(), u8::try_from(index)) else {
+            return;
+        };
+        if usize::from(index) >= tide_playback::EQUALIZER_PRESETS.len() {
+            return;
+        }
+        let mut s = state_equalizer.borrow_mut();
+        let before = s.settings.equalizer;
+        s.settings.equalizer = index;
+        if apply(&s, &u) {
+            u.set_equalizer(i32::from(index));
+            save(&s.settings);
+        } else {
+            s.settings.equalizer = before;
         }
     });
     let state_output = state.clone();
