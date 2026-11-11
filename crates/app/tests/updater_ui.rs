@@ -108,7 +108,7 @@ fn sidebar_updates_remain_reachable_without_interrupting_playback() {
         );
         draw(&window, 1140, 800, "updater-sidebar-panel");
         let d = downloads.get();
-        click(&ui, 105.0, 578.0);
+        click(&ui, 570.0, 443.0);
         assert_eq!(downloads.get(), d + 1, "Update action is not reachable");
         draw(
             &window,
@@ -120,17 +120,17 @@ fn sidebar_updates_remain_reachable_without_interrupting_playback() {
                 "updater-downloading-dark"
             },
         );
-        click(&ui, 105.0, 578.0);
+        click(&ui, 570.0, 443.0);
         assert_eq!(
             downloads.get(),
             d + 1,
             "Busy update started another download"
         );
         let c = cancellations.get();
-        click(&ui, 310.0, 578.0);
+        click(&ui, 734.0, 443.0);
         assert_eq!(cancellations.get(), c + 1, "Cancel is not reachable");
         draw(&window, 1140, 800, "updater-canceling");
-        click(&ui, 310.0, 578.0);
+        click(&ui, 734.0, 443.0);
         assert_eq!(cancellations.get(), c + 1);
         ui.set_update_phase(2);
         ui.set_update_busy(false);
@@ -146,19 +146,19 @@ fn sidebar_updates_remain_reachable_without_interrupting_playback() {
             },
         );
         let r = restarts.get();
-        click(&ui, 105.0, 578.0);
+        click(&ui, 570.0, 443.0);
         assert_eq!(restarts.get(), r + 1, "Restart is not reachable");
         ui.set_update_phase(4);
         ui.set_update_busy(true);
         draw(&window, 1140, 800, "updater-preparing-restart");
-        click(&ui, 105.0, 578.0);
+        click(&ui, 570.0, 443.0);
         assert_eq!(
             restarts.get(),
             r + 1,
             "Preparing started a duplicate restart"
         );
         let c = cancellations.get();
-        click(&ui, 310.0, 578.0);
+        click(&ui, 734.0, 443.0);
         assert_eq!(
             cancellations.get(),
             c + 1,
@@ -167,7 +167,7 @@ fn sidebar_updates_remain_reachable_without_interrupting_playback() {
         ui.set_update_phase(2);
         ui.set_update_busy(false);
         draw(&window, 1140, 800, "updater-retry-restart");
-        click(&ui, 105.0, 578.0);
+        click(&ui, 570.0, 443.0);
         assert_eq!(
             restarts.get(),
             r + 2,
@@ -176,7 +176,7 @@ fn sidebar_updates_remain_reachable_without_interrupting_playback() {
         assert_eq!(playback.get(), 0);
         assert_eq!(ui.get_track_title(), "Synthetic update fixture");
     }
-    click(&ui, 300.0, 488.0);
+    click(&ui, 721.0, 495.0);
     assert!(!ui.get_update_panel_open());
     assert_eq!(
         ui.get_update_phase(),
@@ -198,12 +198,12 @@ fn sidebar_updates_remain_reachable_without_interrupting_playback() {
     click(&ui, 44.0, 286.0);
     assert!(ui.get_update_panel_open());
     draw(&window, 650, 420, "updater-narrow-recheck");
-    click(&ui, 105.0, 198.0);
+    click(&ui, 325.0, 243.0);
     assert_eq!(checks.get(), 1);
     assert!(ui.get_update_installable());
     draw(&window, 650, 420, "updater-narrow-download");
     let before = downloads.get();
-    click(&ui, 105.0, 198.0);
+    click(&ui, 325.0, 243.0);
     assert_eq!(downloads.get(), before + 1);
     assert_eq!(playback.get(), 0);
 }

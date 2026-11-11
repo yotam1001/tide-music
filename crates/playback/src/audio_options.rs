@@ -1,7 +1,7 @@
 //! Fixed native audio processing and bounded output metadata. No executable input.
 use serde_json::Value;
 use tide_core::AudioDevice;
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct AudioOptions {
     pub normalize: bool,
     pub device: String,
@@ -9,6 +9,9 @@ pub struct AudioOptions {
     pub equalizer: u8,
     /// Fade each song in and out (see [`fade_gain`]).
     pub fade: bool,
+    /// Output gain in dB, from -90 (silent) to 0, applied after volume.
+    /// Crossfades use it so the volume setting itself never moves.
+    pub gain_db: f64,
 }
 impl Default for AudioOptions {
     fn default() -> Self {
@@ -17,9 +20,13 @@ impl Default for AudioOptions {
             device: "auto".into(),
             equalizer: 0,
             fade: false,
+            gain_db: 0.0,
         }
     }
 }
+
+/// Quietest crossfade gain; mpv treats it as silence.
+pub const SILENT_GAIN_DB: f64 = -90.0;
 
 /// Seconds over which a song fades in, and out before it ends.
 pub const FADE_IN_SECONDS: f64 = 2.5;
@@ -68,7 +75,8 @@ pub const EQUALIZER_PRESETS: [(&str, &str); 6] = [
 ];
 impl AudioOptions {
     pub fn valid(&self) -> bool {
-        usize::from(self.equalizer) < EQUALIZER_PRESETS.len()
+        (SILENT_GAIN_DB..=0.0).contains(&self.gain_db)
+            && usize::from(self.equalizer) < EQUALIZER_PRESETS.len()
             && (self.device == "auto"
                 || (self.device.starts_with("wasapi/")
                     && self.device.len() > 7

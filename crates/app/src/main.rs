@@ -20,6 +20,7 @@ mod browse_filter;
 mod browse_layout;
 mod card_navigation;
 mod connection;
+mod crossfade;
 mod discord;
 mod discovery;
 mod history_feedback;
@@ -91,6 +92,8 @@ struct Settings {
     equalizer: u8,
     /// Fade songs in and out, like a gentle crossfade.
     fade_transitions: bool,
+    /// Crossfade length in seconds, one of `crossfade::LENGTHS`; 0 is off.
+    crossfade_seconds: u8,
     audio_device: String,
     repeat: bool,
     /// Most recent search queries, newest first (at most eight).
@@ -126,6 +129,7 @@ impl Default for Settings {
             normalize_volume: false,
             equalizer: 0,
             fade_transitions: false,
+            crossfade_seconds: 0,
             audio_device: "auto".into(),
             repeat: false,
             recent_searches: Vec::new(),
@@ -280,6 +284,9 @@ struct State {
     autoplay_recent: std::collections::VecDeque<String>,
     /// Session-only sleep timer; never persisted.
     sleep_timer: Option<SleepTimer>,
+    /// The playlist the queue was started from; autoplay blends its radio.
+    queue_context: Option<String>,
+    crossfade: crossfade::Crossfade,
     radio_resume_when_ready: bool,
     volume_save_pending: bool,
     artwork: RefCell<artwork::ArtworkCache>,
@@ -677,6 +684,7 @@ fn request_radio(s: &mut State, u: &AppWindow, tx: &mpsc::SyncSender<LibraryResu
         tide_provider::Request::Autoplay {
             video_id: autoplay_seed(s).unwrap_or(seed),
             exclude: autoplay_exclusions(s),
+            playlist_id: s.queue_context.clone(),
         }
     };
     request_library(s, u, tx, request);
@@ -1148,6 +1156,40 @@ fn configure_account_playback(s: &mut State, u: &AppWindow) -> bool {
     }
 }
 
+/// Your own playlists first, then ones you saved, then Blends and automatic
+/// mixes. Liked Music and system lists (episodes, saved shorts) are dropped:
+/// Liked Songs has its own entry. YouTube Music's order is kept in each group.
+fn order_library(playlists: Vec<tide_provider::Playlist>) -> Vec<tide_provider::Playlist> {
+    let mut playlists: Vec<_> = playlists
+        .into_iter()
+        .filter(|p| !matches!(p.id.as_str(), "LM" | "SE" | "SS"))
+        .collect();
+    playlists.sort_by_key(library_group);
+    playlists
+}
+
+/// 0: owned, 1: saved playlists, 2: Blends and generated mixes.
+fn library_group(p: &tide_provider::Playlist) -> u8 {
+    if !p.id.starts_with("PL") && !p.id.starts_with("VL") {
+        2
+    } else if p.owned {
+        0
+    } else {
+        1
+    }
+}
+
+/// How many playlists the sidebar lists: real playlists, not mixes.
+fn sidebar_playlist_count(s: &State) -> usize {
+    s.library_playlists
+        .iter()
+        .take_while(|p| library_group(p) < 2)
+        .count()
+}
+
+/// Sidebar covers load regardless of the Library page's scroll position.
+const SIDEBAR_ARTWORK: usize = 40;
+
 fn refresh_library_models(s: &State, u: &AppWindow) {
     let mut artwork = s.artwork.borrow_mut();
     let row_height = u.global::<LayoutMetrics>().get_browse_row_height();
@@ -1175,8 +1217,9 @@ fn refresh_library_models(s: &State, u: &AppWindow) {
         })
         .collect();
     let home_groups = browse_layout::home_groups(&labels, u.get_home_columns().max(1) as usize);
+    // Home scrolls as one page: the shelves start below its header.
     let visible_groups = artwork_view::visible_range(
-        u.get_home_artwork_y(),
+        u.get_home_artwork_y() + u.get_home_header_height(),
         u.get_home_artwork_height(),
         home_groups.iter().map(|g| {
             (match g.layout {
@@ -1211,6 +1254,8 @@ fn refresh_library_models(s: &State, u: &AppWindow) {
             })
             .collect(),
     ));
+    let sidebar_count = sidebar_playlist_count(s);
+    u.set_sidebar_playlist_count(sidebar_count as i32);
     let playlists: Vec<PlaylistRow> = s
         .library_playlists
         .iter()
@@ -1224,11 +1269,12 @@ fn refresh_library_models(s: &State, u: &AppWindow) {
                 .artwork_url
                 .as_deref()
                 .filter(|_| {
-                    playlist_images.contains(&index)
-                        && u.get_library_open()
-                        && u.get_library_section() == 0
-                        && !u.get_detail_open()
-                        && !u.get_search_open()
+                    (index < SIDEBAR_ARTWORK.min(sidebar_count) && !u.get_compact_mode())
+                        || (playlist_images.contains(&index)
+                            && u.get_library_open()
+                            && u.get_library_section() == 0
+                            && !u.get_detail_open()
+                            && !u.get_search_open())
                 })
                 .map(|url| artwork.get_or_request(url))
                 .unwrap_or_default(),
@@ -1365,11 +1411,15 @@ fn restore_settings(value: serde_json::Value) -> Settings {
         normalize_volume,
         equalizer,
         fade_transitions,
+        crossfade_seconds,
         audio_device,
         repeat,
         recent_searches,
         animations,
     );
+    if !crossfade::LENGTHS.contains(&settings.crossfade_seconds) {
+        settings.crossfade_seconds = 0;
+    }
     if !(0..=3).contains(&settings.volume_step_index) {
         settings.volume_step_index = 1;
     }
@@ -1597,6 +1647,7 @@ fn start_tracks(
     if play(s, u) {
         u.set_queue_source("".into());
         u.set_error_message("".into());
+        s.queue_context = None;
         true
     } else {
         s.settings.queue = previous;
@@ -1606,7 +1657,15 @@ fn start_tracks(
 }
 fn start_detail_tracks(s: &mut State, u: &AppWindow, index: usize, shuffle: bool) {
     let tracks = s.detail_tracks.clone();
+    let context = if u.get_detail_navigation() == "liked" {
+        Some("LM".to_owned())
+    } else if u.get_detail_is_artist() {
+        None
+    } else {
+        music_feedback::open_playlist_id(s)
+    };
     if start_tracks(s, u, tracks, index, shuffle) {
+        s.queue_context = context;
         let title = u.get_detail_title();
         let source = if u.get_detail_is_artist() {
             format!("Artist · {title}")
@@ -1762,6 +1821,15 @@ fn refresh(ui: &AppWindow, state: &State) {
             |has| ui.set_has_now_tint(has),
         );
         ui.set_track_artwork(current_art);
+        // Now Playing shows the cover at up to 420px: fetch a large one only
+        // while it is open, and drop it afterwards.
+        let large = t
+            .artwork_url
+            .as_deref()
+            .filter(|_| ui.get_now_playing_open())
+            .map(|url| artwork.get_or_request_large(url))
+            .unwrap_or_default();
+        ui.set_track_artwork_large(large);
     } else {
         ui.set_has_now_tint(false);
         ui.set_track_title("Nothing playing".into());
@@ -1771,6 +1839,7 @@ fn refresh(ui: &AppWindow, state: &State) {
         ui.set_playback_hint("".into());
         ui.set_track_album("".into());
         ui.set_track_artwork(slint::Image::default());
+        ui.set_track_artwork_large(slint::Image::default());
     }
 }
 /// A representative colour for a cover, favouring its colourful pixels and
@@ -2467,6 +2536,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 || smoke_early_skip
                 || listening_seconds.is_some())
             .then_some(0.0),
+            // Opt-in: verify crossfade during a muted listening check.
+            crossfade_seconds: std::env::args()
+                .skip_while(|a| a != "--smoke-crossfade")
+                .nth(1)
+                .and_then(|value| value.parse().ok())
+                .filter(|seconds| crossfade::LENGTHS.contains(seconds))
+                .unwrap_or(0),
             ..Settings::default()
         };
     }
@@ -2581,6 +2657,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         radio_requests: radio::RadioRequests::default(),
         autoplay_recent: std::collections::VecDeque::new(),
         sleep_timer: None,
+        queue_context: None,
+        crossfade: crossfade::Crossfade::default(),
         radio_resume_when_ready: false,
         volume_save_pending: false,
         artwork: RefCell::new(if test_mode {
@@ -3535,6 +3613,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         u.set_recent_searches(recent_model(&s.settings));
         save(&s.settings);
     });
+    {
+        // Opening Now Playing fetches its large cover; closing drops it.
+        let state = state.clone();
+        let weak = ui.as_weak();
+        ui.on_now_playing_toggled(move || {
+            if let Some(u) = weak.upgrade() {
+                refresh(&u, &state.borrow());
+            }
+        });
+    }
     bind!(on_cycle_sleep_timer, |s, u| {
         let now = Instant::now();
         s.sleep_timer = next_sleep_timer(s.sleep_timer, now);
@@ -4374,7 +4462,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             s.account_error = false;
                             u.set_error_is_account(false);
                             u.set_error_message("".into());
-                            s.library_playlists = playlists.into_iter().take(200).collect();
+                            s.library_playlists = order_library(playlists.into_iter().take(200).collect());
                             u.set_library_artwork_y(0.0);
                             u.set_library_artwork_y(0.0);
                             u.set_account_name(account.into());
@@ -4709,6 +4797,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 refresh(&u, &s);
                             }
                         }
+                    }
+                    if crossfade::tick(&mut s, &u, &p) {
+                        // The standby engine took over; `p` is the old one's.
+                        return;
                     }
                     if !local_controls_allowed(&s) { return; }
                     if let Some(SleepTimer::At(deadline)) = s.sleep_timer {

@@ -17,7 +17,7 @@ use tokio::sync::{mpsc, watch};
 use url::Url;
 
 mod audio_options;
-pub use audio_options::{fade_gain, AudioOptions, EQUALIZER_PRESETS};
+pub use audio_options::{fade_gain, AudioOptions, EQUALIZER_PRESETS, SILENT_GAIN_DB};
 mod cookie_updates;
 mod prefetch;
 pub use cookie_updates::CookieUpdate;
@@ -1468,6 +1468,18 @@ async fn apply_audio_options(player: &mut RunningPlayer, options: &AudioOptions)
         send_ipc_command(
             &mut player.writer,
             json!(["set_property", "audio-device", options.device]),
+            Some(-101),
+        )
+        .await?;
+    }
+    if player
+        .audio_options
+        .as_ref()
+        .is_none_or(|old| old.gain_db != options.gain_db)
+    {
+        send_ipc_command(
+            &mut player.writer,
+            json!(["set_property", "volume-gain", options.gain_db]),
             Some(-101),
         )
         .await?;

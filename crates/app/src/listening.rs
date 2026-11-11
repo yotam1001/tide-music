@@ -122,6 +122,10 @@ pub(super) fn start(
                 && previous.duration > 0.0 && previous.duration - previous.position <= 3.0 {
                 natural_transitions += 1;
                 println!("Listening check: natural transition {natural_transitions}");
+                // A crossfade hands over a song that is already playing.
+                if p.position >= 1.0 {
+                    println!("Listening check: crossfade handoff, next song already at {:.1}s", p.position);
+                }
             }
             last_progress = Instant::now();
         }

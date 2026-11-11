@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- Add true crossfade (3–12 s) in Settings → Audio: the next song starts under
+  the end of the current one, using a second short-lived player while they
+  overlap.
+- Autoplay after a playlist or Liked Songs blends that playlist's radio with the
+  last song's Up next, like YouTube Music continuing a playlist.
+- Home's recent-listening shelf mixes three recent songs, at most two songs per
+  artist, and sits below YouTube Music's first two shelves.
+- Home scrolls as one page; playlist headers collapse to a compact bar while
+  you scroll.
+- The sidebar shows your own playlists first, with covers, and leaves Blends,
+  mixes and system lists to the Library page.
+- A new update dialog, sharper Now Playing artwork and generated covers for
+  songs and playlists without artwork.
+- Smoother karaoke that glides through each word, breathing dots during
+  instrumental breaks, and a lighter lyrics background.
+
 - Add equalizer presets in Settings → Audio: Bass boost, Bass reducer, Treble
   boost, Vocal and Loudness. Boosting presets lower the level first to avoid
   distortion, and work together with Even volume.

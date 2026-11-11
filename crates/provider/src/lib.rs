@@ -183,6 +183,10 @@ pub enum Request {
     Autoplay {
         video_id: String,
         exclude: Vec<String>,
+        /// The playlist the queue was started from, when there is one: its
+        /// radio is blended in, like YouTube Music continuing a playlist.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        playlist_id: Option<String>,
     },
     Liked,
     Supermix,
@@ -2599,6 +2603,7 @@ mod tests {
         let request = Request::Autoplay {
             video_id: "K4DyBUG242c".into(),
             exclude: vec!["abcdefghijk".into()],
+            playlist_id: None,
         };
         assert_eq!(
             serde_json::to_value(request).unwrap(),

@@ -19,6 +19,8 @@ const PENDING_CAPACITY: usize = 32;
 const SIDE: u32 = 160;
 const FEATURE_SIDE: u32 = 320;
 const FEATURE_CAPACITY: usize = 4;
+/// Now Playing's large cover; one at a time, evicted like any other entry.
+const LARGE_SIDE: u32 = 512;
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 const MAX_SOURCE_PIXELS: u64 = 1_000_000;
 const MAX_URL_BYTES: usize = 4096;
@@ -150,6 +152,11 @@ impl ArtworkCache {
 
     pub fn get_or_request_current(&mut self, url: &str) -> Image {
         self.request(url, SIDE, true)
+    }
+
+    /// The current song's cover at Now Playing size, from a larger source.
+    pub fn get_or_request_large(&mut self, url: &str) -> Image {
+        self.request(&large_url(url), LARGE_SIDE, true)
     }
 
     pub fn get_or_request_feature(&mut self, url: &str) -> Image {
@@ -456,10 +463,48 @@ fn decode_thumbnail(bytes: &[u8], side: u32) -> Option<Vec<u8>> {
     })
 }
 
+/// Ask YouTube's image hosts for a larger rendition of the same cover.
+/// Google-hosted covers take their size from the URL's `=w…-h…` suffix;
+/// video thumbnails switch to the 480px `hqdefault`. Anything else is kept.
+pub fn large_url(url: &str) -> String {
+    let Ok(parsed) = url::Url::parse(url) else {
+        return url.to_owned();
+    };
+    let host = parsed.host_str().unwrap_or_default();
+    if host.ends_with("googleusercontent.com") || host.ends_with("ggpht.com") {
+        if let Some((base, _)) = url.rsplit_once('=') {
+            return format!("{base}=w544-h544-l90-rj");
+        }
+    }
+    if host == "i.ytimg.com" {
+        if let Some((base, _)) = url.rsplit_once('/') {
+            if base.contains("/vi/") {
+                return format!("{base}/hqdefault.jpg");
+            }
+        }
+    }
+    url.to_owned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    #[test]
+    fn large_covers_request_a_bigger_rendition_of_the_same_image() {
+        assert_eq!(
+            large_url("https://lh3.googleusercontent.com/abc=w120-h120-l90-rj"),
+            "https://lh3.googleusercontent.com/abc=w544-h544-l90-rj"
+        );
+        assert_eq!(
+            large_url("https://i.ytimg.com/vi/K4DyBUG242c/sddefault.jpg?sqp=x"),
+            "https://i.ytimg.com/vi/K4DyBUG242c/hqdefault.jpg"
+        );
+        assert_eq!(
+            large_url("https://example.test/a.jpg"),
+            "https://example.test/a.jpg"
+        );
+    }
     #[test]
     fn only_public_https_thumbnail_hosts_are_allowed() {
         for value in [

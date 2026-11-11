@@ -101,14 +101,57 @@ fn active_line(lines: &[LyricLine], position: f64) -> i32 {
         .map_or(-1, |i| i as i32)
 }
 
-fn sung_prefix(line: &LyricLine, position: f64) -> &str {
+/// The karaoke fill at `position`: text sung before the current word, text
+/// through the end of the current word, and progress through that word
+/// (0–1), so the highlight glides across a word instead of jumping.
+fn karaoke(line: &LyricLine, position: f64) -> (&str, &str, f32) {
+    let now = position * 1000.0;
     let count = line
         .words
-        .partition_point(|word| word.start_ms as f64 <= position * 1000.0);
-    count
-        .checked_sub(1)
-        .and_then(|index| line.text.get(..line.words[index].end_byte))
-        .unwrap_or("")
+        .partition_point(|word| word.start_ms as f64 <= now);
+    let Some(index) = count.checked_sub(1) else {
+        return ("", "", 0.0);
+    };
+    let start = if index == 0 {
+        0
+    } else {
+        line.words[index - 1].end_byte
+    };
+    let (Some(before), Some(through)) = (
+        line.text.get(..start),
+        line.text.get(..line.words[index].end_byte),
+    ) else {
+        return ("", "", 0.0);
+    };
+    let begins = line.words[index].start_ms as f64;
+    let ends = line
+        .words
+        .get(index + 1)
+        .map(|word| word.start_ms)
+        .or(line.end_ms)
+        .map_or(begins + 600.0, |ms| ms as f64);
+    let progress = if ends > begins {
+        ((now - begins) / (ends - begins)).clamp(0.0, 1.0)
+    } else {
+        1.0
+    };
+    (before, through, progress as f32)
+}
+
+/// During an instrumental gap of synced lyrics, the line that comes next.
+fn upcoming_line(lines: &[LyricLine], position: f64) -> i32 {
+    if !position.is_finite() || position < 0.0 {
+        return -1;
+    }
+    lines
+        .iter()
+        .position(|line| {
+            !line.text.is_empty()
+                && line
+                    .start_ms
+                    .is_some_and(|ms| ms as f64 > position * 1000.0)
+        })
+        .map_or(-1, |index| index as i32)
 }
 
 fn clear(ui: &AppWindow) {
@@ -337,12 +380,26 @@ pub fn install(state: &Rc<RefCell<State>>, ui: &AppWindow) -> Lyrics {
                         .filter(|p| p.generation == key.generation && !p.loading)
                         .map_or(f64::NAN, |p| p.position);
                     let active = active_line(&r.lines, position);
-                    let prefix = usize::try_from(active)
+                    let (before, prefix, progress) = usize::try_from(active)
                         .ok()
                         .and_then(|index| r.lines.get(index))
-                        .map_or("", |line| sung_prefix(line, position));
+                        .map_or(("", "", 1.0), |line| karaoke(line, position));
+                    if ui.get_lyrics_sung_before().as_str() != before {
+                        ui.set_lyrics_sung_before(before.into());
+                    }
                     if ui.get_lyrics_sung_prefix().as_str() != prefix {
                         ui.set_lyrics_sung_prefix(prefix.into());
+                    }
+                    if (ui.get_lyrics_word_progress() - progress).abs() >= 0.01 {
+                        ui.set_lyrics_word_progress(progress);
+                    }
+                    let gap = if active < 0 {
+                        upcoming_line(&r.lines, position)
+                    } else {
+                        -1
+                    };
+                    if ui.get_lyrics_gap_next() != gap {
+                        ui.set_lyrics_gap_next(gap);
                     }
                     if ui.get_lyrics_active() != active {
                         ui.set_lyrics_active(active);
@@ -488,6 +545,45 @@ mod tests {
         assert_eq!(active_line(&[ended], 1.6), -1);
         assert_eq!(active_line(&lines, f64::NAN), -1);
         assert_eq!(active_line(&[line(None, "Plain")], 10.0), -1);
+    }
+    #[test]
+    fn karaoke_glides_through_each_word_and_gaps_point_at_the_next_line() {
+        let sung = LyricLine {
+            text: "Hello there world".into(),
+            start_ms: Some(1000),
+            end_ms: Some(4000),
+            words: vec![
+                tide_provider::LyricWord {
+                    start_ms: 1000,
+                    end_byte: 5,
+                },
+                tide_provider::LyricWord {
+                    start_ms: 2000,
+                    end_byte: 11,
+                },
+                tide_provider::LyricWord {
+                    start_ms: 3000,
+                    end_byte: 17,
+                },
+            ],
+        };
+        assert_eq!(karaoke(&sung, 0.5), ("", "", 0.0));
+        assert_eq!(karaoke(&sung, 1.5), ("", "Hello", 0.5));
+        assert_eq!(karaoke(&sung, 2.25), ("Hello", "Hello there", 0.25));
+        assert_eq!(
+            karaoke(&sung, 3.5),
+            ("Hello there", "Hello there world", 0.5)
+        );
+        assert_eq!(karaoke(&sung, 9.0).2, 1.0);
+        let lines = vec![
+            line(Some(1000), "First"),
+            line(Some(5000), ""),
+            line(Some(7000), "Next"),
+        ];
+        assert_eq!(upcoming_line(&lines, 0.0), 0);
+        assert_eq!(upcoming_line(&lines, 6.0), 2);
+        assert_eq!(upcoming_line(&lines, 8.0), -1);
+        assert_eq!(upcoming_line(&lines, f64::NAN), -1);
     }
     #[test]
     fn rejects_oversized_mixed_and_unordered_timings() {

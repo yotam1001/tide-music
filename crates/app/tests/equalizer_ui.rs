@@ -64,19 +64,19 @@ fn equalizer_chips_choose_each_preset() {
         weak.upgrade().unwrap().set_equalizer(index);
     });
     ui.show().unwrap();
-    draw(&window, 1140, 900, "equalizer-off");
+    draw(&window, 1140, 1000, "equalizer-off");
     // Two rows of three chips: Off, Bass boost, Bass reducer / Treble boost,
     // Vocal, Loudness.
     for (index, (x, y)) in [
-        (1, (944.0, 665.0)),
-        (2, (1056.0, 665.0)),
-        (3, (832.0, 709.0)),
-        (4, (944.0, 709.0)),
-        (5, (1056.0, 709.0)),
-        (0, (832.0, 665.0)),
+        (1, (944.0, 769.0)),
+        (2, (1056.0, 769.0)),
+        (3, (832.0, 813.0)),
+        (4, (944.0, 813.0)),
+        (5, (1056.0, 813.0)),
+        (0, (832.0, 769.0)),
     ] {
         click(&ui, x, y);
-        draw(&window, 1140, 900, &format!("equalizer-{index}"));
+        draw(&window, 1140, 1000, &format!("equalizer-{index}"));
         assert_eq!(
             chosen.borrow().last(),
             Some(&index),
@@ -94,8 +94,31 @@ fn equalizer_chips_choose_each_preset() {
         let ui = weak.upgrade().unwrap();
         ui.set_fade_transitions(!ui.get_fade_transitions());
     });
+    let lengths = Rc::new(RefCell::new(Vec::new()));
+    let captured = lengths.clone();
+    let weak = ui.as_weak();
+    ui.on_choose_crossfade(move |seconds| {
+        captured.borrow_mut().push(seconds);
+        weak.upgrade().unwrap().set_crossfade_seconds(seconds);
+    });
+    for (seconds, x) in [
+        (3, 875.0),
+        (6, 939.0),
+        (9, 1003.0),
+        (12, 1067.0),
+        (0, 810.0),
+    ] {
+        click(&ui, x, 665.0);
+        draw(&window, 1140, 1000, &format!("crossfade-{seconds}"));
+        assert_eq!(
+            ui.get_crossfade_seconds(),
+            seconds,
+            "crossfade chip {seconds}"
+        );
+    }
+    assert_eq!(*lengths.borrow(), [3, 6, 9, 12, 0]);
     click(&ui, 1095.0, 572.0);
-    draw(&window, 1140, 900, "fade-on");
+    draw(&window, 1140, 1000, "fade-on");
     assert_eq!(*fades.borrow(), 1, "Fade between songs switch");
     assert!(ui.get_fade_transitions());
 }

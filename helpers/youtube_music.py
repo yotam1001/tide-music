@@ -620,49 +620,95 @@ def tracks(items, limit=MAX_TRACKS, exclude=(), deduplicate=False):
 
 
 MAX_LISTENING_CARDS = 12
-LISTENING_SEEDS = 6
+LISTENING_SEEDS = 8
+LISTENING_SEED_COUNT = 3
+LISTENING_PER_ARTIST = 2
 
 
 def listening_cards(client, seen):
-    """Songs that continue one of the last few songs played, like YouTube
-    Music's "Because you listened" rows. A different recent song seeds each
-    refresh, so Home changes even when the service's own shelves don't.
+    """A varied shelf continuing several recent songs, like YouTube Music's
+    "Because you listened" rows mixed together. Three different recent songs
+    (preferring different artists) each contribute a few of their Up next
+    picks, interleaved, with at most two songs per artist, so one song or
+    genre can't fill the row. The seeds change between refreshes.
     Optional: any failure leaves Home as the service returned it."""
     import random
+    from concurrent.futures import ThreadPoolExecutor
     try:
         history = client.get_history()
-        recent = []
+        recent, artists = [], set()
         for item in history if isinstance(history, list) else []:
             video = identifier(item.get("videoId"), True) if isinstance(item, dict) else ""
-            if video and video not in [entry[0] for entry in recent]:
-                recent.append((video, clean(item.get("title"))))
+            if not video or video in [entry[0] for entry in recent]:
+                continue
+            recent.append((video, artist_names(item)))
             if len(recent) >= LISTENING_SEEDS:
                 break
         if not recent:
             return []
-        video, title = random.choice(recent)
-        data = client.get_watch_playlist(videoId=video, limit=MAX_RADIO_TRACKS + len(recent))
-        items = data.get("tracks", []) if isinstance(data, dict) else []
-        picks = radio_tracks(items if isinstance(items, list) else [], video, {entry[0] for entry in recent})
+        random.shuffle(recent)
+        # Different artists first, then any other recent songs.
+        seeds = []
+        for video, artist in recent:
+            if artist not in artists:
+                seeds.append(video)
+                artists.add(artist)
+        seeds += [video for video, _ in recent if video not in seeds]
+        seeds = seeds[:LISTENING_SEED_COUNT]
+        exclude = {entry[0] for entry in recent}
+
+        def picks(video):
+            data = client.get_watch_playlist(videoId=video, limit=MAX_RADIO_TRACKS)
+            items = data.get("tracks", []) if isinstance(data, dict) else []
+            return radio_tracks(items if isinstance(items, list) else [], video, exclude)
+
+        with ThreadPoolExecutor(max_workers=len(seeds)) as pool:
+            lists = list(pool.map(picks, seeds))
     except Exception:
         return []
-    shelf = clean("Because you played " + title) if title else "Based on your recent listening"
-    cards = []
-    for track in picks:
-        video_id = track["source"].rsplit("v=", 1)[-1]
-        if ("song", video_id) in seen:
-            continue
-        seen.add(("song", video_id))
-        cards.append({"id": video_id, "title": track["title"], "subtitle": track["artist"],
-                      "artists": track["artists"], "kind": "song", "shelf": shelf,
-                      "artwork_url": track["artwork_url"], "featured_artwork_url": None,
-                      "duration_seconds": track["duration_seconds"]})
-        if len(cards) >= MAX_LISTENING_CARDS:
-            break
+    cards, per_artist = [], {}
+    for round_index in range(MAX_RADIO_TRACKS):
+        for tracks_for_seed in lists:
+            if round_index >= len(tracks_for_seed) or len(cards) >= MAX_LISTENING_CARDS:
+                continue
+            track = tracks_for_seed[round_index]
+            video_id = track["source"].rsplit("v=", 1)[-1]
+            artist = track["artist"].casefold()
+            if ("song", video_id) in seen or per_artist.get(artist, 0) >= LISTENING_PER_ARTIST:
+                continue
+            seen.add(("song", video_id))
+            per_artist[artist] = per_artist.get(artist, 0) + 1
+            cards.append({"id": video_id, "title": track["title"], "subtitle": track["artist"],
+                          "artists": track["artists"], "kind": "song",
+                          "shelf": "Based on your recent listening",
+                          "artwork_url": track["artwork_url"], "featured_artwork_url": None,
+                          "duration_seconds": track["duration_seconds"]})
     return cards
 
 
-def autoplay_tracks(client, video, exclude):
+def playlist_radio(client, playlist, video, exclude):
+    """YouTube Music's radio for a whole playlist (or Liked Music)."""
+    try:
+        data = client.get_watch_playlist(playlistId="RDAMPL" + playlist,
+                                         limit=min(MAX_AUTOPLAY_FETCH, MAX_RADIO_TRACKS + len(exclude)))
+    except Exception:
+        return []
+    items = data.get("tracks", []) if isinstance(data, dict) else []
+    return radio_tracks(items if isinstance(items, list) else [], video, exclude)
+
+
+def interleave(first, second):
+    """Alternate two ranked lists, keeping each song once."""
+    merged, seen = [], set()
+    for index in range(max(len(first), len(second))):
+        for source in (first, second):
+            if index < len(source) and source[index]["source"] not in seen:
+                seen.add(source[index]["source"])
+                merged.append(source[index])
+    return merged
+
+
+def autoplay_tracks(client, video, exclude, playlist=""):
     """Continue like YouTube Music's own autoplay.
 
     Without radio parameters the watch endpoint returns the signed-in
@@ -674,11 +720,16 @@ def autoplay_tracks(client, video, exclude):
     data = client.get_watch_playlist(videoId=video, limit=limit)
     items = data.get("tracks", []) if isinstance(data, dict) else []
     selected = radio_tracks(items if isinstance(items, list) else [], video, exclude)
+    # A queue started from a playlist continues in that playlist's spirit:
+    # blend its radio with the last song's Up next, as YouTube Music does
+    # when a playlist runs out, rather than narrowing to one song.
+    if playlist:
+        selected = interleave(playlist_radio(client, playlist, video, exclude), selected)
     if not selected:
         data = client.get_watch_playlist(videoId=video, limit=MAX_RADIO_TRACKS, radio=True)
         items = data.get("tracks", []) if isinstance(data, dict) else []
         selected = radio_tracks(items if isinstance(items, list) else [], video, exclude)
-    return selected
+    return selected[:MAX_RADIO_TRACKS]
 
 
 def radio_tracks(items, seed, exclude=()):
@@ -1382,8 +1433,10 @@ def run(client, request):
         exclude = {identifier(item, True) for item in (raw if isinstance(raw, list) else [])[:MAX_AUTOPLAY_EXCLUDE]
                    if isinstance(item, str)}
         exclude.discard("")
+        playlist = identifier(request.get("playlist_id"))
         try:
-            return {"type": "tracks", "tracks": autoplay_tracks(client, video, exclude), "truncated": False}
+            return {"type": "tracks", "tracks": autoplay_tracks(client, video, exclude, playlist),
+                    "truncated": False}
         except Exception as error:
             return verified_request_failure(error, client)
     if action in ("playlist", "liked"):
@@ -1443,11 +1496,17 @@ def run(client, request):
                     break
             if len(cards) >= MAX_HOME_CARDS:
                 break
-        # A fresh shelf from recent listening, placed after the lead shelf.
+        # A fresh, varied shelf from recent listening, after the first two
+        # shelves so YouTube Music's own lead rows stay on top.
         extra = listening_cards(client, seen)
         if extra:
-            lead = cards[0]["shelf"] if cards else ""
-            split = next((index for index, card in enumerate(cards) if card["shelf"] != lead), len(cards))
+            shelves_seen, split = [], len(cards)
+            for index, card in enumerate(cards):
+                if card["shelf"] not in shelves_seen:
+                    shelves_seen.append(card["shelf"])
+                    if len(shelves_seen) == 3:
+                        split = index
+                        break
             cards = cards[:split] + extra + cards[split:]
         return {"type": "home", "cards": cards}
     raise ValueError("unsupported action")

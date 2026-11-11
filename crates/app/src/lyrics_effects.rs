@@ -10,6 +10,9 @@ pub fn release_ui(ui: &crate::AppWindow) {
     ));
     ui.set_lyrics_active(-1);
     ui.set_lyrics_sung_prefix("".into());
+    ui.set_lyrics_sung_before("".into());
+    ui.set_lyrics_word_progress(1.0);
+    ui.set_lyrics_gap_next(-1);
     ui.set_lyrics_synced(false);
     ui.set_lyrics_source("".into());
     ui.set_lyrics_backdrop(Image::default());
