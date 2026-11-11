@@ -3,7 +3,6 @@ mod handoff;
 mod publisher;
 
 use semver::Version;
-use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use slint::ComponentHandle;
 #[cfg(test)]
@@ -21,7 +20,6 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-const API: &str = "https://api.github.com/repos/yotam1001/tide-music/releases/latest";
 const MAX_INSTALLER: u64 = 96 * 1024 * 1024;
 const CACHE_MARKER: &str = "Tide updater cache v1\n";
 
@@ -33,67 +31,44 @@ pub(super) struct Release {
     size: u64,
     authorization: Option<publisher::Authorization>,
 }
-#[derive(Deserialize)]
-struct Metadata {
-    tag_name: String,
-    draft: bool,
-    prerelease: bool,
-    assets: Vec<Asset>,
-}
-#[derive(Deserialize)]
-struct Asset {
-    name: String,
-    state: String,
-    size: u64,
-    digest: Option<String>,
-    browser_download_url: String,
+/// The newest release's signed manifest. GitHub serves release downloads
+/// without the API's 60-requests-an-hour limit per network, and the manifest
+/// already names the version, installer size and SHA-256, all covered by the
+/// publisher signature. No GitHub API call is made.
+const LATEST_MANIFEST: &str =
+    "https://github.com/yotam1001/tide-music/releases/latest/download/TideUpdate.json";
+
+/// A stable version newer than `current`, or None. Rejects malformed text.
+fn offered_version(text: &str, current: &str) -> Result<Option<Version>, String> {
+    let version = Version::parse(text).map_err(|_| "Invalid release version")?;
+    if !version.build.is_empty() || version.to_string() != text {
+        return Err("Invalid stable release version".into());
+    }
+    if !version.pre.is_empty() {
+        return Ok(None);
+    }
+    let current = Version::parse(current).map_err(|_| "Invalid installed version")?;
+    Ok((version > current).then_some(version))
 }
 
-fn parse_release(bytes: &[u8], current: &str) -> Result<Option<Release>, String> {
-    let metadata: Metadata =
-        serde_json::from_slice(bytes).map_err(|_| "Invalid release metadata")?;
-    let tag = &metadata.tag_name;
-    let version = Version::parse(tag.strip_prefix('v').ok_or("Invalid release version")?)
-        .map_err(|_| "Invalid release version")?;
-    if metadata.draft || metadata.prerelease || !version.pre.is_empty() {
-        return Ok(None);
+/// The installer download for a signed identity: a fixed URL, a bounded size
+/// and a well-formed SHA-256.
+fn release_for(version: Version, digest: &str, size: u64) -> Result<Release, String> {
+    if !(1..=MAX_INSTALLER).contains(&size) {
+        return Err("Invalid installer size".into());
     }
-    if !version.build.is_empty() || tag != &format!("v{version}") {
-        return Err("Invalid stable release tag".into());
+    if digest.len() != 64 || !digest.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err("This release has no verified installer checksum".into());
     }
-    if version <= Version::parse(current).map_err(|_| "Invalid installed version")? {
-        return Ok(None);
-    }
-    let mut assets = metadata
-        .assets
-        .into_iter()
-        .filter(|a| a.name == "TideSetup.exe");
-    let asset = assets
-        .next()
-        .ok_or("This release has no Windows installer")?;
-    if assets.next().is_some()
-        || asset.state != "uploaded"
-        || !(1..=MAX_INSTALLER).contains(&asset.size)
-    {
-        return Err("Invalid installer asset".into());
-    }
-    let expected_url =
-        format!("https://github.com/yotam1001/tide-music/releases/download/{tag}/TideSetup.exe");
-    let digest = asset
-        .digest
-        .and_then(|s| s.strip_prefix("sha256:").map(str::to_owned))
-        .filter(|s| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit()))
-        .ok_or("This release has no verified installer checksum")?;
-    if asset.browser_download_url != expected_url {
-        return Err("Unexpected installer source".into());
-    }
-    Ok(Some(Release {
+    Ok(Release {
+        url: format!(
+            "https://github.com/yotam1001/tide-music/releases/download/v{version}/TideSetup.exe"
+        ),
         version,
-        url: expected_url,
         digest: digest.to_lowercase(),
-        size: asset.size,
+        size,
         authorization: None,
-    }))
+    })
 }
 
 fn agent(timeout: u64) -> ureq::Agent {
@@ -109,35 +84,18 @@ fn agent(timeout: u64) -> ureq::Agent {
 }
 
 pub(super) fn check() -> Result<Option<Release>, String> {
-    let mut response = agent(10)
-        .get(API)
-        .header("User-Agent", concat!("Tide/", env!("CARGO_PKG_VERSION")))
-        .header("Accept", "application/vnd.github+json")
-        .call()
-        .map_err(|_| "Could not reach GitHub. Try again later.")?;
-    match response.status().as_u16() {
-        404 => return Ok(None),
-        200 => {}
-        403 | 429 => return Err("GitHub's update limit was reached. Try again later.".into()),
-        _ => return Err("The update service is temporarily unavailable.".into()),
-    }
-    let mut bytes = Vec::new();
-    response
-        .body_mut()
-        .as_reader()
-        .take(256 * 1024 + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|_| "Could not read release information")?;
-    if bytes.len() > 256 * 1024 {
-        return Err("Release information is too large".into());
-    }
-    let Some(mut release) = parse_release(&bytes, env!("CARGO_PKG_VERSION"))? else {
+    let Some(manifest) = fetch_signed(LATEST_MANIFEST)? else {
         return Ok(None);
     };
-    let manifest = fetch_manifest(&release)?;
+    let (text, digest, size) = publisher::claimed_identity(&manifest)?;
+    let Some(version) = offered_version(&text, env!("CARGO_PKG_VERSION"))? else {
+        return Ok(None);
+    };
+    let mut release = release_for(version, &digest, size)?;
+    // The signature covers exactly these claims; nothing is trusted before.
     release.authorization = Some(publisher::authenticate(
         &manifest,
-        &release.version.to_string(),
+        &text,
         &release.digest,
         release.size,
         unix_time()?,
@@ -200,12 +158,11 @@ pub(super) fn verify_files(manifest: &Path, installer: &Path) -> Result<(), Stri
     println!("PASS publisher signature and exact installer identity; nothing executed");
     Ok(())
 }
-fn fetch_manifest(release: &Release) -> Result<Vec<u8>, String> {
+/// Download a signed manifest, following GitHub's release redirects only to
+/// release hosts. Ok(None) when no release has one yet.
+fn fetch_signed(start: &str) -> Result<Option<Vec<u8>>, String> {
     let client = agent(10);
-    let mut url = format!(
-        "https://github.com/yotam1001/tide-music/releases/download/v{}/TideUpdate.json",
-        release.version
-    );
+    let mut url = start.to_owned();
     for _ in 0..4 {
         if !allowed_download(&url) {
             return Err("Unexpected signed manifest destination".into());
@@ -214,7 +171,13 @@ fn fetch_manifest(release: &Release) -> Result<Vec<u8>, String> {
             .get(&url)
             .header("User-Agent", "Tide-Updater")
             .call()
-            .map_err(|_| "Could not retrieve the publisher signature. Nothing was installed.")?;
+            .map_err(|_| "Could not reach GitHub. Try again later.")?;
+        if response.status().as_u16() == 404 {
+            return Ok(None);
+        }
+        if matches!(response.status().as_u16(), 403 | 429) {
+            return Err("GitHub is busy right now. Try again in a few minutes.".into());
+        }
         if response.status().as_u16() == 200 {
             let mut bytes = Vec::new();
             response
@@ -226,7 +189,7 @@ fn fetch_manifest(release: &Release) -> Result<Vec<u8>, String> {
             if bytes.len() > publisher::MAX_MANIFEST {
                 return Err("Signed manifest is too large".into());
             }
-            return Ok(bytes);
+            return Ok(Some(bytes));
         }
         if !matches!(response.status().as_u16(), 301 | 302 | 303 | 307 | 308) {
             return Err(
@@ -863,13 +826,37 @@ pub(super) fn wire(ui: &super::AppWindow, enabled: bool) -> Rc<RefCell<Updater>>
         let weak = ui.as_weak();
         slint::Timer::single_shot(Duration::from_secs(15), move || {
             if let (Some(state), Some(ui)) = (state.upgrade(), weak.upgrade()) {
-                if ui.get_auto_update_checks() && state.borrow().installable() {
+                let base = state.borrow().base.clone();
+                if ui.get_auto_update_checks()
+                    && state.borrow().installable()
+                    && automatic_check_due(base.as_deref(), unix_time().unwrap_or(0))
+                {
                     Updater::start(&state, &ui, false);
                 }
             }
         });
     }
     owner
+}
+
+/// Automatic checks run at most every six hours; "Check for updates" always
+/// works. The time of the last automatic check is kept in the update cache.
+const AUTOMATIC_CHECK_INTERVAL: u64 = 6 * 60 * 60;
+
+fn automatic_check_due(base: Option<&Path>, now: u64) -> bool {
+    let Some(base) = base else {
+        return true;
+    };
+    let marker = base.join("last-automatic-check");
+    let last = fs::read_to_string(&marker)
+        .ok()
+        .and_then(|text| text.trim().parse::<u64>().ok());
+    if last.is_some_and(|last| now >= last && now - last < AUTOMATIC_CHECK_INTERVAL) {
+        return false;
+    }
+    let _ = fs::create_dir_all(base);
+    let _ = fs::write(marker, now.to_string());
+    true
 }
 
 /// Release gate: inspect the actual installed player's UI eligibility, without
@@ -890,19 +877,17 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn metadata(tag: &str) -> serde_json::Value {
-        json!({"tag_name": tag, "draft": false, "prerelease": false, "assets": [{
-            "name": "TideSetup.exe", "state": "uploaded", "size": 4,
-            "digest": format!("sha256:{:x}", Sha256::digest(b"Tide")),
-            "browser_download_url": format!("https://github.com/yotam1001/tide-music/releases/download/{tag}/TideSetup.exe")
-        }]})
-    }
-    fn parse(value: &serde_json::Value) -> Result<Option<Release>, String> {
-        parse_release(&serde_json::to_vec(value).unwrap(), "0.1.0")
+    fn parse(version: &str) -> Release {
+        release_for(
+            Version::parse(version).unwrap(),
+            &format!("{:x}", Sha256::digest(b"Tide")),
+            4,
+        )
+        .unwrap()
     }
     #[test]
-    fn unsigned_metadata_never_authorizes_download_or_execution() {
-        let release = parse(&metadata("v0.5.0")).unwrap().unwrap();
+    fn unsigned_identity_never_authorizes_download_or_execution() {
+        let release = parse("0.5.0");
         let base = tempfile::tempdir().unwrap();
         assert!(download(&release, base.path(), &Transfer::default())
             .unwrap_err()
@@ -916,7 +901,7 @@ mod tests {
     #[test]
     fn resume_cached_download_only_after_fresh_authorization_and_hash_check() {
         let directory = tempfile::tempdir().unwrap();
-        let mut release = parse(&metadata("v0.2.0")).unwrap().unwrap();
+        let mut release = parse("0.2.0");
         assert!(cached_installer(&release, directory.path()).is_none());
         assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
         let path = stage_installer(&release, directory.path(), &mut &b"Tide"[..]).unwrap();
@@ -937,7 +922,6 @@ mod tests {
     }
     #[test]
     fn installed_stable_and_previews_offer_0_1_2_but_equal_versions_do_not() {
-        let bytes = serde_json::to_vec(&metadata("v0.1.2")).unwrap();
         for installed in [
             "0.1.0",
             "0.1.1",
@@ -945,64 +929,75 @@ mod tests {
             "0.1.0-preview.1",
             "0.1.0-preview.2",
         ] {
-            let release = parse_release(&bytes, installed).unwrap().unwrap();
-            assert_eq!(release.version.to_string(), "0.1.2");
-            assert!(release.url.ends_with("/v0.1.2/TideSetup.exe"));
+            let version = offered_version("0.1.2", installed).unwrap().unwrap();
+            assert_eq!(version.to_string(), "0.1.2");
         }
-        assert!(parse_release(&bytes, "0.1.2").unwrap().is_none());
-        assert!(parse_release(&bytes, "0.1.3").unwrap().is_none());
+        assert!(offered_version("0.1.2", "0.1.2").unwrap().is_none());
+        assert!(offered_version("0.1.2", "0.1.3").unwrap().is_none());
+        assert!(parse("0.1.2").url.ends_with("/v0.1.2/TideSetup.exe"));
     }
     #[test]
     fn only_strictly_newer_stable_versions_are_offered() {
-        for tag in ["v0.1.0", "v0.0.9", "v0.2.0-beta.1"] {
-            assert!(parse(&metadata(tag)).unwrap().is_none());
+        for version in ["0.1.0", "0.0.9", "0.2.0-beta.1"] {
+            assert!(offered_version(version, "0.1.0").unwrap().is_none());
         }
-        assert_eq!(
-            parse(&metadata("v0.2.0"))
-                .unwrap()
-                .unwrap()
-                .version
-                .to_string(),
-            "0.2.0"
-        );
+        assert!(offered_version("0.2.0", "0.1.0").unwrap().is_some());
         for installed in ["0.1.0-beta.1", "0.1.0-preview.1", "0.1.0-preview.2"] {
-            assert!(
-                parse_release(&serde_json::to_vec(&metadata("v0.1.0")).unwrap(), installed)
-                    .unwrap()
-                    .is_some()
-            );
+            assert!(offered_version("0.1.0", installed).unwrap().is_some());
         }
-        for flag in ["draft", "prerelease"] {
-            let mut value = metadata("v0.2.0");
-            value[flag] = json!(true);
-            assert!(parse(&value).unwrap().is_none());
-        }
-        for tag in ["0.2.0", "v0.2.0+build", "v01.2.0", "v0.2.0/../../evil"] {
-            assert!(parse(&metadata(tag)).is_err());
+        for version in ["v0.2.0", "0.2.0+build", "01.2.0", "0.2.0/../../evil", ""] {
+            assert!(offered_version(version, "0.1.0").is_err(), "{version}");
         }
     }
+    /// Opt-in network check: the latest release's signed manifest arrives
+    /// through the download redirects (no GitHub API) and verifies.
     #[test]
-    fn asset_identity_digest_size_and_uniqueness_are_required() {
-        for (field, value) in [
-            ("name", json!("OtherSetup.exe")),
-            ("state", json!("new")),
-            ("size", json!(0)),
-            ("size", json!(MAX_INSTALLER + 1)),
-            ("digest", json!(null)),
-            ("digest", json!("sha256:unverified")),
-            (
-                "browser_download_url",
-                json!("https://github.com/other/project/releases/download/v0.2.0/TideSetup.exe"),
-            ),
-        ] {
-            let mut data = metadata("v0.2.0");
-            data["assets"][0][field] = value;
-            assert!(parse(&data).is_err(), "{field}");
-        }
-        let mut data = metadata("v0.2.0");
-        let duplicate = data["assets"][0].clone();
-        data["assets"].as_array_mut().unwrap().push(duplicate);
-        assert!(parse(&data).is_err());
+    #[ignore = "network: reads the public latest release"]
+    fn live_latest_manifest_verifies_without_the_api() {
+        let manifest = fetch_signed(LATEST_MANIFEST).unwrap().unwrap();
+        let (version, digest, size) = publisher::claimed_identity(&manifest).unwrap();
+        let release = release_for(Version::parse(&version).unwrap(), &digest, size).unwrap();
+        publisher::authenticate(
+            &manifest,
+            &version,
+            &release.digest,
+            size,
+            unix_time().unwrap(),
+        )
+        .unwrap();
+        println!("latest signed release {version}, {size} bytes");
+    }
+    #[test]
+    fn automatic_checks_run_at_most_every_six_hours() {
+        let base = tempfile::tempdir().unwrap();
+        assert!(automatic_check_due(Some(base.path()), 1_000_000));
+        assert!(!automatic_check_due(Some(base.path()), 1_000_000 + 60));
+        assert!(!automatic_check_due(
+            Some(base.path()),
+            1_000_000 + AUTOMATIC_CHECK_INTERVAL - 1
+        ));
+        assert!(automatic_check_due(
+            Some(base.path()),
+            1_000_000 + AUTOMATIC_CHECK_INTERVAL
+        ));
+        // A clock moved backwards does not block checks forever.
+        assert!(automatic_check_due(Some(base.path()), 10));
+        assert!(automatic_check_due(None, 0));
+    }
+    #[test]
+    fn installer_size_and_digest_must_be_well_formed() {
+        let good = format!("{:x}", Sha256::digest(b"Tide"));
+        let version = || Version::parse("0.2.0").unwrap();
+        assert!(release_for(version(), &good, 0).is_err());
+        assert!(release_for(version(), &good, MAX_INSTALLER + 1).is_err());
+        assert!(release_for(version(), "unverified", 4).is_err());
+        assert!(release_for(version(), &good[..63], 4).is_err());
+        assert_eq!(
+            release_for(version(), &good.to_uppercase(), 4)
+                .unwrap()
+                .digest,
+            good
+        );
     }
     #[test]
     fn redirects_cannot_leak_requests_to_untrusted_hosts_or_cleartext() {
@@ -1023,7 +1018,7 @@ mod tests {
     }
     #[test]
     fn streaming_verification_rejects_truncation_extra_bytes_and_tampering() {
-        let release = parse(&metadata("v0.2.0")).unwrap().unwrap();
+        let release = parse("0.2.0");
         let mut output = Vec::new();
         copy_verified(&mut &b"Tide"[..], &mut output, &release).unwrap();
         assert_eq!(output, b"Tide");
@@ -1049,7 +1044,7 @@ mod tests {
     #[test]
     fn failed_download_preserves_ready_installer_and_removes_its_partial_file() {
         let base = tempfile::tempdir().unwrap();
-        let release = parse(&metadata("v0.2.0")).unwrap().unwrap();
+        let release = parse("0.2.0");
         let setup = stage_installer(&release, base.path(), &mut &b"Tide"[..]).unwrap();
         assert!(stage_installer(&release, base.path(), &mut &b"Fake"[..]).is_err());
         assert_eq!(fs::read(&setup).unwrap(), b"Tide");
@@ -1071,7 +1066,7 @@ mod tests {
             }
         }
         let base = tempfile::tempdir().unwrap();
-        let release = parse(&metadata("v0.2.0")).unwrap().unwrap();
+        let release = parse("0.2.0");
         let previous = stage_installer(&release, base.path(), &mut &b"Tide"[..]).unwrap();
         let transfer = Arc::new(Transfer::default());
         let mut reader = CancelReader {
@@ -1110,7 +1105,7 @@ mod tests {
         .unwrap();
         let ui = super::super::AppWindow::new().unwrap();
         let base = tempfile::tempdir().unwrap();
-        let release = parse(&metadata("v0.2.0")).unwrap().unwrap();
+        let release = parse("0.2.0");
         let path = stage_installer(&release, base.path(), &mut &b"Tide"[..]).unwrap();
         let (sender, receiver) = mpsc::channel();
         let mut updater = Updater {

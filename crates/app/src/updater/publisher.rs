@@ -46,6 +46,19 @@ fn hex<const N: usize>(value: &str) -> Result<[u8; N], String> {
     }
     Ok(bytes)
 }
+/// The version, SHA-256 and size a manifest claims, before verification.
+/// Callers must still `authenticate` with exactly these values.
+pub(super) fn claimed_identity(bytes: &[u8]) -> Result<(String, String, u64), String> {
+    if bytes.len() > MAX_MANIFEST {
+        return Err("Signed update manifest is too large".into());
+    }
+    let envelope: Envelope =
+        serde_json::from_slice(bytes).map_err(|_| "Invalid signed update manifest")?;
+    let manifest: Manifest =
+        serde_json::from_str(&envelope.payload).map_err(|_| "Invalid signed installer identity")?;
+    Ok((manifest.version, manifest.sha256, manifest.size))
+}
+
 pub(super) fn authenticate(
     envelope: &[u8],
     version: &str,
