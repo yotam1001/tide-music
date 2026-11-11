@@ -91,6 +91,8 @@ struct Settings {
     repeat: bool,
     /// Most recent search queries, newest first (at most eight).
     recent_searches: Vec<String>,
+    /// Interface animations. On by default; off for reduced motion.
+    animations: bool,
     #[serde(skip)]
     transient: bool,
 }
@@ -121,6 +123,7 @@ impl Default for Settings {
             audio_device: "auto".into(),
             repeat: false,
             recent_searches: Vec::new(),
+            animations: true,
             transient: false,
         }
     }
@@ -1073,9 +1076,7 @@ fn refresh_library_models(s: &State, u: &AppWindow) {
             }
         })
         .collect();
-    let collections: Vec<bool> = s.recommendations.iter().map(|p| p.kind != "song").collect();
-    let home_groups =
-        browse_layout::home_groups(&labels, &collections, u.get_home_columns().max(1) as usize);
+    let home_groups = browse_layout::home_groups(&labels, u.get_home_columns().max(1) as usize);
     let visible_groups = artwork_view::visible_range(
         u.get_home_artwork_y(),
         u.get_home_artwork_height(),
@@ -1266,6 +1267,8 @@ fn restore_settings(value: serde_json::Value) -> Settings {
         normalize_volume,
         audio_device,
         repeat,
+        recent_searches,
+        animations,
     );
     if !(0..=3).contains(&settings.volume_step_index) {
         settings.volume_step_index = 1;
@@ -1718,6 +1721,17 @@ fn remember_search(settings: &mut Settings, query: &str) {
         .recent_searches
         .insert(0, query.chars().take(200).collect());
     settings.recent_searches.truncate(8);
+}
+
+/// Time-of-day greeting for Home.
+fn greeting(hour: Option<u8>) -> &'static str {
+    match hour {
+        Some(5..=11) => "Good morning",
+        Some(12..=17) => "Good afternoon",
+        Some(18..=23) => "Good evening",
+        Some(_) => "Late night listening",
+        None => "Home",
+    }
 }
 
 fn recent_model(settings: &Settings) -> ModelRc<slint::SharedString> {
@@ -2283,8 +2297,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     let ui = AppWindow::new()?;
-    ui.global::<ControlMotion>()
-        .set_enabled(tide_windows::client_animations_enabled());
+    // Animations follow Tide's own setting (on by default) rather than only the
+    // Windows animation preference, which is off on many PCs.
     let mut settings: Settings = if jam_ownership_smoke {
         Settings {
             transient: true,
@@ -2492,6 +2506,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ui.set_windows_theme_supported(cfg!(windows) && !test_mode);
     ui.set_follow_windows_theme(state.borrow().settings.follow_windows_theme);
     ui.set_recent_searches(recent_model(&state.borrow().settings));
+    {
+        let animations = state.borrow().settings.animations && !state.borrow().settings.transient;
+        ui.global::<ControlMotion>().set_enabled(animations);
+        ui.set_animations_enabled(state.borrow().settings.animations);
+    }
+    ui.set_greeting(greeting(tide_windows::local_hour()).into());
     ui.set_compact_mode(state.borrow().settings.compact_mode);
     ui.set_library_grid(state.borrow().settings.library_grid);
     ui.set_autoplay_enabled(state.borrow().settings.autoplay);
@@ -3400,6 +3420,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             });
         }};
     }
+    bind!(on_toggle_animations, |s, u| {
+        s.settings.animations = !s.settings.animations;
+        u.set_animations_enabled(s.settings.animations);
+        u.global::<ControlMotion>()
+            .set_enabled(s.settings.animations);
+        save(&s.settings);
+    });
     bind!(on_clear_recent_searches, |s, u| {
         s.settings.recent_searches.clear();
         u.set_recent_searches(recent_model(&s.settings));
@@ -5542,6 +5569,21 @@ mod tests {
         assert!(!old.close_to_tray);
         assert!(old.light_mode);
         assert!(old.library_grid);
+    }
+
+    #[test]
+    fn every_saved_setting_is_restored_on_load() {
+        // A field missing from restore_settings is saved but silently dropped
+        // on the next start (0.4.18 shipped this for recent searches).
+        let saved = Settings {
+            recent_searches: vec!["night drive".into(), "lofi".into()],
+            animations: false,
+            ..Settings::default()
+        };
+        let restored = restore_settings(serde_json::to_value(&saved).unwrap());
+        assert_eq!(restored.recent_searches, ["night drive", "lofi"]);
+        assert!(!restored.animations);
+        assert!(restore_settings(serde_json::json!({})).animations);
     }
 
     #[test]

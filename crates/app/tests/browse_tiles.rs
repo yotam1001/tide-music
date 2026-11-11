@@ -102,11 +102,8 @@ fn cover_grid_and_list_preserve_playlist_actions() {
                 width < 1140 || columns >= 5,
                 "Home retained a narrow screen's column count after resize"
             );
-            let groups = browse_layout::home_groups(
-                &vec!["Listen again".into(); 12],
-                &(0..12).map(|i| i == 1).collect::<Vec<_>>(),
-                columns as usize,
-            );
+            let groups =
+                browse_layout::home_groups(&vec!["Listen again".into(); 12], columns as usize);
             ui.set_home_browse_rows(ModelRc::new(VecModel::from(
                 groups
                     .iter()

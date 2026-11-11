@@ -91,7 +91,12 @@ fn typed_search_tabs_and_collections_keep_actions_at_each_size() {
         for light in [false, true] {
             ui.set_light_mode(light);
             draw(&window, width, height);
-            let left = 88.0 + if height >= 650 { 28.0 } else { 18.0 };
+            let nav = if width < 900 {
+                ui.global::<LayoutMetrics>().get_navigation_narrow()
+            } else {
+                ui.global::<LayoutMetrics>().get_navigation_wide()
+            };
+            let left = nav + if height >= 650 { 28.0 } else { 18.0 };
             let tabs_y = if height >= 650 { 168.0 } else { 158.0 };
             for (index, offset) in [(1, 122.0), (2, 206.0), (3, 300.0)] {
                 click(&ui, left + offset, tabs_y);

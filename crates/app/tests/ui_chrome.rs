@@ -38,6 +38,16 @@ fn export(name: &str, width: u32, height: u32, pixels: &[Rgb8Pixel]) {
             .unwrap();
     }
 }
+/// Left edge of page content: navigation width plus the page padding.
+fn content_left(ui: &AppWindow, width: u32, height: u32) -> f32 {
+    let nav = if width < 900 {
+        ui.global::<LayoutMetrics>().get_navigation_narrow()
+    } else {
+        ui.global::<LayoutMetrics>().get_navigation_wide()
+    };
+    nav + if height >= 650 { 28.0 } else { 18.0 }
+}
+
 fn click(ui: &AppWindow, x: f32, y: f32) {
     let position = LogicalPosition::new(x, y);
     ui.window()
@@ -382,7 +392,7 @@ fn settings_theme_account_and_song_menu_remain_independent() {
         ui.set_light_mode(light);
         let pixels = draw(&window, width, height);
         export(&format!("library-supermix-{width}"), width, height, &pixels);
-        click(&ui, 240.0, 205.0);
+        click(&ui, content_left(&ui, width, height) + 30.0, 205.0);
     }
     assert_eq!(
         supermix_opens.get(),
@@ -391,7 +401,7 @@ fn settings_theme_account_and_song_menu_remain_independent() {
     );
     ui.set_account_connected(false);
     draw(&window, 650, 420);
-    click(&ui, 240.0, 205.0);
+    click(&ui, content_left(&ui, 650, 420) + 30.0, 205.0);
     assert_eq!(
         supermix_opens.get(),
         3,
@@ -530,12 +540,12 @@ fn settings_theme_account_and_song_menu_remain_independent() {
     // Secondary controls stay hidden until explicitly expanded.
     ui.set_settings_more_open(false);
     draw(&window, 1140, 1200);
-    click(&ui, 920.0, 467.0);
+    click(&ui, 920.0, 543.0);
     assert!(ui.get_settings_more_open(), "More options is reachable");
     draw(&window, 1140, 1200);
-    // Windows media keys is the first switch now that Advanced no longer has
-    // an Open audio file button above it.
-    click(&ui, 920.0, 517.0);
+    // Windows media keys is Advanced's first switch. The Animations row above
+    // Audio moves Advanced 76px down.
+    click(&ui, 920.0, 593.0);
     assert!(!ui.get_media_controls_enabled());
     assert_eq!(ui.get_shortcut_toggle(), "Ctrl+Alt+P");
     assert_eq!(ui.get_shortcut_next(), "Ctrl+Alt+N");

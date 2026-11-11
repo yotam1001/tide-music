@@ -71,19 +71,21 @@ fn native_ratings_remain_reachable_and_do_not_take_over_transport() {
         ui.set_light_mode(light);
         ui.set_current_rating(0);
         draw(&window, width, height, &format!("ratings-{width}"));
-        let actions = if width >= 900 {
-            ui.global::<LayoutMetrics>().get_footer_actions_width()
+        // Like and Dislike end the player's left column, whose width follows
+        // the window (see PlayerBar.side-width).
+        let side = if width < 900 {
+            200.0
         } else {
-            204.0
+            f32::max(268.0, (width as f32 - 64.0) * 0.3)
         };
-        let x = width as f32 - actions - 2.0;
-        let y = height as f32 - 74.0;
+        let x = 16.0 + side - 60.0;
+        let y = height as f32 - 46.0;
         let start = ratings.borrow().len();
         click(&ui, x, y);
         click(&ui, x, y);
         // Like and Dislike are adjacent; both remain direct reversible actions.
-        click(&ui, x + 40.0, y);
-        click(&ui, x + 40.0, y);
+        click(&ui, x + 44.0, y);
+        click(&ui, x + 44.0, y);
         assert_eq!(
             ratings.borrow().len(),
             start + 4,
