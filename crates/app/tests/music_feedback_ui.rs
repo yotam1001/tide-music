@@ -53,7 +53,8 @@ fn native_ratings_remain_reachable_and_do_not_take_over_transport() {
     let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
     slint::platform::set_platform(Box::new(Platform(window.clone()))).unwrap();
     let ui = AppWindow::new().unwrap();
-    ui.set_track_title("Synthetic feedback song".into());
+    // Long enough to fill the title column, which puts the ratings at its end.
+    ui.set_track_title("Synthetic feedback song with a deliberately long title".into());
     ui.set_track_artist("Fixture artist".into());
     ui.set_rating_enabled(true);
     let ratings = Rc::new(RefCell::new(Vec::new()));
