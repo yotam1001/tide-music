@@ -13,7 +13,7 @@ pub enum Layout {
     Compact,
 }
 
-pub fn home_groups(labels: &[String], collections: &[bool], columns: usize) -> Vec<Group> {
+pub fn home_groups(labels: &[String], columns: usize) -> Vec<Group> {
     let columns = columns.clamp(1, 6);
     let mut groups = Vec::new();
     let mut section = 0;
@@ -22,10 +22,10 @@ pub fn home_groups(labels: &[String], collections: &[bool], columns: usize) -> V
         while end < labels.len() && labels[end] == labels[section] {
             end += 1;
         }
-        let collection_count = (section..end)
-            .filter(|&index| collections.get(index) == Some(&true))
-            .count();
-        let tiles = columns >= 3 && end - section >= 2 && collection_count * 2 >= end - section;
+        // Shelves read as cover cards, as on YouTube Music; "Quick picks" is
+        // a scannable song list there, so it stays compact.
+        let quick_picks = labels[section].trim().eq_ignore_ascii_case("quick picks");
+        let tiles = columns >= 3 && end - section >= 2 && !quick_picks;
         let row_size = if tiles { columns } else { columns.min(2) };
         let mut start = section;
         while start < end {
@@ -68,7 +68,7 @@ mod tests {
         .map(str::to_owned)
         .collect();
         for columns in 1..=6 {
-            let groups = home_groups(&labels, &[false, true, false, true, true, false], columns);
+            let groups = home_groups(&labels, columns);
             let indices: Vec<_> = groups
                 .iter()
                 .flat_map(|g| g.start..g.start + g.count)
@@ -76,17 +76,22 @@ mod tests {
             assert_eq!(indices, (0..labels.len()).collect::<Vec<_>>());
             assert_eq!(groups.iter().filter(|g| !g.title.is_empty()).count(), 3);
             assert!(groups.iter().all(|g| g.count <= columns));
-            assert_eq!(groups[0].layout, Layout::Compact);
+            let expected = if columns >= 3 {
+                Layout::Tiles
+            } else {
+                Layout::Compact
+            };
+            assert_eq!(groups[0].layout, expected);
         }
-        assert!(home_groups(&[], &[], 0).is_empty());
+        let picks = home_groups(&vec!["Quick picks".into(); 6], 6);
+        assert!(picks
+            .iter()
+            .all(|g| g.layout == Layout::Compact && g.count <= 2));
+        assert!(home_groups(&[], 0).is_empty());
     }
     #[test]
     fn narrow_mixed_recommendations_use_compact_pairs() {
-        let groups = home_groups(
-            &vec!["Listen again".into(); 7],
-            &[true, false, true, false, false, false, false],
-            2,
-        );
+        let groups = home_groups(&vec!["Listen again".into(); 7], 2);
         assert_eq!(groups[0].count, 2);
         assert_eq!(groups[1].layout, Layout::Compact);
         assert_eq!(groups[1].count, 2);

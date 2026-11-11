@@ -127,33 +127,36 @@ fn sidebar_home_transport_and_keyboard_shortcuts_keep_their_actions() {
             800,
             &draw(&window, 1140, 800),
         );
-        // The compact rail preserves library access without duplicating Account.
+        // The full sidebar lists Liked Songs and Supermix under Your music.
         let before = liked.get();
-        click(&ui, 44.0, 346.0);
+        click(&ui, 100.0, 303.0);
         assert_eq!(liked.get(), before + 1, "Liked songs shortcut");
         let before = mix.get();
-        click(&ui, 44.0, 418.0);
+        click(&ui, 100.0, 353.0);
         assert_eq!(mix.get(), before + 1, "Supermix shortcut");
-        click(&ui, 44.0, 186.0);
-        assert!(ui.get_library_open(), "Library is reachable from the rail");
-        click(&ui, 44.0, 114.0);
-        assert!(!ui.get_library_open(), "Home is reachable from the rail");
+        click(&ui, 100.0, 153.0);
+        assert!(
+            ui.get_library_open(),
+            "Library is reachable from the sidebar"
+        );
+        click(&ui, 100.0, 103.0);
+        assert!(!ui.get_library_open(), "Home is reachable from the sidebar");
         draw(&window, 1140, 800);
         let before = pauses.get();
-        click(&ui, 570.0, 724.0);
+        click(&ui, 569.0, 740.0);
         assert_eq!(pauses.get(), before + 1, "Play and pause in the footer");
         let before = shuffle.get();
-        click(&ui, 468.0, 724.0);
+        click(&ui, 467.0, 740.0);
         assert_eq!(shuffle.get(), before + 1, "Shuffle beside transport");
         let before = repeats.get();
-        click(&ui, 672.0, 724.0);
+        click(&ui, 672.0, 740.0);
         assert_eq!(repeats.get(), before + 1, "Repeat beside transport");
         ui.set_jam_guest(true);
         draw(&window, 1140, 800);
         let before = (pauses.get(), shuffle.get(), repeats.get());
-        click(&ui, 570.0, 724.0);
-        click(&ui, 468.0, 724.0);
-        click(&ui, 672.0, 724.0);
+        click(&ui, 569.0, 740.0);
+        click(&ui, 467.0, 740.0);
+        click(&ui, 672.0, 740.0);
         assert_eq!(
             (pauses.get(), shuffle.get(), repeats.get()),
             before,

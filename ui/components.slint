@@ -627,3 +627,101 @@ export component UpdateAction inherits Rectangle {
         LibraryButton { width: parent.width; height: parent.height; caption: "×"; label: root.phase == 4 ? "Cancel update preparation" : "Cancel update download"; light-mode: root.light-mode; quiet: false; enabled: root.phase != 3; clicked => { root.cancel(); } }
     }
 }
+
+// Cover for a collection: Liked Songs and Supermix get their own art.
+export component CollectionArt inherits Rectangle {
+    in property <string> kind: "playlist";
+    in property <int> variant;
+    in property <image> artwork;
+    in property <bool> light-mode;
+    border-radius: 6px;
+    clip: true;
+    background: root.kind == "liked" ? @linear-gradient(135deg, #c43f68 0%, #6a3fb5 100%)
+        : root.kind == "mix" ? @linear-gradient(135deg, #2f6fd6 0%, #8a55e0 100%) : Theme.cover;
+    if root.kind == "playlist" : Cover { width: parent.width; height: parent.height; artwork: root.artwork; playlist: true; variant: root.variant; light-mode: root.light-mode; }
+    if root.kind != "playlist" : Path {
+        x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+        width: parent.width * 0.46; height: self.width;
+        viewbox-width: 24; viewbox-height: 24;
+        fill: root.kind == "liked" ? #ffffff : transparent; stroke: #ffffff; stroke-width: 2px;
+        commands: root.kind == "liked" ? "M 12 20 C 4 14 2 10 4 7 C 6 4 10 4 12 8 C 14 4 18 4 20 7 C 22 10 20 14 12 20 Z"
+            : "M 3 8 L 3 16 M 8 4 L 8 20 M 13 7 L 13 17 M 18 3 L 18 21";
+    }
+}
+
+// A collection in the full sidebar: small cover, title and subtitle.
+export component SidebarCollection inherits Rectangle {
+    in property <string> title;
+    in property <string> subtitle;
+    // "liked", "mix" or "playlist".
+    in property <string> kind: "playlist";
+    in property <int> variant;
+    in property <image> artwork;
+    in property <bool> active: false;
+    in property <bool> enabled: true;
+    in property <bool> light-mode;
+    callback open();
+    height: 48px;
+    border-radius: 8px;
+    background: root.active ? Theme.selected : touch.has-hover ? Theme.hover : transparent;
+    animate background { duration: ControlMotion.feedback; easing: ease-out; }
+    border-width: control.has-focus ? 2px : 0px;
+    border-color: Theme.focus;
+    opacity: root.enabled ? 1 : 0.5;
+    touch := TouchArea {
+        enabled: root.enabled; mouse-cursor: pointer;
+        control := Button { width: parent.width; height: parent.height; opacity: 0; text: ""; enabled: root.enabled; accessible-label: "Open " + root.title; clicked => { root.open(); } }
+    }
+    HorizontalLayout {
+        padding-left: 8px; padding-right: 8px; spacing: 10px; cross-axis-alignment: center;
+        CollectionArt { width: 34px; height: 34px; kind: root.kind; variant: root.variant; artwork: root.artwork; light-mode: root.light-mode; }
+        VerticalLayout {
+            horizontal-stretch: 1; min-width: 0px; spacing: 1px; alignment: center;
+            Text { text: root.title; color: root.active ? Theme.selected-ink : Theme.text; font-size: 13px; font-weight: 600; overflow: elide; }
+            if root.subtitle != "" : Text { text: root.subtitle; color: Theme.muted; font-size: 11px; overflow: elide; }
+        }
+    }
+}
+
+// Wide Home shortcut: cover on the left, title, and a play badge on hover.
+export component QuickTile inherits Rectangle {
+    in property <string> title;
+    in property <string> kind: "playlist";
+    in property <int> variant;
+    in property <image> artwork;
+    in property <bool> enabled: true;
+    in property <bool> light-mode;
+    callback open();
+    height: 56px;
+    border-radius: 8px;
+    clip: true;
+    background: control.pressed ? Theme.pressed : touch.has-hover ? Theme.hover : Theme.raised;
+    animate background { duration: ControlMotion.feedback; easing: ease-out; }
+    border-width: control.has-focus ? 2px : 0px;
+    border-color: Theme.focus;
+    opacity: root.enabled ? 1 : 0.5;
+    touch := TouchArea {
+        enabled: root.enabled; mouse-cursor: pointer;
+        control := Button { width: parent.width; height: parent.height; opacity: 0; text: ""; enabled: root.enabled; accessible-label: "Open " + root.title; clicked => { root.open(); } }
+    }
+    CollectionArt { x: 0px; y: 0px; width: root.height; height: root.height; border-radius: 0px; kind: root.kind; variant: root.variant; artwork: root.artwork; light-mode: root.light-mode; }
+    Text {
+        x: root.height + 14px; width: root.width - self.x - 56px; height: root.height;
+        text: root.title; color: Theme.text; font-size: 14px; font-weight: 700;
+        vertical-alignment: center; overflow: elide;
+    }
+    Rectangle {
+        x: root.width - 46px; y: (root.height - self.height) / 2 + (touch.has-hover ? 0px : 4px);
+        width: 34px; height: 34px; border-radius: 17px;
+        background: Theme.accent;
+        opacity: touch.has-hover && root.enabled ? 1 : 0;
+        drop-shadow-blur: 8px; drop-shadow-offset-y: 2px; drop-shadow-color: Theme.shadow;
+        animate opacity, y { duration: ControlMotion.selection; easing: ease-out; }
+        Path {
+            x: (parent.width - self.width) / 2 + 1px; y: (parent.height - self.height) / 2;
+            width: 14px; height: 14px; viewbox-width: 24; viewbox-height: 24;
+            fill: Theme.on-accent; stroke: Theme.on-accent;
+            commands: "M 7 4 L 20 12 L 7 20 Z";
+        }
+    }
+}

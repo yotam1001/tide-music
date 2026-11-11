@@ -1,7 +1,7 @@
 import { AboutSlint, Button, ComboBox, LineEdit, ListView, Palette, ScrollView } from "std-widgets.slint";
 import { TrackRow, JamMemberRow, ArtistRow, PlaylistRow, RecommendationRow, LyricRow, HomeBrowseRow } from "model.slint";
 import { ControlMotion, Theme, LayoutMetrics, PreferenceRow, SettingsLink, TideSlider, LibraryButton, LibraryTab, NavigationButton, EqualizerBars } from "theme.slint";
-import { Cover, PlaylistTile, LoadingTracks, EmptyState, ArtistLink, SongRow, LibraryEntry, HomeCard, ShortcutRow, UpdateAction } from "components.slint";
+import { Cover, PlaylistTile, LoadingTracks, EmptyState, ArtistLink, SongRow, LibraryEntry, HomeCard, ShortcutRow, UpdateAction, SidebarCollection, QuickTile } from "components.slint";
 import { QueueDrawer } from "queue.slint";
 import { PlayerBar } from "player.slint";
 import { LyricsPage } from "lyrics.slint";
@@ -414,6 +414,13 @@ export component AppWindow inherits Window {
     private property <image> current-artwork: root.track-artwork;
     private property <bool> wide: true;
     private property <bool> narrow-navigation: false;
+    // The full sidebar shows labels and your playlists; small windows use the rail.
+    private property <bool> full-sidebar: !root.compact-mode && !root.narrow-navigation;
+    // Time-of-day greeting for Home, supplied by the app.
+    in property <string> greeting: "Home";
+    // Interface animations (on by default). The app persists the choice.
+    in property <bool> animations-enabled: true;
+    callback toggle-animations();
     private property <bool> header-branding: true;
     private property <bool> sidebar-profile: false;
     private property <bool> advanced-open: false;
@@ -626,31 +633,54 @@ export component AppWindow inherits Window {
                     visible: !root.lyrics-open;
                     spacing: 0px;
                     Rectangle {
-                        width: root.compact-mode || root.narrow-navigation ? LayoutMetrics.navigation-narrow : LayoutMetrics.navigation-wide;
+                        width: root.full-sidebar ? LayoutMetrics.navigation-wide : LayoutMetrics.navigation-narrow;
                         background: transparent;
                         VerticalLayout {
                             padding-left: 10px;
                             padding-right: 10px;
                             padding-top: 18px;
                             spacing: 8px;
-                            NavigationButton { light-mode: root.light-mode; enabled: root.browsing-enabled || root.jam-open; active: root.active-navigation == "home"; library: false; clicked => { root.jam-open = false; root.playlist-picker-open = false; root.library-open = false; root.home-open = true; root.close-detail(); root.close-search(); root.forward-collection = false; } }
-                            NavigationButton { light-mode: root.light-mode; enabled: root.browsing-enabled || root.jam-open; active: root.active-navigation == "library"; library: true; clicked => { root.jam-open = false; root.playlist-picker-open = false; root.library-open = true; root.home-open = false; root.close-detail(); root.close-search(); root.forward-collection = false; } }
-                            if root.jam-available : NavigationButton { light-mode: root.light-mode; jam: true; jam-active: root.jam-active; active: root.jam-open; enabled: !root.artist-picker-open; clicked => { root.jam-open = !root.jam-open; } }
-                            if root.sidebar-profile && !root.compact-mode : VerticalLayout {
+                            NavigationButton { wide: root.full-sidebar; light-mode: root.light-mode; enabled: root.browsing-enabled || root.jam-open; active: root.active-navigation == "home"; library: false; clicked => { root.jam-open = false; root.playlist-picker-open = false; root.library-open = false; root.home-open = true; root.close-detail(); root.close-search(); root.forward-collection = false; } }
+                            NavigationButton { wide: root.full-sidebar; light-mode: root.light-mode; enabled: root.browsing-enabled || root.jam-open; active: root.active-navigation == "library"; library: true; clicked => { root.jam-open = false; root.playlist-picker-open = false; root.library-open = true; root.home-open = false; root.close-detail(); root.close-search(); root.forward-collection = false; } }
+                            if root.jam-available : NavigationButton { wide: root.full-sidebar; light-mode: root.light-mode; jam: true; jam-active: root.jam-active; active: root.jam-open; enabled: !root.artist-picker-open; clicked => { root.jam-open = !root.jam-open; } }
+                            // Icon rail: Liked and Supermix as rail items.
+                            if !root.full-sidebar && root.sidebar-profile && !root.compact-mode : VerticalLayout {
                                 spacing: 8px; padding-top: 16px;
                                 NavigationButton { liked: true; active: root.active-navigation == "liked"; light-mode: root.light-mode; enabled: root.collection-navigation-enabled; clicked => { root.play-liked(); } }
                                 NavigationButton { mix: true; active: root.active-navigation == "supermix"; light-mode: root.light-mode; enabled: root.collection-navigation-enabled; clicked => { root.open-supermix(); } }
                             }
-                            Rectangle { vertical-stretch: 1; }
+                            // Full sidebar: your music, with playlists as a scrolling list.
+                            if root.full-sidebar && root.account-connected : VerticalLayout {
+                                vertical-stretch: 1;
+                                spacing: 2px;
+                                Rectangle { height: 17px; Rectangle { x: 10px; y: 8px; width: parent.width - 20px; height: 1px; background: Theme.divider; } }
+                                Text { height: 26px; x: 12px; text: "YOUR MUSIC"; color: Theme.muted; font-size: 10px; font-weight: 700; letter-spacing: 0.8px; vertical-alignment: center; }
+                                SidebarCollection { title: "Liked Songs"; subtitle: "Auto playlist"; kind: "liked"; active: root.active-navigation == "liked"; enabled: root.collection-navigation-enabled; light-mode: root.light-mode; open => { root.play-liked(); } }
+                                SidebarCollection { title: "My Supermix"; subtitle: "Made for you"; kind: "mix"; active: root.active-navigation == "supermix"; enabled: root.collection-navigation-enabled; light-mode: root.light-mode; open => { root.open-supermix(); } }
+                                if root.library-playlists.length > 0 : ListView {
+                                    vertical-stretch: 1;
+                                    accessible-label: "Your playlists";
+                                    horizontal-scrollbar-policy: always-off;
+                                    for row[index] in root.library-playlists : SidebarCollection {
+                                        title: row.title; subtitle: row.subtitle; kind: "playlist"; variant: row.cover-variant; artwork: row.artwork;
+                                        active: root.detail-open && !root.detail-is-artist && root.detail-title == row.title;
+                                        enabled: root.collection-navigation-enabled; light-mode: root.light-mode;
+                                        open => { root.select-library-playlist(index); }
+                                    }
+                                }
+                            }
+                            if !(root.full-sidebar && root.account-connected) : Rectangle { vertical-stretch: 1; }
                             HorizontalLayout {
-                                height: 40px; alignment: center;
+                                height: 40px; alignment: root.full-sidebar ? stretch : center;
                                 LibraryButton {
-                                    width: 48px; height: 40px;
+                                    width: root.full-sidebar ? parent.width : 48px; height: 40px;
                                     show-tooltip: true; quiet: !root.update-available && root.update-phase == 0;
                                     light-mode: root.light-mode; active: root.update-panel-open || root.update-phase == 2;
                                     notification: root.update-available && root.update-phase == 0;
-                                    caption: root.update-phase == 1 ? root.update-progress.to-fixed(0) + "%" : "";
-                                    icon-path: root.update-phase == 1 ? "" : root.update-phase == 2 ? "M5 12 L10 17 L19 7" : "M12 3 V15 M7 10 L12 15 L17 10 M5 17 V21 H19 V17";
+                                    caption: root.update-phase == 1 ? root.update-progress.to-fixed(0) + "%"
+                                        : root.full-sidebar ? (root.update-phase == 2 ? "Restart to update" : root.update-available ? "Update available" : "Updates") : "";
+                                    leading-icon: root.full-sidebar && root.update-phase != 1 ? (root.update-phase == 2 ? "M5 12 L10 17 L19 7" : "M12 3 V15 M7 10 L12 15 L17 10 M5 17 V21 H19 V17") : "";
+                                    icon-path: root.full-sidebar || root.update-phase == 1 ? "" : root.update-phase == 2 ? "M5 12 L10 17 L19 7" : "M12 3 V15 M7 10 L12 15 L17 10 M5 17 V21 H19 V17";
                                     label: root.update-phase == 2 ? "Tide update ready" : (root.update-available ? "Tide update available" : "Tide updates");
                                     clicked => {
                                         root.suggestions-open = false; root.update-panel-open = true;
@@ -869,7 +899,7 @@ export component AppWindow inherits Window {
                                     height: 48px;
                                     spacing: 10px;
                                     cross-axis-alignment: center;
-                                    VerticalLayout { horizontal-stretch: 1; spacing: 4px; Text { text: "Search results"; color: root.foreground; font-size: 26px; font-weight: 600; } Text { text: root.search-busy ? (root.search-result-count > 0 ? "Refreshing results…" : "Searching…") : "" + root.search-result-count + " results"; color: root.secondary; font-size: 12px; } }
+                                    VerticalLayout { horizontal-stretch: 1; spacing: 4px; Text { text: "Search results"; color: root.foreground; font-size: 30px; font-weight: 800; } Text { text: root.search-busy ? (root.search-result-count > 0 ? "Refreshing results…" : "Searching…") : "" + root.search-result-count + " results"; color: root.secondary; font-size: 12px; } }
                                     LibraryButton { width: 36px; show-tooltip: true; light-mode: root.light-mode; enabled: root.browsing-enabled; icon-path: "M 20 12 L 4 12 M 10 6 L 4 12 L 10 18"; label: "Close search results"; clicked => { root.close-search(); } }
                                 }
                                 HorizontalLayout {
@@ -920,7 +950,7 @@ export component AppWindow inherits Window {
                                     cross-axis-alignment: center;
                                     VerticalLayout {
                                         horizontal-stretch: 1; spacing: 2px; alignment: center;
-                                        Text { text: root.library-section == 4 ? "Explore" : "Your Library"; color: root.foreground; font-size: 28px; font-weight: 650; }
+                                        Text { text: root.library-section == 4 ? "Explore" : "Your Library"; color: root.foreground; font-size: 30px; font-weight: 800; }
                                         if root.sidebar-profile : Text { text: root.library-section == 4 ? "Browse charts, moods and genres" : "Your saved music and listening history"; color: root.secondary; font-size: 12px; overflow: elide; }
                                     }
                                     if root.library-section == 0 : LibraryButton {
@@ -968,12 +998,12 @@ export component AppWindow inherits Window {
                                     }
                                 }
                                 if root.library-section == 0 : HorizontalLayout {
-                                    height: root.sidebar-profile ? LayoutMetrics.browse-row-height : 34px;
-                                    spacing: 12px;
-                                    if root.sidebar-profile : LibraryEntry { horizontal-stretch: 1; min-width: 0px; title: "My Supermix"; subtitle: "Made for you"; shortcut-icon: "M 3 6 L 7 6 C 11 6 13 18 17 18 L 21 18 M 17 14 L 21 18 L 17 22 M 3 18 L 7 18 C 11 18 13 6 17 6 L 21 6 M 17 2 L 21 6 L 17 10"; light-mode: root.light-mode; enabled: root.browsing-enabled && root.account-connected && !root.account-busy; open => { root.open-supermix(); } }
-                                    if root.sidebar-profile : LibraryEntry { horizontal-stretch: 1; min-width: 0px; title: "Liked Songs"; subtitle: "Your favorites"; shortcut-icon: "M 12 21 L 3 12 C -2 5 7 -1 12 6 C 17 -1 26 5 21 12 Z"; light-mode: root.light-mode; enabled: root.browsing-enabled && root.account-connected && !root.account-busy; open => { root.play-liked(); } }
-                                    if !root.sidebar-profile : LibraryButton { horizontal-stretch: 1; height: 34px; caption: "My Supermix"; label: "Open My Supermix"; light-mode: root.light-mode; enabled: root.browsing-enabled && root.account-connected && !root.account-busy; clicked => { root.open-supermix(); } }
-                                    if !root.sidebar-profile : LibraryButton { horizontal-stretch: 1; height: 34px; caption: "Liked Songs"; label: "Open Liked Songs"; light-mode: root.light-mode; enabled: root.browsing-enabled && root.account-connected && !root.account-busy; clicked => { root.play-liked(); } }
+                                    height: root.sidebar-profile ? 56px : 34px;
+                                    spacing: 10px;
+                                    if root.sidebar-profile : QuickTile { horizontal-stretch: 1; min-width: 0px; title: "My Supermix"; kind: "mix"; light-mode: root.light-mode; enabled: root.browsing-enabled && root.account-connected && !root.account-busy; open => { root.open-supermix(); } }
+                                    if root.sidebar-profile : QuickTile { horizontal-stretch: 1; min-width: 0px; title: "Liked Songs"; kind: "liked"; light-mode: root.light-mode; enabled: root.browsing-enabled && root.account-connected && !root.account-busy; open => { root.play-liked(); } }
+                                    if !root.sidebar-profile : LibraryButton { quiet: false; horizontal-stretch: 1; height: 34px; caption: "My Supermix"; label: "Open My Supermix"; light-mode: root.light-mode; enabled: root.browsing-enabled && root.account-connected && !root.account-busy; clicked => { root.open-supermix(); } }
+                                    if !root.sidebar-profile : LibraryButton { quiet: false; horizontal-stretch: 1; height: 34px; caption: "Liked Songs"; label: "Open Liked Songs"; light-mode: root.light-mode; enabled: root.browsing-enabled && root.account-connected && !root.account-busy; clicked => { root.play-liked(); } }
                                 }
                                 if root.library-note != "" : Text { height: 18px; text: root.library-note; font-size: 12px; color: root.secondary; overflow: elide; }
                                 if root.library-section == 0 && root.library-playlists.length > 0 : library-list := ListView {
@@ -1035,19 +1065,32 @@ export component AppWindow inherits Window {
                                 }
                             }
                             if !root.library-open && !root.detail-open && !root.search-open : VerticalLayout {
-                                spacing: 12px;
+                                spacing: 18px;
                                 if root.account-connected || root.account-busy || root.jam-guest : HorizontalLayout {
                                     height: 48px;
                                     spacing: 10px;
                                     cross-axis-alignment: center;
-                                    VerticalLayout { horizontal-stretch: 1; spacing: 4px; Text { text: "Home"; color: root.foreground; font-size: 26px; font-weight: 650; } Text { text: root.home-refreshing ? "Refreshing recommendations…" : root.jam-guest ? "Choose a song or press + to add it to the shared queue" : "Your YouTube Music recommendations"; color: root.secondary; font-size: 12px; overflow: elide; } }
+                                    VerticalLayout { horizontal-stretch: 1; spacing: 4px; Text { text: root.jam-guest ? "Home" : root.greeting; color: root.foreground; font-size: 30px; font-weight: 800; overflow: elide; } Text { text: root.home-refreshing ? "Refreshing recommendations…" : root.jam-guest ? "Choose a song or press + to add it to the shared queue" : "Picks from your YouTube Music Home"; color: root.secondary; font-size: 13px; overflow: elide; } }
                                         LibraryButton { width: 36px; show-tooltip: true; light-mode: root.light-mode; icon-path: "M 20 7 L 20 3 M 20 7 L 16 7 M 20 7 A 9 9 0 1 0 21 14"; label: "Refresh your recommendations"; enabled: root.browsing-enabled && root.account-connected && !root.account-busy; clicked => { root.refresh-recommendations(); } }
 
                                 }
-                                if root.account-connected && root.height >= 620px : HorizontalLayout {
-                                    height: LayoutMetrics.browse-row-height; spacing: 12px;
-                                    LibraryEntry { home-shortcut: true; horizontal-stretch: 1; min-width: 0px; title: "Liked Songs"; subtitle: "Your favorites"; shortcut-icon: "M 12 21 L 3 12 C -2 5 7 -1 12 6 C 17 -1 26 5 21 12 Z"; light-mode: root.light-mode; enabled: root.browsing-enabled && root.account-connected && !root.account-busy; open => { root.play-liked(); } }
-                                    LibraryEntry { home-shortcut: true; horizontal-stretch: 1; min-width: 0px; title: "My Supermix"; subtitle: "Made for you"; shortcut-icon: "M 3 6 L 7 6 C 11 6 13 18 17 18 L 21 18 M 17 14 L 21 18 L 17 22 M 3 18 L 7 18 C 11 18 13 6 17 6 L 21 6 M 17 2 L 21 6 L 17 10"; light-mode: root.light-mode; enabled: root.browsing-enabled && root.account-connected && !root.account-busy; open => { root.open-supermix(); } }
+                                if root.account-connected && root.height >= 620px : quick := Rectangle {
+                                    property <int> columns: root.browse-width >= 760px ? 3 : 2;
+                                    property <int> count: min(self.columns * 2, root.library-playlists.length + 2);
+                                    property <length> tile-width: (self.width - 10px * (self.columns - 1)) / self.columns;
+                                    property <bool> tiles-enabled: root.browsing-enabled && root.account-connected && !root.account-busy;
+                                    height: ceil(self.count / self.columns) * 66px - 10px;
+                                    QuickTile { x: 0px; y: 0px; width: quick.tile-width; title: "Liked Songs"; kind: "liked"; light-mode: root.light-mode; enabled: quick.tiles-enabled; open => { root.play-liked(); } }
+                                    QuickTile { x: quick.tile-width + 10px; y: quick.columns == 2 ? 0px : 0px; width: quick.tile-width; title: "My Supermix"; kind: "mix"; light-mode: root.light-mode; enabled: quick.tiles-enabled; open => { root.open-supermix(); } }
+                                    for row[index] in root.library-playlists : QuickTile {
+                                        visible: index + 2 < quick.count;
+                                        x: Math.mod(index + 2, quick.columns) * (quick.tile-width + 10px);
+                                        y: floor((index + 2) / quick.columns) * 66px;
+                                        width: quick.tile-width;
+                                        title: row.title; kind: "playlist"; variant: row.cover-variant; artwork: row.artwork;
+                                        light-mode: root.light-mode; enabled: quick.tiles-enabled;
+                                        open => { root.select-library-playlist(index); }
+                                    }
                                 }
                                 if root.recommendations.length > 0 : ListView {
                                     content-y <=> root.home-artwork-y;
@@ -1058,7 +1101,7 @@ export component AppWindow inherits Window {
                                         spacing: 0px; padding-bottom: LayoutMetrics.home-row-gap;
                                         if group.title != "" : Rectangle {
                                             height: LayoutMetrics.home-heading-height;
-                                            Text { x: 0px; y: 6px; width: parent.width; height: 34px; text: group.title; color: root.foreground; font-size: 23px; font-weight: 600; overflow: elide; }
+                                            Text { x: 0px; y: 6px; width: parent.width; height: 34px; text: group.title; color: root.foreground; font-size: 22px; font-weight: 750; overflow: elide; }
                                         }
                                         HorizontalLayout {
                                             height: group.layout == "compact" ? LayoutMetrics.home-compact-height : LayoutMetrics.library-tile-height; spacing: 12px;
@@ -1259,17 +1302,27 @@ export component AppWindow inherits Window {
                 }
                 if root.settings-open : Rectangle {
                     width: parent.width; height: parent.height;
-                    Rectangle { x: 0px; y: 0px; width: max(0px, parent.width - 384px); height: parent.height; background: #00000060; TouchArea { clicked => { root.settings-open = false; } } }
                     Rectangle {
-                        x: max(0px, parent.width - 384px); width: 384px; height: parent.height;
+                        x: 0px; y: 0px; width: max(0px, parent.width - 384px); height: parent.height; background: #00000070;
+                        opacity: ControlMotion.enabled ? 0 : 1;
+                        init => { self.opacity = 1; }
+                        animate opacity { duration: ControlMotion.enabled ? 240ms : 0ms; easing: ease-out; }
+                        TouchArea { clicked => { root.settings-open = false; } }
+                    }
+                    Rectangle {
+                        property <length> slide: ControlMotion.enabled ? 384px : 0px;
+                        init => { self.slide = 0; }
+                        animate slide { duration: ControlMotion.enabled ? 280ms : 0ms; easing: cubic-bezier(0.2, 0.9, 0.3, 1); }
+                        x: max(0px, parent.width - 384px) + self.slide; width: 384px; height: parent.height;
                         background: root.surface; border-width: 1px; border-color: root.outline;
+                        drop-shadow-blur: 30px; drop-shadow-color: Theme.shadow;
                         TouchArea { }
                         ScrollView {
                             content-y <=> root.settings-scroll-y;
                             width: parent.width; height: parent.height; horizontal-scrollbar-policy: always-off;
                             VerticalLayout {
                                 padding: 24px; spacing: 14px; alignment: start;
-                                HorizontalLayout { height: 42px; cross-axis-alignment: center; Text { horizontal-stretch: 1; text: "Settings"; color: root.foreground; font-size: 25px; font-weight: 650; } LibraryButton { width: 32px; height: 32px; caption: "×"; label: "Close settings"; light-mode: root.light-mode; clicked => { root.settings-open = false; } } }
+                                HorizontalLayout { height: 42px; cross-axis-alignment: center; Text { horizontal-stretch: 1; text: "Settings"; color: root.foreground; font-size: 26px; font-weight: 800; } LibraryButton { width: 32px; height: 32px; caption: "×"; label: "Close settings"; light-mode: root.light-mode; clicked => { root.settings-open = false; } } }
                                 if root.settings-shortcuts-open : VerticalLayout {
                                     spacing: 12px; alignment: start;
                                     LibraryButton { height: 34px; caption: "‹  Back"; label: "Back to general settings"; light-mode: root.light-mode; clicked => { root.cancel-shortcut(); root.settings-shortcuts-open = false; } }
@@ -1296,10 +1349,11 @@ export component AppWindow inherits Window {
                                 }
                                 if !root.settings-shortcuts-open && !root.settings-audio-open : VerticalLayout {
                                     spacing: 10px; alignment: start;
-                                    Text { height: 24px; text: "Listening"; color: root.foreground; font-size: 17px; font-weight: 600; }
+                                    Text { height: 24px; text: "Listening"; color: root.foreground; font-size: 17px; font-weight: 700; }
                                     PreferenceRow { title: "Listening history"; detail: "Send played songs to YouTube Music for better recommendations."; checked: root.history-feedback-enabled; light-mode: root.light-mode; toggled => { root.toggle-history-feedback(); } }
                                     if root.history-feedback-status != "" : Text { text: root.history-feedback-status; color: root.secondary; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
                                     PreferenceRow { title: "Discord activity"; detail: "Show the playing song on your Discord profile."; checked: root.discord-presence-enabled; light-mode: root.light-mode; toggled => { root.toggle-discord-presence(); } }
+                                    PreferenceRow { title: "Animations"; detail: "Smooth transitions, hover effects and live level bars."; checked: root.animations-enabled; light-mode: root.light-mode; toggled => { root.toggle-animations(); } }
                                     if root.discord-presence-enabled : Text { text: root.discord-status; color: root.secondary; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
                                     SettingsLink { title: "Audio"; icon-path: "M 4 10 L 8 10 L 13 5 L 13 19 L 8 14 L 4 14 Z M 17 8 C 21 10 21 14 17 16 M 19 4 C 27 9 27 15 19 20"; light-mode: root.light-mode; activated => { root.settings-audio-open = true; } }
                                     SettingsLink { title: "Keyboard shortcuts"; icon-path: "M 2 5 L 22 5 L 22 19 L 2 19 Z M 5 9 L 7 9 M 10 9 L 12 9 M 15 9 L 19 9 M 5 12 L 7 12 M 10 12 L 12 12 M 15 12 L 19 12 M 6 16 L 18 16"; light-mode: root.light-mode; activated => { root.settings-shortcuts-open = true; app-focus.focus(); } }
@@ -1324,14 +1378,24 @@ export component AppWindow inherits Window {
                 if root.account-open : Rectangle {
                     width: parent.width;
                     height: parent.height;
-                    Rectangle { x: 0px; y: 0px; width: max(0px, parent.width - 420px); height: parent.height; background: #00000060; TouchArea { clicked => { root.account-open = false; } } }
                     Rectangle {
-                        x: max(0px, parent.width - 420px);
+                        x: 0px; y: 0px; width: max(0px, parent.width - 420px); height: parent.height; background: #00000070;
+                        opacity: ControlMotion.enabled ? 0 : 1;
+                        init => { self.opacity = 1; }
+                        animate opacity { duration: ControlMotion.enabled ? 240ms : 0ms; easing: ease-out; }
+                        TouchArea { clicked => { root.account-open = false; } }
+                    }
+                    Rectangle {
+                        property <length> slide: ControlMotion.enabled ? 420px : 0px;
+                        init => { self.slide = 0; }
+                        animate slide { duration: ControlMotion.enabled ? 280ms : 0ms; easing: cubic-bezier(0.2, 0.9, 0.3, 1); }
+                        x: max(0px, parent.width - 420px) + self.slide;
                         width: 420px;
                         height: parent.height;
                         background: root.surface;
                         border-width: 1px;
                         border-color: root.outline;
+                        drop-shadow-blur: 30px; drop-shadow-color: Theme.shadow;
                         TouchArea { }
                         ScrollView {
                             width: parent.width;
@@ -1554,9 +1618,9 @@ export component AppWindow inherits Window {
                 window-minimized: root.minimized;
                 transport-enabled: !root.jam-guest;
                 skip-enabled: root.can-skip;
-                preferred-height: 110px;
-                min-height: 110px;
-                max-height: root.collapsed ? 1000px : 110px;
+                preferred-height: root.collapsed ? 110px : 92px;
+                min-height: root.collapsed ? 110px : 92px;
+                max-height: root.collapsed ? 1000px : 92px;
                 vertical-stretch: root.collapsed ? 1 : 0;
                 track-title: root.track-title;
                 track-artist: root.track-artist;

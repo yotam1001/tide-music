@@ -49,8 +49,9 @@ export global Theme {
 
 // Artwork viewport calculations read these same logical dimensions from Rust.
 export global LayoutMetrics {
-    out property <length> navigation-wide: 88px;
-    out property <length> navigation-narrow: 88px;
+    // Full sidebar with labels and playlists; narrow windows use an icon rail.
+    out property <length> navigation-wide: 232px;
+    out property <length> navigation-narrow: 76px;
     out property <length> footer-actions-width: 248px;
     out property <length> browse-row-height: 72px;
     out property <length> collection-row-height: 82px;
@@ -501,20 +502,14 @@ export component LibraryTab inherits Rectangle {
     in property <bool> light-mode;
     in property <bool> enabled: true;
     callback select();
-    height: 32px; width: root.title == "Playlists" ? 88px : root.title == "History" ? 88px : 76px;
-    border-radius: 5px;
-    background: hover.has-hover ? (Theme.hover) : transparent;
-    animate background { duration: ControlMotion.feedback; easing: ease-out; }
-    border-width: action.has-focus ? 2px : 0px; border-color: Theme.accent-ink;
+    height: 32px; width: root.title == "Playlists" ? 88px : root.title == "History" ? 82px : 76px;
+    border-radius: self.height / 2;
+    background: root.selected ? Theme.accent : hover.has-hover ? Theme.hover : Theme.raised;
+    animate background { duration: ControlMotion.selection; easing: ease-out; }
+    border-width: action.has-focus ? 2px : 0px; border-color: Theme.focus;
     opacity: root.enabled ? 1 : 0.45;
-    Text { width: parent.width; height: parent.height; text: root.title; font-size: 13px; font-weight: root.selected ? 600 : 500;
-        horizontal-alignment: center; vertical-alignment: center; color: root.selected ? (Theme.text) : (Theme.muted); }
-    Rectangle {
-        x: (parent.width - self.width) / 2; y: parent.height - 2px;
-        width: root.selected ? parent.width - 24px : 0px;
-        height: 2px; border-radius: 1px; background: Theme.accent;
-        animate width { duration: ControlMotion.selection; easing: ease-out; }
-    }
+    Text { width: parent.width; height: parent.height; text: root.title; font-size: 13px; font-weight: 600;
+        horizontal-alignment: center; vertical-alignment: center; color: root.selected ? Theme.on-accent : Theme.text; }
     hover := TouchArea { width: parent.width; height: parent.height; enabled: root.enabled; mouse-cursor: pointer;
         action := Button { width: parent.width; height: parent.height; opacity: 0; enabled: root.enabled; accessible-label: root.label; clicked => { root.select(); } } }
 }
@@ -529,10 +524,13 @@ export component NavigationButton inherits Rectangle {
     in property <bool> mix: false;
     in property <bool> jam-active: false;
     in property <bool> enabled: true;
+    // Full sidebar: icon and label side by side. Otherwise a compact rail item.
+    in property <bool> wide: false;
     callback clicked;
-    height: 64px;
+    height: root.wide ? 42px : 64px;
     border-radius: 8px;
-    background: control.pressed || row-hover.has-hover ? (Theme.hover) : transparent;
+    background: root.active && root.wide ? Theme.selected
+        : control.pressed || row-hover.has-hover ? (Theme.hover) : transparent;
     animate background { duration: ControlMotion.feedback; easing: ease-out; }
     border-width: control.has-focus ? 2px : 0px;
     border-color: Theme.focus;
@@ -553,7 +551,9 @@ export component NavigationButton inherits Rectangle {
         }
     }
     Path {
-        x: (parent.width - self.width) / 2; y: 9px; width: 22px; height: 22px;
+        x: root.wide ? 14px : (parent.width - self.width) / 2;
+        y: root.wide ? (parent.height - self.height) / 2 : 9px;
+        width: root.wide ? 20px : 22px; height: self.width;
         viewbox-width: 24; viewbox-height: 24; fill: transparent; stroke: root.ink; stroke-width: 1.8px;
         commands: root.liked ? "M 12 20 L 4 12 C -3 4 8 -1 12 6 C 16 -1 27 4 20 12 Z"
             : root.mix ? "M 3 8 L 3 16 M 8 4 L 8 20 M 13 7 L 13 17 M 18 3 L 18 21 M 23 9 L 23 15"
@@ -561,10 +561,17 @@ export component NavigationButton inherits Rectangle {
             : root.library ? "M 4 4 L 4 20 M 9 4 L 9 20 M 14 5 L 19 4 L 22 19 L 17 20 Z"
             : "M 3 10 L 12 3 L 21 10 M 5 9 L 5 21 L 10 21 L 10 14 L 14 14 L 14 21 L 19 21 L 19 9";
     }
-    Text {
+    if !root.wide : Text {
         y: 37px; width: parent.width; height: 18px;
         text: root.liked ? "Liked" : root.mix ? "Supermix" : root.jam ? (root.jam-active ? "Jams •" : "Jams") : root.library ? "Library" : "Home";
         color: root.ink; font-size: 11px; font-weight: root.active ? 600 : 500; horizontal-alignment: center;
+    }
+    if root.wide : Text {
+        x: 46px; width: parent.width - self.x - 10px; height: parent.height;
+        text: root.liked ? "Liked Songs" : root.mix ? "My Supermix" : root.jam ? (root.jam-active ? "Jams · live" : "Jams") : root.library ? "Your library" : "Home";
+        color: root.active ? Theme.selected-ink : row-hover.has-hover ? Theme.text : Theme.muted;
+        font-size: 14px; font-weight: root.active ? 700 : 600;
+        vertical-alignment: center; overflow: elide;
     }
 }
 
