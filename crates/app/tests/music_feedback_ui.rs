@@ -253,7 +253,7 @@ fn native_ratings_remain_reachable_and_do_not_take_over_transport() {
     for (guest, down_count) in [(false, 4), (true, 2)] {
         ui.set_jam_guest(guest);
         draw(&window, 1140, 800, "playlist-menu-before");
-        click(&ui, 1087.0, 229.0);
+        click(&ui, 1087.0, 373.0);
         draw(
             &window,
             1140,

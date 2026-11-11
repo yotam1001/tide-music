@@ -279,12 +279,12 @@ fn settings_theme_account_and_song_menu_remain_independent() {
     ui.set_light_mode(false);
     ui.set_search_open(true);
     let before = draw(&window, 1140, 800);
-    click(&ui, 1087.0, 229.0);
+    click(&ui, 1087.0, 373.0);
     let menu = draw(&window, 1140, 800);
     export("song-menu-dark", 1140, 800, &menu);
     assert_ne!(menu, before, "song action did not display a menu");
     assert_eq!(
-        menu[264 * 1140 + 900],
+        menu[408 * 1140 + 900],
         Rgb8Pixel {
             r: 25,
             g: 28,
@@ -296,7 +296,7 @@ fn settings_theme_account_and_song_menu_remain_independent() {
     let light_menu = draw(&window, 1140, 800);
     export("song-menu-light", 1140, 800, &light_menu);
     assert_eq!(
-        light_menu[264 * 1140 + 900],
+        light_menu[408 * 1140 + 900],
         Rgb8Pixel {
             r: 249,
             g: 244,
@@ -322,7 +322,7 @@ fn settings_theme_account_and_song_menu_remain_independent() {
         queue_action.get().is_none(),
         "dismissal must not queue a track"
     );
-    click(&ui, 1087.0, 229.0);
+    click(&ui, 1087.0, 373.0);
     draw(&window, 1140, 800);
     click(&ui, 400.0, 420.0);
     let dismissed = draw(&window, 1140, 800);
@@ -335,7 +335,7 @@ fn settings_theme_account_and_song_menu_remain_independent() {
         );
     }
     assert!(queue_action.get().is_none());
-    click(&ui, 1087.0, 229.0);
+    click(&ui, 1087.0, 373.0);
     draw(&window, 1140, 800);
     key(&ui, Key::DownArrow);
     key(&ui, Key::Return);
@@ -348,7 +348,7 @@ fn settings_theme_account_and_song_menu_remain_independent() {
     for light in [false, true] {
         ui.set_light_mode(light);
         draw(&window, 1140, 800);
-        click(&ui, 1087.0, 229.0);
+        click(&ui, 1087.0, 373.0);
         draw(&window, 1140, 800);
         key(&ui, Key::DownArrow);
         key(&ui, Key::DownArrow);
@@ -359,7 +359,7 @@ fn settings_theme_account_and_song_menu_remain_independent() {
             Some((0, false)),
             "Add to queue must target this search row"
         );
-        click(&ui, 1087.0, 229.0);
+        click(&ui, 1087.0, 373.0);
         draw(&window, 1140, 800);
         // Radio is the third item; playlist saving now follows it.
         key(&ui, Key::DownArrow);

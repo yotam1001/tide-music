@@ -929,6 +929,38 @@ export component AppWindow inherits Window {
                                         clicked => { root.select-search-kind(root.search-kind); }
                                     }
                                 }
+                                // Top result, like the hero card in other players' search.
+                                if root.search-kind == 0 && root.search-rows.length > 0 && root.browse-width >= 600px && root.height >= 680px : Rectangle {
+                                    height: 132px;
+                                    border-radius: 10px;
+                                    background: hero-touch.has-hover ? Theme.hover : Theme.raised;
+                                    animate background { duration: ControlMotion.feedback; easing: ease-out; }
+                                    hero-touch := TouchArea {
+                                        enabled: root.browsing-enabled; mouse-cursor: pointer;
+                                        clicked => { root.select-search-track(0); }
+                                    }
+                                    HorizontalLayout {
+                                        padding: 16px; spacing: 18px;
+                                        Cover { width: 100px; height: 100px; artwork: root.search-rows[0].artwork; light-mode: root.light-mode; seed: root.search-rows[0].title; drop-shadow-blur: 14px; drop-shadow-color: Theme.shadow; }
+                                        VerticalLayout {
+                                            horizontal-stretch: 1; min-width: 0px; spacing: 6px; alignment: center;
+                                            Text { text: "TOP RESULT"; color: Theme.accent-ink; font-size: 11px; font-weight: 700; letter-spacing: 1px; }
+                                            Text { text: root.search-rows[0].title; color: root.foreground; font-size: 26px; font-weight: 800; overflow: elide; }
+                                            Text { text: "Song · " + root.search-rows[0].artist; color: root.secondary; font-size: 14px; overflow: elide; }
+                                        }
+                                        VerticalLayout {
+                                            alignment: center;
+                                            LibraryButton {
+                                                width: 52px; height: 52px; round: true; show-tooltip: true; light-mode: root.light-mode;
+                                                active: true; icon-path: "M 7 4 L 20 12 L 7 20 Z";
+                                                opacity: hero-touch.has-hover ? 1 : 0.92;
+                                                label: (root.jam-guest ? "Add to shared queue: " : "Play ") + root.search-rows[0].title;
+                                                enabled: root.browsing-enabled;
+                                                clicked => { root.select-search-track(0); }
+                                            }
+                                        }
+                                    }
+                                }
                                 if root.search-kind == 0 && root.search-rows.length > 0 : ListView {
                                     content-y <=> root.search-artwork-y;
                                     changed visible-height => { root.search-artwork-height = self.visible-height; }
@@ -1207,6 +1239,15 @@ export component AppWindow inherits Window {
                     TouchArea { }
                     property <length> art: max(140px, min(420px, min(self.height - 120px, (self.width - 160px) * 0.45)));
                     property <int> upcoming: max(0, root.rows.length - root.current-index - 1);
+                    // Ambient backdrop: the cover itself, washed into the window.
+                    Image {
+                        width: parent.width; height: parent.height;
+                        source: root.track-artwork; image-fit: cover;
+                        opacity: Theme.light ? 0.14 : 0.2;
+                    }
+                    Rectangle {
+                        background: @linear-gradient(180deg, Theme.window.with-alpha(0.35) 0%, Theme.window.with-alpha(0.82) 60%, Theme.window 100%);
+                    }
                     Rectangle {
                         background: @linear-gradient(160deg, root.hero-color.with-alpha(Theme.light ? 0.36 : 0.5) 0%, root.hero-color.with-alpha(0.08) 55%, root.hero-color.with-alpha(0) 100%);
                     }
@@ -1233,8 +1274,8 @@ export component AppWindow inherits Window {
                             Rectangle { height: 14px; }
                             HorizontalLayout {
                                 height: 36px; spacing: 8px; alignment: start;
-                                LibraryButton { width: 96px; height: 36px; quiet: false; light-mode: root.light-mode; caption: "Lyrics"; label: "Open lyrics"; clicked => { root.now-playing-open = false; root.lyrics-open = true; } }
-                                LibraryButton { width: 96px; height: 36px; quiet: false; light-mode: root.light-mode; caption: "Queue"; label: "Open the queue"; clicked => { root.now-playing-open = false; root.queue-open = true; } }
+                                LibraryButton { width: 108px; height: 36px; border-radius: 18px; quiet: false; light-mode: root.light-mode; caption: "Lyrics"; leading-icon: "M 12 3 A 3 3 0 0 1 15 6 L 15 11 A 3 3 0 0 1 9 11 L 9 6 A 3 3 0 0 1 12 3 Z M 6 11 A 6 6 0 0 0 18 11 M 12 17 L 12 21"; label: "Open lyrics"; clicked => { root.now-playing-open = false; root.lyrics-open = true; } }
+                                LibraryButton { width: 108px; height: 36px; border-radius: 18px; quiet: false; light-mode: root.light-mode; caption: "Queue"; leading-icon: "M 4 6 L 16 6 M 4 11 L 16 11 M 4 16 L 11 16 M 15 14 L 20 17 L 15 20 Z"; label: "Open the queue"; clicked => { root.now-playing-open = false; root.queue-open = true; } }
                             }
                             Rectangle { height: 10px; }
                             Text { text: "UP NEXT"; color: Theme.muted; font-size: 11px; font-weight: 700; letter-spacing: 0.8px; }

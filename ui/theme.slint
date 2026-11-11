@@ -345,7 +345,8 @@ export component TideButton inherits Rectangle {
         height: 20px;
         viewbox-width: 24;
         viewbox-height: 24;
-        fill: root.icon-kind == "play" || root.icon-kind == "pause" || root.icon-kind == "previous" || root.icon-kind == "next" ? root.icon-color : Colors.transparent;
+        fill: root.icon-kind == "play" || root.icon-kind == "pause" || root.icon-kind == "previous" || root.icon-kind == "next"
+            || root.icon-path == "M 7 4 L 20 12 L 7 20 Z" ? root.icon-color : Colors.transparent;
         stroke: root.icon-color;
         stroke-width: 1.5px;
         commands: root.icon-path != "" ? root.icon-path
