@@ -1252,8 +1252,18 @@ export component AppWindow inherits Window {
                     property <int> upcoming: max(0, root.rows.length - root.current-index - 1);
                     // Ambient backdrop: the cover itself, washed into the window.
                     // The lyrics controller's pre-blurred cover when available.
+                    // It drifts slowly while playing, like Apple Music's
+                    // ambient player; four steps a second keep it cheap for
+                    // the software renderer.
+                    property <float> drift: 0;
+                    Timer {
+                        interval: 250ms;
+                        running: ControlMotion.enabled && !root.paused && root.lyrics-backdrop.width > 0;
+                        triggered => { np.drift += 0.012; }
+                    }
                     Image {
-                        width: parent.width; height: parent.height;
+                        x: -np.width * 0.06 * (1 + sin(np.drift * 1rad)); y: -np.height * 0.06 * (1 + cos(np.drift * 0.7rad));
+                        width: np.width * 1.12; height: np.height * 1.12;
                         source: root.lyrics-backdrop.width > 0 ? root.lyrics-backdrop : root.track-artwork; image-fit: cover;
                         opacity: root.lyrics-backdrop.width > 0 ? (Theme.light ? 0.35 : 0.55) : (Theme.light ? 0.14 : 0.2);
                     }
