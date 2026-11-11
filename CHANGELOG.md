@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.4.20 - 2026-11-11
+
 - Add equalizer presets in Settings → Audio: Bass boost, Bass reducer, Treble
   boost, Vocal and Loudness. Boosting presets lower the level first to avoid
   distortion, and work together with Even volume.
