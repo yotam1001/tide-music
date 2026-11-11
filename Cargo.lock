@@ -4242,7 +4242,7 @@ dependencies = [
 
 [[package]]
 name = "tide-core"
-version = "0.4.18"
+version = "0.4.19"
 dependencies = [
  "serde",
 ]
@@ -4263,7 +4263,7 @@ dependencies = [
 
 [[package]]
 name = "tide-music"
-version = "0.4.18"
+version = "0.4.19"
 dependencies = [
  "arboard",
  "image",
@@ -4290,7 +4290,7 @@ dependencies = [
 
 [[package]]
 name = "tide-playback"
-version = "0.4.18"
+version = "0.4.19"
 dependencies = [
  "serde_json",
  "tide-core",
@@ -4302,7 +4302,7 @@ dependencies = [
 
 [[package]]
 name = "tide-provider"
-version = "0.4.18"
+version = "0.4.19"
 dependencies = [
  "serde",
  "serde_json",
@@ -4315,7 +4315,7 @@ dependencies = [
 
 [[package]]
 name = "tide-windows"
-version = "0.4.18"
+version = "0.4.19"
 dependencies = [
  "serde_json",
  "url",
