@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.4.22 - 2026-11-12
+
+- Update checks no longer use the GitHub API, so "GitHub's update limit was
+  reached" stops appearing: Tide reads the latest release's signed update file
+  directly and verifies it before offering anything.
+- The automatic check on startup runs at most once every six hours; Check for
+  updates still works any time.
+
 ## 0.4.21 - 2026-11-11
 
 - Add Bit-perfect output in Settings → Audio: exclusive device access with no
