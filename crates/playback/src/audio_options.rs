@@ -12,6 +12,10 @@ pub struct AudioOptions {
     /// Output gain in dB, from -90 (silent) to 0, applied after volume.
     /// Crossfades use it so the volume setting itself never moves.
     pub gain_db: f64,
+    /// Bit-perfect output: WASAPI exclusive mode and no processing at all
+    /// (no equalizer, normalization, fades or gain), so the decoded stream
+    /// reaches the device unchanged. The app also holds volume at 100%.
+    pub bit_perfect: bool,
 }
 impl Default for AudioOptions {
     fn default() -> Self {
@@ -21,6 +25,7 @@ impl Default for AudioOptions {
             equalizer: 0,
             fade: false,
             gain_db: 0.0,
+            bit_perfect: false,
         }
     }
 }
@@ -85,9 +90,15 @@ impl AudioOptions {
     }
     /// Whether a change from `old` needs the audio filter chain replaced.
     pub(crate) fn filters_differ(&self, old: &Self) -> bool {
-        self.normalize != old.normalize || self.equalizer != old.equalizer || self.fade != old.fade
+        self.normalize != old.normalize
+            || self.equalizer != old.equalizer
+            || self.fade != old.fade
+            || self.bit_perfect != old.bit_perfect
     }
     pub(crate) fn filter(&self) -> String {
+        if self.bit_perfect {
+            return String::new();
+        }
         let mut filters = Vec::new();
         if let Some((_, chain)) = EQUALIZER_PRESETS
             .get(usize::from(self.equalizer))
@@ -161,6 +172,21 @@ mod tests {
         }
         .filter()
         .contains("dynaudnorm"));
+    }
+    #[test]
+    fn bit_perfect_bypasses_every_effect() {
+        let options = AudioOptions {
+            normalize: true,
+            equalizer: 1,
+            fade: true,
+            bit_perfect: true,
+            ..Default::default()
+        };
+        assert!(options.filter().is_empty());
+        assert!(options.filters_differ(&AudioOptions {
+            bit_perfect: false,
+            ..options.clone()
+        }));
     }
     #[test]
     fn fades_shape_only_full_length_songs_and_come_last_in_the_chain() {

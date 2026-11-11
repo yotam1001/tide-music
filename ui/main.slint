@@ -241,6 +241,9 @@ export component AppWindow inherits Window {
     in property <bool> fade-transitions: false;
     // Crossfade length in seconds; 0 is off.
     in property <int> crossfade-seconds: 0;
+    // Exclusive, unprocessed output: effects and Tide's volume step aside.
+    in property <bool> bit-perfect: false;
+    callback toggle-bit-perfect();
     callback choose-crossfade(int);
     callback toggle-fade-transitions();
     // Remaining sleep timer, e.g. "25 min" or "End of song"; empty when off.
@@ -1517,18 +1520,20 @@ export component AppWindow inherits Window {
                                     Text { text: "Output device"; color: root.secondary; font-size: 12px; }
                                     ComboBox { model: root.audio-device-names; current-index: root.audio-device-index; selected(value) => { root.choose-audio-device(self.current-index); } }
                                     Text { text: root.audio-status; color: root.secondary; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
+                                    PreferenceRow { title: "Bit-perfect output"; detail: "Exclusive device access with no processing. Set loudness on your device or DAC."; checked: root.bit-perfect; light-mode: root.light-mode; toggled => { root.toggle-bit-perfect(); } }
+                                    if root.bit-perfect : Text { text: "Tide plays at full volume and turns off Even volume, crossfade, fades and the equalizer. Other apps can't play sound on this device meanwhile. YouTube Music streams are compressed, so this keeps the decoded audio unchanged rather than making it lossless."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
                                     Text { text: "Volume step for wheel and arrow keys"; color: root.secondary; font-size: 12px; }
                                     ComboBox { model: ["1%", "2%", "5%", "10%"]; current-index: root.volume-step-index; accessible-label: "Volume adjustment step"; selected(value) => { root.set-volume-step(self.current-index); } }
-                                    PreferenceRow { title: "Even volume"; detail: "Smooth volume differences between songs."; checked: root.normalize-volume; light-mode: root.light-mode; toggled => { root.toggle-normalization(); } }
+                                    PreferenceRow { title: "Even volume"; detail: "Smooth volume differences between songs."; checked: root.normalize-volume && !root.bit-perfect; enabled: !root.bit-perfect; light-mode: root.light-mode; toggled => { root.toggle-normalization(); } }
                                     Text { text: "Smooth out loud and quiet songs locally. This changes the sound and adds a small processing delay. Off preserves the original dynamics."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
-                                    PreferenceRow { title: "Fade between songs"; detail: root.crossfade-seconds == 0 ? "Ease each song in and out instead of cutting." : "Off while crossfade is on."; checked: root.fade-transitions && root.crossfade-seconds == 0; enabled: root.crossfade-seconds == 0; light-mode: root.light-mode; toggled => { root.toggle-fade-transitions(); } }
+                                    PreferenceRow { title: "Fade between songs"; detail: root.crossfade-seconds == 0 ? "Ease each song in and out instead of cutting." : "Off while crossfade is on."; checked: root.fade-transitions && root.crossfade-seconds == 0 && !root.bit-perfect; enabled: root.crossfade-seconds == 0 && !root.bit-perfect; light-mode: root.light-mode; toggled => { root.toggle-fade-transitions(); } }
                                     Text { text: "Crossfade"; color: root.foreground; font-size: 15px; font-weight: 600; }
                                     HorizontalLayout {
                                         height: 32px; spacing: 6px; alignment: start;
                                         for length in [0, 3, 6, 9, 12] : LibraryTab {
                                             width: length == 0 ? 60px : 58px; title: length == 0 ? "Off" : length + " s";
                                             label: length == 0 ? "Crossfade off" : "Crossfade " + length + " seconds";
-                                            selected: root.crossfade-seconds == length; light-mode: root.light-mode;
+                                            selected: root.crossfade-seconds == length; light-mode: root.light-mode; enabled: !root.bit-perfect;
                                             select => { root.choose-crossfade(length); }
                                         }
                                     }
@@ -1538,7 +1543,7 @@ export component AppWindow inherits Window {
                                         height: 32px; spacing: 8px; alignment: start;
                                         for name[column] in (row == 0 ? ["Off", "Bass boost", "Bass reducer"] : ["Treble boost", "Vocal", "Loudness"]) : LibraryTab {
                                             width: 104px; title: name; label: name + " equalizer preset";
-                                            selected: root.equalizer == row * 3 + column; light-mode: root.light-mode;
+                                            selected: root.equalizer == row * 3 + column; light-mode: root.light-mode; enabled: !root.bit-perfect;
                                             select => { root.choose-equalizer(row * 3 + column); }
                                         }
                                     }
@@ -1808,6 +1813,7 @@ export component AppWindow inherits Window {
                 }
             }
             PlayerBar {
+                volume-locked: root.bit-perfect;
                 expand => { root.now-playing-open = !root.now-playing-open; }
                 now-playing-open: root.now-playing-open;
                 tint: root.now-tint;

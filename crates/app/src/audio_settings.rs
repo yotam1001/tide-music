@@ -9,6 +9,7 @@ pub(super) fn options(s: &Settings, gain_db: f64) -> tide_playback::AudioOptions
         equalizer: s.equalizer,
         fade: s.fade_transitions && s.crossfade_seconds == 0,
         gain_db,
+        bit_perfect: s.bit_perfect,
     }
 }
 pub fn apply(s: &State, u: &AppWindow) -> bool {
@@ -47,6 +48,7 @@ pub fn refresh(s: &State, u: &AppWindow, p: &tide_core::PlaybackSnapshot) {
     u.set_equalizer(i32::from(s.settings.equalizer));
     u.set_fade_transitions(s.settings.fade_transitions);
     u.set_crossfade_seconds(i32::from(s.settings.crossfade_seconds));
+    u.set_bit_perfect(s.settings.bit_perfect);
     u.set_audio_device_index(
         devices
             .iter()
@@ -112,6 +114,26 @@ pub fn install(state: &Rc<RefCell<State>>, ui: &AppWindow) {
             } else {
                 s.settings.fade_transitions = before;
             }
+        }
+    });
+    let state_bit_perfect = state.clone();
+    let weak = ui.as_weak();
+    ui.on_toggle_bit_perfect(move || {
+        let Some(u) = weak.upgrade() else {
+            return;
+        };
+        let mut s = state_bit_perfect.borrow_mut();
+        crate::crossfade::Crossfade::cancel(&mut s);
+        let before = s.settings.bit_perfect;
+        s.settings.bit_perfect = !before;
+        if apply(&s, &u) {
+            u.set_bit_perfect(s.settings.bit_perfect);
+            // Full volume when turned on; the chosen volume returns when off.
+            let volume = f64::from(u.get_volume());
+            crate::send(&mut s, &u, tide_core::PlaybackCommand::SetVolume(volume));
+            save(&s.settings);
+        } else {
+            s.settings.bit_perfect = before;
         }
     });
     let state_crossfade = state.clone();

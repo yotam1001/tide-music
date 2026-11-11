@@ -1475,11 +1475,29 @@ async fn apply_audio_options(player: &mut RunningPlayer, options: &AudioOptions)
     if player
         .audio_options
         .as_ref()
-        .is_none_or(|old| old.gain_db != options.gain_db)
+        .is_none_or(|old| old.bit_perfect != options.bit_perfect)
+    {
+        // Exclusive mode bypasses the Windows mixer and its resampling.
+        send_ipc_command(
+            &mut player.writer,
+            json!(["set_property", "audio-exclusive", options.bit_perfect]),
+            Some(-101),
+        )
+        .await?;
+    }
+    let gain_db = if options.bit_perfect {
+        0.0
+    } else {
+        options.gain_db
+    };
+    if player
+        .audio_options
+        .as_ref()
+        .is_none_or(|old| (if old.bit_perfect { 0.0 } else { old.gain_db }) != gain_db)
     {
         send_ipc_command(
             &mut player.writer,
-            json!(["set_property", "volume-gain", options.gain_db]),
+            json!(["set_property", "volume-gain", gain_db]),
             Some(-101),
         )
         .await?;
