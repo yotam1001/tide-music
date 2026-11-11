@@ -132,7 +132,8 @@ export component PlayerBar inherits Rectangle {
                 min-width: 0px;
                 spacing: 2px;
                 alignment: center;
-                Text { text: root.track-title == "" ? "Nothing playing" : root.track-title; color: root.foreground; font-size: 14px; font-weight: 650; overflow: elide; }
+                // Right-to-left titles can paint outside an elided Text; clip them.
+                Rectangle { height: 20px; min-width: 0px; clip: true; Text { width: parent.width; height: parent.height; vertical-alignment: center; text: root.track-title == "" ? "Nothing playing" : root.track-title; color: root.foreground; font-size: 14px; font-weight: 650; overflow: elide; } }
                 ArtistLink { artist: root.track-artist; enabled: root.artist-enabled; light-mode: root.light-mode; activated => { root.artist(); } }
                 if root.playback-hint != "" : Text { text: root.playback-hint; color: Theme.accent-ink; font-size: 10px; overflow: elide; accessible-live-region: polite; }
                 if root.playback-hint == "" && root.audio-quality != "" : Text { text: root.audio-quality; color: root.secondary; font-size: 10px; overflow: elide; }
@@ -194,7 +195,8 @@ export component PlayerBar inherits Rectangle {
                 VerticalLayout {
                     horizontal-stretch: 1;
                     spacing: 1px;
-                    Text { text: root.track-title == "" ? "Nothing playing" : root.track-title; color: root.foreground; font-size: 14px; font-weight: 600; overflow: elide; }
+                    // Right-to-left titles can paint outside an elided Text; clip them.
+                Rectangle { height: 20px; min-width: 0px; clip: true; Text { width: parent.width; height: parent.height; vertical-alignment: center; text: root.track-title == "" ? "Nothing playing" : root.track-title; color: root.foreground; font-size: 14px; font-weight: 600; overflow: elide; } }
                     ArtistLink { artist: root.track-artist; enabled: root.artist-enabled; light-mode: root.light-mode; activated => { root.artist(); } }
                 }
             }
