@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## 0.4.19 - 2026-11-11
+
+- Autoplay continues with YouTube Music's personalized Up next from the last song
+  you picked, skipping songs already queued or played, instead of song radio.
+- Home reads more shelves, rotates each one on refresh, moves Listen again below
+  discovery shelves and adds a "Because you played" shelf from recent listening.
+- Search opens on All, YouTube Music's mixed results by section, with a Top result.
+- Playlists and albums get a numbered track table with an album column and round
+  Play and Shuffle buttons.
+- Sidebar with your playlists, a time-of-day greeting and quick tiles on Home,
+  pill filters, sliding Settings and Account sheets and an Animations switch.
+- Now Playing shows a live lyrics preview over a slowly drifting blurred cover.
+- Like and Dislike sit beside the song title; larger Home and library tiles.
+- Right-to-left titles stay inside the player bar; restore recent searches.
+
 ## 0.4.18 - 2026-11-11
 
 - Give the interface depth: one theme palette, a raised content panel and a glow
