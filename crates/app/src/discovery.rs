@@ -1,15 +1,25 @@
 //! Session-only selection from actual personalized home recommendations.
+//!
+//! YouTube Music returns Home as shelves ("Quick picks", "Mixed for you",
+//! "New releases", "Listen again", ...). Each shelf keeps its own slot budget
+//! and rotates within its leading cards on refresh, so one long shelf can't
+//! crowd out the rest and refreshes surface new picks instead of the same
+//! first two dozen songs. "Listen again" is familiar by definition, so it sits
+//! after the discovery shelves.
 
 use std::collections::{HashSet, VecDeque};
 use tide_provider::Card;
 
-const MAX_CANDIDATES: usize = 240;
-const VISIBLE_CARDS: usize = 24;
-// Vary within the leading two screens, never mine the full pool for novelty.
-const RELEVANCE_WINDOW: usize = 48;
-const RECENT_CARDS: usize = RELEVANCE_WINDOW;
-const LAST_DISPLAY_PENALTY: usize = 16;
-const RECENT_PENALTY: usize = 8;
+const MAX_CANDIDATES: usize = 320;
+const MAX_SHELVES: usize = 9;
+const LEAD_SHELF_CARDS: usize = 12;
+const SHELF_CARDS: usize = 8;
+const FAMILIAR_SHELF_CARDS: usize = 6;
+// Rotate within each shelf's leading cards, never mine its tail for novelty.
+const WINDOW_FACTOR: usize = 2;
+const RECENT_CARDS: usize = 240;
+#[cfg(test)]
+const VISIBLE_CARDS: usize = LEAD_SHELF_CARDS + (MAX_SHELVES - 1) * SHELF_CARDS;
 type Identity = (String, String);
 
 #[derive(Default)]
@@ -25,6 +35,23 @@ struct Candidate {
     rank: usize,
 }
 
+struct Shelf {
+    title: String,
+    candidates: Vec<Candidate>,
+}
+
+fn familiar(title: &str) -> bool {
+    let title = title.to_ascii_lowercase();
+    [
+        "listen again",
+        "keep listening",
+        "from your library",
+        "recently played",
+    ]
+    .iter()
+    .any(|label| title.contains(label))
+}
+
 impl Discovery {
     pub(crate) fn clear(&mut self) {
         self.recent.clear();
@@ -33,54 +60,60 @@ impl Discovery {
 
     pub(crate) fn select(&mut self, cards: Vec<Card>) -> Vec<Card> {
         let mut seen = HashSet::new();
-        let mut candidates: Vec<_> = cards
-            .into_iter()
-            .take(MAX_CANDIDATES)
-            .filter_map(|card| {
-                // Keep supported collections in provider order alongside songs.
-                // Opening validates their canonical API identity separately.
-                if !matches!(card.kind.as_str(), "song" | "playlist" | "album" | "artist")
-                    || card.id.trim().is_empty()
-                    || card.title.trim().is_empty()
-                {
-                    return None;
-                }
-                let identity = (card.kind.clone(), card.id.clone());
-                if !seen.insert(identity.clone()) {
-                    return None;
-                }
-                Some(Candidate {
-                    rank: seen.len() - 1,
-                    card,
-                    identity,
-                })
-            })
-            .take(RELEVANCE_WINDOW)
-            .collect();
-        if candidates.is_empty() {
+        let mut shelves: Vec<Shelf> = Vec::new();
+        for card in cards.into_iter().take(MAX_CANDIDATES) {
+            // Keep supported collections in provider order alongside songs.
+            // Opening validates their canonical API identity separately.
+            if !matches!(card.kind.as_str(), "song" | "playlist" | "album" | "artist")
+                || card.id.trim().is_empty()
+                || card.title.trim().is_empty()
+            {
+                continue;
+            }
+            let identity = (card.kind.clone(), card.id.clone());
+            if !seen.insert(identity.clone()) {
+                continue;
+            }
+            let rank = seen.len() - 1;
+            let candidate = Candidate {
+                card,
+                identity,
+                rank,
+            };
+            if let Some(shelf) = shelves
+                .iter_mut()
+                .find(|shelf| shelf.title == candidate.card.shelf)
+            {
+                shelf.candidates.push(candidate);
+            } else if shelves.len() < MAX_SHELVES {
+                shelves.push(Shelf {
+                    title: candidate.card.shelf.clone(),
+                    candidates: vec![candidate],
+                });
+            }
+        }
+        if shelves.is_empty() {
             // The caller keeps the current Home screen on an empty response.
             // Keep its recency state too, rather than treating it as a reset.
             return Vec::new();
         }
-        // Provider order is the only relevance signal we actually have. Give
-        // repeat cards a bounded penalty, instead of letting every unseen card
-        // outrank all familiar songs or enforcing a song/playlist split.
-        candidates.sort_by_key(|candidate| {
-            let penalty = if self.last_display.contains(&candidate.identity) {
-                LAST_DISPLAY_PENALTY
-            } else if self.recent.contains(&candidate.identity) {
-                RECENT_PENALTY
+        // Discovery shelves first in provider order, familiar ones after.
+        shelves.sort_by_key(|shelf| familiar(&shelf.title));
+        let lead = shelves.iter().position(|shelf| !familiar(&shelf.title));
+        let mut chosen = Vec::new();
+        for (index, shelf) in shelves.into_iter().enumerate() {
+            let quota = if familiar(&shelf.title) {
+                FAMILIAR_SHELF_CARDS
+            } else if Some(index) == lead {
+                LEAD_SHELF_CARDS
             } else {
-                0
+                SHELF_CARDS
             };
-            (candidate.rank + penalty, candidate.rank)
-        });
-        candidates.truncate(VISIBLE_CARDS);
-        // Display the chosen cards in their original order and shelf context.
-        candidates.sort_by_key(|candidate| candidate.rank);
+            chosen.extend(self.rotate(shelf.candidates, quota));
+        }
         self.last_display.clear();
-        let mut result = Vec::with_capacity(candidates.len());
-        for candidate in candidates {
+        let mut result = Vec::with_capacity(chosen.len());
+        for candidate in chosen {
             self.recent.retain(|key| key != &candidate.identity);
             self.recent.push_back(candidate.identity.clone());
             self.last_display.push(candidate.identity);
@@ -91,11 +124,37 @@ impl Discovery {
         }
         result
     }
+
+    /// Provider order is the relevance signal. The leading third of each
+    /// shelf always stays; the other slots cycle through the rest of the
+    /// shelf's leading window, unseen cards first and then the ones shown
+    /// longest ago, so every refresh brings new picks without reaching into
+    /// the shelf's weaker tail.
+    fn rotate(&self, mut candidates: Vec<Candidate>, quota: usize) -> Vec<Candidate> {
+        candidates.truncate(quota * WINDOW_FACTOR);
+        let anchors = (quota / 3).max(1).min(candidates.len());
+        let mut rest = candidates.split_off(anchors);
+        rest.sort_by_cached_key(|candidate| {
+            let shown = self
+                .recent
+                .iter()
+                .position(|identity| identity == &candidate.identity)
+                .map_or(0, |index| index + 1);
+            (shown, candidate.rank)
+        });
+        rest.truncate(quota - anchors);
+        candidates.extend(rest);
+        // Display the chosen cards in their original order.
+        candidates.sort_by_key(|candidate| candidate.rank);
+        candidates
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const SHELF_SIZE: usize = 24;
 
     fn card(index: usize) -> Card {
         Card {
@@ -104,7 +163,7 @@ mod tests {
             title: format!("Personalized title {index}"),
             subtitle: format!("Artist {index}"),
             kind: ["song", "playlist"][index % 2].into(),
-            shelf: format!("Shelf {}", (index / 2) % 8),
+            shelf: format!("Shelf {}", index / SHELF_SIZE),
             artwork_url: Some(format!("https://i.ytimg.com/{index}")),
             featured_artwork_url: None,
             duration_seconds: Some(180 + index as u64),
@@ -126,65 +185,107 @@ mod tests {
         cards.iter().map(|card| card.id.as_str()).collect()
     }
 
-    #[test]
-    fn first_page_preserves_upstream_order_without_random_shelf_balancing() {
-        let selected = Discovery::default().select(pool(MAX_CANDIDATES));
-        assert_eq!(order(&selected), order(&pool(VISIBLE_CARDS)));
+    fn index(card: &Card) -> usize {
+        card.id.strip_prefix("candidate-").unwrap().parse().unwrap()
+    }
+
+    fn shelf_cards<'a>(cards: &'a [Card], shelf: &str) -> Vec<&'a Card> {
+        cards.iter().filter(|card| card.shelf == shelf).collect()
     }
 
     #[test]
-    fn unseen_playlists_do_not_force_out_the_leading_recommended_songs() {
-        let mut cards = pool(MAX_CANDIDATES);
-        for (index, card) in cards.iter_mut().enumerate() {
-            card.kind = if index < 32 { "song" } else { "playlist" }.into();
-            card.shelf = if index < 32 { "For you" } else { "Explore" }.into();
-        }
-        let mut discovery = Discovery::default();
-        let leading_songs = identities(&cards[..16]);
-        let first = discovery.select(cards.clone());
-        assert!(first.iter().all(|card| card.kind == "song"));
-        for _ in 0..12 {
-            let selected = discovery.select(cards.clone());
-            assert_eq!(selected.len(), VISIBLE_CARDS);
-            assert!(leading_songs.is_subset(&identities(&selected)));
-            assert!(
-                selected
-                    .iter()
-                    .filter(|card| card.kind == "playlist")
-                    .count()
-                    <= 8
-            );
-        }
+    fn first_page_takes_each_shelf_lead_in_upstream_order() {
+        let selected = Discovery::default().select(pool(SHELF_SIZE * 4));
+        let expected: Vec<usize> = (0..LEAD_SHELF_CARDS)
+            .chain((1..4).flat_map(|shelf| shelf * SHELF_SIZE..shelf * SHELF_SIZE + SHELF_CARDS))
+            .collect();
+        assert_eq!(selected.iter().map(index).collect::<Vec<_>>(), expected);
     }
 
     #[test]
-    fn refresh_changes_the_selection_without_promoting_distant_unseen_cards() {
+    fn every_shelf_is_represented_and_a_long_one_cannot_crowd_out_the_rest() {
+        let mut cards = pool(SHELF_SIZE * 3);
+        for card in &mut cards[..SHELF_SIZE * 2] {
+            card.shelf = "Quick picks".into();
+        }
+        let selected = Discovery::default().select(cards);
+        assert_eq!(
+            shelf_cards(&selected, "Quick picks").len(),
+            LEAD_SHELF_CARDS
+        );
+        assert_eq!(shelf_cards(&selected, "Shelf 2").len(), SHELF_CARDS);
+    }
+
+    #[test]
+    fn listen_again_moves_after_discovery_shelves_with_a_smaller_budget() {
+        let mut cards = pool(SHELF_SIZE * 3);
+        for card in &mut cards[..SHELF_SIZE] {
+            card.shelf = "Listen again".into();
+        }
+        let selected = Discovery::default().select(cards);
+        let first_familiar = selected
+            .iter()
+            .position(|card| card.shelf == "Listen again")
+            .unwrap();
+        assert!(selected[..first_familiar]
+            .iter()
+            .all(|card| card.shelf != "Listen again"));
+        assert_eq!(selected[0].shelf, "Shelf 1");
+        assert_eq!(shelf_cards(&selected, "Shelf 1").len(), LEAD_SHELF_CARDS);
+        assert_eq!(
+            shelf_cards(&selected, "Listen again").len(),
+            FAMILIAR_SHELF_CARDS
+        );
+    }
+
+    #[test]
+    fn refresh_rotates_each_shelf_but_keeps_its_leading_picks() {
         let mut discovery = Discovery::default();
-        let mut previous = identities(&discovery.select(pool(MAX_CANDIDATES)));
-        let anchors = identities(&pool(8));
-        for _ in 0..32 {
-            let selected = discovery.select(pool(MAX_CANDIDATES));
+        let mut previous = identities(&discovery.select(pool(SHELF_SIZE * 4)));
+        let anchors = identities(&[card(0), card(1), card(SHELF_SIZE)]);
+        let mut ever_shown = HashSet::new();
+        for _ in 0..16 {
+            let selected = discovery.select(pool(SHELF_SIZE * 4));
             let current = identities(&selected);
-            assert_eq!(current.len(), VISIBLE_CARDS);
             assert_ne!(current, previous);
             assert!(anchors.is_subset(&current));
-            let ranks: Vec<usize> = selected
-                .iter()
-                .map(|card| card.id.strip_prefix("candidate-").unwrap().parse().unwrap())
-                .collect();
-            assert!(ranks.iter().all(|&rank| rank < RELEVANCE_WINDOW));
-            assert!(ranks.windows(2).all(|pair| pair[0] < pair[1]));
+            for shelf in 0..4 {
+                let ranks: Vec<usize> = shelf_cards(&selected, &format!("Shelf {shelf}"))
+                    .into_iter()
+                    .map(index)
+                    .collect();
+                let quota = if shelf == 0 {
+                    LEAD_SHELF_CARDS
+                } else {
+                    SHELF_CARDS
+                };
+                assert_eq!(ranks.len(), quota);
+                assert!(ranks
+                    .iter()
+                    .all(|&rank| rank < shelf * SHELF_SIZE + quota * WINDOW_FACTOR));
+                assert!(ranks.windows(2).all(|pair| pair[0] < pair[1]));
+            }
+            ever_shown.extend(current.iter().cloned());
             previous = current;
         }
+        // Rotation reaches every card in each shelf's leading window.
+        let first_page = LEAD_SHELF_CARDS + 3 * SHELF_CARDS;
+        assert_eq!(ever_shown.len(), first_page * WINDOW_FACTOR);
     }
 
     #[test]
     fn newly_ranked_top_cards_outrank_the_previous_selection() {
         let mut discovery = Discovery::default();
-        discovery.select(pool(MAX_CANDIDATES));
-        let fresh: Vec<_> = (1000..1000 + VISIBLE_CARDS).map(card).collect();
+        discovery.select(pool(SHELF_SIZE));
+        let fresh: Vec<_> = (1000..1000 + LEAD_SHELF_CARDS)
+            .map(|index| {
+                let mut card = card(index);
+                card.shelf = "Shelf 0".into();
+                card
+            })
+            .collect();
         let mut updated = fresh.clone();
-        updated.extend(pool(MAX_CANDIDATES));
+        updated.extend(pool(SHELF_SIZE));
         assert_eq!(order(&discovery.select(updated)), order(&fresh));
     }
 
@@ -203,13 +304,7 @@ mod tests {
     fn upstream_metadata_and_shelf_context_are_preserved() {
         let selected = Discovery::default().select(pool(MAX_CANDIDATES));
         for actual in &selected {
-            let index: usize = actual
-                .id
-                .strip_prefix("candidate-")
-                .unwrap()
-                .parse()
-                .unwrap();
-            let expected = card(index);
+            let expected = card(index(actual));
             assert_eq!(actual.title, expected.title);
             assert_eq!(actual.subtitle, expected.subtitle);
             assert_eq!(actual.artwork_url, expected.artwork_url);
@@ -222,7 +317,7 @@ mod tests {
     #[test]
     fn small_pools_stay_nonempty_deduplicate_and_keep_upstream_order() {
         let mut discovery = Discovery::default();
-        for count in [1, 2, 7, VISIBLE_CARDS] {
+        for count in [1, 2, 7, LEAD_SHELF_CARDS] {
             discovery.clear();
             let first = discovery.select(pool(count));
             let second = discovery.select(pool(count));
@@ -311,13 +406,8 @@ mod tests {
     fn reset_restores_upstream_order_and_memory_and_inputs_are_bounded() {
         let mut discovery = Discovery::default();
         let first = discovery.select(pool(MAX_CANDIDATES + 50));
-        assert!(first.iter().all(|card| card
-            .id
-            .strip_prefix("candidate-")
-            .unwrap()
-            .parse::<usize>()
-            .unwrap()
-            < MAX_CANDIDATES));
+        assert!(first.iter().all(|card| index(card) < MAX_CANDIDATES));
+        assert!(first.len() <= VISIBLE_CARDS);
         assert_eq!(
             order(&first),
             order(&Discovery::default().select(pool(MAX_CANDIDATES)))
