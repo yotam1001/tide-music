@@ -53,7 +53,8 @@ fn native_ratings_remain_reachable_and_do_not_take_over_transport() {
     let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
     slint::platform::set_platform(Box::new(Platform(window.clone()))).unwrap();
     let ui = AppWindow::new().unwrap();
-    ui.set_track_title("Synthetic feedback song".into());
+    // Long enough to fill the title column, which puts the ratings at its end.
+    ui.set_track_title("Synthetic feedback song with a deliberately long title".into());
     ui.set_track_artist("Fixture artist".into());
     ui.set_rating_enabled(true);
     let ratings = Rc::new(RefCell::new(Vec::new()));
@@ -253,7 +254,7 @@ fn native_ratings_remain_reachable_and_do_not_take_over_transport() {
     for (guest, down_count) in [(false, 4), (true, 2)] {
         ui.set_jam_guest(guest);
         draw(&window, 1140, 800, "playlist-menu-before");
-        click(&ui, 1087.0, 229.0);
+        click(&ui, 1087.0, 373.0);
         draw(
             &window,
             1140,

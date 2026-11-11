@@ -235,6 +235,8 @@ pub enum SearchKind {
     Albums,
     Artists,
     Playlists,
+    /// YouTube Music's unfiltered mix: top result plus each kind, by section.
+    All,
 }
 
 #[derive(Clone, Debug, Deserialize)]

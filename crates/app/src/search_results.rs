@@ -11,12 +11,16 @@ pub(super) enum Failure {
 }
 pub(super) type Sender = mpsc::SyncSender<(u64, Result<Results, Failure>)>;
 
+/// Search opens on All, like other players; the chip index of YouTube
+/// Music's unfiltered mix.
+pub(super) const ALL: i32 = 4;
 fn kind(index: i32) -> Option<SearchKind> {
     match index {
         0 => Some(SearchKind::Songs),
         1 => Some(SearchKind::Albums),
         2 => Some(SearchKind::Artists),
         3 => Some(SearchKind::Playlists),
+        ALL => Some(SearchKind::All),
         _ => None,
     }
 }
@@ -29,6 +33,15 @@ fn accepts(kind: SearchKind, card: &Card) -> bool {
             | (
                 SearchKind::Playlists,
                 Some(card_navigation::Action::Playlist)
+            )
+            | (
+                SearchKind::All,
+                Some(
+                    card_navigation::Action::Song
+                        | card_navigation::Action::Album
+                        | card_navigation::Action::Artist
+                        | card_navigation::Action::Playlist
+                )
             )
     )
 }
@@ -73,6 +86,14 @@ fn fetch(
     }
 }
 pub(super) fn start(s: &mut State, ui: &AppWindow, tx: &Sender, query: String, index: i32) {
+    // All needs the account's search; without it, fall back to songs.
+    let index = if index == ALL
+        && !(s.provider.is_some() && s.account_verified && s.pending_saved_connection.is_none())
+    {
+        0
+    } else {
+        index
+    };
     let Some(kind) = kind(index) else {
         return;
     };
@@ -127,12 +148,24 @@ pub(super) fn invalidate(s: &mut State, ui: &AppWindow) {
 }
 pub(super) fn refresh(s: &State, ui: &AppWindow) {
     let mut cache = s.artwork.borrow_mut();
+    // The All view starts each section with a header; other kinds have none.
+    let sectioned = ui.get_search_kind() == ALL;
+    let headers: Vec<bool> = s
+        .search_cards
+        .iter()
+        .enumerate()
+        .map(|(index, card)| {
+            sectioned && (index == 0 || s.search_cards[index - 1].shelf != card.shelf)
+        })
+        .collect();
+    let row_height = ui.global::<LayoutMetrics>().get_browse_row_height();
+    let header_height = ui.global::<LayoutMetrics>().get_search_section_height();
     let visible = artwork_view::visible_range(
         ui.get_search_artwork_y(),
         ui.get_search_artwork_height(),
-        s.search_cards
+        headers
             .iter()
-            .map(|_| ui.global::<LayoutMetrics>().get_browse_row_height()),
+            .map(|&header| row_height + if header { header_height } else { 0.0 }),
     );
     let rows = s
         .search_cards
@@ -143,7 +176,11 @@ pub(super) fn refresh(s: &State, ui: &AppWindow) {
             title: card.title.clone().into(),
             subtitle: card.subtitle.clone().into(),
             kind: card.kind.clone().into(),
-            shelf: "".into(),
+            shelf: if headers[index] {
+                card.shelf.clone().into()
+            } else {
+                "".into()
+            },
             cover_variant: artwork::fallback_variant(&card.id),
             artwork: card
                 .artwork_url
@@ -329,6 +366,13 @@ mod tests {
         card.id = "https://example.test".into();
         assert!(!accepts(SearchKind::Artists, &card));
         assert!(kind(-1).is_none());
-        assert!(kind(4).is_none());
+        assert!(kind(5).is_none());
+        assert!(accepts(
+            SearchKind::All,
+            &Card {
+                id: "UC1234567890123456789012".into(),
+                ..card.clone()
+            }
+        ));
     }
 }

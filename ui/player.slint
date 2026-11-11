@@ -103,6 +103,9 @@ export component PlayerBar inherits Rectangle {
             cross-axis-alignment: center;
             Rectangle {
                 width: root.narrow ? 44px : 56px; height: self.width;
+                // Text measures for the title column (outside the row layout).
+                title-measure := Text { visible: false; width: 0px; height: 0px; text: root.track-title == "" ? "Nothing playing" : root.track-title; font-size: 14px; font-weight: 650; }
+                artist-measure := Text { visible: false; width: 0px; height: 0px; text: root.track-artist; font-size: 13px; }
                 Cover { width: parent.width; height: parent.height; artwork: root.artwork; light-mode: root.light-mode; seed: root.track-title; drop-shadow-blur: 12px; drop-shadow-offset-y: 3px; drop-shadow-color: Theme.shadow; }
                 if root.track-title != "" : expand-area := TouchArea {
                     mouse-cursor: pointer;
@@ -127,18 +130,21 @@ export component PlayerBar inherits Rectangle {
                     }
                 }
             }
+            // The title hugs its text so Like and Dislike sit right beside it,
+            // as in other players, until the column runs out of room.
             VerticalLayout {
-                horizontal-stretch: 1;
-                min-width: 0px;
+                width: max(0px, min(root.side-width - (root.narrow ? 44px : 56px) - 4 * 12px - 64px, max(title-measure.preferred-width, artist-measure.preferred-width) + 4px));
                 spacing: 2px;
                 alignment: center;
-                Text { text: root.track-title == "" ? "Nothing playing" : root.track-title; color: root.foreground; font-size: 14px; font-weight: 650; overflow: elide; }
+                // Right-to-left titles can paint outside an elided Text; clip them.
+                Rectangle { height: 20px; min-width: 0px; clip: true; Text { width: parent.width; height: parent.height; vertical-alignment: center; text: root.track-title == "" ? "Nothing playing" : root.track-title; color: root.foreground; font-size: 14px; font-weight: 650; overflow: elide; } }
                 ArtistLink { artist: root.track-artist; enabled: root.artist-enabled; light-mode: root.light-mode; activated => { root.artist(); } }
                 if root.playback-hint != "" : Text { text: root.playback-hint; color: Theme.accent-ink; font-size: 10px; overflow: elide; accessible-live-region: polite; }
                 if root.playback-hint == "" && root.audio-quality != "" : Text { text: root.audio-quality; color: root.secondary; font-size: 10px; overflow: elide; }
             }
             RatingButton { width: 32px; height: 34px; enabled: root.rating-enabled && !root.rating-busy; light-mode: root.light-mode; active: root.rating == 1; label: root.rating == 1 ? "Remove like" : "Like this song on YouTube Music"; clicked => { root.rate(root.rating == 1 ? 0 : 1); } }
             RatingButton { width: 32px; height: 34px; negative: true; enabled: root.rating-enabled && !root.rating-busy; light-mode: root.light-mode; active: root.rating == -1; label: root.rating == -1 ? "Remove dislike" : "Dislike this song on YouTube Music"; clicked => { root.rate(root.rating == -1 ? 0 : -1); } }
+            Rectangle { horizontal-stretch: 1; }
         }
         VerticalLayout {
             horizontal-stretch: 1;
@@ -194,7 +200,8 @@ export component PlayerBar inherits Rectangle {
                 VerticalLayout {
                     horizontal-stretch: 1;
                     spacing: 1px;
-                    Text { text: root.track-title == "" ? "Nothing playing" : root.track-title; color: root.foreground; font-size: 14px; font-weight: 600; overflow: elide; }
+                    // Right-to-left titles can paint outside an elided Text; clip them.
+                Rectangle { height: 20px; min-width: 0px; clip: true; Text { width: parent.width; height: parent.height; vertical-alignment: center; text: root.track-title == "" ? "Nothing playing" : root.track-title; color: root.foreground; font-size: 14px; font-weight: 600; overflow: elide; } }
                     ArtistLink { artist: root.track-artist; enabled: root.artist-enabled; light-mode: root.light-mode; activated => { root.artist(); } }
                 }
             }

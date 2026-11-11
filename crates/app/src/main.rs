@@ -2559,6 +2559,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let animations = state.borrow().settings.animations && !state.borrow().settings.transient;
         ui.global::<ControlMotion>().set_enabled(animations);
         ui.set_animations_enabled(state.borrow().settings.animations);
+        ui.set_search_kind(search_results::ALL);
     }
     ui.set_greeting(greeting(tide_windows::local_hour()).into());
     ui.set_compact_mode(state.borrow().settings.compact_mode);
@@ -5344,6 +5345,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     10 => {
                         u.set_settings_open(false);
                         u.set_queue_open(false);
+                        // Synthetic lyrics show Now Playing's live preview.
+                        u.set_lyrics_lines(ModelRc::new(VecModel::from(
+                            [
+                                "Salt on the window",
+                                "Lines in the sand",
+                                "We follow the tide out",
+                                "As far as we can",
+                                "And back to the harbour",
+                                "Before the light ends",
+                            ]
+                            .map(|text| LyricRow {
+                                text: text.into(),
+                                word_timed: false,
+                            })
+                            .to_vec(),
+                        )));
+                        u.set_lyrics_active(2);
                         u.set_now_playing_open(true);
                     }
                     _ => {

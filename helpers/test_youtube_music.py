@@ -9,7 +9,7 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import MagicMock, patch
-from youtube_music import (LOGIN_SECONDS, MAX_RADIO_TRACKS, MAX_SUPERMIX_SHELVES, MAX_HOME_CARDS, MAX_HOME_ITEMS_PER_SHELF,
+from youtube_music import (LOGIN_SECONDS, MAX_RADIO_TRACKS, MAX_SEARCH_CARDS, MAX_SUPERMIX_SHELVES, MAX_HOME_CARDS, MAX_HOME_ITEMS_PER_SHELF,
                           MAX_HOME_SHELVES, MUSIC_URL, artwork_url, featured_artwork_url, connect, connect_existing, create_client, main,
                           music_cookies, cookie_matches_music, read_cookie_database, CookieReadError, CookieSelectionError,
                           read_music_cookies, remove_login_profile, radio_tracks, run,
@@ -246,6 +246,50 @@ class ProviderTests(unittest.TestCase):
             client.get_watch_playlist.side_effect = RuntimeError(f"Server returned HTTP {status}: private fixture")
             self.assertEqual(run(client, {"action": "radio", "video_id": "K4DyBUG242c"}),
                              {"type": "error", "code": "request"})
+
+    def test_all_search_keeps_youtube_music_sections_and_supported_kinds(self):
+        client = SimpleNamespace(search=MagicMock(return_value=[
+            {"category": "Top result", "resultType": "artist", "title": "Band",
+             "artists": [{"name": "Band", "id": "UC1234567890123456789012"}]},
+            {"category": "Songs", "resultType": "song", "videoId": "00000000001", "title": "Hit",
+             "artists": [{"name": "Band"}], "played": "Listen again"},
+            {"category": "Artists", "resultType": "artist", "artist": "Other",
+             "browseId": "UC0000000000000000000000"},
+            {"category": "Videos", "resultType": "video", "videoId": "00000000002", "title": "Clip"},
+            {"category": "Albums", "resultType": "album", "browseId": "MPREb_fixture", "title": "Record",
+             "artist": "Band"},
+            {"category": "Community playlists", "resultType": "playlist", "browseId": "VLPLfixture",
+             "title": "Mix", "author": "Someone"},
+            {"category": "Songs", "resultType": "song", "videoId": "00000000001", "title": "Duplicate"},
+            {"category": "Songs", "resultType": "song", "videoId": "00000000003", "title": "Later song"},
+        ]))
+        result = run(client, {"action": "search", "kind": "all", "query": "band"})
+        client.search.assert_called_once_with("band", limit=MAX_SEARCH_CARDS)
+        self.assertEqual(result["kind"], "all")
+        self.assertEqual([(c["kind"], c["shelf"]) for c in result["cards"]], [
+            ("artist", "Top result"), ("song", "Songs"), ("song", "Songs"), ("artist", "Artists"),
+            ("album", "Albums"), ("playlist", "Community playlists")])
+        self.assertEqual(result["cards"][0]["id"], "UC1234567890123456789012")
+        self.assertEqual(result["cards"][0]["title"], "Band")
+        self.assertEqual(result["cards"][5]["id"], "PLfixture")
+        self.assertEqual(result["cards"][4]["subtitle"], "Band")
+
+    def test_home_adds_a_recent_listening_shelf_after_the_lead_shelf(self):
+        shelves = [{"title": "Quick picks", "contents": [{"videoId": "00000000001", "title": "Pick"}]},
+                   {"title": "New releases", "contents": [{"videoId": "00000000002", "title": "New"}]}]
+        history = [{"videoId": "00000000009", "title": "Recent"}]
+        up_next = {"tracks": [{"videoId": "00000000009", "title": "Recent"},
+                              {"videoId": "00000000001", "title": "Already on Home"},
+                              {"videoId": "00000000003", "title": "Fresh"}]}
+        client = SimpleNamespace(get_home=lambda limit: shelves, get_history=lambda: history,
+                                 get_watch_playlist=MagicMock(return_value=up_next))
+        cards = run(client, {"action": "home"})["cards"]
+        self.assertEqual([(c["id"], c["shelf"]) for c in cards], [
+            ("00000000001", "Quick picks"), ("00000000003", "Because you played Recent"),
+            ("00000000002", "New releases")])
+        self.assertNotIn("radio", client.get_watch_playlist.call_args.kwargs)
+        client.get_history = MagicMock(side_effect=RuntimeError("private"))
+        self.assertEqual(len(run(client, {"action": "home"})["cards"]), 2)
 
     def test_autoplay_uses_the_personalized_up_next_and_skips_excluded_songs(self):
         items = [{"videoId": "K4DyBUG242c", "title": "Seed"}]

@@ -81,7 +81,7 @@ export component AppWindow inherits Window {
     // queue and scrollbar. A deferred ListView width callback can retain the
     // previous screen's column count when navigating after a resize.
     private property <length> browse-width: max(0px, (root.width - (root.compact-mode || root.width < 900px ? LayoutMetrics.navigation-narrow : LayoutMetrics.navigation-wide) - (root.queue-open && root.width >= 1050px ? 340px : 0px)) - (root.compact-mode ? 36px : 56px) - 16px);
-    out property <int> home-columns: max(1, min(6, floor(root.browse-width / 164px)));
+    out property <int> home-columns: max(1, min(6, floor(root.browse-width / 196px)));
     in property <bool> account-connected;
     in property <bool> account-verified;
     in property <bool> error-retryable;
@@ -103,7 +103,9 @@ export component AppWindow inherits Window {
     in property <image> lyrics-backdrop;
     in-out property <bool> lyrics-motion-enabled: true;
     callback lyrics-visibility-changed(bool);
-    changed lyrics-presented => { root.lyrics-visibility-changed(root.lyrics-presented); }
+    // Lyrics load for the lyrics page and for Now Playing's live preview.
+    out property <bool> lyrics-wanted: root.lyrics-presented || root.now-playing-presented;
+    changed lyrics-wanted => { root.lyrics-visibility-changed(root.lyrics-wanted); }
     in property <[LyricRow]> lyrics-lines;
     in property <string> lyrics-sung-prefix;
     in property <int> lyrics-active: -1;
@@ -674,6 +676,7 @@ export component AppWindow inherits Window {
                                 height: 40px; alignment: root.full-sidebar ? stretch : center;
                                 LibraryButton {
                                     width: root.full-sidebar ? parent.width : 48px; height: 40px;
+                                    caption-start: root.full-sidebar; caption-size: root.full-sidebar ? 14px : 12px;
                                     show-tooltip: true; quiet: !root.update-available && root.update-phase == 0;
                                     light-mode: root.light-mode; active: root.update-panel-open || root.update-phase == 2;
                                     notification: root.update-available && root.update-phase == 0;
@@ -761,11 +764,11 @@ export component AppWindow inherits Window {
                                     }
                                     VerticalLayout {
                                         horizontal-stretch: 1; min-width: 0px; spacing: 10px; alignment: center;
-                                        Text { text: root.detail-title; color: root.foreground; font-size: root.detail-cover-visible ? 42px : 26px; font-weight: 650; overflow: elide; } Text { text: root.detail-busy ? (root.detail-is-artist ? "Loading top songs…" : root.detail-navigation == "supermix" ? "Finding your mix on YouTube Music…" : "Loading tracks…") : root.detail-is-artist ? "Top songs · " + root.detail-rows.length + " songs" : root.detail-filter != "" ? "" + root.detail-matches.length + " of " + root.detail-rows.length + " tracks" : "" + root.detail-rows.length + " tracks"; color: root.secondary; font-size: 12px; }
+                                        Text { text: root.detail-title; color: root.foreground; font-size: root.detail-cover-visible ? 48px : 26px; font-weight: 800; overflow: elide; } Text { text: root.detail-busy ? (root.detail-is-artist ? "Loading top songs…" : root.detail-navigation == "supermix" ? "Finding your mix on YouTube Music…" : "Loading tracks…") : root.detail-is-artist ? "Top songs · " + root.detail-rows.length + " songs" : root.detail-filter != "" ? "" + root.detail-matches.length + " of " + root.detail-rows.length + " tracks" : "" + root.detail-rows.length + " tracks"; color: root.secondary; font-size: 13px; }
                                         if root.detail-cover-visible : HorizontalLayout {
-                                            height: 44px; spacing: 12px; alignment: start;
-                                            LibraryButton { width: 132px; height: 44px; round: !root.detail-cover-visible; show-tooltip: true; light-mode: root.light-mode; caption: root.detail-cover-visible ? "Play" : "▶"; leading-icon: root.detail-cover-visible ? "M 7 4 L 20 12 L 7 20 Z" : ""; label: "Play " + root.detail-title; active: true; enabled: !root.jam-guest && root.browsing-enabled && !root.detail-busy && root.detail-rows.length > 0; clicked => { root.play-detail(); } }
-                                            LibraryButton { width: 144px; height: 44px; quiet: false; show-tooltip: true; light-mode: root.light-mode; caption: root.detail-cover-visible ? "Shuffle" : "⇄"; leading-icon: root.detail-cover-visible ? "M 3 6 L 7 6 C 11 6 13 18 17 18 L 21 18 M 17 14 L 21 18 L 17 22 M 3 18 L 7 18 C 11 18 13 6 17 6 L 21 6 M 17 2 L 21 6 L 17 10" : ""; label: "Shuffle " + root.detail-title; enabled: !root.jam-guest && root.browsing-enabled && !root.detail-busy && root.detail-rows.length > 0; clicked => { root.shuffle-detail(); } }
+                                            height: 52px; spacing: 14px; alignment: start; cross-axis-alignment: center;
+                                            LibraryButton { width: 52px; height: 52px; round: true; show-tooltip: true; light-mode: root.light-mode; icon-path: "M 7 4 L 20 12 L 7 20 Z"; label: "Play " + root.detail-title; active: true; enabled: !root.jam-guest && root.browsing-enabled && !root.detail-busy && root.detail-rows.length > 0; clicked => { root.play-detail(); } }
+                                            LibraryButton { width: 44px; height: 44px; round: true; quiet: true; show-tooltip: true; light-mode: root.light-mode; icon-path: "M 3 6 L 7 6 C 11 6 13 18 17 18 L 21 18 M 17 14 L 21 18 L 17 22 M 3 18 L 7 18 C 11 18 13 6 17 6 L 21 6 M 17 2 L 21 6 L 17 10"; label: "Shuffle " + root.detail-title; enabled: !root.jam-guest && root.browsing-enabled && !root.detail-busy && root.detail-rows.length > 0; clicked => { root.shuffle-detail(); } }
                                         }
                                     }
                                     LibraryButton { width: 36px; show-tooltip: true; light-mode: root.light-mode; enabled: root.browsing-enabled; icon-path: "M 20 12 L 4 12 M 10 6 L 4 12 L 10 18"; label: root.detail-is-artist ? "Back from artist page" : "Back from collection details"; clicked => { if root.detail-is-artist { root.back-detail(); } else { root.close-detail(); } } }
@@ -822,14 +825,23 @@ export component AppWindow inherits Window {
                                     }
                                 }
                                 if root.detail-note != "" && (!root.detail-is-artist || root.detail-rows.length == 0) : Text { text: root.detail-note; color: root.secondary; font-size: 12px; wrap: word-wrap; }
-                                if root.detail-has-cover && !root.detail-is-artist && root.browse-width >= 850px && root.detail-rows.length > 0 : Rectangle {
-                                    height: 28px;
+                                if root.detail-has-cover && !root.detail-is-artist && root.detail-rows.length > 0 : Rectangle {
+                                    height: 30px;
                                     HorizontalLayout {
-                                        padding-left: 10px; padding-right: 18px; spacing: 10px;
-                                        Text { horizontal-stretch: 1; text: "Song"; color: root.secondary; font-weight: 600; font-size: 14px; }
-                                        Text { width: parent.width * 0.22; text: "Artist"; color: root.secondary; font-weight: 600; font-size: 14px; }
-                                        Text { width: parent.width * 0.23; text: "Album"; color: root.secondary; font-weight: 600; font-size: 14px; }
-                                        Text { width: 92px; text: "Duration"; horizontal-alignment: left; color: root.secondary; font-weight: 600; font-size: 14px; }
+                                        padding-left: 10px; padding-right: 10px; spacing: 10px;
+                                        Text { width: 28px; text: "#"; horizontal-alignment: center; color: root.secondary; font-size: 13px; vertical-alignment: center; }
+                                        Rectangle { width: 42px; }
+                                        Text { horizontal-stretch: 1; text: "Title"; color: root.secondary; font-size: 13px; vertical-alignment: center; }
+                                        if parent.width >= 700px : Text { width: parent.width * 0.3; text: "Album"; color: root.secondary; font-size: 13px; vertical-alignment: center; }
+                                        Rectangle {
+                                            width: 52px;
+                                            Path {
+                                                x: parent.width - self.width; y: (parent.height - self.height) / 2;
+                                                width: 15px; height: 15px; viewbox-width: 24; viewbox-height: 24;
+                                                stroke: root.secondary; stroke-width: 1.8px; fill: transparent;
+                                                commands: "M 21 12 A 9 9 0 1 1 3 12 A 9 9 0 1 1 21 12 Z M 12 7 L 12 12 L 15 14";
+                                            }
+                                        }
                                         Rectangle { width: root.jam-guest ? 70px : 30px; }
                                     }
                                     Rectangle { y: parent.height - 1px; width: parent.width; height: 1px; background: root.outline; }
@@ -904,10 +916,12 @@ export component AppWindow inherits Window {
                                 }
                                 HorizontalLayout {
                                     height: 32px; spacing: 8px; alignment: start;
-                                    for title[index] in ["Songs", "Albums", "Artists", "Playlists"] : LibraryTab {
-                                        title: title; label: title + " search results"; selected: root.search-kind == index; light-mode: root.light-mode;
+                                    // "All" is kind 4, YouTube Music's unfiltered mix.
+                                    for chip in [{ title: "All", kind: 4 }, { title: "Songs", kind: 0 }, { title: "Albums", kind: 1 }, { title: "Artists", kind: 2 }, { title: "Playlists", kind: 3 }] : LibraryTab {
+                                        width: chip.kind == 4 ? 56px : chip.kind == 3 ? 88px : 76px;
+                                        title: chip.title; label: chip.title + " search results"; selected: root.search-kind == chip.kind; light-mode: root.light-mode;
                                         enabled: root.browsing-enabled && !root.search-busy && !root.account-busy;
-                                        select => { root.select-search-kind(index); }
+                                        select => { root.select-search-kind(chip.kind); }
                                     }
                                 }
                                 if root.search-note != "" : HorizontalLayout {
@@ -917,6 +931,38 @@ export component AppWindow inherits Window {
                                         width: 76px; height: 32px; caption: "Retry"; label: "Retry this search";
                                         light-mode: root.light-mode; enabled: root.music-search-enabled && !root.search-busy;
                                         clicked => { root.select-search-kind(root.search-kind); }
+                                    }
+                                }
+                                // Top result, like the hero card in other players' search.
+                                if root.search-kind == 0 && root.search-rows.length > 0 && root.browse-width >= 600px && root.height >= 680px : Rectangle {
+                                    height: 132px;
+                                    border-radius: 10px;
+                                    background: hero-touch.has-hover ? Theme.hover : Theme.raised;
+                                    animate background { duration: ControlMotion.feedback; easing: ease-out; }
+                                    hero-touch := TouchArea {
+                                        enabled: root.browsing-enabled; mouse-cursor: pointer;
+                                        clicked => { root.select-search-track(0); }
+                                    }
+                                    HorizontalLayout {
+                                        padding: 16px; spacing: 18px;
+                                        Cover { width: 100px; height: 100px; artwork: root.search-rows[0].artwork; light-mode: root.light-mode; seed: root.search-rows[0].title; drop-shadow-blur: 14px; drop-shadow-color: Theme.shadow; }
+                                        VerticalLayout {
+                                            horizontal-stretch: 1; min-width: 0px; spacing: 6px; alignment: center;
+                                            Text { text: "TOP RESULT"; color: Theme.accent-ink; font-size: 11px; font-weight: 700; letter-spacing: 1px; }
+                                            Text { text: root.search-rows[0].title; color: root.foreground; font-size: 26px; font-weight: 800; overflow: elide; }
+                                            Text { text: "Song · " + root.search-rows[0].artist; color: root.secondary; font-size: 14px; overflow: elide; }
+                                        }
+                                        VerticalLayout {
+                                            alignment: center;
+                                            LibraryButton {
+                                                width: 52px; height: 52px; round: true; show-tooltip: true; light-mode: root.light-mode;
+                                                active: true; icon-path: "M 7 4 L 20 12 L 7 20 Z";
+                                                opacity: hero-touch.has-hover ? 1 : 0.92;
+                                                label: (root.jam-guest ? "Add to shared queue: " : "Play ") + root.search-rows[0].title;
+                                                enabled: root.browsing-enabled;
+                                                clicked => { root.select-search-track(0); }
+                                            }
+                                        }
                                     }
                                 }
                                 if root.search-kind == 0 && root.search-rows.length > 0 : ListView {
@@ -930,10 +976,17 @@ export component AppWindow inherits Window {
                                     content-y <=> root.search-artwork-y;
                                     changed visible-height => { root.search-artwork-height = self.visible-height; }
                                     vertical-stretch: 1; accessible-label: "Music collection search results";
-                                    for card[index] in root.search-cards : HomeCard {
-                                        height: LayoutMetrics.browse-row-height; quick: true; item: card; source-index: index;
-                                        light-mode: root.light-mode; enabled: root.browsing-enabled && !root.account-busy;
-                                        select => { root.select-search-card(index); }
+                                    for card[index] in root.search-cards : VerticalLayout {
+                                        // The All view labels each YouTube Music section once.
+                                        if card.shelf != "" : Text {
+                                            height: LayoutMetrics.search-section-height; vertical-alignment: bottom;
+                                            text: card.shelf; color: root.foreground; font-size: 20px; font-weight: 800; overflow: elide;
+                                        }
+                                        HomeCard {
+                                            height: LayoutMetrics.browse-row-height; quick: true; item: card; source-index: index;
+                                            light-mode: root.light-mode; enabled: root.browsing-enabled && !root.account-busy;
+                                            select => { root.select-search-card(index); }
+                                        }
                                     }
                                 }
                                 if root.search-busy && root.search-result-count == 0 : LoadingTracks { placeholder-color: root.outline; }
@@ -1197,8 +1250,33 @@ export component AppWindow inherits Window {
                     TouchArea { }
                     property <length> art: max(140px, min(420px, min(self.height - 120px, (self.width - 160px) * 0.45)));
                     property <int> upcoming: max(0, root.rows.length - root.current-index - 1);
+                    // Ambient backdrop: the cover itself, washed into the window.
+                    // The lyrics controller's pre-blurred cover when available.
+                    // It drifts slowly while playing, like Apple Music's
+                    // ambient player; four steps a second keep it cheap for
+                    // the software renderer.
+                    property <float> drift: 0;
+                    Timer {
+                        interval: 250ms;
+                        running: ControlMotion.enabled && !root.paused && root.lyrics-backdrop.width > 0;
+                        triggered => { np.drift += 0.012; }
+                    }
+                    Image {
+                        // Whole pixels: fractional placement of a scaled image
+                        // leaves a seam in the software renderer.
+                        x: round(-np.width * 0.06 * (1 + sin(np.drift * 1rad)) / 1px) * 1px;
+                        y: round(-np.height * 0.06 * (1 + cos(np.drift * 0.7rad)) / 1px) * 1px;
+                        width: round(np.width * 1.12 / 1px) * 1px; height: round(np.height * 1.12 / 1px) * 1px;
+                        source: root.lyrics-backdrop.width > 0 ? root.lyrics-backdrop : root.track-artwork; image-fit: cover;
+                        opacity: root.lyrics-backdrop.width > 0 ? (Theme.light ? 0.35 : 0.55) : (Theme.light ? 0.14 : 0.2);
+                    }
                     Rectangle {
-                        background: @linear-gradient(160deg, root.hero-color.with-alpha(Theme.light ? 0.36 : 0.5) 0%, root.hero-color.with-alpha(0.08) 55%, root.hero-color.with-alpha(0) 100%);
+                        // Two stops only: the software renderer draws a seam
+                        // line at an intermediate gradient stop.
+                        background: @linear-gradient(180deg, Theme.window.with-alpha(0.4) 0%, Theme.window 100%);
+                    }
+                    Rectangle {
+                        background: @linear-gradient(160deg, root.hero-color.with-alpha(Theme.light ? 0.36 : 0.5) 0%, root.hero-color.with-alpha(0) 100%);
                     }
                     HorizontalLayout {
                         padding-left: 56px; padding-right: 56px; padding-top: 56px; padding-bottom: 32px;
@@ -1223,12 +1301,33 @@ export component AppWindow inherits Window {
                             Rectangle { height: 14px; }
                             HorizontalLayout {
                                 height: 36px; spacing: 8px; alignment: start;
-                                LibraryButton { width: 96px; height: 36px; quiet: false; light-mode: root.light-mode; caption: "Lyrics"; label: "Open lyrics"; clicked => { root.now-playing-open = false; root.lyrics-open = true; } }
-                                LibraryButton { width: 96px; height: 36px; quiet: false; light-mode: root.light-mode; caption: "Queue"; label: "Open the queue"; clicked => { root.now-playing-open = false; root.queue-open = true; } }
+                                LibraryButton { width: 108px; height: 36px; border-radius: 18px; quiet: false; light-mode: root.light-mode; caption: "Lyrics"; leading-icon: "M 12 3 A 3 3 0 0 1 15 6 L 15 11 A 3 3 0 0 1 9 11 L 9 6 A 3 3 0 0 1 12 3 Z M 6 11 A 6 6 0 0 0 18 11 M 12 17 L 12 21"; label: "Open lyrics"; clicked => { root.now-playing-open = false; root.lyrics-open = true; } }
+                                LibraryButton { width: 108px; height: 36px; border-radius: 18px; quiet: false; light-mode: root.light-mode; caption: "Queue"; leading-icon: "M 4 6 L 16 6 M 4 11 L 16 11 M 4 16 L 11 16 M 15 14 L 20 17 L 15 20 Z"; label: "Open the queue"; clicked => { root.now-playing-open = false; root.queue-open = true; } }
                             }
                             Rectangle { height: 10px; }
-                            Text { text: "UP NEXT"; color: Theme.muted; font-size: 11px; font-weight: 700; letter-spacing: 0.8px; }
-                            for offset in min(4, np.upcoming) : Rectangle {
+                            // Live lyrics preview, like the full-screen players.
+                            if root.lyrics-lines.length > 0 : Text { text: "LYRICS"; color: Theme.muted; font-size: 11px; font-weight: 700; letter-spacing: 0.8px; }
+                            if root.lyrics-lines.length > 0 : lyrics-window := Rectangle {
+                                height: 5 * 34px;
+                                property <int> first: max(0, min(root.lyrics-lines.length - 5, root.lyrics-active - 1));
+                                lyrics-touch := TouchArea {
+                                    mouse-cursor: pointer;
+                                    Button { width: parent.width; height: parent.height; opacity: 0; text: ""; accessible-label: "Open full lyrics"; clicked => { root.now-playing-open = false; root.lyrics-open = true; } }
+                                }
+                                VerticalLayout {
+                                    for offset in min(5, root.lyrics-lines.length) : Text {
+                                        height: 34px; vertical-alignment: center; overflow: elide;
+                                        text: root.lyrics-lines[lyrics-window.first + offset].text;
+                                        font-size: lyrics-window.first + offset == root.lyrics-active ? 20px : 17px;
+                                        font-weight: 750;
+                                        color: lyrics-window.first + offset == root.lyrics-active ? Theme.text
+                                            : lyrics-window.first + offset < root.lyrics-active ? Theme.muted.with-alpha(0.55) : Theme.muted;
+                                        animate font-size, color { duration: ControlMotion.selection; easing: ease-out; }
+                                    }
+                                }
+                            }
+                            if root.lyrics-lines.length == 0 : Text { text: "UP NEXT"; color: Theme.muted; font-size: 11px; font-weight: 700; letter-spacing: 0.8px; }
+                            for offset in root.lyrics-lines.length > 0 ? 0 : min(4, np.upcoming) : Rectangle {
                                 height: 52px; border-radius: 8px;
                                 background: row-touch.has-hover ? Theme.hover : transparent;
                                 row-touch := TouchArea {
@@ -1246,7 +1345,7 @@ export component AppWindow inherits Window {
                                     Text { text: root.rows[root.current-index + 1 + offset].duration == "—" ? "" : root.rows[root.current-index + 1 + offset].duration; color: Theme.muted; font-size: 12px; vertical-alignment: center; }
                                 }
                             }
-                            if np.upcoming == 0 : Text {
+                            if np.upcoming == 0 && root.lyrics-lines.length == 0 : Text {
                                 text: root.autoplay-enabled ? "Nothing queued. Autoplay will add similar songs." : "Nothing queued. Add songs from any song's menu.";
                                 color: Theme.muted; font-size: 13px; wrap: word-wrap;
                             }

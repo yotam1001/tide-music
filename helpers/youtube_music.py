@@ -619,6 +619,49 @@ def tracks(items, limit=MAX_TRACKS, exclude=(), deduplicate=False):
     return result
 
 
+MAX_LISTENING_CARDS = 12
+LISTENING_SEEDS = 6
+
+
+def listening_cards(client, seen):
+    """Songs that continue one of the last few songs played, like YouTube
+    Music's "Because you listened" rows. A different recent song seeds each
+    refresh, so Home changes even when the service's own shelves don't.
+    Optional: any failure leaves Home as the service returned it."""
+    import random
+    try:
+        history = client.get_history()
+        recent = []
+        for item in history if isinstance(history, list) else []:
+            video = identifier(item.get("videoId"), True) if isinstance(item, dict) else ""
+            if video and video not in [entry[0] for entry in recent]:
+                recent.append((video, clean(item.get("title"))))
+            if len(recent) >= LISTENING_SEEDS:
+                break
+        if not recent:
+            return []
+        video, title = random.choice(recent)
+        data = client.get_watch_playlist(videoId=video, limit=MAX_RADIO_TRACKS + len(recent))
+        items = data.get("tracks", []) if isinstance(data, dict) else []
+        picks = radio_tracks(items if isinstance(items, list) else [], video, {entry[0] for entry in recent})
+    except Exception:
+        return []
+    shelf = clean("Because you played " + title) if title else "Based on your recent listening"
+    cards = []
+    for track in picks:
+        video_id = track["source"].rsplit("v=", 1)[-1]
+        if ("song", video_id) in seen:
+            continue
+        seen.add(("song", video_id))
+        cards.append({"id": video_id, "title": track["title"], "subtitle": track["artist"],
+                      "artists": track["artists"], "kind": "song", "shelf": shelf,
+                      "artwork_url": track["artwork_url"], "featured_artwork_url": None,
+                      "duration_seconds": track["duration_seconds"]})
+        if len(cards) >= MAX_LISTENING_CARDS:
+            break
+    return cards
+
+
 def autoplay_tracks(client, video, exclude):
     """Continue like YouTube Music's own autoplay.
 
@@ -1148,9 +1191,40 @@ def run(client, request):
     if action == "search":
         kind, query = request.get("kind"), request.get("query")
         kinds = {"songs": "song", "albums": "album", "artists": "artist", "playlists": "playlist"}
-        if (not isinstance(kind, str) or kind not in kinds or not isinstance(query, str) or not query.strip()
-                or len(query.encode("utf-8")) > 512 or any(ord(c) < 32 for c in query)):
+        if (not isinstance(kind, str) or (kind not in kinds and kind != "all") or not isinstance(query, str)
+                or not query.strip() or len(query.encode("utf-8")) > 512 or any(ord(c) < 32 for c in query)):
             return {"type": "error", "code": "search_unavailable"}
+        if kind == "all":
+            # Unfiltered search: YouTube Music's own mix of a top result and
+            # a few songs, albums, artists and playlists, in its order.
+            items = client.search(query.strip(), limit=MAX_SEARCH_CARDS)
+            cards = []
+            for item in items[:MAX_SEARCH_CARDS * 2] if isinstance(items, list) else []:
+                if not isinstance(item, dict) or item.get("resultType") not in kinds.values():
+                    continue
+                item = dict(item)
+                result = item["resultType"]
+                if result == "playlist" and isinstance(item.get("browseId"), str):
+                    item["browseId"] = item["browseId"].removeprefix("VL")
+                if not item.get("artists"):
+                    author = item.get("artist") if result == "album" else item.get("author")
+                    if isinstance(author, str):
+                        item["artists"] = [{"name": author}]
+                if result == "artist" and not clean(item.get("artist")):
+                    # The top result names an artist under "artists" or "title".
+                    names = item.get("artists") if isinstance(item.get("artists"), list) else []
+                    first = names[0] if names and isinstance(names[0], dict) else {}
+                    item["artist"] = clean(first.get("name")) or clean(item.get("title"))
+                    item["browseId"] = item.get("browseId") or first.get("id")
+                section = clean(item.get("category")) or result.title() + "s"
+                for card in browse_cards([item], result, section):
+                    card["shelf"] = section
+                    if all((card["kind"], card["id"]) != (seen["kind"], seen["id"]) for seen in cards):
+                        cards.append(card)
+            # Keep each section together, in the order YouTube Music ranks them.
+            order = list(dict.fromkeys(card["shelf"] for card in cards))
+            cards.sort(key=lambda card: order.index(card["shelf"]))
+            return {"type": "search", "kind": kind, "cards": cards[:MAX_SEARCH_CARDS]}
         items = client.search(query.strip(), filter=kind, limit=MAX_SEARCH_CARDS)
         normalized = []
         for item in items[:MAX_SEARCH_CARDS] if isinstance(items, list) else []:
@@ -1366,7 +1440,15 @@ def run(client, request):
                               "featured_artwork_url": featured_artwork_url(item, thumbnail),
                               "duration_seconds": duration_seconds(item)})
                 if len(cards) >= MAX_HOME_CARDS:
-                    return {"type": "home", "cards": cards}
+                    break
+            if len(cards) >= MAX_HOME_CARDS:
+                break
+        # A fresh shelf from recent listening, placed after the lead shelf.
+        extra = listening_cards(client, seen)
+        if extra:
+            lead = cards[0]["shelf"] if cards else ""
+            split = next((index for index, card in enumerate(cards) if card["shelf"] != lead), len(cards))
+            cards = cards[:split] + extra + cards[split:]
         return {"type": "home", "cards": cards}
     raise ValueError("unsupported action")
 

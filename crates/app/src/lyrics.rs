@@ -188,18 +188,18 @@ pub fn install(state: &Rc<RefCell<State>>, ui: &AppWindow) -> Lyrics {
                     return;
                 };
                 let s = state.borrow();
-                let key =
-                    if ui.get_lyrics_presented() && ui.window().is_visible() && s.active_playback {
-                        current_video_id(&s).zip(s.saved_connection.clone()).map(
-                            |(video, connection)| Key {
-                                generation: s.generation,
-                                video,
-                                connection,
-                            },
-                        )
-                    } else {
-                        None
-                    };
+                let key = if ui.get_lyrics_wanted() && ui.window().is_visible() && s.active_playback
+                {
+                    current_video_id(&s).zip(s.saved_connection.clone()).map(
+                        |(video, connection)| Key {
+                            generation: s.generation,
+                            video,
+                            connection,
+                        },
+                    )
+                } else {
+                    None
+                };
                 // Visibility can dispatch its release callback. Evaluate it
                 // before borrowing the controller for this polling pass.
                 let mut r = runtime.borrow_mut();
