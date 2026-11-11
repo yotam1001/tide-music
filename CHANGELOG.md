@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Add equalizer presets in Settings → Audio: Bass boost, Bass reducer, Treble
+  boost, Vocal and Loudness. Boosting presets lower the level first to avoid
+  distortion, and work together with Even volume.
+- Add Fade between songs in Settings → Audio: each song eases in over 2.5 s and
+  out over its last 4 s instead of cutting. Off by default.
+- Add a sleep timer to Now Playing: 15, 30, 45 or 60 minutes, or the end of the
+  current song.
+
 ## 0.4.19 - 2026-11-11
 
 - Autoplay continues with YouTube Music's personalized Up next from the last song

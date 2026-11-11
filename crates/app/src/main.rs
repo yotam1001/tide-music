@@ -87,6 +87,10 @@ struct Settings {
     volume: Option<f64>,
     volume_step_index: i32,
     normalize_volume: bool,
+    /// Equalizer preset index; 0 is off.
+    equalizer: u8,
+    /// Fade songs in and out, like a gentle crossfade.
+    fade_transitions: bool,
     audio_device: String,
     repeat: bool,
     /// Most recent search queries, newest first (at most eight).
@@ -120,6 +124,8 @@ impl Default for Settings {
             volume: None,
             volume_step_index: 1,
             normalize_volume: false,
+            equalizer: 0,
+            fade_transitions: false,
             audio_device: "auto".into(),
             repeat: false,
             recent_searches: Vec::new(),
@@ -180,6 +186,48 @@ impl LibraryAction {
         }
     }
 }
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum SleepTimer {
+    At(Instant),
+    EndOfSong,
+}
+
+/// Off → 15 → 30 → 45 → 60 minutes → end of this song → off.
+fn next_sleep_timer(current: Option<SleepTimer>, now: Instant) -> Option<SleepTimer> {
+    let minutes = match current {
+        None => 15,
+        Some(SleepTimer::At(deadline)) => {
+            let left = deadline
+                .saturating_duration_since(now)
+                .as_secs()
+                .div_ceil(60);
+            match left {
+                0..=15 => 30,
+                16..=30 => 45,
+                31..=45 => 60,
+                _ => return Some(SleepTimer::EndOfSong),
+            }
+        }
+        Some(SleepTimer::EndOfSong) => return None,
+    };
+    Some(SleepTimer::At(now + Duration::from_secs(minutes * 60)))
+}
+
+fn sleep_label(timer: Option<SleepTimer>, now: Instant) -> String {
+    match timer {
+        None => String::new(),
+        Some(SleepTimer::EndOfSong) => "End of song".into(),
+        Some(SleepTimer::At(deadline)) => format!(
+            "{} min",
+            deadline
+                .saturating_duration_since(now)
+                .as_secs()
+                .div_ceil(60)
+                .max(1)
+        ),
+    }
+}
+
 struct State {
     music_feedback: music_feedback::Music,
     #[cfg(feature = "experimental-jams")]
@@ -230,6 +278,8 @@ struct State {
     /// Songs autoplay added this session, so long listening sessions keep
     /// moving forward instead of circling back to the same picks.
     autoplay_recent: std::collections::VecDeque<String>,
+    /// Session-only sleep timer; never persisted.
+    sleep_timer: Option<SleepTimer>,
     radio_resume_when_ready: bool,
     volume_save_pending: bool,
     artwork: RefCell<artwork::ArtworkCache>,
@@ -1313,6 +1363,8 @@ fn restore_settings(value: serde_json::Value) -> Settings {
         volume,
         volume_step_index,
         normalize_volume,
+        equalizer,
+        fade_transitions,
         audio_device,
         repeat,
         recent_searches,
@@ -2528,6 +2580,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         shuffle_request: false,
         radio_requests: radio::RadioRequests::default(),
         autoplay_recent: std::collections::VecDeque::new(),
+        sleep_timer: None,
         radio_resume_when_ready: false,
         volume_save_pending: false,
         artwork: RefCell::new(if test_mode {
@@ -3481,6 +3534,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         s.settings.recent_searches.clear();
         u.set_recent_searches(recent_model(&s.settings));
         save(&s.settings);
+    });
+    bind!(on_cycle_sleep_timer, |s, u| {
+        let now = Instant::now();
+        s.sleep_timer = next_sleep_timer(s.sleep_timer, now);
+        u.set_sleep_label(sleep_label(s.sleep_timer, now).into());
     });
     bind!(on_toggle_pause, |s, u| {
         if s.connection_resume.is_none() && !s.active_playback && s.settings.queue.current.is_some()
@@ -4653,7 +4711,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                     if !local_controls_allowed(&s) { return; }
-                    if p.ended && !failed {
+                    if let Some(SleepTimer::At(deadline)) = s.sleep_timer {
+                        if Instant::now() >= deadline {
+                            s.sleep_timer = None;
+                            if s.active_playback && !p.paused {
+                                send(&mut s, &u, PlaybackCommand::SetPaused(true));
+                            }
+                            u.set_status_text("Sleep timer paused playback".into());
+                        }
+                    }
+                    let label = sleep_label(s.sleep_timer, Instant::now());
+                    if u.get_sleep_label().as_str() != label {
+                        u.set_sleep_label(label.into());
+                    }
+                    if p.ended && !failed && s.sleep_timer == Some(SleepTimer::EndOfSong) {
+                        // Stop after this song; Play resumes with the next one.
+                        s.sleep_timer = None;
+                        s.active_playback = false;
+                        if let Some(index) = next_queue_index(&s) {
+                            s.settings.queue.select(index);
+                        }
+                        u.set_paused(true);
+                        u.set_sleep_label("".into());
+                        refresh(&u, &s);
+                        save(&s.settings);
+                        u.set_status_text("Sleep timer stopped after the song".into());
+                    } else if p.ended && !failed {
                         let previous = s.settings.queue.current;
                         if let Some(index) = next_queue_index(&s) {
                             s.settings.queue.select(index);
@@ -5362,6 +5445,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             .to_vec(),
                         )));
                         u.set_lyrics_active(2);
+                        u.set_sleep_label("25 min".into());
                         u.set_now_playing_open(true);
                     }
                     _ => {
@@ -5646,6 +5730,26 @@ mod tests {
         assert!(old.library_grid);
     }
 
+    #[test]
+    fn sleep_timer_cycles_through_presets_and_labels_remaining_time() {
+        let now = Instant::now();
+        let mut timer = None;
+        let mut labels = Vec::new();
+        for _ in 0..6 {
+            timer = next_sleep_timer(timer, now);
+            labels.push(sleep_label(timer, now));
+        }
+        assert_eq!(
+            labels,
+            ["15 min", "30 min", "45 min", "60 min", "End of song", ""]
+        );
+        let almost = Some(SleepTimer::At(now + Duration::from_secs(20)));
+        assert_eq!(sleep_label(almost, now), "1 min");
+        assert_eq!(
+            sleep_label(Some(SleepTimer::At(now)), now + Duration::from_secs(5)),
+            "1 min"
+        );
+    }
     #[test]
     fn every_saved_setting_is_restored_on_load() {
         // A field missing from restore_settings is saved but silently dropped

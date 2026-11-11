@@ -17,7 +17,7 @@ use tokio::sync::{mpsc, watch};
 use url::Url;
 
 mod audio_options;
-pub use audio_options::AudioOptions;
+pub use audio_options::{fade_gain, AudioOptions, EQUALIZER_PRESETS};
 mod cookie_updates;
 mod prefetch;
 pub use cookie_updates::CookieUpdate;
@@ -691,6 +691,8 @@ struct RunningPlayer {
     reader_task: tokio::task::JoinHandle<()>,
     session_id: u64,
     audio_options: Option<AudioOptions>,
+    /// Level last sent to the fade filter.
+    fade_gain: f64,
 }
 
 #[cfg(windows)]
@@ -968,11 +970,11 @@ async fn run_worker(
                     Some(IpcEvent::Line { session_id, line })
                         if player.as_ref().is_some_and(|running| running.session_id == session_id) => {
                         if let Ok(message) = serde_json::from_str::<Value>(&line) {
-                            if matches!(message.get("request_id").and_then(Value::as_i64), Some(-101 | -102))
+                            if matches!(message.get("request_id").and_then(Value::as_i64), Some(-103..=-101))
                                 && message.get("error").and_then(Value::as_str).is_some_and(|e| e != "success") {
                                 if let Some(running) = player.as_mut() { running.audio_options = None; }
                             }
-                            let audio_message = matches!(message.get("request_id").and_then(Value::as_i64), Some(-101 | -102))
+                            let audio_message = matches!(message.get("request_id").and_then(Value::as_i64), Some(-103..=-101))
                                 || (message.get("event").and_then(Value::as_str) == Some("property-change")
                                     && matches!(message.get("name").and_then(Value::as_str), Some("audio-device-list" | "af")));
                             // These properties belong to the player, not a track. Keep
@@ -984,6 +986,7 @@ async fn run_worker(
                                 continue;
                             }
                             let loaded;
+                            let mut fade_level = None;
                             {
                                 let _gate = send_gate.lock().unwrap_or_else(|p| p.into_inner());
                                 let generation = desired_generation.load(Ordering::Acquire);
@@ -1019,6 +1022,7 @@ async fn run_worker(
                                                     if let Some(position) = message.get("data").and_then(finite_non_negative) {
                                                         current.observe_position(position, Instant::now());
                                                         view.position = current.position;
+                                                        fade_level = Some(fade_gain(current.position, current.duration));
                                                     }
                                                 }
                                                 Some("duration") => {
@@ -1038,6 +1042,18 @@ async fn run_worker(
                                 }
                                 view.volume = f64::from_bits(desired_volume.load(Ordering::Acquire));
                                 view.paused = intent.lock().unwrap_or_else(|p| p.into_inner()).paused || view.ended;
+                            }
+                            // Commands can't be sent while the snapshot lock is held.
+                            if let (Some(level), Some(running)) = (fade_level, player.as_mut()) {
+                                let fading = running.audio_options.as_ref().is_some_and(|options| options.fade);
+                                if fading && level != running.fade_gain {
+                                    running.fade_gain = level;
+                                    // Best effort: a missed step is corrected by the next one.
+                                    // The last argument targets the graph's volume filter;
+                                    // mpv rejects the command without it.
+                                    let _ = send_ipc_command(&mut running.writer,
+                                        json!(["af-command", "tide-fade", "volume", format!("{level:.2}"), "volume"]), Some(-103)).await;
+                                }
                             }
                             if loaded && !fault {
                                 if let Some(running) = player.as_mut() {
@@ -1339,6 +1355,7 @@ async fn launch_player(
         reader_task,
         session_id,
         audio_options: None,
+        fade_gain: 1.0,
     };
     if let Err(error) = send_ipc_command(
         &mut running.writer,
@@ -1458,8 +1475,10 @@ async fn apply_audio_options(player: &mut RunningPlayer, options: &AudioOptions)
     if player
         .audio_options
         .as_ref()
-        .is_none_or(|old| old.normalize != options.normalize)
+        .is_none_or(|old| options.filters_differ(old))
     {
+        // A rebuilt chain starts its fade filter at full level.
+        player.fade_gain = 1.0;
         send_ipc_command(
             &mut player.writer,
             json!(["af", "set", options.filter()]),
@@ -1573,7 +1592,7 @@ fn apply_ipc_message(
     }
     if matches!(
         message.get("request_id").and_then(Value::as_i64),
-        Some(-101 | -102)
+        Some(-103..=-101)
     ) {
         if message
             .get("error")
@@ -1876,7 +1895,8 @@ mod tests {
     #[ignore = "requires bundled mpv; hosted CI uses null audio"]
     fn native_audio_preferences_probe() {
         let path = env::temp_dir().join(format!("tide-audio-options-{}.wav", std::process::id()));
-        let sample_bytes = 8000_u32 * 2 * 12;
+        // Long enough to be faded, so fade level changes reach mpv too.
+        let sample_bytes = 8000_u32 * 2 * 24;
         let mut wav = Vec::new();
         wav.extend(b"RIFF");
         wav.extend((sample_bytes + 36).to_le_bytes());
@@ -1906,10 +1926,17 @@ mod tests {
                 generation: 1,
             })
             .unwrap();
-        for enabled in [true, false, true] {
+        // Every equalizer preset, alone and before normalization, must be
+        // accepted by the bundled mpv.
+        let steps = (0..EQUALIZER_PRESETS.len() as u8)
+            .flat_map(|equalizer| [(true, equalizer), (false, equalizer)])
+            .chain([(true, 0)]);
+        for (step, (enabled, equalizer)) in steps.enumerate() {
             handle
                 .configure_audio(AudioOptions {
                     normalize: enabled,
+                    equalizer,
+                    fade: step % 2 == 0,
                     ..Default::default()
                 })
                 .unwrap();
@@ -1923,6 +1950,11 @@ mod tests {
                 assert!(p.error.is_none(), "Local audio failed");
                 assert_eq!(p.volume, 0.0);
                 if !p.loading && p.position > 0.1 && p.normalization_active == enabled {
+                    thread::sleep(Duration::from_millis(300));
+                    assert!(
+                        !handle.snapshot().audio_settings_error,
+                        "Bundled mpv rejected equalizer preset {equalizer}"
+                    );
                     break;
                 }
                 assert!(
