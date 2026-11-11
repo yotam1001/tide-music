@@ -247,6 +247,42 @@ class ProviderTests(unittest.TestCase):
             self.assertEqual(run(client, {"action": "radio", "video_id": "K4DyBUG242c"}),
                              {"type": "error", "code": "request"})
 
+    def test_autoplay_uses_the_personalized_up_next_and_skips_excluded_songs(self):
+        items = [{"videoId": "K4DyBUG242c", "title": "Seed"}]
+        items += [{"videoId": f"{i:011}", "title": f"Track {i}"} for i in range(1, 61)]
+        client = SimpleNamespace(get_watch_playlist=MagicMock(return_value={"tracks": items}))
+        exclude = [f"{i:011}" for i in range(1, 11)] + ["bad", 7, "K4DyBUG242c"]
+        result = run(client, {"action": "autoplay", "video_id": "K4DyBUG242c", "exclude": exclude})
+        # No radio params: the account's own Up next queue, read far enough to
+        # cover the excluded songs.
+        client.get_watch_playlist.assert_called_once_with(videoId="K4DyBUG242c", limit=MAX_RADIO_TRACKS + 11)
+        self.assertEqual(len(result["tracks"]), MAX_RADIO_TRACKS)
+        self.assertEqual(result["tracks"][0]["title"], "Track 11")
+        self.assertNotIn("Seed", [track["title"] for track in result["tracks"]])
+        self.assertFalse(result["truncated"])
+
+    def test_autoplay_falls_back_to_song_radio_when_up_next_has_nothing_new(self):
+        up_next = {"tracks": [{"videoId": "00000000001", "title": "Played"}]}
+        radio = {"tracks": [{"videoId": "00000000001", "title": "Played"},
+                            {"videoId": "00000000002", "title": "New"}]}
+        client = SimpleNamespace(get_watch_playlist=MagicMock(side_effect=[up_next, radio]))
+        result = run(client, {"action": "autoplay", "video_id": "K4DyBUG242c", "exclude": ["00000000001"]})
+        self.assertEqual([track["title"] for track in result["tracks"]], ["New"])
+        self.assertEqual(client.get_watch_playlist.call_args_list[1].kwargs["radio"], True)
+
+    def test_autoplay_inputs_and_failures_are_bounded(self):
+        client = SimpleNamespace(get_watch_playlist=MagicMock(return_value={"tracks": []}),
+                                 get_account_info=MagicMock(return_value={"accountName": "Fixture"}))
+        empty = {"type": "tracks", "tracks": [], "truncated": False}
+        self.assertEqual(run(client, {"action": "autoplay", "video_id": "bad"}), empty)
+        client.get_watch_playlist.assert_not_called()
+        huge = [f"{i:011}" for i in range(5000)]
+        run(client, {"action": "autoplay", "video_id": "K4DyBUG242c", "exclude": huge})
+        self.assertLessEqual(client.get_watch_playlist.call_args_list[0].kwargs["limit"], 150)
+        client.get_watch_playlist.side_effect = ValueError("private headers must not be returned")
+        self.assertEqual(run(client, {"action": "autoplay", "video_id": "K4DyBUG242c"}),
+                         {"type": "error", "code": "request"})
+
     def test_artwork_chooses_small_safe_public_thumbnail_and_watch_variant(self):
         candidates = [{"url": "https://i.ytimg.com/large.jpg", "width": 512, "height": 512},
                       {"url": "https://lh3.googleusercontent.com/small", "width": 96, "height": 96},
@@ -366,19 +402,20 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(len(result["cards"]), 3)
         self.assertEqual([c["kind"] for c in result["cards"][:3]], ["song", "album", "playlist"])
 
-    def test_home_preserves_the_leading_rows_and_does_not_fetch_distant_shelves(self):
+    def test_home_keeps_every_requested_shelf_and_no_more(self):
         shelves = [None, {"contents": "Description"}, {"contents": None}]
         shelves += [{"title": "Personal shelf " + str(index), "contents": [
             {"videoId": f"{index:011d}", "title": "Personal song " + str(index)}
         ]} for index in range(MAX_HOME_SHELVES + 1)]
         client = SimpleNamespace(get_home=MagicMock(return_value=shelves))
         cards = run(client, {"action": "home"})["cards"]
-        client.get_home.assert_called_once_with(limit=3)
+        client.get_home.assert_called_once_with(limit=MAX_HOME_SHELVES)
         self.assertEqual(len(cards), MAX_HOME_SHELVES)
-        self.assertEqual(cards[-1]["id"], "00000000002")
-        self.assertEqual(cards[-1]["title"], "Personal song 2")
-        self.assertEqual(cards[-1]["shelf"], "Personal shelf 2")
-        self.assertNotIn("00000000003", [card["id"] for card in cards])
+        last = MAX_HOME_SHELVES - 1
+        self.assertEqual(cards[-1]["id"], f"{last:011d}")
+        self.assertEqual(cards[-1]["title"], f"Personal song {last}")
+        self.assertEqual(cards[-1]["shelf"], f"Personal shelf {last}")
+        self.assertNotIn(f"{MAX_HOME_SHELVES:011d}", [card["id"] for card in cards])
 
     def test_home_caps_distinct_cards_and_items_per_shelf_even_if_api_overshoots(self):
         shelves = [{"title": str(shelf), "contents": [

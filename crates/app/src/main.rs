@@ -227,6 +227,9 @@ struct State {
     library_retry: Option<(tide_provider::Request, bool)>,
     shuffle_request: bool,
     radio_requests: radio::RadioRequests,
+    /// Songs autoplay added this session, so long listening sessions keep
+    /// moving forward instead of circling back to the same picks.
+    autoplay_recent: std::collections::VecDeque<String>,
     radio_resume_when_ready: bool,
     volume_save_pending: bool,
     artwork: RefCell<artwork::ArtworkCache>,
@@ -384,6 +387,13 @@ fn request_library_view(
             generation: s.generation,
             replace_upcoming: false,
         },
+        // Autoplay may be seeded by an earlier song the listener chose; the
+        // response still belongs to the song playing now.
+        tide_provider::Request::Autoplay { video_id, .. } => LibraryAction::Radio {
+            seed: current_video_id(s).unwrap_or_else(|| video_id.clone()),
+            generation: s.generation,
+            replace_upcoming: false,
+        },
         tide_provider::Request::Playlist { .. } if s.shuffle_request => LibraryAction::Shuffle,
         tide_provider::Request::Playlist { id } => LibraryAction::Preview {
             radio_seed: None,
@@ -515,6 +525,36 @@ fn request_library_view(
     }));
 }
 
+/// The song autoplay continues from: the most recent one the listener picked
+/// themselves, like YouTube Music's Up next, so recommendations don't drift
+/// one recommended song at a time.
+fn autoplay_seed(s: &State) -> Option<String> {
+    let current = s.settings.queue.current?;
+    s.settings
+        .queue
+        .tracks
+        .get(..=current)?
+        .iter()
+        .rev()
+        .find(|track| !track.recommended)
+        .and_then(|track| source_video_id(&track.source))
+}
+
+/// Songs autoplay must not offer again: everything still queued or played,
+/// plus what it already added this session.
+fn autoplay_exclusions(s: &State) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    s.settings
+        .queue
+        .tracks
+        .iter()
+        .filter_map(|track| source_video_id(&track.source))
+        .chain(s.autoplay_recent.iter().cloned())
+        .filter(|id| seen.insert(id.clone()))
+        .take(400)
+        .collect()
+}
+
 fn current_video_id(s: &State) -> Option<String> {
     let track = s
         .settings
@@ -581,7 +621,15 @@ fn request_radio(s: &mut State, u: &AppWindow, tx: &mpsc::SyncSender<LibraryResu
         s.radio_requests.reset();
     }
     s.radio_requests.started(s.generation);
-    request_library(s, u, tx, tide_provider::Request::Radio { video_id: seed });
+    let request = if force {
+        tide_provider::Request::Radio { video_id: seed }
+    } else {
+        tide_provider::Request::Autoplay {
+            video_id: autoplay_seed(s).unwrap_or(seed),
+            exclude: autoplay_exclusions(s),
+        }
+    };
+    request_library(s, u, tx, request);
     if force {
         if let LibraryAction::Radio {
             replace_upcoming, ..
@@ -2479,6 +2527,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         library_retry: None,
         shuffle_request: false,
         radio_requests: radio::RadioRequests::default(),
+        autoplay_recent: std::collections::VecDeque::new(),
         radio_resume_when_ready: false,
         volume_save_pending: false,
         artwork: RefCell::new(if test_mode {
@@ -4379,6 +4428,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     continue;
                                 }
                                 s.radio_requests.succeeded();
+                                let added_ids: Vec<String> = s.settings.queue.tracks[old_len..]
+                                    .iter()
+                                    .filter_map(|track| source_video_id(&track.source))
+                                    .collect();
+                                s.autoplay_recent.extend(added_ids);
+                                while s.autoplay_recent.len() > 300 {
+                                    s.autoplay_recent.pop_front();
+                                }
                                 if !s.active_playback && s.radio_resume_when_ready {
                                     s.settings.queue.select(old_len);
                                     play(&mut s, &u);

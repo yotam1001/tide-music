@@ -22,8 +22,15 @@ from urllib.parse import urlsplit
 MAX_INPUT = 65536
 MAX_TRACKS = 2000
 MAX_RADIO_TRACKS = 25
-MAX_HOME_SHELVES = 3
-MAX_HOME_ITEMS_PER_SHELF = 40
+# Autoplay reads further into the personalized Up next queue so songs already
+# queued or played can be skipped without running out.
+MAX_AUTOPLAY_FETCH = 150
+MAX_AUTOPLAY_EXCLUDE = 400
+# Home keeps YouTube Music's shelf structure (Quick picks, Mixed for you, New
+# releases, ...). The app gives every shelf its own slot budget and rotates
+# within it on refresh, so more shelves mean variety without diluting the top.
+MAX_HOME_SHELVES = 9
+MAX_HOME_ITEMS_PER_SHELF = 30
 MAX_HOME_CARDS = MAX_HOME_SHELVES * MAX_HOME_ITEMS_PER_SHELF
 MAX_SUPERMIX_SHELVES = 20
 MAX_LIBRARY_CARDS = 200
@@ -612,9 +619,28 @@ def tracks(items, limit=MAX_TRACKS, exclude=(), deduplicate=False):
     return result
 
 
-def radio_tracks(items, seed):
+def autoplay_tracks(client, video, exclude):
+    """Continue like YouTube Music's own autoplay.
+
+    Without radio parameters the watch endpoint returns the signed-in
+    listener's personalized Up next queue (the automix YouTube Music plays
+    after a song). Songs already queued or played are skipped; if nothing new
+    remains, fall back to the song radio so playback can continue.
+    """
+    limit = min(MAX_AUTOPLAY_FETCH, MAX_RADIO_TRACKS + len(exclude))
+    data = client.get_watch_playlist(videoId=video, limit=limit)
+    items = data.get("tracks", []) if isinstance(data, dict) else []
+    selected = radio_tracks(items if isinstance(items, list) else [], video, exclude)
+    if not selected:
+        data = client.get_watch_playlist(videoId=video, limit=MAX_RADIO_TRACKS, radio=True)
+        items = data.get("tracks", []) if isinstance(data, dict) else []
+        selected = radio_tracks(items if isinstance(items, list) else [], video, exclude)
+    return selected
+
+
+def radio_tracks(items, seed, exclude=()):
     """Keep the service's ranking and prefer an explicitly identified album track."""
-    excluded = {seed}
+    excluded = {seed, *exclude}
     candidates = []
     for item in items[:MAX_TRACKS]:
         if not isinstance(item, dict):
@@ -1273,6 +1299,19 @@ def run(client, request):
                     "truncated": len(items) > MAX_RADIO_TRACKS}
         except Exception as error:
             return verified_request_failure(error, client)
+    if action == "autoplay":
+        video = identifier(request.get("video_id"), True)
+        empty = {"type": "tracks", "tracks": [], "truncated": False}
+        if not video:
+            return empty
+        raw = request.get("exclude")
+        exclude = {identifier(item, True) for item in (raw if isinstance(raw, list) else [])[:MAX_AUTOPLAY_EXCLUDE]
+                   if isinstance(item, str)}
+        exclude.discard("")
+        try:
+            return {"type": "tracks", "tracks": autoplay_tracks(client, video, exclude), "truncated": False}
+        except Exception as error:
+            return verified_request_failure(error, client)
     if action in ("playlist", "liked"):
         if action == "playlist":
             playlist = identifier(request.get("id"))
@@ -1287,8 +1326,7 @@ def run(client, request):
             result["playlist"] = playlist_context(playlist, data)
         return result
     if action == "home":
-        # Keep the leading Home rows in provider order. Fetching distant shelves
-        # for novelty diluted the earlier, more relevant selection.
+        # Keep every shelf in provider order; the app picks from each one.
         # The API may overshoot its row limit; cap our output too.
         shelves = client.get_home(limit=MAX_HOME_SHELVES)
         cards = []
