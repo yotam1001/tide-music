@@ -64,19 +64,19 @@ fn equalizer_chips_choose_each_preset() {
         weak.upgrade().unwrap().set_equalizer(index);
     });
     ui.show().unwrap();
-    draw(&window, 1140, 800, "equalizer-off");
+    draw(&window, 1140, 900, "equalizer-off");
     // Two rows of three chips: Off, Bass boost, Bass reducer / Treble boost,
     // Vocal, Loudness.
     for (index, (x, y)) in [
-        (1, (944.0, 587.0)),
-        (2, (1056.0, 587.0)),
-        (3, (832.0, 631.0)),
-        (4, (944.0, 631.0)),
-        (5, (1056.0, 631.0)),
-        (0, (832.0, 587.0)),
+        (1, (944.0, 665.0)),
+        (2, (1056.0, 665.0)),
+        (3, (832.0, 709.0)),
+        (4, (944.0, 709.0)),
+        (5, (1056.0, 709.0)),
+        (0, (832.0, 665.0)),
     ] {
         click(&ui, x, y);
-        draw(&window, 1140, 800, &format!("equalizer-{index}"));
+        draw(&window, 1140, 900, &format!("equalizer-{index}"));
         assert_eq!(
             chosen.borrow().last(),
             Some(&index),
@@ -85,4 +85,17 @@ fn equalizer_chips_choose_each_preset() {
         assert_eq!(ui.get_equalizer(), index);
     }
     assert_eq!(*chosen.borrow(), [1, 2, 3, 4, 5, 0]);
+
+    let fades = Rc::new(RefCell::new(0));
+    let captured = fades.clone();
+    let weak = ui.as_weak();
+    ui.on_toggle_fade_transitions(move || {
+        *captured.borrow_mut() += 1;
+        let ui = weak.upgrade().unwrap();
+        ui.set_fade_transitions(!ui.get_fade_transitions());
+    });
+    click(&ui, 1095.0, 572.0);
+    draw(&window, 1140, 900, "fade-on");
+    assert_eq!(*fades.borrow(), 1, "Fade between songs switch");
+    assert!(ui.get_fade_transitions());
 }

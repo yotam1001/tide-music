@@ -7,6 +7,8 @@ pub struct AudioOptions {
     pub device: String,
     /// Index into [`EQUALIZER_PRESETS`]; 0 is off.
     pub equalizer: u8,
+    /// Fade each song in and out (see [`fade_gain`]).
+    pub fade: bool,
 }
 impl Default for AudioOptions {
     fn default() -> Self {
@@ -14,8 +16,29 @@ impl Default for AudioOptions {
             normalize: false,
             device: "auto".into(),
             equalizer: 0,
+            fade: false,
         }
     }
+}
+
+/// Seconds over which a song fades in, and out before it ends.
+pub const FADE_IN_SECONDS: f64 = 2.5;
+pub const FADE_OUT_SECONDS: f64 = 4.0;
+
+/// The fade filter's level at `position` of a song `duration` long, in steps
+/// of 0.05 so the player is sent a change only every few hundred ms. Short or
+/// unknown-length songs play at full level.
+pub fn fade_gain(position: f64, duration: f64) -> f64 {
+    if !position.is_finite()
+        || !duration.is_finite()
+        || duration < 2.0 * (FADE_IN_SECONDS + FADE_OUT_SECONDS)
+    {
+        return 1.0;
+    }
+    let fade_in = position / FADE_IN_SECONDS;
+    let fade_out = (duration - position) / FADE_OUT_SECONDS;
+    let gain = fade_in.min(fade_out).clamp(0.0, 1.0);
+    (gain * 20.0).round() / 20.0
 }
 
 /// Fixed equalizer presets as (name, lavfi chain). Boosting presets lower the
@@ -54,7 +77,7 @@ impl AudioOptions {
     }
     /// Whether a change from `old` needs the audio filter chain replaced.
     pub(crate) fn filters_differ(&self, old: &Self) -> bool {
-        self.normalize != old.normalize || self.equalizer != old.equalizer
+        self.normalize != old.normalize || self.equalizer != old.equalizer || self.fade != old.fade
     }
     pub(crate) fn filter(&self) -> String {
         let mut filters = Vec::new();
@@ -66,6 +89,10 @@ impl AudioOptions {
         }
         if self.normalize {
             filters.push("@tide-normalize:lavfi=[dynaudnorm=f=150:g=5:p=0.9:m=4]".into());
+        }
+        // Last, so normalization can't undo the fade.
+        if self.fade {
+            filters.push("@tide-fade:lavfi=[volume=volume=1]".into());
         }
         filters.join(",")
     }
@@ -126,6 +153,31 @@ mod tests {
         }
         .filter()
         .contains("dynaudnorm"));
+    }
+    #[test]
+    fn fades_shape_only_full_length_songs_and_come_last_in_the_chain() {
+        assert_eq!(fade_gain(0.0, 200.0), 0.0);
+        assert_eq!(fade_gain(1.25, 200.0), 0.5);
+        assert_eq!(fade_gain(10.0, 200.0), 1.0);
+        assert_eq!(fade_gain(198.0, 200.0), 0.5);
+        assert_eq!(fade_gain(200.0, 200.0), 0.0);
+        assert_eq!(fade_gain(1.0, 10.0), 1.0, "short clips are not faded");
+        assert_eq!(fade_gain(f64::NAN, 200.0), 1.0);
+        assert_eq!(fade_gain(0.0, f64::INFINITY), 1.0);
+        let options = AudioOptions {
+            normalize: true,
+            equalizer: 2,
+            fade: true,
+            ..Default::default()
+        };
+        assert!(options
+            .filter()
+            .ends_with("@tide-fade:lavfi=[volume=volume=1]"));
+        assert!(options.filters_differ(&AudioOptions {
+            fade: false,
+            ..options.clone()
+        }));
+        assert!(!AudioOptions::default().filter().contains("tide-fade"));
     }
     #[test]
     fn equalizer_presets_chain_before_normalization_and_are_bounded() {

@@ -5,6 +5,7 @@ fn options(s: &Settings) -> tide_playback::AudioOptions {
         normalize: s.normalize_volume,
         device: s.audio_device.clone(),
         equalizer: s.equalizer,
+        fade: s.fade_transitions,
     }
 }
 pub fn apply(s: &State, u: &AppWindow) -> bool {
@@ -41,6 +42,7 @@ pub fn refresh(s: &State, u: &AppWindow, p: &tide_core::PlaybackSnapshot) {
     let devices = outputs(s, p);
     u.set_normalize_volume(s.settings.normalize_volume);
     u.set_equalizer(i32::from(s.settings.equalizer));
+    u.set_fade_transitions(s.settings.fade_transitions);
     u.set_audio_device_index(
         devices
             .iter()
@@ -90,6 +92,21 @@ pub fn install(state: &Rc<RefCell<State>>, ui: &AppWindow) {
                 save(&s.settings);
             } else {
                 s.settings.normalize_volume = before;
+            }
+        }
+    });
+    let state_fade = state.clone();
+    let weak = ui.as_weak();
+    ui.on_toggle_fade_transitions(move || {
+        if let Some(u) = weak.upgrade() {
+            let mut s = state_fade.borrow_mut();
+            let before = s.settings.fade_transitions;
+            s.settings.fade_transitions = !before;
+            if apply(&s, &u) {
+                u.set_fade_transitions(s.settings.fade_transitions);
+                save(&s.settings);
+            } else {
+                s.settings.fade_transitions = before;
             }
         }
     });

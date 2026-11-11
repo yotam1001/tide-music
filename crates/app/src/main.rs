@@ -89,6 +89,8 @@ struct Settings {
     normalize_volume: bool,
     /// Equalizer preset index; 0 is off.
     equalizer: u8,
+    /// Fade songs in and out, like a gentle crossfade.
+    fade_transitions: bool,
     audio_device: String,
     repeat: bool,
     /// Most recent search queries, newest first (at most eight).
@@ -123,6 +125,7 @@ impl Default for Settings {
             volume_step_index: 1,
             normalize_volume: false,
             equalizer: 0,
+            fade_transitions: false,
             audio_device: "auto".into(),
             repeat: false,
             recent_searches: Vec::new(),
@@ -1361,6 +1364,7 @@ fn restore_settings(value: serde_json::Value) -> Settings {
         volume_step_index,
         normalize_volume,
         equalizer,
+        fade_transitions,
         audio_device,
         repeat,
         recent_searches,
