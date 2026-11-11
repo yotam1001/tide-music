@@ -222,13 +222,13 @@ fn guest_mini_keeps_leave_and_volume_reachable_and_blocks_transport() {
     ui.on_open_supermix(move || selected.set("supermix"));
     ui.set_jam_open(true);
     draw(&window, 1140, 800);
-    click(&ui, 44.0, 346.0);
+    click(&ui, 100.0, 303.0);
     assert_eq!(
         destination.get(),
         "liked",
         "Jam blocked the Liked Songs shortcut"
     );
-    click(&ui, 44.0, 418.0);
+    click(&ui, 100.0, 353.0);
     assert_eq!(
         destination.get(),
         "supermix",

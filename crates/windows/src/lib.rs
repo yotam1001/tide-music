@@ -145,6 +145,18 @@ pub fn app_light_theme() -> Option<bool> {
 }
 
 /// Read Windows Accessibility's animation preference once at startup.
+/// The local wall-clock hour (0-23), used for the Home greeting.
+#[cfg(windows)]
+pub fn local_hour() -> Option<u8> {
+    let time = unsafe { windows::Win32::System::SystemInformation::GetLocalTime() };
+    u8::try_from(time.wHour).ok().filter(|hour| *hour < 24)
+}
+
+#[cfg(not(windows))]
+pub fn local_hour() -> Option<u8> {
+    None
+}
+
 pub fn client_animations_enabled() -> bool {
     #[cfg(windows)]
     {

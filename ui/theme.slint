@@ -1,0 +1,599 @@
+// Palette, motion and layout tokens, plus Tide's basic controls.
+import { Button, CheckBox, Slider } from "std-widgets.slint";
+
+// Short, event-driven feedback. No animation runs while the UI is idle.
+export global ControlMotion {
+    in property <bool> enabled: false;
+    out property <duration> feedback: self.enabled ? 100ms : 0ms;
+    out property <duration> selection: self.enabled ? 150ms : 0ms;
+}
+
+// Tide's palette, defined once per theme. Components read tokens instead of
+// repeating light/dark colour pairs. Dark mode uses deeper chrome so content
+// panels and artwork stand forward; values otherwise keep Tide's berry and
+// terracotta identity.
+export global Theme {
+    in-out property <bool> light: false;
+    out property <color> window: self.light ? #f4eee6 : #0e1014;
+    out property <color> chrome: self.light ? #eee5db : #13161b;
+    out property <color> surface: self.light ? #f9f4ee : #191c22;
+    out property <color> raised: self.light ? #f4ede5 : #1d2128;
+    out property <color> hover: self.light ? #e9e0d6 : #232832;
+    out property <color> pressed: self.light ? #dbc9c2 : #2c2730;
+    out property <color> outline: self.light ? #ded0c4 : #2a2f38;
+    out property <color> divider: self.light ? #e1d7ce : #22262e;
+    out property <color> text: self.light ? #392e33 : #f2f0f1;
+    out property <color> muted: self.light ? #716773 : #a3a7b0;
+    out property <color> accent: self.light ? #b45448 : #c43f68;
+    out property <color> accent-hover: self.light ? #a44a3f : #d24f77;
+    out property <color> accent-ink: self.light ? #985955 : #ec9ab4;
+    out property <color> on-accent: #fff8f6;
+    out property <color> selected: self.light ? #e8d5cb : #2e2029;
+    out property <color> selected-ink: self.light ? #88463e : #f2b7c8;
+    out property <color> focus: self.light ? #68465d : #e88aa6;
+    out property <color> cover: self.light ? #e0d1c9 : #262329;
+    out property <color> cover-ink: self.light ? #956a61 : #c4879a;
+    out property <color> rail: self.light ? #b7a599 : #3d414a;
+    out property <color> rail-disabled: self.light ? #c1b3aa : #33363e;
+    out property <color> shadow: self.light ? #2f252930 : #00000090;
+    // Placeholder art: a stable gradient per title instead of a grey square.
+    public pure function art(seed: int) -> brush {
+        return seed == 0 ? @linear-gradient(140deg, #c43f68 0%, #6a3fb5 100%)
+            : seed == 1 ? @linear-gradient(140deg, #2f6fd6 0%, #45b8e0 100%)
+            : seed == 2 ? @linear-gradient(140deg, #f0904a 0%, #d9475a 100%)
+            : seed == 3 ? @linear-gradient(140deg, #0f7f73 0%, #4cb98a 100%)
+            : seed == 4 ? @linear-gradient(140deg, #8a55e0 0%, #4570dc 100%)
+            : @linear-gradient(140deg, #b8667f 0%, #3a5d7c 100%);
+    }
+}
+
+// Artwork viewport calculations read these same logical dimensions from Rust.
+export global LayoutMetrics {
+    // Full sidebar with labels and playlists; narrow windows use an icon rail.
+    out property <length> navigation-wide: 232px;
+    out property <length> navigation-narrow: 76px;
+    out property <length> footer-actions-width: 248px;
+    out property <length> browse-row-height: 72px;
+    out property <length> collection-row-height: 82px;
+    out property <length> jam-row-height: 64px;
+    out property <length> library-tile-height: 236px;
+    out property <length> home-heading-height: 44px;
+    out property <length> home-spotlight-height: 224px;
+    out property <length> home-compact-height: 64px;
+    out property <length> artist-track-height: 58px;
+    out property <length> home-row-gap: 8px;
+    out property <length> queue-row-height: 66px;
+    out property <length> queue-heading-height: 28px;
+}
+
+// Preferences are rows with independent labels, rather than a wall of buttons.
+export component PreferenceRow inherits Rectangle {
+    in property <string> title;
+    in property <string> detail;
+    in property <bool> checked;
+    in property <bool> light-mode;
+    in property <bool> enabled: true;
+    callback toggled();
+    height: root.detail == "" ? 46px : 66px;
+    // The label and description are part of the target, not just the tiny box.
+    // The checkbox above this area retains native keyboard/accessibility input.
+    opacity: root.enabled ? 1 : 0.45;
+    TouchArea { width: parent.width; height: parent.height; enabled: root.enabled; mouse-cursor: pointer; clicked => { toggle.focus(); root.toggled(); } }
+    HorizontalLayout {
+        spacing: 16px; cross-axis-alignment: center;
+        VerticalLayout {
+            horizontal-stretch: 1; min-width: 0px; spacing: 5px; alignment: center;
+            Text { text: root.title; color: Theme.text; font-size: 14px; font-weight: 500; overflow: elide; }
+            if root.detail != "" : Text { text: root.detail; color: Theme.muted; font-size: 12px; wrap: word-wrap; }
+        }
+        Rectangle {
+            width: 40px; height: 24px; border-radius: 12px;
+            background: root.checked ? (Theme.accent) : (Theme.outline);
+            border-width: toggle.has-focus ? 2px : 1px;
+            border-color: toggle.has-focus ? (Theme.focus) : (root.light-mode ? #c7b5ac : #444a55);
+            Rectangle { x: root.checked ? 19px : 3px; y: 3px; width: 18px; height: 18px; border-radius: 9px; background: #fff8f6; animate x { duration: 100ms; } }
+            // Native checkbox semantics, focus and Space-key behavior under
+            // Tide's visual switch; this does not install a custom key hook.
+            toggle := CheckBox { width: parent.width; height: parent.height; opacity: 0; enabled: root.enabled; checked: root.checked; accessible-label: root.title; toggled => { toggle.focus(); root.toggled(); } }
+        }
+    }
+}
+
+export component SettingsLink inherits Rectangle {
+    in property <string> title;
+    in property <string> icon-path;
+    in property <bool> light-mode;
+    callback activated();
+    height: 44px; border-radius: 8px;
+    background: hover.has-hover ? (Theme.hover) : transparent;
+    border-width: action.has-focus ? 2px : 0px;
+    border-color: Theme.focus;
+    hover := TouchArea {
+        width: parent.width; height: parent.height; mouse-cursor: pointer;
+        action := Button { width: parent.width; height: parent.height; opacity: 0; text: ""; accessible-label: root.title; clicked => { root.activated(); } }
+    }
+    HorizontalLayout {
+        padding-left: 8px; padding-right: 8px; spacing: 12px; cross-axis-alignment: center;
+        Path { width: 20px; height: 20px; viewbox-width: 24; viewbox-height: 24; fill: transparent; stroke: Theme.muted; stroke-width: 1.5px; commands: root.icon-path; }
+        Text { horizontal-stretch: 1; text: root.title; color: Theme.text; font-size: 14px; }
+        Path { width: 16px; height: 16px; viewbox-width: 24; viewbox-height: 24; fill: transparent; stroke: Theme.muted; stroke-width: 1.5px; commands: "M 9 5 L 16 12 L 9 19"; }
+    }
+}
+
+export component SearchMark inherits Path {
+    in property <color> ink;
+    width: 18px;
+    height: 18px;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    fill: Colors.transparent;
+    stroke: root.ink;
+    stroke-width: 1.6px;
+    commands: "M 18 10 A 8 8 0 1 0 2 10 A 8 8 0 1 0 18 10 Z M 16 16 L 22 22";
+}
+
+export component VolumeMark inherits Path {
+    in property <color> ink;
+    width: 18px;
+    height: 18px;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    fill: Colors.transparent;
+    stroke: root.ink;
+    stroke-width: 1.5px;
+    commands: "M 3 9 L 7 9 L 12 5 L 12 19 L 7 15 L 3 15 Z M 16 8 C 19 10 19 14 16 16 M 19 5 C 24 9 24 15 19 19";
+}
+
+// The native slider supplies pointer, keyboard, focus and accessibility actions.
+// Its value drives a tiny code-native treatment in the approved accent colors.
+export component TideSlider inherits Rectangle {
+    in property <float> minimum: 0;
+    in property <float> maximum: 100;
+    in property <float> value: 0;
+    in property <float> step: 1;
+    in property <bool> wheel-adjustable: false;
+    in property <int> reset-revision: 0;
+    // Native input must never assign the externally owned value: doing so
+    // breaks its binding to the live clock/volume. Keep a local drag preview.
+    private property <float> input-value: root.value;
+    private property <bool> interacting: false;
+    private property <bool> input-focused: native.has-focus;
+    changed value => { if !root.interacting { root.input-value = root.value; } }
+    changed maximum => { root.interacting = false; root.input-value = root.value; }
+    changed reset-revision => { root.interacting = false; root.input-value = root.value; }
+    changed enabled => { if !root.enabled { root.interacting = false; root.input-value = root.value; } }
+    changed input-focused => { if !root.input-focused { root.interacting = false; root.input-value = root.value; } }
+    in property <bool> enabled: true;
+    in property <bool> light-mode: false;
+    in property <string> label;
+    in property <string> value-text;
+    callback changed(float);
+    callback released(float);
+    private property <float> fraction: root.maximum > root.minimum
+        ? min(1, max(0, (root.input-value - root.minimum) / (root.maximum - root.minimum))) : 0;
+    private property <color> accent: Theme.accent;
+
+    min-width: 40px;
+    min-height: 20px;
+    horizontal-stretch: 1;
+    forward-focus: native;
+    // Accessibility adjustments are complete actions and have no pointer/key release.
+    function commit-accessible(value: float) {
+        if root.enabled {
+            root.interacting = false;
+            root.input-value = min(root.maximum, max(root.minimum, value));
+            root.changed(root.input-value);
+            root.released(root.input-value);
+            root.input-value = root.value;
+        }
+    }
+
+    Rectangle {
+        x: 10px;
+        y: (root.height - 4px) / 2;
+        width: max(0px, root.width - 20px);
+        height: 4px;
+        border-radius: 2px;
+        background: Theme.rail;
+    }
+    Rectangle {
+        x: 10px;
+        y: (root.height - 4px) / 2;
+        width: max(0px, root.width - 20px) * root.fraction;
+        height: 4px;
+        border-radius: 2px;
+        background: root.enabled ? root.accent : (Theme.rail-disabled);
+    }
+    Rectangle {
+        x: 3px + max(0px, root.width - 20px) * root.fraction;
+        y: (root.height - 14px) / 2;
+        width: 14px;
+        height: 14px;
+        border-radius: 7px;
+        border-width: native.has-focus ? 2px : 0px;
+        border-color: root.light-mode ? #68465d : #f2bccb;
+        background: root.enabled ? root.accent : (Theme.rail-disabled);
+    }
+    TouchArea {
+        width: parent.width; height: parent.height;
+        scroll-event(event) => {
+            if !root.enabled || !root.wheel-adjustable || event.delta-y == 0px { return reject; }
+            root.commit-accessible(root.value + (event.delta-y > 0px ? root.step : -root.step));
+            return accept;
+        }
+        native := Slider {
+            width: parent.width;
+            height: parent.height;
+            opacity: 0;
+            step: root.step;
+            minimum: root.minimum;
+            maximum: root.maximum;
+            value <=> root.input-value;
+            enabled: root.enabled;
+            accessible-label: root.label;
+            accessible-value: root.value-text;
+            accessible-action-set-value(value) => {
+                if value.is-float() { root.commit-accessible(value.to-float()); }
+            }
+            accessible-action-increment => { root.commit-accessible(root.value + root.step); }
+            accessible-action-decrement => { root.commit-accessible(root.value - root.step); }
+            changed(value) => { root.interacting = true; root.changed(value); }
+            released(value) => {
+                root.interacting = false;
+                root.released(value);
+                // A rejected/no-op seek need not change the owner's value, so a
+                // changed-value callback alone cannot end the local preview.
+                root.input-value = root.value;
+            }
+        }
+    }
+}
+
+// Buttons use Slint's standard Button for keyboard and accessibility behavior,
+// while the surrounding rectangle supplies Tide's compact visual treatment.
+export component TideButton inherits Rectangle {
+    in property <string> label;
+    in property <string> caption;
+    in property <string> leading-icon;
+    in property <string> icon-path;
+    in property <bool> show-tooltip: false;
+    in property <bool> notification: false;
+    in property <color> surface-color;
+    in property <color> text-color;
+    in property <color> accent-color;
+    in property <color> accent-text-color;
+    in property <color> outline-color;
+    in property <color> focus-color;
+    in property <color> pressed-color;
+    in property <bool> active: false;
+    in property <bool> round: false;
+    in property <bool> quiet: false;
+    in property <bool> enabled: true;
+    in property <length> caption-size: 14px;
+    callback clicked;
+    forward-focus: control;
+
+    in property <string> icon-kind:
+        root.caption == "⏮" ? "previous" : root.caption == "⏭" ? "next"
+        : root.caption == "▶" ? "play" : root.caption == "Ⅱ" ? "pause"
+        : root.caption == "↻" ? "repeat" : root.caption == "⌄" ? "collapse"
+        : root.caption == "↗" ? "expand" : root.caption == "☼" ? "sun" : root.caption == "☾" ? "moon" : root.caption == "◐" ? "mode"
+        : root.caption == "⌫" ? "clear" : root.caption == "＋" ? "add"
+        : root.caption == "⇄" ? "shuffle" : root.caption == "→" ? "send"
+        : root.caption == "..." ? "more" : root.caption == "×" ? "close" : "";
+    private property <color> icon-color: root.active ? root.accent-text-color : root.text-color;
+
+    border-radius: root.round ? self.height / 2 : 9px;
+    border-width: control.has-focus ? 2px : root.active || root.quiet ? 0px : 1px;
+    border-color: control.has-focus ? root.focus-color : root.outline-color;
+    background: root.active ? root.accent-color
+        : control.pressed || hover-area.has-hover ? root.pressed-color : root.quiet ? Colors.transparent : root.surface-color;
+    animate background { duration: ControlMotion.feedback; easing: ease-out; }
+    opacity: root.enabled ? 1 : 0.45;
+
+    hover-area := TouchArea {
+        width: parent.width; height: parent.height; enabled: root.enabled;
+        mouse-cursor: pointer;
+        control := Button {
+            width: parent.width; height: parent.height;
+            text: ""; opacity: 0;
+            accessible-label: root.label; enabled: root.enabled;
+            clicked => { root.clicked(); }
+        }
+    }
+
+    Text {
+        x: root.leading-icon == "" ? 0px : 28px;
+        width: parent.width - self.x;
+        height: parent.height;
+        text: root.icon-kind == "" && root.icon-path == "" ? root.caption : "";
+        color: root.active ? root.accent-text-color : root.text-color;
+        font-size: root.caption-size;
+        font-weight: 600;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    if root.leading-icon != "" : Path {
+        x: 12px; y: (root.height - 18px) / 2;
+        width: 18px; height: 18px; viewbox-width: 24; viewbox-height: 24;
+        fill: transparent; stroke: root.icon-color; stroke-width: 1.5px;
+        commands: root.leading-icon;
+    }
+    if root.show-tooltip : Tooltip {
+        Rectangle {
+            max-width: 320px;
+            background: root.surface-color;
+            border-width: 1px; border-color: root.outline-color; border-radius: 6px;
+            HorizontalLayout {
+                padding: 8px;
+                Text { max-width: 304px; wrap: word-wrap; text: root.label; color: root.text-color; font-size: 12px; }
+            }
+        }
+    }
+    if root.notification : Rectangle {
+        x: root.width - 10px; y: 5px; width: 6px; height: 6px;
+        border-radius: 3px;
+        background: root.active ? root.accent-text-color : root.accent-color;
+    }
+    if root.icon-kind != "" || root.icon-path != "" : Path {
+        x: (root.width - 20px) / 2;
+        y: (root.height - 20px) / 2;
+        width: 20px;
+        height: 20px;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        fill: root.icon-kind == "play" || root.icon-kind == "pause" || root.icon-kind == "previous" || root.icon-kind == "next" ? root.icon-color : Colors.transparent;
+        stroke: root.icon-color;
+        stroke-width: 1.5px;
+        commands: root.icon-path != "" ? root.icon-path
+            : root.icon-kind == "play" ? "M 7 4 L 20 12 L 7 20 Z"
+            : root.icon-kind == "pause" ? "M 6 5 L 9 5 L 9 19 L 6 19 Z M 15 5 L 18 5 L 18 19 L 15 19 Z"
+            : root.icon-kind == "previous" ? "M 6 5 L 6 19 M 18 5 L 9 12 L 18 19 Z"
+            : root.icon-kind == "next" ? "M 18 5 L 18 19 M 6 5 L 15 12 L 6 19 Z"
+            : root.icon-kind == "repeat" ? "M 17 3 L 21 7 L 17 11 M 21 7 L 7 7 C 4 7 3 9 3 12 M 7 21 L 3 17 L 7 13 M 3 17 L 17 17 C 20 17 21 15 21 12"
+            : root.icon-kind == "shuffle" ? "M 3 6 L 7 6 C 11 6 13 18 17 18 L 21 18 M 17 14 L 21 18 L 17 22 M 3 18 L 7 18 C 11 18 13 6 17 6 L 21 6 M 17 2 L 21 6 L 17 10"
+            : root.icon-kind == "collapse" ? "M 5 9 L 12 16 L 19 9"
+            : root.icon-kind == "expand" ? "M 14 4 L 20 4 L 20 10 M 20 4 L 10 14 M 10 5 L 5 5 L 5 19 L 19 19 L 19 14"
+            : root.icon-kind == "sun" ? "M 12 8 A 4 4 0 1 0 12 16 A 4 4 0 1 0 12 8 Z M 12 2 L 12 4 M 12 20 L 12 22 M 2 12 L 4 12 M 20 12 L 22 12 M 5 5 L 6.5 6.5 M 17.5 17.5 L 19 19 M 5 19 L 6.5 17.5 M 17.5 6.5 L 19 5"
+            : root.icon-kind == "moon" ? "M 19 15 A 8 8 0 0 1 9 5 A 8 8 0 1 0 19 15 Z"
+            : root.icon-kind == "mode" ? "M 12 3 A 9 9 0 1 0 12 21 A 9 9 0 1 0 12 3 Z M 12 3 L 12 21 M 12 6 L 17 6 M 12 9 L 19 9 M 12 12 L 20 12 M 12 15 L 19 15 M 12 18 L 17 18"
+            : root.icon-kind == "clear" ? "M 6 7 L 18 7 L 17 21 L 7 21 Z M 4 7 L 20 7 M 9 7 L 9 3 L 15 3 L 15 7 M 10 10 L 10 18 M 14 10 L 14 18"
+            : root.icon-kind == "add" ? "M 12 5 L 12 19 M 5 12 L 19 12"
+            : root.icon-kind == "close" ? "M 6 6 L 18 18 M 18 6 L 6 18"
+            : root.icon-kind == "more" ? "M 5 11 A 1 1 0 1 0 5 13 A 1 1 0 1 0 5 11 Z M 12 11 A 1 1 0 1 0 12 13 A 1 1 0 1 0 12 11 Z M 19 11 A 1 1 0 1 0 19 13 A 1 1 0 1 0 19 11 Z"
+            : "M 4 12 L 20 12 M 14 6 L 20 12 L 14 18";
+    }
+}
+
+// Code-native abstract cover art avoids loading and retaining large artwork in
+// the lightweight layouts. The parent can replace this component once artwork
+// becomes part of the shared track model.
+export component TransportButtons inherits Rectangle {
+    in property <bool> enabled: true;
+    in property <bool> next-enabled: root.enabled;
+    in property <bool> paused;
+    in property <bool> repeat-enabled;
+    in property <bool> light-mode: false;
+    in property <bool> show-repeat: true;
+    in property <bool> show-shuffle: true;
+    callback previous-track;
+    callback toggle-pause;
+    callback next-track;
+    callback toggle-repeat;
+    callback shuffle-queue;
+
+    private property <color> surface: Theme.raised;
+    private property <color> foreground: Theme.text;
+    private property <color> accent: Theme.accent;
+    private property <color> accent-foreground: #fff8f6;
+    private property <color> outline: Theme.outline;
+    private property <color> focus-ring: Theme.focus;
+    private property <color> pressed: Theme.pressed;
+
+    HorizontalLayout {
+        spacing: 9px;
+        alignment: center;
+
+        if root.show-shuffle : TideButton { quiet: true;
+            enabled: root.enabled;
+            width: 36px;
+            height: 36px;
+            label: "Shuffle upcoming tracks";
+            caption: "⇄";
+            surface-color: root.surface;
+            text-color: root.foreground;
+            accent-color: root.accent;
+            accent-text-color: root.accent-foreground;
+            outline-color: root.outline;
+            focus-color: root.focus-ring;
+            pressed-color: root.pressed;
+            clicked => { root.shuffle-queue(); }
+        }
+
+        TideButton { quiet: true;
+            enabled: root.enabled;
+            width: 42px;
+            height: 40px;
+            label: "Previous track";
+            caption: "⏮";
+            surface-color: root.surface;
+            text-color: root.foreground;
+            accent-color: root.accent;
+            accent-text-color: root.accent-foreground;
+            outline-color: root.outline;
+            focus-color: root.focus-ring;
+            pressed-color: root.pressed;
+            clicked => { root.previous-track(); }
+        }
+
+        TideButton { quiet: true;
+            enabled: root.enabled;
+            width: 48px;
+            height: 44px;
+            label: root.paused ? "Play" : "Pause";
+            caption: root.paused ? "▶" : "Ⅱ";
+            active: true;
+            round: true;
+            caption-size: 17px;
+            surface-color: root.surface;
+            text-color: root.foreground;
+            accent-color: root.accent;
+            accent-text-color: root.accent-foreground;
+            outline-color: root.outline;
+            focus-color: root.focus-ring;
+            pressed-color: root.pressed;
+            clicked => { root.toggle-pause(); }
+        }
+
+        TideButton { quiet: true;
+            enabled: root.next-enabled;
+            width: 42px;
+            height: 40px;
+            label: "Next track";
+            caption: "⏭";
+            surface-color: root.surface;
+            text-color: root.foreground;
+            accent-color: root.accent;
+            accent-text-color: root.accent-foreground;
+            outline-color: root.outline;
+            focus-color: root.focus-ring;
+            pressed-color: root.pressed;
+            clicked => { root.next-track(); }
+        }
+
+        if root.show-repeat : TideButton { quiet: true;
+            enabled: root.enabled;
+            width: 38px;
+            height: 38px;
+            label: root.repeat-enabled ? "Turn repeat off" : "Turn repeat on";
+            caption: "↻";
+            active: root.repeat-enabled;
+            surface-color: root.surface;
+            text-color: root.foreground;
+            accent-color: root.accent;
+            accent-text-color: root.accent-foreground;
+            outline-color: root.outline;
+            focus-color: root.focus-ring;
+            pressed-color: root.pressed;
+            clicked => { root.toggle-repeat(); }
+        }
+    }
+}
+
+export component LibraryButton inherits TideButton {
+    quiet: true;
+    in property <bool> light-mode: false;
+    height: 36px;
+    caption-size: 12px;
+    surface-color: Theme.raised;
+    text-color: Theme.text;
+    accent-color: Theme.accent;
+    accent-text-color: #fff8f6;
+    outline-color: Theme.outline;
+    focus-color: Theme.focus;
+    pressed-color: Theme.pressed;
+}
+
+export component LibraryTab inherits Rectangle {
+    in property <string> title;
+    in property <string> label: root.title + " in your library";
+    in property <bool> selected;
+    in property <bool> light-mode;
+    in property <bool> enabled: true;
+    callback select();
+    height: 32px; width: root.title == "Playlists" ? 88px : root.title == "History" ? 82px : 76px;
+    border-radius: self.height / 2;
+    background: root.selected ? Theme.accent : hover.has-hover ? Theme.hover : Theme.raised;
+    animate background { duration: ControlMotion.selection; easing: ease-out; }
+    border-width: action.has-focus ? 2px : 0px; border-color: Theme.focus;
+    opacity: root.enabled ? 1 : 0.45;
+    Text { width: parent.width; height: parent.height; text: root.title; font-size: 13px; font-weight: 600;
+        horizontal-alignment: center; vertical-alignment: center; color: root.selected ? Theme.on-accent : Theme.text; }
+    hover := TouchArea { width: parent.width; height: parent.height; enabled: root.enabled; mouse-cursor: pointer;
+        action := Button { width: parent.width; height: parent.height; opacity: 0; enabled: root.enabled; accessible-label: root.label; clicked => { root.select(); } } }
+}
+
+// A quiet selected navigation treatment keeps the playback action dominant.
+export component NavigationButton inherits Rectangle {
+    in property <bool> light-mode;
+    in property <bool> active;
+    in property <bool> library;
+    in property <bool> jam: false;
+    in property <bool> liked: false;
+    in property <bool> mix: false;
+    in property <bool> jam-active: false;
+    in property <bool> enabled: true;
+    // Full sidebar: icon and label side by side. Otherwise a compact rail item.
+    in property <bool> wide: false;
+    callback clicked;
+    height: root.wide ? 42px : 64px;
+    border-radius: 8px;
+    background: root.active && root.wide ? Theme.selected
+        : control.pressed || row-hover.has-hover ? (Theme.hover) : transparent;
+    animate background { duration: ControlMotion.feedback; easing: ease-out; }
+    border-width: control.has-focus ? 2px : 0px;
+    border-color: Theme.focus;
+    private property <color> ink: root.active ? (Theme.selected-ink) : (Theme.muted);
+    Rectangle {
+        x: 0px; y: (parent.height - self.height) / 2;
+        width: 3px; height: root.active ? 20px : 0px;
+        border-radius: 1.5px; background: Theme.accent;
+        animate height { duration: ControlMotion.selection; easing: ease-out; }
+    }
+    row-hover := TouchArea {
+        width: parent.width; height: parent.height;
+        enabled: root.enabled; mouse-cursor: pointer;
+        control := Button {
+            width: parent.width; height: parent.height; opacity: 0; enabled: root.enabled;
+            accessible-label: root.liked ? "Open Liked Songs" : root.mix ? "Open your Supermix" : root.jam ? "Open Jams to listen together with friends" : root.library ? "Open your Library" : "Open Home";
+            clicked => { root.clicked(); }
+        }
+    }
+    Path {
+        x: root.wide ? 14px : (parent.width - self.width) / 2;
+        y: root.wide ? (parent.height - self.height) / 2 : 9px;
+        width: root.wide ? 20px : 22px; height: self.width;
+        viewbox-width: 24; viewbox-height: 24; fill: transparent; stroke: root.ink; stroke-width: 1.8px;
+        commands: root.liked ? "M 12 20 L 4 12 C -3 4 8 -1 12 6 C 16 -1 27 4 20 12 Z"
+            : root.mix ? "M 3 8 L 3 16 M 8 4 L 8 20 M 13 7 L 13 17 M 18 3 L 18 21 M 23 9 L 23 15"
+            : root.jam ? "M 9 3 A 3 3 0 1 0 9 9 A 3 3 0 1 0 9 3 Z M 3 21 L 3 18 C 3 11 15 11 15 18 L 15 21 M 17 4 C 22 4 22 10 17 10 M 18 13 C 22 13 23 17 22 21"
+            : root.library ? "M 4 4 L 4 20 M 9 4 L 9 20 M 14 5 L 19 4 L 22 19 L 17 20 Z"
+            : "M 3 10 L 12 3 L 21 10 M 5 9 L 5 21 L 10 21 L 10 14 L 14 14 L 14 21 L 19 21 L 19 9";
+    }
+    if !root.wide : Text {
+        y: 37px; width: parent.width; height: 18px;
+        text: root.liked ? "Liked" : root.mix ? "Supermix" : root.jam ? (root.jam-active ? "Jams •" : "Jams") : root.library ? "Library" : "Home";
+        color: root.ink; font-size: 11px; font-weight: root.active ? 600 : 500; horizontal-alignment: center;
+    }
+    if root.wide : Text {
+        x: 46px; width: parent.width - self.x - 10px; height: parent.height;
+        text: root.liked ? "Liked Songs" : root.mix ? "My Supermix" : root.jam ? (root.jam-active ? "Jams · live" : "Jams") : root.library ? "Your library" : "Home";
+        color: root.active ? Theme.selected-ink : row-hover.has-hover ? Theme.text : Theme.muted;
+        font-size: 14px; font-weight: root.active ? 700 : 600;
+        vertical-alignment: center; overflow: elide;
+    }
+}
+
+// Level bars for the song that is playing. They rest when paused, and only
+// tick while motion is enabled; their timer exists only while shown.
+export component EqualizerBars inherits Rectangle {
+    in property <bool> active: true;
+    in property <color> ink: Theme.accent;
+    private property <int> tick: 0;
+    private property <bool> moving: root.active && ControlMotion.enabled;
+    width: 16px;
+    height: 14px;
+    Timer { interval: 300ms; running: root.moving; triggered => { root.tick += 1; } }
+    for bar in 4 : Rectangle {
+        x: bar * 4.5px;
+        width: 3px;
+        height: root.moving
+            ? root.height * (0.25 + 0.75 * abs(sin((root.tick * (1.1 + bar * 0.63) + bar * 1.7) * 1rad)))
+            : root.height * (bar == 1 ? 0.9 : bar == 2 ? 0.6 : bar == 0 ? 0.45 : 0.3);
+        y: root.height - self.height;
+        border-radius: 1.5px;
+        background: root.ink;
+        animate height { duration: 280ms; easing: ease-in-out; }
+    }
+}

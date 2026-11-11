@@ -194,9 +194,8 @@ fn run() -> Result<(), String> {
                 }
             })
             .collect();
-        let collections: Vec<_> = cards.iter().map(|card| card.kind != "song").collect();
         ui.set_home_browse_rows(ModelRc::new(VecModel::from(
-            browse_layout::home_groups(&labels, &collections, ui.get_home_columns() as usize)
+            browse_layout::home_groups(&labels, ui.get_home_columns() as usize)
                 .into_iter()
                 .map(|group| HomeBrowseRow {
                     start: group.start as i32,

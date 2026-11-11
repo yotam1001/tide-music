@@ -105,7 +105,12 @@ fn library_sections_keep_collection_and_history_actions_at_every_size() {
             ui.set_light_mode(light);
             draw(&window, width, height);
             let padding = if height >= 650 { 28.0 } else { 18.0 };
-            let left = ui.global::<LayoutMetrics>().get_navigation_wide() + padding;
+            let nav = if width < 900 {
+                ui.global::<LayoutMetrics>().get_navigation_narrow()
+            } else {
+                ui.global::<LayoutMetrics>().get_navigation_wide()
+            };
+            let left = nav + padding;
             let tabs_y = if height >= 650 { 168.0 } else { 146.0 };
             for (section, offset) in [(1, 134.0), (2, 218.0), (3, 308.0)] {
                 click(&ui, left + offset, tabs_y);

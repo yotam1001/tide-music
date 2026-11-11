@@ -121,7 +121,8 @@ fn shortcuts_capture_keys_cancel_and_clear_without_transport() {
             "Visual switch lost native Space-key support"
         );
         // The top-level panel opens shortcuts without revealing technical fields.
-        click(&ui, 980.0, 406.0);
+        // (The Animations row sits above the Audio and Keyboard shortcuts links.)
+        click(&ui, 980.0, 482.0);
         assert!(ui.get_settings_shortcuts_open());
         draw(&window, 1140, 800, "settings-shortcuts");
         click(&ui, 1000.0, 296.0);
