@@ -619,6 +619,49 @@ def tracks(items, limit=MAX_TRACKS, exclude=(), deduplicate=False):
     return result
 
 
+MAX_LISTENING_CARDS = 12
+LISTENING_SEEDS = 6
+
+
+def listening_cards(client, seen):
+    """Songs that continue one of the last few songs played, like YouTube
+    Music's "Because you listened" rows. A different recent song seeds each
+    refresh, so Home changes even when the service's own shelves don't.
+    Optional: any failure leaves Home as the service returned it."""
+    import random
+    try:
+        history = client.get_history()
+        recent = []
+        for item in history if isinstance(history, list) else []:
+            video = identifier(item.get("videoId"), True) if isinstance(item, dict) else ""
+            if video and video not in [entry[0] for entry in recent]:
+                recent.append((video, clean(item.get("title"))))
+            if len(recent) >= LISTENING_SEEDS:
+                break
+        if not recent:
+            return []
+        video, title = random.choice(recent)
+        data = client.get_watch_playlist(videoId=video, limit=MAX_RADIO_TRACKS + len(recent))
+        items = data.get("tracks", []) if isinstance(data, dict) else []
+        picks = radio_tracks(items if isinstance(items, list) else [], video, {entry[0] for entry in recent})
+    except Exception:
+        return []
+    shelf = clean("Because you played " + title) if title else "Based on your recent listening"
+    cards = []
+    for track in picks:
+        video_id = track["source"].rsplit("v=", 1)[-1]
+        if ("song", video_id) in seen:
+            continue
+        seen.add(("song", video_id))
+        cards.append({"id": video_id, "title": track["title"], "subtitle": track["artist"],
+                      "artists": track["artists"], "kind": "song", "shelf": shelf,
+                      "artwork_url": track["artwork_url"], "featured_artwork_url": None,
+                      "duration_seconds": track["duration_seconds"]})
+        if len(cards) >= MAX_LISTENING_CARDS:
+            break
+    return cards
+
+
 def autoplay_tracks(client, video, exclude):
     """Continue like YouTube Music's own autoplay.
 
@@ -1397,7 +1440,15 @@ def run(client, request):
                               "featured_artwork_url": featured_artwork_url(item, thumbnail),
                               "duration_seconds": duration_seconds(item)})
                 if len(cards) >= MAX_HOME_CARDS:
-                    return {"type": "home", "cards": cards}
+                    break
+            if len(cards) >= MAX_HOME_CARDS:
+                break
+        # A fresh shelf from recent listening, placed after the lead shelf.
+        extra = listening_cards(client, seen)
+        if extra:
+            lead = cards[0]["shelf"] if cards else ""
+            split = next((index for index, card in enumerate(cards) if card["shelf"] != lead), len(cards))
+            cards = cards[:split] + extra + cards[split:]
         return {"type": "home", "cards": cards}
     raise ValueError("unsupported action")
 

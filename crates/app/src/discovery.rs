@@ -11,7 +11,7 @@ use std::collections::{HashSet, VecDeque};
 use tide_provider::Card;
 
 const MAX_CANDIDATES: usize = 320;
-const MAX_SHELVES: usize = 9;
+const MAX_SHELVES: usize = 10;
 const LEAD_SHELF_CARDS: usize = 12;
 const SHELF_CARDS: usize = 8;
 const FAMILIAR_SHELF_CARDS: usize = 6;

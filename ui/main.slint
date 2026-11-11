@@ -81,7 +81,7 @@ export component AppWindow inherits Window {
     // queue and scrollbar. A deferred ListView width callback can retain the
     // previous screen's column count when navigating after a resize.
     private property <length> browse-width: max(0px, (root.width - (root.compact-mode || root.width < 900px ? LayoutMetrics.navigation-narrow : LayoutMetrics.navigation-wide) - (root.queue-open && root.width >= 1050px ? 340px : 0px)) - (root.compact-mode ? 36px : 56px) - 16px);
-    out property <int> home-columns: max(1, min(6, floor(root.browse-width / 164px)));
+    out property <int> home-columns: max(1, min(6, floor(root.browse-width / 196px)));
     in property <bool> account-connected;
     in property <bool> account-verified;
     in property <bool> error-retryable;

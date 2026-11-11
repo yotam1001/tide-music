@@ -99,7 +99,7 @@ fn cover_grid_and_list_preserve_playlist_actions() {
             render(&window, width, light, "home-initial");
             let columns = ui.get_home_columns();
             assert!(
-                width < 1140 || columns >= 5,
+                width < 1140 || columns >= 4,
                 "Home retained a narrow screen's column count after resize"
             );
             let groups =

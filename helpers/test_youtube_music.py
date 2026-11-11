@@ -274,6 +274,23 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(result["cards"][5]["id"], "PLfixture")
         self.assertEqual(result["cards"][4]["subtitle"], "Band")
 
+    def test_home_adds_a_recent_listening_shelf_after_the_lead_shelf(self):
+        shelves = [{"title": "Quick picks", "contents": [{"videoId": "00000000001", "title": "Pick"}]},
+                   {"title": "New releases", "contents": [{"videoId": "00000000002", "title": "New"}]}]
+        history = [{"videoId": "00000000009", "title": "Recent"}]
+        up_next = {"tracks": [{"videoId": "00000000009", "title": "Recent"},
+                              {"videoId": "00000000001", "title": "Already on Home"},
+                              {"videoId": "00000000003", "title": "Fresh"}]}
+        client = SimpleNamespace(get_home=lambda limit: shelves, get_history=lambda: history,
+                                 get_watch_playlist=MagicMock(return_value=up_next))
+        cards = run(client, {"action": "home"})["cards"]
+        self.assertEqual([(c["id"], c["shelf"]) for c in cards], [
+            ("00000000001", "Quick picks"), ("00000000003", "Because you played Recent"),
+            ("00000000002", "New releases")])
+        self.assertNotIn("radio", client.get_watch_playlist.call_args.kwargs)
+        client.get_history = MagicMock(side_effect=RuntimeError("private"))
+        self.assertEqual(len(run(client, {"action": "home"})["cards"]), 2)
+
     def test_autoplay_uses_the_personalized_up_next_and_skips_excluded_songs(self):
         items = [{"videoId": "K4DyBUG242c", "title": "Seed"}]
         items += [{"videoId": f"{i:011}", "title": f"Track {i}"} for i in range(1, 61)]

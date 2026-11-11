@@ -11,13 +11,16 @@ pub(super) enum Failure {
 }
 pub(super) type Sender = mpsc::SyncSender<(u64, Result<Results, Failure>)>;
 
+/// Search opens on All, like other players; the chip index of YouTube
+/// Music's unfiltered mix.
+pub(super) const ALL: i32 = 4;
 fn kind(index: i32) -> Option<SearchKind> {
     match index {
         0 => Some(SearchKind::Songs),
         1 => Some(SearchKind::Albums),
         2 => Some(SearchKind::Artists),
         3 => Some(SearchKind::Playlists),
-        4 => Some(SearchKind::All),
+        ALL => Some(SearchKind::All),
         _ => None,
     }
 }
@@ -83,6 +86,14 @@ fn fetch(
     }
 }
 pub(super) fn start(s: &mut State, ui: &AppWindow, tx: &Sender, query: String, index: i32) {
+    // All needs the account's search; without it, fall back to songs.
+    let index = if index == ALL
+        && !(s.provider.is_some() && s.account_verified && s.pending_saved_connection.is_none())
+    {
+        0
+    } else {
+        index
+    };
     let Some(kind) = kind(index) else {
         return;
     };
@@ -138,7 +149,7 @@ pub(super) fn invalidate(s: &mut State, ui: &AppWindow) {
 pub(super) fn refresh(s: &State, ui: &AppWindow) {
     let mut cache = s.artwork.borrow_mut();
     // The All view starts each section with a header; other kinds have none.
-    let sectioned = ui.get_search_kind() == 4;
+    let sectioned = ui.get_search_kind() == ALL;
     let headers: Vec<bool> = s
         .search_cards
         .iter()

@@ -2559,6 +2559,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let animations = state.borrow().settings.animations && !state.borrow().settings.transient;
         ui.global::<ControlMotion>().set_enabled(animations);
         ui.set_animations_enabled(state.borrow().settings.animations);
+        ui.set_search_kind(search_results::ALL);
     }
     ui.set_greeting(greeting(tide_windows::local_hour()).into());
     ui.set_compact_mode(state.borrow().settings.compact_mode);
