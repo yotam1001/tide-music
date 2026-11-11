@@ -154,6 +154,7 @@ pub fn tick(s: &mut State, u: &AppWindow, p: &tide_core::PlaybackSnapshot) -> bo
             .map(|track| track.source.clone())
     });
     let eligible = seconds > 0.0
+        && !s.settings.bit_perfect
         && local_controls_allowed(s)
         && !u.get_jam_active()
         && s.active_playback

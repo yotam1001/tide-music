@@ -2,8 +2,11 @@
 
 ## Unreleased
 
-## 0.4.20 - 2026-11-11
+## 0.4.21 - 2026-11-11
 
+- Add Bit-perfect output in Settings → Audio: exclusive device access with no
+  processing and Tide's volume at 100%, so the decoded stream reaches your
+  device or DAC unchanged.
 - Add true crossfade (3–12 s) in Settings → Audio: the next song starts under
   the end of the current one, using a second short-lived player while they
   overlap.

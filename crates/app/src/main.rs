@@ -94,6 +94,8 @@ struct Settings {
     fade_transitions: bool,
     /// Crossfade length in seconds, one of `crossfade::LENGTHS`; 0 is off.
     crossfade_seconds: u8,
+    /// Exclusive, unprocessed output at full volume.
+    bit_perfect: bool,
     audio_device: String,
     repeat: bool,
     /// Most recent search queries, newest first (at most eight).
@@ -130,6 +132,7 @@ impl Default for Settings {
             equalizer: 0,
             fade_transitions: false,
             crossfade_seconds: 0,
+            bit_perfect: false,
             audio_device: "auto".into(),
             repeat: false,
             recent_searches: Vec::new(),
@@ -1412,6 +1415,7 @@ fn restore_settings(value: serde_json::Value) -> Settings {
         equalizer,
         fade_transitions,
         crossfade_seconds,
+        bit_perfect,
         audio_device,
         repeat,
         recent_searches,
@@ -1989,6 +1993,14 @@ fn send(state: &mut State, ui: &AppWindow, cmd: PlaybackCommand) -> bool {
     if !local_controls_allowed(state) && !matches!(cmd, PlaybackCommand::SetVolume(_)) {
         return false;
     }
+    // Bit-perfect output keeps the stream unscaled: any level plays at 100%,
+    // and the device or DAC sets loudness. Mute still works.
+    let cmd = match cmd {
+        PlaybackCommand::SetVolume(volume) if state.settings.bit_perfect && volume > 0.0 => {
+            PlaybackCommand::SetVolume(100.0)
+        }
+        other => other,
+    };
     let clears_audio = matches!(cmd, PlaybackCommand::Stop | PlaybackCommand::Shutdown);
 
     if let Some((_, _, position, paused)) = &mut state.connection_resume {

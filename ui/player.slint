@@ -54,6 +54,8 @@ export component PlayerBar inherits Rectangle {
     callback previous-track();
     callback seek(float);
     in property <float> volume-step: 2;
+    // Bit-perfect output: the device sets loudness, so the slider rests.
+    in property <bool> volume-locked: false;
     callback change-volume(float);
     callback restore();
     callback toggle-queue();
@@ -177,7 +179,7 @@ export component PlayerBar inherits Rectangle {
             LibraryButton { width: 36px; height: 36px; show-tooltip: true; light-mode: root.light-mode; icon-path: "M 4 6 L 20 6 M 4 12 L 14 12 M 4 18 L 14 18 M 18 12 L 23 15 L 18 18 Z"; label: root.queue-open ? "Close queue" : "Open queue"; active: root.queue-open; clicked => { root.toggle-queue(); } }
             LibraryButton { width: 36px; height: 36px; show-tooltip: true; light-mode: root.light-mode; icon-path: "M 3 4 L 21 4 L 21 20 L 3 20 Z M 12 12 L 19 12 L 19 18 L 12 18 Z"; label: "Open mini player"; clicked => { root.mini(); } }
             LibraryButton { width: 36px; height: 36px; show-tooltip: true; light-mode: root.light-mode; icon-path: root.volume <= 0 ? "M 3 9 L 7 9 L 12 5 L 12 19 L 7 15 L 3 15 Z M 16 9 L 22 15 M 22 9 L 16 15" : "M 3 9 L 7 9 L 12 5 L 12 19 L 7 15 L 3 15 Z M 16 8 C 19 10 19 14 16 16 M 19 5 C 24 9 24 15 19 19"; label: root.volume <= 0 ? "Unmute" : "Mute"; clicked => { root.toggle-mute(); } }
-            if !root.narrow : TideSlider { reset-revision: root.input-revision; light-mode: root.light-mode; width: root.compact ? 90px : 116px; minimum: 0; maximum: 100; value: root.volume; step: root.volume-step; wheel-adjustable: true; label: "Volume"; value-text: root.volume.to-fixed(0) + "%"; changed(value) => { root.change-volume(value); } }
+            if !root.narrow : TideSlider { reset-revision: root.input-revision; light-mode: root.light-mode; width: root.compact ? 90px : 116px; minimum: 0; maximum: 100; value: root.volume; step: root.volume-step; wheel-adjustable: true; label: root.volume-locked ? "Volume is set on your device in bit-perfect mode" : "Volume"; value-text: root.volume-locked ? "Device" : root.volume.to-fixed(0) + "%"; enabled: !root.volume-locked; changed(value) => { root.change-volume(value); } }
         }
     }
 
@@ -226,7 +228,7 @@ export component PlayerBar inherits Rectangle {
             TideSlider { reset-revision: root.input-revision; light-mode: root.light-mode; horizontal-stretch: 1; minimum: 0; maximum: max(1, root.duration); value: root.position; enabled: root.transport-enabled && root.duration > 0; label: "Playback position"; value-text: root.format-time(root.position); released(value) => { root.seek(value); } }
             Text { width: 38px; text: root.format-time(root.duration); color: root.secondary; font-size: 11px; }
             VolumeMark { ink: root.secondary; }
-            TideSlider { reset-revision: root.input-revision; light-mode: root.light-mode; width: 105px; minimum: 0; maximum: 100; value: root.volume; step: root.volume-step; wheel-adjustable: true; label: "Volume"; value-text: root.volume.to-fixed(0) + "%"; changed(value) => { root.change-volume(value); } }
+            TideSlider { reset-revision: root.input-revision; light-mode: root.light-mode; width: 105px; minimum: 0; maximum: 100; value: root.volume; step: root.volume-step; wheel-adjustable: true; label: root.volume-locked ? "Volume is set on your device in bit-perfect mode" : "Volume"; value-text: root.volume-locked ? "Device" : root.volume.to-fixed(0) + "%"; enabled: !root.volume-locked; changed(value) => { root.change-volume(value); } }
             Text { width: 38px; text: root.volume.to-fixed(0) + "%"; color: root.secondary; font-size: 11px; horizontal-alignment: right; }
         }
     }
