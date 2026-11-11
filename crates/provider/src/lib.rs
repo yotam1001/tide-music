@@ -178,6 +178,12 @@ pub enum Request {
     Radio {
         video_id: String,
     },
+    /// Personalized continuation, like YouTube Music's own autoplay, seeded
+    /// by `video_id` and skipping songs already queued or played.
+    Autoplay {
+        video_id: String,
+        exclude: Vec<String>,
+    },
     Liked,
     Supermix,
     Home,
@@ -2583,6 +2589,19 @@ mod tests {
             serde_json::to_value(request).unwrap(),
             serde_json::json!({
                 "action": "radio", "video_id": "K4DyBUG242c"
+            })
+        );
+    }
+    #[test]
+    fn autoplay_request_matches_helper_contract() {
+        let request = Request::Autoplay {
+            video_id: "K4DyBUG242c".into(),
+            exclude: vec!["abcdefghijk".into()],
+        };
+        assert_eq!(
+            serde_json::to_value(request).unwrap(),
+            serde_json::json!({
+                "action": "autoplay", "video_id": "K4DyBUG242c", "exclude": ["abcdefghijk"]
             })
         );
     }
