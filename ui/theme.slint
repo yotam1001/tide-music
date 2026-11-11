@@ -54,7 +54,7 @@ export global LayoutMetrics {
     out property <length> navigation-narrow: 76px;
     out property <length> footer-actions-width: 248px;
     out property <length> browse-row-height: 72px;
-    out property <length> collection-row-height: 82px;
+    out property <length> collection-row-height: 60px;
     out property <length> jam-row-height: 64px;
     out property <length> library-tile-height: 236px;
     out property <length> home-heading-height: 44px;
@@ -270,6 +270,8 @@ export component TideButton inherits Rectangle {
     in property <bool> quiet: false;
     in property <bool> enabled: true;
     in property <length> caption-size: 14px;
+    // Left-aligned caption, matching the sidebar's navigation rows.
+    in property <bool> caption-start: false;
     callback clicked;
     forward-focus: control;
 
@@ -303,19 +305,19 @@ export component TideButton inherits Rectangle {
     }
 
     Text {
-        x: root.leading-icon == "" ? 0px : 28px;
+        x: root.caption-start ? 46px : root.leading-icon == "" ? 0px : 28px;
         width: parent.width - self.x;
         height: parent.height;
         text: root.icon-kind == "" && root.icon-path == "" ? root.caption : "";
         color: root.active ? root.accent-text-color : root.text-color;
         font-size: root.caption-size;
-        font-weight: 600;
-        horizontal-alignment: center;
+        font-weight: root.caption-start ? 500 : 600;
+        horizontal-alignment: root.caption-start ? left : center;
         vertical-alignment: center;
         overflow: elide;
     }
     if root.leading-icon != "" : Path {
-        x: 12px; y: (root.height - 18px) / 2;
+        x: root.caption-start ? 14px : 12px; y: (root.height - 18px) / 2;
         width: 18px; height: 18px; viewbox-width: 24; viewbox-height: 24;
         fill: transparent; stroke: root.icon-color; stroke-width: 1.5px;
         commands: root.leading-icon;
