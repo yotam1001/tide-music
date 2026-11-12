@@ -51,7 +51,7 @@ def main():
              str(fixture / "scripts/setup-runtime.ps1"), "-Destination", "tools"])
         for name, arguments, version in (
             ("mpv.exe", ["--no-config", "--version"], "0.41.0"),
-            ("yt-dlp.exe", ["--ignore-config", "--version"], "2026.08.19"),
+            ("yt-dlp.exe", ["--ignore-config", "--version"], "2026.10.26"),
             ("deno.exe", ["--version"], "2.9.7"),
         ):
             if version not in run([str(fixture / "tools" / name), *arguments], timeout=30):

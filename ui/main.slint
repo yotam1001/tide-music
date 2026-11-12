@@ -1865,7 +1865,8 @@ export component AppWindow inherits Window {
         if root.recents-visible : Rectangle {
             y: 56px; width: root.width; height: root.height - self.y;
             Rectangle {
-                x: root.header-branding ? 126px : 60px;
+                // Anchor under the search field; an unset y centres it.
+                x: root.header-branding ? 126px : 60px; y: 4px;
                 width: min(480px, root.width - self.x - 18px);
                 height: 52px + 36px * min(8, root.recent-searches.length);
                 border-radius: 12px; border-width: 1px; border-color: root.outline; background: root.surface;
@@ -1879,6 +1880,7 @@ export component AppWindow inherits Window {
                     }
                     for query in root.recent-searches : LibraryButton {
                         height: 36px; light-mode: root.light-mode; caption: query; label: "Search again for " + query;
+                        caption-start: true;
                         leading-icon: "M 21 12 A 9 9 0 1 0 3 12 A 9 9 0 1 0 21 12 Z M 12 7 L 12 12 L 15 14";
                         clicked => { root.source-input = query; root.submit-source(query); }
                     }
@@ -1889,7 +1891,8 @@ export component AppWindow inherits Window {
             y: 56px; width: root.width; height: root.height - self.y;
             TouchArea { clicked => { root.suggestions-open = false; } }
             Rectangle {
-                x: root.header-branding ? 126px : 60px;
+                // Anchor under the search field; an unset y centres it.
+                x: root.header-branding ? 126px : 60px; y: 4px;
                 width: min(480px, root.width - self.x - 18px);
                 height: 16px + 36px * root.search-suggestions.length;
                 border-radius: 9px; border-width: 1px; border-color: root.outline; background: root.surface;
@@ -1897,6 +1900,7 @@ export component AppWindow inherits Window {
                     padding: 8px;
                     for suggestion[index] in root.search-suggestions : LibraryButton {
                         height: 36px; light-mode: root.light-mode; caption: suggestion; label: "Search for " + suggestion;
+                        caption-start: true; leading-icon: "M 10.5 3 A 7.5 7.5 0 1 0 10.5 18 A 7.5 7.5 0 1 0 10.5 3 Z M 16 16 L 22 22";
                         active: index == root.suggestion-index;
                         clicked => { root.select-suggestion(suggestion); }
                     }

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Fix songs failing to play for signed-in accounts without YouTube Premium:
+  Tide now ships yt-dlp 2026.10.26, which replaces a YouTube client that
+  stopped returning playable audio.
+- When a song can't play, the message now says why (sign-in needed,
+  unavailable, no playable stream) with a short code to quote in bug reports.
+- Search suggestions and recent searches open directly under the search field
+  instead of floating mid-window, with left-aligned rows.
+
 ## 0.4.22 - 2026-11-12
 
 - Update checks no longer use the GitHub API, so "GitHub's update limit was

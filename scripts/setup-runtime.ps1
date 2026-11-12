@@ -30,7 +30,7 @@ foreach ($taskFile in Get-ChildItem -LiteralPath $taskMpv[0].DirectoryName -File
     [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($taskOutput)) | Out-Null
     [IO.File]::Copy($taskFile.FullName, $taskOutput, $false)
 }
-Get-VerifiedAsset 'yt-dlp/yt-dlp' '2026.08.19' 'yt-dlp.exe' (Join-Path $Destination 'yt-dlp.exe') '66674953fe251b89f4d08c5f0e35e0728679bd67ab3d7d05c0562af101dd3e7a'
+Get-VerifiedAsset 'yt-dlp/yt-dlp' '2026.10.26' 'yt-dlp.exe' (Join-Path $Destination 'yt-dlp.exe') 'f5389d3698ecde4ef06f4e6b1ce0294fe9ac1396228c8990b8d3416d6d177a7d'
 Get-VerifiedAsset 'denoland/deno' 'v2.9.7' 'deno-x86_64-pc-windows-msvc.zip' (Join-Path $taskDownloads 'deno.zip') 'a0c3101b4158d1dfb7d6a78a7bf0f3de80c96bb423c152beec8beb22786f2238'
 Expand-TideArchive (Join-Path $taskDownloads 'deno.zip') $Destination
 Write-Output "Playback tools ready in $Destination. No system configuration was changed."
