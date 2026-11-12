@@ -214,4 +214,11 @@ fn typed_search_tabs_and_collections_keep_actions_at_each_size() {
     press(slint::platform::Key::Return);
     assert_eq!(chosen.take().as_deref(), Some("Second suggestion"));
     assert!(!ui.get_suggestions_open());
+
+    // The list hangs directly under the search field. Without an explicit y
+    // it was centred in the window and floated mid-screen.
+    ui.set_suggestions_open(true);
+    draw(&window, 1140, 800);
+    click(&ui, 300.0, 86.0);
+    assert_eq!(chosen.take().as_deref(), Some("First suggestion"));
 }

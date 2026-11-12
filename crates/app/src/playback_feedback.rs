@@ -1,5 +1,5 @@
 //! UI copy comes from structured engine state, never from raw helper output.
-use tide_core::PlaybackSnapshot;
+use tide_core::{PlaybackSnapshot, SourceFailure};
 
 pub(crate) fn hint(p: &PlaybackSnapshot) -> String {
     if p.error.is_some() {
@@ -65,8 +65,25 @@ pub(crate) fn failure(p: &PlaybackSnapshot) -> (&'static str, &'static str) {
             "Retry audio",
         )
     } else {
+        // The short code in brackets lets users quote the cause in reports.
         (
-            "This song could not play after two retries. Retry the song or choose another track.",
+            match p.source_failure {
+                Some(SourceFailure::SignInRequired) => {
+                    "YouTube asked to confirm your sign-in for this song. Reconnect your account in Account, then retry. [sign-in]"
+                }
+                Some(SourceFailure::Unavailable) => {
+                    "This song isn't available on YouTube here: it may be removed, private or blocked in your region. Choose another track. [unavailable]"
+                }
+                Some(SourceFailure::NoStream) => {
+                    "YouTube didn't offer a playable stream for this song. Check for a Tide update, then retry. [no-stream]"
+                }
+                Some(SourceFailure::Other) => {
+                    "YouTube refused this song after two retries. Check your connection and for a Tide update, then retry. [extractor]"
+                }
+                None => {
+                    "This song could not play after two retries. Retry the song or choose another track."
+                }
+            },
             "Retry song",
         )
     }
@@ -98,6 +115,17 @@ mod tests {
         assert!(!failure(&p).0.contains("private"));
         p.output_unavailable = false;
         assert_eq!(failure(&p).1, "Retry song");
+        for (cause, code) in [
+            (SourceFailure::SignInRequired, "[sign-in]"),
+            (SourceFailure::Unavailable, "[unavailable]"),
+            (SourceFailure::NoStream, "[no-stream]"),
+            (SourceFailure::Other, "[extractor]"),
+        ] {
+            p.source_failure = Some(cause);
+            assert!(failure(&p).0.ends_with(code));
+            assert_eq!(failure(&p).1, "Retry song");
+        }
+        p.source_failure = None;
         p.error = None;
         p.ended = true;
         assert!(hint(&p).is_empty());

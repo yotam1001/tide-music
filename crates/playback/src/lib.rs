@@ -297,6 +297,7 @@ impl PlaybackHandle {
         snapshot.ended = false;
         snapshot.error = None;
         snapshot.output_unavailable = false;
+        snapshot.source_failure = None;
         clear_audio_details(&mut snapshot);
         snapshot.retry_attempt = 0;
         snapshot.title = None;
@@ -1006,6 +1007,12 @@ async fn run_worker(
                                 fault |= prepared_failed;
                                 loaded = active && event == Some("file-loaded");
                                 let mut view = snapshot_write(&snapshot);
+                                if event == Some("log-message") {
+                                    if let Some(failure) = recovery::source_failure(&message) {
+                                        view.source_failure = Some(failure);
+                                    }
+                                    continue;
+                                }
                                 if matching_end && fault {
                                     view.output_unavailable = recovery::output_failure(&message);
                                 }
@@ -1455,6 +1462,14 @@ async fn observe_properties(player: &mut RunningPlayer) -> io::Result<()> {
         )
         .await?;
     }
+    // The extractor reports why YouTube refused a song only in mpv's log.
+    // Tide classifies those lines into a fixed category and keeps no text.
+    send_ipc_command(
+        &mut player.writer,
+        json!(["request_log_messages", "warn"]),
+        None,
+    )
+    .await?;
     Ok(())
 }
 
@@ -1855,6 +1870,7 @@ fn reset_snapshot(snapshot: &mut PlaybackSnapshot) {
     clear_audio_details(snapshot);
     snapshot.retry_attempt = 0;
     snapshot.output_unavailable = false;
+    snapshot.source_failure = None;
     snapshot.position = 0.0;
     snapshot.duration = 0.0;
     snapshot.paused = true;

@@ -49,6 +49,20 @@ pub enum PlaybackCommand {
     Shutdown,
 }
 
+/// Why YouTube refused a song, classified from the extractor's error line.
+/// Only this fixed category is kept; the raw line can carry signed URLs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SourceFailure {
+    /// YouTube asked for sign-in or a bot check.
+    SignInRequired,
+    /// Removed, private, region-blocked or otherwise unavailable.
+    Unavailable,
+    /// YouTube answered but offered no playable audio stream.
+    NoStream,
+    /// The extractor failed for another reason.
+    Other,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AudioDevice {
     pub name: String,
@@ -75,6 +89,8 @@ pub struct PlaybackSnapshot {
     pub error: Option<String>,
     /// Classified audio-output failure; never an authentication/network error.
     pub output_unavailable: bool,
+    /// Last extractor failure for the current track; survives retries.
+    pub source_failure: Option<SourceFailure>,
     pub title: Option<String>,
 }
 
@@ -98,6 +114,7 @@ impl Default for PlaybackSnapshot {
             volume: 100.0,
             error: None,
             output_unavailable: false,
+            source_failure: None,
             title: None,
         }
     }

@@ -137,6 +137,52 @@ pub(super) fn premature_eof(position: f64, duration: f64) -> bool {
         && duration - position > 3.0_f64.max(duration * 0.01)
 }
 
+/// Classify the extractor's `ERROR:` line from an mpv log-message event.
+/// Returns only a fixed category; the line itself is never stored.
+pub(super) fn source_failure(message: &Value) -> Option<tide_core::SourceFailure> {
+    use tide_core::SourceFailure::*;
+    if message.get("prefix").and_then(Value::as_str) != Some("ytdl_hook") {
+        return None;
+    }
+    let text = message.get("text").and_then(Value::as_str)?;
+    let error = text
+        .trim_start()
+        .strip_prefix("ERROR:")?
+        .to_ascii_lowercase();
+    Some(
+        if ["sign in", "not a bot", "login_required", "cookies"]
+            .iter()
+            .any(|needle| error.contains(needle))
+        {
+            SignInRequired
+        } else if [
+            "requested format is not available",
+            "page needs to be reloaded",
+            "only images are available",
+            "no video formats",
+        ]
+        .iter()
+        .any(|needle| error.contains(needle))
+        {
+            NoStream
+        } else if [
+            "unavailable",
+            "not available",
+            "private video",
+            "removed",
+            "copyright",
+            "your country",
+        ]
+        .iter()
+        .any(|needle| error.contains(needle))
+        {
+            Unavailable
+        } else {
+            Other
+        },
+    )
+}
+
 // Compare only mpv's fixed error enum text, never logs or arbitrary URL text.
 // The caller must first validate the session, generation and playlist entry.
 pub(super) fn output_failure(message: &Value) -> bool {
@@ -180,6 +226,41 @@ pub(super) fn message_failed(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn extractor_errors_become_fixed_categories() {
+        use tide_core::SourceFailure::*;
+        let line = |prefix: &str, text: &str| serde_json::json!({"event":"log-message","prefix":prefix,"level":"error","text":text});
+        for (text, expected) in [
+            ("ERROR: [youtube] abc: Sign in to confirm you're not a bot. Use --cookies
+", SignInRequired),
+            ("ERROR: [youtube] abc: The page needs to be reloaded.
+", NoStream),
+            ("ERROR: [youtube] abc: Requested format is not available. Use --list-formats
+", NoStream),
+            ("ERROR: [youtube] abc: This video is unavailable
+", Unavailable),
+            ("ERROR: [youtube] abc: Video unavailable. This content isn't available in your country
+", Unavailable),
+            ("ERROR: unable to download https://googlevideo.com/x?sig=secret
+", Other),
+        ] {
+            assert_eq!(source_failure(&line("ytdl_hook", text)), Some(expected), "{text}");
+        }
+        // Only the extractor's ERROR lines count; other modules and warnings do not.
+        assert_eq!(
+            source_failure(&line(
+                "ytdl_hook",
+                "youtube-dl failed: unexpected error occurred"
+            )),
+            None
+        );
+        assert_eq!(source_failure(&line("ffmpeg", "ERROR: Sign in")), None);
+        assert_eq!(
+            source_failure(&serde_json::json!({"event":"end-file"})),
+            None
+        );
+    }
     fn track(now: Instant) -> Track {
         Track::new(
             PendingLoad {
