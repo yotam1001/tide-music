@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.4.23 - 2026-11-12
+
 - Fix songs failing to play for signed-in accounts without YouTube Premium:
   Tide now ships yt-dlp 2026.10.26, which replaces a YouTube client that
   stopped returning playable audio.
