@@ -13,7 +13,12 @@ use std::{
     time::{Duration, Instant},
 };
 
-const CACHE_CAPACITY: usize = 48;
+// Covers on screen together: sidebar playlists (40), a track list or grid
+// (up to 40), the queue panel (up to 40), plus the current song and header.
+// A cache smaller than that evicts visible covers, and each refresh re-requests
+// them, so artwork flickers and downloads never settle. 128 thumbnails at
+// 160x160 RGB stay under 10 MB.
+const CACHE_CAPACITY: usize = 128;
 const PENDING_CAPACITY: usize = 32;
 // Fits the artwork-led shelves without retaining full-resolution source images.
 const SIDE: u32 = 160;
@@ -93,6 +98,23 @@ struct Entry {
     stored: Instant,
 }
 
+/// Delivers synthetic thumbnails to a cache made by `new_synthetic`.
+pub struct SyntheticFeed(SyncSender<Completion>);
+
+impl SyntheticFeed {
+    /// Queue a solid-colour thumbnail; false when the bounded queue is full.
+    pub fn push(&self, url: &str, shade: u8) -> bool {
+        self.0
+            .try_send(Completion {
+                url: url.to_owned(),
+                side: SIDE,
+                generation: 0,
+                pixels: Some(vec![shade; (SIDE * SIDE * 3) as usize]),
+            })
+            .is_ok()
+    }
+}
+
 /// Call all methods from the UI thread. `poll()` reports completed requests;
 /// refresh visible model rows when it returns true to display images and refill
 /// available request slots. Clones handed to models share
@@ -118,6 +140,21 @@ impl ArtworkCache {
             generation: Arc::new(AtomicU64::new(0)),
             stopped: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// A networkless cache whose completions are fed by `SyntheticFeed`, so
+    /// stress fixtures can exercise the completion/refresh path deterministically.
+    pub fn new_synthetic() -> (Self, SyntheticFeed) {
+        let (sender, results) = mpsc::sync_channel(PENDING_CAPACITY);
+        let cache = Self {
+            entries: VecDeque::with_capacity(CACHE_CAPACITY),
+            pending: HashSet::with_capacity(PENDING_CAPACITY),
+            requests: None,
+            results,
+            generation: Arc::new(AtomicU64::new(0)),
+            stopped: Arc::new(AtomicBool::new(false)),
+        };
+        (cache, SyntheticFeed(sender))
     }
 
     pub fn new() -> Self {
@@ -642,6 +679,32 @@ mod tests {
         assert!(cache.entries.is_empty());
         assert!(cache.pending.is_empty());
         assert_eq!(cache.generation.load(Ordering::Acquire), 1);
+    }
+
+    #[test]
+    fn every_thumbnail_on_screen_at_once_survives_refresh_passes() {
+        // Sidebar covers (40), a track list (up to 40), the queue panel (up to
+        // 40), the current song and the playlist header can all be on screen
+        // together. A smaller cache evicts covers that are still visible; each
+        // refresh then re-requests them, so artwork flickers and downloads
+        // never settle.
+        const ON_SCREEN: usize = 40 + 40 + 40 + 2;
+        let mut cache = offline_cache();
+        let urls: Vec<String> = (0..ON_SCREEN)
+            .map(|index| format!("https://i.ytimg.com/{index}"))
+            .collect();
+        for url in &urls {
+            let image = Image::from_rgb8(SharedPixelBuffer::<Rgb8Pixel>::new(1, 1));
+            cache.insert(url.clone(), SIDE, Some(image));
+        }
+        for _ in 0..3 {
+            for url in &urls {
+                assert!(
+                    cache.get_or_request(url).size().width > 0,
+                    "{url} was evicted while still on screen"
+                );
+            }
+        }
     }
 
     #[test]

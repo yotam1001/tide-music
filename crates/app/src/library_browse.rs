@@ -8,6 +8,9 @@ pub(super) struct Browse {
     pub cards: Vec<Card>,
     categories: Vec<tide_provider::ExploreCategory>,
     category: Option<usize>,
+    /// A mood or genre chosen from Home or Search, opened once Explore's
+    /// categories arrive.
+    pending_mood: Option<String>,
 }
 pub(super) fn reset(s: &mut State, u: &AppWindow) {
     s.library_browse = Browse::default();
@@ -64,6 +67,7 @@ pub(super) fn choose(
     s.library_browse.section = section;
     s.library_browse.cards.clear();
     s.library_browse.category = None;
+    u.set_library_loaded(false);
     u.set_explore_category(0);
     u.set_library_section(index);
     u.set_library_note("".into());
@@ -88,6 +92,7 @@ pub(super) fn receive(
         .take(200)
         .filter(|card| accepts(section, card))
         .collect();
+    u.set_library_loaded(true);
     u.set_library_note(
         if truncated && section == BrowseSection::Explore {
             "Showing a limited selection from YouTube Music"
@@ -156,6 +161,14 @@ pub(super) fn wire(ui: &AppWindow, state: Rc<RefCell<State>>, tx: mpsc::SyncSend
             refresh(&mut s, &u, &category_tx);
         }
     });
+    let mood_state = state.clone();
+    let weak = ui.as_weak();
+    let mood_tx = tx.clone();
+    ui.on_open_mood(move |name| {
+        if let Some(u) = weak.upgrade() {
+            open_mood(&mut mood_state.borrow_mut(), &u, &mood_tx, name.to_string());
+        }
+    });
     let section_state = state.clone();
     let weak = ui.as_weak();
     let section_tx = tx.clone();
@@ -191,9 +204,47 @@ pub(super) fn wire(ui: &AppWindow, state: Rc<RefCell<State>>, tx: mpsc::SyncSend
         }
     });
 }
+/// Index of the Explore category for a mood/genre name such as "Focus" or
+/// "R&B": exact title first, then a title that starts with it, then contains it.
+pub(super) fn category_for(
+    categories: &[tide_provider::ExploreCategory],
+    name: &str,
+) -> Option<usize> {
+    fn key(text: &str) -> String {
+        text.chars()
+            .filter(|c| c.is_alphanumeric())
+            .flat_map(char::to_lowercase)
+            .collect()
+    }
+    let wanted = key(name);
+    if wanted.is_empty() {
+        return None;
+    }
+    let titles: Vec<String> = categories.iter().map(|c| key(&c.title)).collect();
+    titles
+        .iter()
+        .position(|t| *t == wanted)
+        .or_else(|| titles.iter().position(|t| t.starts_with(&wanted)))
+        .or_else(|| titles.iter().position(|t| t.contains(&wanted)))
+}
+
+/// Open YouTube Music's own page for a mood or genre (Explore → category).
+pub(super) fn open_mood(
+    s: &mut State,
+    u: &AppWindow,
+    tx: &mpsc::SyncSender<LibraryResult>,
+    name: String,
+) {
+    choose(s, u, tx, 4);
+    if s.library_browse.section == Some(BrowseSection::Explore) {
+        s.library_browse.pending_mood = Some(name);
+    }
+}
+
 pub(super) fn receive_explore(
     s: &mut State,
     u: &AppWindow,
+    tx: &mpsc::SyncSender<LibraryResult>,
     cards: Vec<Card>,
     categories: Vec<tide_provider::ExploreCategory>,
     available: bool,
@@ -221,10 +272,62 @@ pub(super) fn receive_explore(
                 .into(),
         );
     }
+    if let Some(name) = s.library_browse.pending_mood.take() {
+        match category_for(&s.library_browse.categories, &name) {
+            Some(index) => {
+                s.library_browse.category = Some(index);
+                u.set_explore_category(index as i32 + 1);
+                s.library_browse.cards.clear();
+                u.set_library_loaded(false);
+                u.set_library_artwork_y(0.0);
+                refresh_library_models(s, u);
+                refresh(s, u, tx);
+            }
+            None => u.set_library_note(
+                format!("YouTube Music has no “{name}” page right now — showing charts and new releases.")
+                    .into(),
+            ),
+        }
+    }
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn moods_and_genres_find_their_explore_pages() {
+        let categories: Vec<_> = [
+            "Chill",
+            "Focus",
+            "Hip-hop",
+            "R&B & soul",
+            "Dance & electronic",
+            "K-pop",
+            "Chilled R&B",
+        ]
+        .into_iter()
+        .map(|title| tide_provider::ExploreCategory {
+            title: title.into(),
+            group: "Moods & genres".into(),
+            params: String::new(),
+        })
+        .collect();
+        assert_eq!(category_for(&categories, "Focus"), Some(1));
+        assert_eq!(
+            category_for(&categories, "Chill"),
+            Some(0),
+            "exact title beats a prefix match"
+        );
+        assert_eq!(category_for(&categories, "Hip-hop"), Some(2));
+        assert_eq!(
+            category_for(&categories, "R&B"),
+            Some(3),
+            "prefix beats a later contains match"
+        );
+        assert_eq!(category_for(&categories, "Electronic"), Some(4));
+        assert_eq!(category_for(&categories, "K-Pop"), Some(5));
+        assert_eq!(category_for(&categories, "Throwback"), None);
+        assert_eq!(category_for(&categories, "  "), None);
+    }
     #[test]
     fn sections_reject_mismatched_or_invalid_identities() {
         let mut card = Card {

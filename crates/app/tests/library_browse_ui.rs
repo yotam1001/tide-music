@@ -131,7 +131,7 @@ fn library_sections_keep_collection_and_history_actions_at_every_size() {
                     );
                 }
                 opened.set(-1);
-                click(&ui, left + 30.0, if height >= 650 { 230.0 } else { 210.0 });
+                click(&ui, left + 30.0, if height >= 650 { 278.0 } else { 258.0 });
                 assert_eq!(
                     opened.get(),
                     0,
@@ -139,7 +139,8 @@ fn library_sections_keep_collection_and_history_actions_at_every_size() {
                 );
             }
             // Artist/radio use the history source, never the queue or Home's index zero.
-            let row_y = if height >= 650 { 196.0 } else { 174.0 };
+            // Rows start below the 48px Library search row.
+            let row_y = if height >= 650 { 244.0 } else { 222.0 };
             *artist.borrow_mut() = None;
             click(&ui, left + 110.0, row_y + 47.0);
             assert_eq!(

@@ -4,6 +4,7 @@ use std::ops::Range;
 
 const OVERSCAN: usize = 2;
 const MAX_VISIBLE_IMAGES: usize = 40;
+const PER_GROUP_IMAGES: usize = 20;
 
 pub fn grid_visible_range(
     scroll_y: f32,
@@ -12,7 +13,7 @@ pub fn grid_visible_range(
     columns: usize,
     row_height: f32,
 ) -> Range<usize> {
-    let columns = columns.clamp(1, 6);
+    let columns = columns.clamp(1, 8);
     let rows = visible_range(
         scroll_y,
         height,
@@ -25,17 +26,26 @@ pub fn grid_visible_range(
             .min(start + MAX_VISIBLE_IMAGES)
 }
 
+/// Images for the visible Home groups. A card shelf scrolls sideways, so each
+/// visible group loads `PER_GROUP_IMAGES` entries from its first card on screen
+/// (`first_shown(group.start)`, 0 until paged). The total stays bounded.
 pub fn group_image_range(
     groups: &[crate::browse_layout::Group],
     visible: Range<usize>,
-) -> Range<usize> {
-    let Some(first) = groups.get(visible.start).filter(|_| !visible.is_empty()) else {
-        return 0..0;
-    };
-    let Some(last) = groups.get(visible.end - 1) else {
-        return 0..0;
-    };
-    first.start..(last.start + last.count).min(first.start + MAX_VISIBLE_IMAGES)
+    first_shown: impl Fn(usize) -> usize,
+) -> Vec<usize> {
+    let mut images = Vec::new();
+    for group in groups.get(visible).unwrap_or_default() {
+        let first = first_shown(group.start).min(group.count.saturating_sub(1));
+        let take = (group.count - first).min(PER_GROUP_IMAGES);
+        let room = MAX_VISIBLE_IMAGES - images.len();
+        let start = group.start + first;
+        images.extend(start..start + take.min(room));
+        if images.len() == MAX_VISIBLE_IMAGES {
+            break;
+        }
+    }
+    images
 }
 
 pub fn visible_range(
@@ -108,9 +118,26 @@ mod tests {
             let range = grid_visible_range(-2060.0, f32::MAX, 2000, columns, 206.0);
             assert!(range.len() <= MAX_VISIBLE_IMAGES);
         }
+        // One long scrolling shelf: only its first cards load.
         let groups = crate::browse_layout::home_groups(&vec!["Mixes".into(); 200], 6);
-        assert_eq!(group_image_range(&groups, 2..4), 12..24);
-        assert_eq!(group_image_range(&groups, 0..0), 0..0);
-        assert_eq!(group_image_range(&groups, 0..30).len(), MAX_VISIBLE_IMAGES);
+        assert_eq!(
+            group_image_range(&groups, 0..1, |_| 0),
+            (0..20).collect::<Vec<_>>()
+        );
+        assert!(group_image_range(&groups, 0..0, |_| 0).is_empty());
+        // Paged to card 50: covers follow the cards on screen.
+        assert_eq!(
+            group_image_range(&groups, 0..1, |_| 50),
+            (50..70).collect::<Vec<_>>()
+        );
+        assert_eq!(group_image_range(&groups, 0..1, |_| 999), vec![199]);
+        // Several shelves share the fixed bound, each starting at its first card.
+        let labels: Vec<String> = (0..10)
+            .flat_map(|s| vec![format!("Shelf {s}"); 20])
+            .collect();
+        let groups = crate::browse_layout::home_groups(&labels, 6);
+        let images = group_image_range(&groups, 0..10, |_| 0);
+        assert_eq!(images.len(), MAX_VISIBLE_IMAGES);
+        assert_eq!(&images[20..22], &[20, 21]);
     }
 }

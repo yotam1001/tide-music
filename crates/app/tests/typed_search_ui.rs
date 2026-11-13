@@ -60,6 +60,8 @@ fn typed_search_tabs_and_collections_keep_actions_at_each_size() {
     ui.set_account_connected(true);
     ui.set_account_verified(true);
     ui.set_search_open(true);
+    // Filter tabs appear once there is a query; an empty field shows Browse.
+    ui.set_source_input("fixture".into());
     let selected = Rc::new(Cell::new(-1));
     let n = selected.clone();
     let weak = ui.as_weak();
@@ -97,7 +99,7 @@ fn typed_search_tabs_and_collections_keep_actions_at_each_size() {
                 ui.global::<LayoutMetrics>().get_navigation_wide()
             };
             let left = nav + if height >= 650 { 28.0 } else { 18.0 };
-            let tabs_y = if height >= 650 { 168.0 } else { 158.0 };
+            let tabs_y = if height >= 650 { 216.0 } else { 206.0 };
             for (index, offset) in [(4, 28.0), (1, 186.0), (2, 270.0), (3, 364.0)] {
                 click(&ui, left + offset, tabs_y);
                 assert_eq!(
@@ -113,7 +115,7 @@ fn typed_search_tabs_and_collections_keep_actions_at_each_size() {
                     &pixels,
                 );
                 opened.set(-1);
-                click(&ui, left + 30.0, if height >= 650 { 230.0 } else { 220.0 });
+                click(&ui, left + 30.0, if height >= 650 { 278.0 } else { 268.0 });
                 assert_eq!(opened.get(), 0, "Wrong collection identity opened");
                 assert!(
                     !queued.get(),

@@ -95,6 +95,10 @@ export component LyricsPage inherits Rectangle {
                 property <length> lyric-width: max(0px, self.width - 40px);
                 property <color> sung-ink: root.light-mode ? #693143 : #fff7fa;
                 property <bool> karaoke: index == root.active && line.word-timed && measure.preferred-width <= self.lyric-width;
+                // One line keeps the full size; longer lines shrink so their
+                // wrapped text fits the row instead of being cut off.
+                property <length> fit-size: measure.preferred-width <= self.lyric-width ? self.lyric-size
+                    : measure.preferred-width <= self.lyric-width * 2.6 ? self.lyric-size * 0.7 : self.lyric-size * 0.55;
                 measure := Text {
                     visible: false; text: line.text; font-size: parent.lyric-size; font-weight: 750;
                 }
@@ -102,9 +106,9 @@ export component LyricsPage inherits Rectangle {
                     x: 20px; y: 10px; width: parent.lyric-width; height: 88px;
                     text: line.text; wrap: word-wrap; overflow: elide;
                     horizontal-alignment: left; vertical-alignment: center;
-                    font-size: parent.lyric-size; font-weight: 750;
+                    font-size: parent.fit-size; font-weight: 750;
                     color: index == root.active && !parent.karaoke ? parent.sung-ink : (root.light-mode ? #695764 : #aaa0ac);
-                    opacity: !root.synced || root.active < 0 || index == root.active ? 1 : (abs(index - root.active) <= 1 ? 0.68 : 0.48);
+                    opacity: !root.synced || root.active < 0 || index == root.active ? 1 : (abs(index - root.active) <= 1 ? 0.8 : 0.62);
                     animate color, opacity { duration: root.motion-enabled ? 220ms : 0ms; easing: ease-out; }
                 }
                 // Instrumental gap: breathing dots above the line that comes next.

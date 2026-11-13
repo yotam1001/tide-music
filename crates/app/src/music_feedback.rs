@@ -77,6 +77,8 @@ struct Picker {
     expected: SavedConnection,
     choices: Vec<tide_provider::Playlist>,
     refreshing: bool,
+    /// A choice made while a background account sync was running.
+    pending: Option<usize>,
 }
 pub struct Music {
     worker: Option<Work>,
@@ -125,6 +127,23 @@ impl Drop for Music {
     }
 }
 
+/// Work Tide starts on its own during playback. It must not lock the user out
+/// of collection actions; their choice waits for it instead.
+fn background(request: &FeedbackRequest) -> bool {
+    matches!(
+        request,
+        FeedbackRequest::Rating { .. } | FeedbackRequest::History { .. }
+    )
+}
+
+/// Whether a user-started account action is running.
+fn user_busy(s: &State) -> bool {
+    s.music_feedback
+        .worker
+        .as_ref()
+        .is_some_and(|w| !background(&w.request))
+}
+
 fn begin(s: &mut State, request: FeedbackRequest) -> bool {
     if s.music_feedback.synthetic
         || s.music_feedback.worker.is_some()
@@ -164,15 +183,52 @@ fn begin(s: &mut State, request: FeedbackRequest) -> bool {
     true
 }
 
+/// Save the open picker's song to choice `index`. While a background sync
+/// runs, the choice is kept and `tick` submits it as soon as the sync ends.
+fn pick(s: &mut State, u: &AppWindow, index: i32) {
+    let Some(picker) = s.music_feedback.picker.as_ref() else {
+        return;
+    };
+    if picker.refreshing || s.saved_connection.as_ref() != Some(&picker.expected) {
+        return;
+    }
+    let Some(target) = usize::try_from(index)
+        .ok()
+        .and_then(|i| picker.choices.get(i))
+        .cloned()
+    else {
+        return;
+    };
+    if s.music_feedback.worker.is_some() && !user_busy(s) {
+        if let Some(picker) = s.music_feedback.picker.as_mut() {
+            picker.pending = Some(index as usize);
+        }
+        u.set_playlist_choices_busy(true);
+        notice(s, u, "Saving song to the playlist…");
+        return;
+    }
+    let request = FeedbackRequest::PlaylistAdd {
+        video_id: picker.video.clone(),
+        playlist_id: target.id,
+    };
+    if begin(s, request) {
+        s.music_feedback.worker.as_mut().unwrap().label = target.title;
+        s.music_feedback.picker = None;
+        u.set_playlist_picker_open(false);
+        u.set_playlist_choices_busy(false);
+        u.set_collection_busy(true);
+        u.set_rating_busy(true);
+        notice(s, u, "Saving song to the playlist…");
+    }
+}
+
 pub fn install(
     state: &Rc<RefCell<State>>,
     ui: &AppWindow,
     library_tx: &mpsc::SyncSender<LibraryResult>,
 ) {
     ui.set_history_feedback_enabled(state.borrow().settings.history_feedback);
-    ui.set_history_feedback_status(
-        "Only real playback is counted. Automated tests never update history.".into(),
-    );
+    ui.set_history_feedback_status("".into());
     let create_state = state.clone();
     let weak = ui.as_weak();
     ui.on_create_playlist(move |title| {
@@ -195,6 +251,35 @@ pub fn install(
             u.set_collection_busy(true);
             u.set_rating_busy(true);
             notice(&mut s, &u, "Creating private playlist…");
+        } else {
+            notice(
+                &mut s,
+                &u,
+                "Wait for the current account action, then try again.",
+            );
+        }
+    });
+    let save_state = state.clone();
+    let weak = ui.as_weak();
+    ui.on_save_detail(move || {
+        let Some(u) = weak.upgrade() else {
+            return;
+        };
+        let mut s = save_state.borrow_mut();
+        if !u.get_detail_open()
+            || u.get_detail_busy()
+            || u.get_detail_editable()
+            || u.get_detail_saved()
+        {
+            return;
+        }
+        let Some(playlist_id) = s.detail_save_target.clone() else {
+            return;
+        };
+        if begin(&mut s, FeedbackRequest::PlaylistSave { playlist_id }) {
+            u.set_collection_busy(true);
+            u.set_rating_busy(true);
+            notice(&mut s, &u, "Saving to your library…");
         } else {
             notice(
                 &mut s,
@@ -347,7 +432,7 @@ pub fn install(
         else {
             return;
         };
-        if s.music_feedback.worker.is_some() {
+        if user_busy(&s) {
             notice(
                 &mut s,
                 &u,
@@ -367,6 +452,7 @@ pub fn install(
             expected,
             choices,
             refreshing: false,
+            pending: None,
         });
         u.set_playlist_picker_artwork_y(0.0);
         update_choices(&s, &u);
@@ -390,31 +476,7 @@ pub fn install(
             return;
         };
         let mut s = choose_state.borrow_mut();
-        let Some(picker) = s.music_feedback.picker.as_ref() else {
-            return;
-        };
-        if picker.refreshing || s.saved_connection.as_ref() != Some(&picker.expected) {
-            return;
-        }
-        let Some(target) = usize::try_from(index)
-            .ok()
-            .and_then(|i| picker.choices.get(i))
-            .cloned()
-        else {
-            return;
-        };
-        let request = FeedbackRequest::PlaylistAdd {
-            video_id: picker.video.clone(),
-            playlist_id: target.id,
-        };
-        if begin(&mut s, request) {
-            s.music_feedback.worker.as_mut().unwrap().label = target.title;
-            s.music_feedback.picker = None;
-            u.set_playlist_picker_open(false);
-            u.set_collection_busy(true);
-            u.set_rating_busy(true);
-            notice(&mut s, &u, "Saving song to the playlist…");
-        }
+        pick(&mut s, &u, index);
     });
     let refresh_state = state.clone();
     let weak = ui.as_weak();
@@ -522,7 +584,8 @@ pub fn update_choices(s: &State, u: &AppWindow) {
             artwork: p
                 .artwork_url
                 .as_deref()
-                .filter(|_| visible.contains(&index))
+                // A closed picker keeps its rows; it must not compete for covers.
+                .filter(|_| u.get_playlist_picker_open() && visible.contains(&index))
                 .map(|url| artwork.get_or_request(url))
                 .unwrap_or_default(),
         })
@@ -791,6 +854,20 @@ pub fn tick(s: &mut State, u: &AppWindow) {
                         );
                     }
                 }
+                FeedbackRequest::PlaylistSave { .. } => {
+                    if confirmed {
+                        if s.music_feedback.detail_revision == work.detail_revision {
+                            u.set_detail_saved(true);
+                        }
+                        notice(s, u, "Saved to your library on YouTube Music.");
+                    } else {
+                        notice(
+                            s,
+                            u,
+                            "Saving was not confirmed. Check your Library before trying again.",
+                        );
+                    }
+                }
                 _ => {}
             }
             if let FeedbackRequest::PlaylistAdd { .. } = &work.request {
@@ -858,6 +935,16 @@ pub fn tick(s: &mut State, u: &AppWindow) {
             }
         }
     }
+    if s.music_feedback.worker.is_none() {
+        if let Some(index) = s
+            .music_feedback
+            .picker
+            .as_mut()
+            .and_then(|p| p.pending.take())
+        {
+            pick(s, u, index as i32);
+        }
+    }
     if u.get_collapsed() {
         u.set_playlist_picker_open(false);
     }
@@ -910,7 +997,7 @@ pub fn tick(s: &mut State, u: &AppWindow) {
         }
     }
     u.set_rating_busy(s.music_feedback.worker.is_some());
-    u.set_collection_busy(s.music_feedback.worker.is_some());
+    u.set_collection_busy(user_busy(s));
     if s.music_feedback.synthetic
         || !s.settings.history_feedback
         || !s.active_playback
@@ -1024,6 +1111,24 @@ pub fn read_probe() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_user_actions_lock_collection_actions() {
+        let video_id = "fixture0001".to_owned();
+        assert!(background(&FeedbackRequest::Rating {
+            video_id: video_id.clone()
+        }));
+        assert!(background(&FeedbackRequest::History {
+            video_id: video_id.clone()
+        }));
+        assert!(!background(&FeedbackRequest::PlaylistAdd {
+            video_id,
+            playlist_id: "PLfixture".into(),
+        }));
+        assert!(!background(&FeedbackRequest::PlaylistCreate {
+            title: "New".into()
+        }));
+    }
 
     #[test]
     fn persisted_dislikes_are_scoped_to_the_verified_connection() {

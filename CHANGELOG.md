@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+## 0.4.24 - 2026-11-13
+
+- A redesigned full-screen interface. Home has mood chips that open YouTube
+  Music's own mood pages, a Jump back in row, square Quick picks and
+  sideways-paging shelves; Search opens on recent searches and genres; playlist
+  and album pages have a large header with total running time.
+- Save someone else's playlist, or any album, to your library.
+- Library sections can be searched and sorted, and say whether they are
+  loading, empty, or not loaded yet.
+- Now Playing shows the cover, details, lyrics and Up next side by side, with
+  Like and Dislike, on a still background (no more blocky moving backdrop).
+- Reorder the queue from the keyboard with Move up and Move down.
+- Tide opens maximized; compact mode and the mini player return to the window
+  you had. Fixed the window drawing in only its top half for accounts with no
+  saved playlists.
+- Fix playback failing for every song on free accounts.
+- Fix a crash when scrolling recaps and YouTube-generated mixes, and stop
+  artwork flickering while lists refresh. Crashes are now logged locally.
+
 ## 0.4.23 - 2026-11-12
 
 - Fix songs failing to play for signed-in accounts without YouTube Premium:

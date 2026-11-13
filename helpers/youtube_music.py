@@ -851,6 +851,31 @@ def manage_playlist(client, request, kind):
     return {"type": "error", "code": "feedback_unconfirmed"}
 
 
+def save_collection(client, request):
+    """Save a playlist or album to the library. Albums resolve to their playlist."""
+    playlist = identifier(request.get("playlist_id"))
+    if (set(request) != {"kind", "playlist_id"} or not playlist
+            or not any(playlist.startswith(p) and len(playlist) > len(p)
+                       for p in ("PL", "VL", "RDCLAK", "OLAK5uy_", "MPRE"))):
+        return {"type": "error", "code": "feedback_invalid"}
+    try:
+        if playlist.startswith("MPRE"):
+            album = client.get_album(playlist)
+            target = identifier(album.get("audioPlaylistId")) if isinstance(album, dict) else ""
+        else:
+            target = playlist[2:] if playlist.startswith("VL") else playlist
+        if not target:
+            return {"type": "error", "code": "feedback_unconfirmed"}
+        response = client.rate_playlist(target, "LIKE")
+        if not isinstance(response, dict) or "error" in response:
+            raise ValueError("unconfirmed save")
+        return {"type": "feedback", "result": {"operation": "playlistsave", "video_id": "",
+                "playlist_id": playlist, "rating": None, "entry_id": None}}
+    except Exception:
+        # A timed-out write may have taken effect. Never retry it automatically.
+        return {"type": "error", "code": "feedback_unconfirmed"}
+
+
 def feedback(client, request):
     """Never replay a collection write, or serialize the provider's raw reply."""
     fields = {
@@ -865,6 +890,8 @@ def feedback(client, request):
     kind = request.get("kind")
     if kind in ("playlistcreate", "playlistrename", "playlistdelete"):
         return manage_playlist(client, request, kind)
+    if kind == "playlistsave":
+        return save_collection(client, request)
     video = identifier(request.get("video_id"), True)
     if not isinstance(kind, str) or kind not in fields or set(request) != fields[kind] or not video:
         return {"type": "error", "code": "feedback_invalid"}

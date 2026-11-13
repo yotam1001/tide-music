@@ -44,6 +44,23 @@ class FeedbackTests(unittest.TestCase):
         for name in vars(client):
             getattr(client, name).assert_not_called()
 
+    def test_save_resolves_albums_and_rejects_invalid_ids(self):
+        client = SimpleNamespace(
+            get_album=MagicMock(return_value={"audioPlaylistId": "OLAK5uy_fixture"}),
+            rate_playlist=MagicMock(return_value={"responseContext": {}}))
+        result = feedback(client, {"kind": "playlistsave", "playlist_id": "MPREb_fixture"})
+        self.assertEqual(result["result"]["operation"], "playlistsave")
+        self.assertEqual(result["result"]["playlist_id"], "MPREb_fixture")
+        client.rate_playlist.assert_called_once_with("OLAK5uy_fixture", "LIKE")
+        feedback(client, {"kind": "playlistsave", "playlist_id": "VLPLfixture"})
+        client.rate_playlist.assert_called_with("PLfixture", "LIKE")
+        for bad in ({"kind": "playlistsave", "playlist_id": "x"},
+                    {"kind": "playlistsave", "playlist_id": "PLfixture", "extra": 1}):
+            self.assertEqual(feedback(client, bad)["code"], "feedback_invalid")
+        failing = SimpleNamespace(rate_playlist=MagicMock(return_value={"error": "no"}))
+        self.assertEqual(feedback(failing, {"kind": "playlistsave", "playlist_id": "PLfixture"})["code"],
+                         "feedback_unconfirmed")
+
     def test_create_playlist_is_private_and_requires_a_confirmed_new_id(self):
         client = SimpleNamespace(create_playlist=MagicMock(return_value="PLnewfixture"))
         request = {"kind": "playlistcreate", "title": "  Evening mix  "}

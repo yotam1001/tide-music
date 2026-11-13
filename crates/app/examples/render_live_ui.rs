@@ -94,25 +94,31 @@ fn run() -> Result<(), String> {
     ui.set_autoplay_enabled(true);
     ui.show().map_err(|_| "Window unavailable")?;
     let mut cache = artwork::ArtworkCache::new();
-    for card in &cards {
-        if let Some(url) = &card.artwork_url {
-            cache.get_or_request(url);
-        }
-    }
-    let deadline = Instant::now() + Duration::from_secs(20);
+    // Request covers in on-screen order, a cache-sized batch at a time, and
+    // keep re-requesting as the single bounded worker drains its queue, the
+    // way a real session fills Home while it is open.
+    let wanted: Vec<&str> = cards
+        .iter()
+        .filter_map(|card| card.artwork_url.as_deref())
+        .take(40)
+        .collect();
+    let current_cover = cards
+        .iter()
+        .find(|card| card.kind == "song")
+        .and_then(|card| card.artwork_url.clone());
+    let deadline = Instant::now() + Duration::from_secs(60);
     while Instant::now() < deadline {
         cache.poll();
-        let with_art = cards
+        // Now Playing uses a separate 512px cover, as in the app.
+        let large_ready = current_cover.as_deref().is_none_or(|url| {
+            cache.get_or_request_current(url);
+            cache.get_or_request_large(url).size().width > 0
+        });
+        let loaded = wanted
             .iter()
-            .filter_map(|card| card.artwork_url.as_deref())
             .filter(|url| cache.get_or_request(url).size().width > 0)
             .count();
-        if with_art
-            >= cards
-                .iter()
-                .filter(|card| card.artwork_url.is_some())
-                .count()
-        {
+        if loaded == wanted.len() && large_ready {
             break;
         }
         std::thread::sleep(Duration::from_millis(50));
@@ -179,6 +185,12 @@ fn run() -> Result<(), String> {
                 .map(|url| cache.get_or_request_current(url))
                 .unwrap_or_default(),
         );
+        ui.set_track_artwork_large(
+            card.artwork_url
+                .as_deref()
+                .map(|url| cache.get_or_request_large(url))
+                .unwrap_or_default(),
+        );
     }
     for light in [false, true] {
         ui.set_light_mode(light);
@@ -204,6 +216,7 @@ fn run() -> Result<(), String> {
                     layout: match group.layout {
                         browse_layout::Layout::Tiles => "tiles",
                         browse_layout::Layout::Compact => "compact",
+                        browse_layout::Layout::Picks => "picks",
                     }
                     .into(),
                 })
@@ -221,7 +234,41 @@ fn run() -> Result<(), String> {
             900,
         )?;
     }
+    // Full-screen review with real artwork: Home without the queue drawer,
+    // then Now Playing.
     ui.set_light_mode(false);
+    ui.set_queue_open(false);
+    draw(&window, 1920, 1000);
+    let labels: Vec<_> = cards
+        .iter()
+        .map(|card| {
+            if card.shelf.trim().is_empty() {
+                "Recommended for you".to_owned()
+            } else {
+                card.shelf.clone()
+            }
+        })
+        .collect();
+    ui.set_home_browse_rows(ModelRc::new(VecModel::from(
+        browse_layout::home_groups(&labels, ui.get_home_columns() as usize)
+            .into_iter()
+            .map(|group| HomeBrowseRow {
+                start: group.start as i32,
+                count: group.count as i32,
+                title: group.title.into(),
+                layout: match group.layout {
+                    browse_layout::Layout::Tiles => "tiles",
+                    browse_layout::Layout::Compact => "compact",
+                    browse_layout::Layout::Picks => "picks",
+                }
+                .into(),
+            })
+            .collect::<Vec<_>>(),
+    )));
+    save(&window, &directory, "live-home-full", 1920, 1000)?;
+    ui.set_now_playing_open(true);
+    save(&window, &directory, "live-now-playing-full", 1920, 1000)?;
+    ui.set_now_playing_open(false);
     ui.set_collapsed(true);
     save(&window, &directory, "live-mini", 700, 132)?;
     println!("Saved native Home (dark/light) and mini previews with fetched artwork; no playback or settings changes.");
