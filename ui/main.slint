@@ -400,7 +400,26 @@ export component AppWindow inherits Window {
     // The large cover header collapses into the compact title bar once the
     // track list scrolls, so the list gets the room, as in other players.
     private property <bool> detail-cover-visible: (root.detail-has-cover || root.detail-navigation == "liked" || root.detail-navigation == "radio")
-        && !root.detail-is-artist && root.sidebar-profile && root.detail-artwork-y > -24px;
+        && !root.detail-is-artist && root.sidebar-profile && !root.detail-scrolled;
+    // Latched from the scroll position in a change handler, never read by a
+    // layout binding: the header's size changes the list's geometry, which
+    // clamps the scroll position, so binding one to the other is a cycle that
+    // Slint aborts ("Recursion detected") while scrolling.
+    private property <bool> detail-scrolled: false;
+    // Height the list gains when the hero collapses to the 48px title bar:
+    // the hero is its cover plus 12px (168px, or 232px on full-screen windows).
+    private property <length> detail-header-room: (root.browse-width >= 1100px && root.height >= 900px ? 232px : 168px) + 12px - 48px;
+    private property <length> detail-list-height: (root.detail-filter == "" ? root.detail-rows.length : root.detail-matches.length) * root.detail-row-height;
+    changed detail-artwork-y => {
+        if root.detail-scrolled {
+            if root.detail-artwork-y > -4px { root.detail-scrolled = false; }
+        } else if root.detail-artwork-y < -24px
+            // Collapse only if the list stays scrolled once it is taller;
+            // otherwise the clamp reopens the header and it flickers.
+            && root.detail-list-height - root.detail-artwork-height - root.detail-header-room >= -root.detail-artwork-y {
+            root.detail-scrolled = true;
+        }
+    }
     out property <string> active-navigation: root.jam-open ? "jams" : root.detail-open ? (root.detail-is-artist ? "" : root.detail-navigation) : root.search-open ? "" : root.library-open ? "library" : "home";
     in property <string> detail-note;
     in property <[TrackRow]> detail-rows;

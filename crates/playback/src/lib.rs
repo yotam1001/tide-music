@@ -1008,6 +1008,14 @@ async fn run_worker(
                                 loaded = active && event == Some("file-loaded");
                                 let mut view = snapshot_write(&snapshot);
                                 if event == Some("log-message") {
+                                    // Opt-in diagnostics: TIDE_DEBUG_MPV_LOG prints raw
+                                    // warning/error lines with stream URLs redacted.
+                                    if std::env::var_os("TIDE_DEBUG_MPV_LOG").is_some() {
+                                        let text = message.get("text").and_then(Value::as_str).unwrap_or_default();
+                                        let redacted: Vec<&str> = text.split_whitespace()
+                                            .map(|w| if w.contains("://") { "<url>" } else { w }).collect();
+                                        eprintln!("MPV[{}] {}", message.get("prefix").and_then(Value::as_str).unwrap_or_default(), redacted.join(" "));
+                                    }
                                     if let Some(failure) = recovery::source_failure(&message) {
                                         view.source_failure = Some(failure);
                                     }
@@ -1231,7 +1239,6 @@ async fn launch_player(
         .arg("--osd-level=0")
         .arg("--ytdl=yes")
         .arg("--ytdl-format=bestaudio/best")
-        .arg("--ytdl-raw-options=ignore-config=")
         .arg("--cache=yes")
         .arg("--cache-secs=20")
         .arg("--demuxer-readahead-secs=5")
@@ -1247,25 +1254,20 @@ async fn launch_player(
     if runtimes.null_audio_for_lab {
         command.arg("--ao=null");
     }
+    // One option string: a later --ytdl-raw-options replaces an earlier one.
+    let args = extractor_args(runtimes.account_index);
+    let mut raw = format!("ignore-config=,extractor-args=%{}%{}", args.len(), args);
     if let Some(cookies) = &cookie_copy {
         let path = cookies.path().to_string_lossy();
-        command.arg(format!(
-            "--ytdl-raw-options=ignore-config=,cookies=%{}%{}{}",
-            path.len(),
-            path,
-            if runtimes.account_index > 0 {
-                let args = "youtube:player_skip=webpage,configs";
-                format!(
-                    ",add-headers=X-Goog-AuthUser:{},extractor-args=%{}%{}",
-                    runtimes.account_index,
-                    args.len(),
-                    args
-                )
-            } else {
-                String::new()
-            }
-        ));
+        raw.push_str(&format!(",cookies=%{}%{}", path.len(), path));
+        if runtimes.account_index > 0 {
+            raw.push_str(&format!(
+                ",add-headers=X-Goog-AuthUser:{}",
+                runtimes.account_index
+            ));
+        }
     }
+    command.arg(format!("--ytdl-raw-options={raw}"));
 
     if runtimes.yt_dlp.is_some() {
         command.arg("--script-opts=ytdl_hook-ytdl_path=yt-dlp.exe");
@@ -1420,6 +1422,23 @@ fn unique_pipe_path() -> String {
         r"\\.\pipe\tide-playback-{}-{tick}-{counter}",
         std::process::id()
     )
+}
+
+/// YouTube clients yt-dlp resolves streams with. Its default now prefers
+/// formats whose URLs refuse mpv's ffmpeg requests (HTTP 403, while yt-dlp's
+/// own chunked downloader still works), so every song fails after its retries
+/// with no extractor error to classify. These clients give URLs mpv can open.
+pub(crate) const PLAYER_CLIENTS: &str = "web_music,visionos";
+
+/// The `--extractor-args` value shared by playback and preparation.
+pub(crate) fn extractor_args(account_index: u32) -> String {
+    let clients =
+        std::env::var("TIDE_YTDL_PLAYER_CLIENT").unwrap_or_else(|_| PLAYER_CLIENTS.to_owned());
+    let mut args = format!("youtube:player_client={clients}");
+    if account_index > 0 {
+        args.push_str(";player_skip=webpage,configs");
+    }
+    args
 }
 
 #[cfg(windows)]
