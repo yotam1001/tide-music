@@ -20,6 +20,7 @@ mod browse_filter;
 mod browse_layout;
 mod card_navigation;
 mod connection;
+mod crash_log;
 mod crossfade;
 mod discord;
 mod discovery;
@@ -39,6 +40,7 @@ mod output_recovery;
 mod performance;
 mod playback_feedback;
 mod radio;
+mod scroll_stress;
 mod search_results;
 mod settings_location;
 mod settings_store;
@@ -2450,8 +2452,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if jam_ownership_smoke && !cfg!(feature = "experimental-jams") {
         return Err("Jam ownership verification requires an experimental-jams build".into());
     }
+    // Automated checks report their own failures; normal launches keep the
+    // last panic next to the settings so a crash can be diagnosed.
+    if !std::env::args().any(|arg| arg.starts_with("--smoke") || arg == "--benchmark-mode") {
+        if let Some(path) = settings_path().and_then(|p| Some(p.parent()?.join("crash.log"))) {
+            crash_log::install(path);
+        }
+    }
     if std::env::args().any(|arg| {
-        arg == "--smoke-ui" || arg == "--smoke-performance" || arg.starts_with("--smoke-early-skip")
+        arg == "--smoke-ui"
+            || arg == "--smoke-scroll-stress"
+            || arg == "--smoke-performance"
+            || arg.starts_with("--smoke-early-skip")
     }) {
         let panic_hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
@@ -2539,7 +2551,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         || smoke_autoplay
         || listening_seconds.is_some()
         || smoke_early_skip
-        || std::env::args().any(|a| a == "--smoke-ui" || a == "--benchmark-mode")
+        || std::env::args()
+            .any(|a| a == "--smoke-ui" || a == "--smoke-scroll-stress" || a == "--benchmark-mode")
     {
         settings = Settings {
             transient: true,
@@ -2576,7 +2589,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         || performance_args.is_some()
         || (smoke_early_skip && !smoke_skip_session)
         || local_listening_source.is_some()
-        || std::env::args().any(|a| a == "--smoke-ui" || a == "--benchmark-mode");
+        || std::env::args()
+            .any(|a| a == "--smoke-ui" || a == "--smoke-scroll-stress" || a == "--benchmark-mode");
     let provider = if test_mode {
         None
     } else {
@@ -2600,7 +2614,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     cookie_lease.as_ref().map(|l| l.path().to_path_buf()),
                     saved_connection.as_ref().map_or(0, |c| c.account_index),
                 )
-            } else if performance_args.is_some() || std::env::args().any(|a| a == "--smoke-ui") {
+            } else if performance_args.is_some()
+                || std::env::args().any(|a| a == "--smoke-ui" || a == "--smoke-scroll-stress")
+            {
                 tide_playback::start_local_benchmark()
             } else {
                 tide_playback::start_with_account(
@@ -2613,6 +2629,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ) {
         Ok(e) => (Some(e), None),
         Err(e) => (None, Some(e)),
+    };
+    // `--smoke-scroll-stress N` scrolls an N-track synthetic playlist while
+    // thumbnails complete; the feed replaces the network-backed cache.
+    let scroll_stress: Option<usize> = std::env::args()
+        .skip_while(|a| a != "--smoke-scroll-stress")
+        .nth(1)
+        .map(|n| n.parse().unwrap_or(1000));
+    let (stress_cache, stress_feed) = if scroll_stress.is_some() {
+        let (cache, feed) = artwork::ArtworkCache::new_synthetic();
+        (Some(cache), Some(feed))
+    } else {
+        (None, None)
     };
     let state = Rc::new(RefCell::new(State {
         music_feedback: music_feedback::Music::new(
@@ -2673,7 +2701,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         crossfade: crossfade::Crossfade::default(),
         radio_resume_when_ready: false,
         volume_save_pending: false,
-        artwork: RefCell::new(if test_mode {
+        artwork: RefCell::new(if let Some(cache) = stress_cache {
+            cache
+        } else if test_mode {
             artwork::ArtworkCache::new_disabled()
         } else {
             artwork::ArtworkCache::new()
@@ -5698,6 +5728,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         });
     }
+    let _scroll_stress = scroll_stress
+        .zip(stress_feed)
+        .map(|(count, feed)| scroll_stress::start(&state, &ui, count, feed));
     let listening = listening_seconds
         .map(|seconds| listening::start(state.clone(), &ui, seconds, local_listening_source));
     // Sustained probes must not expose a second interactive player or compete
