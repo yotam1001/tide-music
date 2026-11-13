@@ -235,9 +235,11 @@ fn resolve(
             command
                 .arg("--add-header")
                 .arg(format!("X-Goog-AuthUser:{}", runtimes.account_index));
-            command.args(["--extractor-args", "youtube:player_skip=webpage,configs"]);
         }
     }
+    command
+        .arg("--extractor-args")
+        .arg(super::extractor_args(runtimes.account_index));
     command.arg("--").arg(request.source.as_ref()?);
     if !preparation.current(request.token) {
         return None;

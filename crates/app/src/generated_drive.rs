@@ -147,3 +147,95 @@ pub(super) fn start(state: &Rc<RefCell<State>>, ui: &AppWindow) -> slint::Timer 
     );
     timer
 }
+
+/// Opt-in `--drive-playback`: with the signed-in account, play up to five
+/// Home songs one at a time (muted, settings unsaved) and report whether each
+/// starts or which failure category the player shows.
+pub(super) fn start_playback(state: &Rc<RefCell<State>>, ui: &AppWindow) -> slint::Timer {
+    let timer = slint::Timer::default();
+    let state = state.clone();
+    let weak = ui.as_weak();
+    let began = Instant::now();
+    let mut songs: Option<Vec<Track>> = None;
+    let mut current: Option<(String, Instant)> = None;
+    let (mut played, mut failed) = (0_u32, 0_u32);
+    timer.start(
+        slint::TimerMode::Repeated,
+        Duration::from_millis(200),
+        move || {
+            let Some(u) = weak.upgrade() else { return };
+            let mut s = state.borrow_mut();
+            if songs.is_none() {
+                if !s.account_verified || s.recommendations.is_empty() {
+                    if began.elapsed() > WAIT {
+                        eprintln!(
+                            "PLAY: account/Home not ready (verified={})",
+                            s.account_verified
+                        );
+                        let _ = slint::quit_event_loop();
+                    }
+                    return;
+                }
+                let list: Vec<Track> = s
+                    .recommendations
+                    .iter()
+                    .filter(|c| c.kind == "song")
+                    .take(5)
+                    .map(recommendation_track)
+                    .collect();
+                println!("PLAY: {} Home songs to try", list.len());
+                songs = Some(list);
+                return;
+            }
+            if let Some((id, started)) = &current {
+                let Some(p) = s.engine.as_ref().map(|e| e.snapshot()) else {
+                    println!("PLAY: no playback engine");
+                    let _ = slint::quit_event_loop();
+                    return;
+                };
+                if p.generation == s.generation && !p.loading && p.position > 3.0 {
+                    println!("PLAY: {id} plays ({} retries)", p.retry_attempt);
+                    played += 1;
+                } else if p.error.is_some() {
+                    println!(
+                        "PLAY: {id} failed: {:?}; engine: {:?}; banner: {}",
+                        p.source_failure,
+                        p.error,
+                        u.get_error_message()
+                    );
+                    failed += 1;
+                } else if started.elapsed() > Duration::from_secs(75) {
+                    println!(
+                        "PLAY: {id} timed out (loading={}, retry={})",
+                        p.loading, p.retry_attempt
+                    );
+                    failed += 1;
+                } else {
+                    return;
+                }
+                current = None;
+                return;
+            }
+            let next = songs
+                .as_mut()
+                .and_then(|l| (!l.is_empty()).then(|| l.remove(0)));
+            let Some(track) = next else {
+                println!("PLAY: done, {played} played, {failed} failed");
+                let _ = slint::quit_event_loop();
+                return;
+            };
+            let id = source_video_id(&track.source).unwrap_or_default();
+            s.settings.queue = Queue {
+                tracks: vec![track],
+                current: Some(0),
+            };
+            if !play(&mut s, &u) {
+                println!("PLAY: {id} could not start");
+                failed += 1;
+                return;
+            }
+            current = Some((id, Instant::now()));
+        },
+    );
+    timer
+}
