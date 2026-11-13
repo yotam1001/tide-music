@@ -184,14 +184,14 @@ fn settings_theme_account_and_song_menu_remain_independent() {
     ui.set_account_verified(false);
     let idle = draw(&window, 1140, 800);
     ui.window().dispatch_event(WindowEvent::PointerMoved {
-        position: LogicalPosition::new(1012.0, 32.0),
+        position: LogicalPosition::new(1058.0, 32.0),
     });
     assert_ne!(
         draw(&window, 1140, 800),
         idle,
-        "theme control needs hover feedback"
+        "settings control needs hover feedback"
     );
-    assert!(!ui.get_light_mode(), "hover must not switch the theme");
+    assert!(!ui.get_settings_open(), "hover must not open Settings");
     click(&ui, 1058.0, 32.0);
     assert!(
         ui.get_settings_open(),
@@ -216,13 +216,23 @@ fn settings_theme_account_and_song_menu_remain_independent() {
             height,
             &draw(&window, width, height),
         );
-        // The theme switch is reachable without opening an account or resizing.
-        click(&ui, width as f32 - 128.0, 32.0);
-        assert!(
-            ui.get_light_mode(),
-            "direct theme control is inaccessible at {width}"
-        );
-        assert!(!ui.get_settings_open() && !ui.get_account_open());
+        // The theme lives in Settings > Appearance: reachable without an
+        // account or resizing, and it does not close the panel.
+        if height >= 700 {
+            click(&ui, width as f32 - 82.0, 32.0);
+            assert!(ui.get_settings_open(), "Settings is inaccessible at {width}");
+            draw(&window, width, height);
+            click(&ui, width as f32 - 45.0, 397.0);
+            assert!(
+                ui.get_light_mode(),
+                "Settings theme control is inaccessible at {width}"
+            );
+            assert!(ui.get_settings_open() && !ui.get_account_open());
+            key(&ui, Key::Escape);
+        } else {
+            ui.invoke_switch_mode();
+        }
+        assert!(ui.get_light_mode() && !ui.get_settings_open() && !ui.get_account_open());
         assert_eq!(window.size(), PhysicalSize::new(width, height));
         assert!(!ui.get_compact_mode());
         export(
@@ -279,12 +289,12 @@ fn settings_theme_account_and_song_menu_remain_independent() {
     ui.set_light_mode(false);
     ui.set_search_open(true);
     let before = draw(&window, 1140, 800);
-    click(&ui, 1087.0, 373.0);
+    click(&ui, 1087.0, 421.0);
     let menu = draw(&window, 1140, 800);
     export("song-menu-dark", 1140, 800, &menu);
     assert_ne!(menu, before, "song action did not display a menu");
     assert_eq!(
-        menu[408 * 1140 + 900],
+        menu[456 * 1140 + 900],
         Rgb8Pixel {
             r: 25,
             g: 28,
@@ -296,7 +306,7 @@ fn settings_theme_account_and_song_menu_remain_independent() {
     let light_menu = draw(&window, 1140, 800);
     export("song-menu-light", 1140, 800, &light_menu);
     assert_eq!(
-        light_menu[408 * 1140 + 900],
+        light_menu[456 * 1140 + 900],
         Rgb8Pixel {
             r: 249,
             g: 244,
@@ -322,7 +332,7 @@ fn settings_theme_account_and_song_menu_remain_independent() {
         queue_action.get().is_none(),
         "dismissal must not queue a track"
     );
-    click(&ui, 1087.0, 373.0);
+    click(&ui, 1087.0, 421.0);
     draw(&window, 1140, 800);
     click(&ui, 400.0, 420.0);
     let dismissed = draw(&window, 1140, 800);
@@ -335,7 +345,7 @@ fn settings_theme_account_and_song_menu_remain_independent() {
         );
     }
     assert!(queue_action.get().is_none());
-    click(&ui, 1087.0, 373.0);
+    click(&ui, 1087.0, 421.0);
     draw(&window, 1140, 800);
     key(&ui, Key::DownArrow);
     key(&ui, Key::Return);
@@ -348,7 +358,7 @@ fn settings_theme_account_and_song_menu_remain_independent() {
     for light in [false, true] {
         ui.set_light_mode(light);
         draw(&window, 1140, 800);
-        click(&ui, 1087.0, 373.0);
+        click(&ui, 1087.0, 421.0);
         draw(&window, 1140, 800);
         key(&ui, Key::DownArrow);
         key(&ui, Key::DownArrow);
@@ -359,7 +369,7 @@ fn settings_theme_account_and_song_menu_remain_independent() {
             Some((0, false)),
             "Add to queue must target this search row"
         );
-        click(&ui, 1087.0, 373.0);
+        click(&ui, 1087.0, 421.0);
         draw(&window, 1140, 800);
         // Radio is the third item; playlist saving now follows it.
         key(&ui, Key::DownArrow);
@@ -392,7 +402,8 @@ fn settings_theme_account_and_song_menu_remain_independent() {
         ui.set_light_mode(light);
         let pixels = draw(&window, width, height);
         export(&format!("library-supermix-{width}"), width, height, &pixels);
-        click(&ui, content_left(&ui, width, height) + 30.0, 205.0);
+        // The Library search row (48px) sits above the Supermix and Liked tiles.
+        click(&ui, content_left(&ui, width, height) + 30.0, 253.0);
     }
     assert_eq!(
         supermix_opens.get(),
@@ -463,7 +474,7 @@ fn settings_theme_account_and_song_menu_remain_independent() {
         click(
             &ui,
             ui.global::<LayoutMetrics>().get_navigation_wide() + offset,
-            170.0,
+            218.0,
         );
         assert_eq!(
             playlist_action.get(),
@@ -540,12 +551,13 @@ fn settings_theme_account_and_song_menu_remain_independent() {
     // Secondary controls stay hidden until explicitly expanded.
     ui.set_settings_more_open(false);
     draw(&window, 1140, 1200);
-    click(&ui, 920.0, 543.0);
+    // Appearance (heading + Dark theme, 110px) and the Updates link (54px)
+    // sit above Advanced.
+    click(&ui, 920.0, 707.0);
     assert!(ui.get_settings_more_open(), "More options is reachable");
     draw(&window, 1140, 1200);
-    // Windows media keys is Advanced's first switch. The Animations row above
-    // Audio moves Advanced 76px down.
-    click(&ui, 920.0, 593.0);
+    // Windows media keys is Advanced's first switch.
+    click(&ui, 920.0, 757.0);
     assert!(!ui.get_media_controls_enabled());
     assert_eq!(ui.get_shortcut_toggle(), "Ctrl+Alt+P");
     assert_eq!(ui.get_shortcut_next(), "Ctrl+Alt+N");

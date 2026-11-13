@@ -47,6 +47,9 @@ export component PlayerBar inherits Rectangle {
     in property <image> artwork;
     in property <float> position;
     in property <float> duration;
+    // Listed length such as "3:34" ("—" or "" when unknown).
+    in property <string> known-length;
+    private property <bool> length-listed: root.known-length != "" && root.known-length != "—";
     in property <bool> paused;
     in property <float> volume;
     callback toggle-pause();
@@ -86,7 +89,11 @@ export component PlayerBar inherits Rectangle {
     // Below 900px the side columns narrow and the volume slider gives way to
     // the mute button, so the transport never overlaps them.
     private property <bool> narrow: root.width < 900px;
-    private property <length> side-width: root.narrow ? 200px : max(268px, (root.width - 64px) * 0.3);
+    // Narrow windows give the song column whatever the transport can spare:
+    // 200px at the 650px minimum, ~230px at the 780px compact size.
+    private property <length> side-width: root.narrow ? clamp((root.width - 64px) * 0.32, 200px, 250px) : max(268px, (root.width - 64px) * 0.3);
+    // Compact (780px+) but narrow: Like/Dislike sit with the right-hand buttons.
+    private property <bool> ratings-right: root.narrow && root.width >= 760px;
     private property <float> unmute-volume: 70;
     function toggle-mute() {
         if root.volume > 0 { root.unmute-volume = root.volume; root.change-volume(0); }
@@ -101,10 +108,10 @@ export component PlayerBar inherits Rectangle {
         cross-axis-alignment: center;
         HorizontalLayout {
             width: root.side-width;
-            spacing: 12px;
+            spacing: root.narrow ? 10px : 12px;
             cross-axis-alignment: center;
             Rectangle {
-                width: root.narrow ? 44px : 56px; height: self.width;
+                width: root.narrow ? 40px : 56px; height: self.width;
                 // Text measures for the title column (outside the row layout).
                 title-measure := Text { visible: false; width: 0px; height: 0px; text: root.track-title == "" ? "Nothing playing" : root.track-title; font-size: 14px; font-weight: 650; }
                 artist-measure := Text { visible: false; width: 0px; height: 0px; text: root.track-artist; font-size: 13px; }
@@ -135,7 +142,7 @@ export component PlayerBar inherits Rectangle {
             // The title hugs its text so Like and Dislike sit right beside it,
             // as in other players, until the column runs out of room.
             VerticalLayout {
-                width: max(0px, min(root.side-width - (root.narrow ? 44px : 56px) - 4 * 12px - 64px, max(title-measure.preferred-width, artist-measure.preferred-width) + 4px));
+                width: max(0px, min(root.side-width - (root.narrow ? 40px : 56px) - (root.ratings-right ? 2 * 10px : 4 * (root.narrow ? 10px : 12px) + 64px), max(title-measure.preferred-width, artist-measure.preferred-width) + 4px));
                 spacing: 2px;
                 alignment: center;
                 // Right-to-left titles can paint outside an elided Text; clip them.
@@ -144,8 +151,8 @@ export component PlayerBar inherits Rectangle {
                 if root.playback-hint != "" : Text { text: root.playback-hint; color: Theme.accent-ink; font-size: 10px; overflow: elide; accessible-live-region: polite; }
                 if root.playback-hint == "" && root.audio-quality != "" : Text { text: root.audio-quality; color: root.secondary; font-size: 10px; overflow: elide; }
             }
-            RatingButton { width: 32px; height: 34px; enabled: root.rating-enabled && !root.rating-busy; light-mode: root.light-mode; active: root.rating == 1; label: root.rating == 1 ? "Remove like" : "Like this song on YouTube Music"; clicked => { root.rate(root.rating == 1 ? 0 : 1); } }
-            RatingButton { width: 32px; height: 34px; negative: true; enabled: root.rating-enabled && !root.rating-busy; light-mode: root.light-mode; active: root.rating == -1; label: root.rating == -1 ? "Remove dislike" : "Dislike this song on YouTube Music"; clicked => { root.rate(root.rating == -1 ? 0 : -1); } }
+            if !root.ratings-right : RatingButton { width: 32px; height: 34px; enabled: root.rating-enabled && !root.rating-busy; light-mode: root.light-mode; active: root.rating == 1; label: root.rating == 1 ? "Remove like" : "Like this song on YouTube Music"; clicked => { root.rate(root.rating == 1 ? 0 : 1); } }
+            if !root.ratings-right : RatingButton { width: 32px; height: 34px; negative: true; enabled: root.rating-enabled && !root.rating-busy; light-mode: root.light-mode; active: root.rating == -1; label: root.rating == -1 ? "Remove dislike" : "Dislike this song on YouTube Music"; clicked => { root.rate(root.rating == -1 ? 0 : -1); } }
             Rectangle { horizontal-stretch: 1; }
         }
         VerticalLayout {
@@ -165,9 +172,9 @@ export component PlayerBar inherits Rectangle {
                 height: 22px;
                 spacing: 8px;
                 cross-axis-alignment: center;
-                Text { width: 40px; text: root.duration > 0 ? root.format-time(root.position) : "–:––"; color: root.secondary; font-size: 11px; horizontal-alignment: right; vertical-alignment: center; }
+                Text { width: 40px; text: root.duration > 0 ? root.format-time(root.position) : root.length-listed ? "0:00" : ""; color: root.secondary; font-size: 11px; horizontal-alignment: right; vertical-alignment: center; }
                 TideSlider { reset-revision: root.input-revision; light-mode: root.light-mode; horizontal-stretch: 1; minimum: 0; maximum: max(1, root.duration); value: root.position; enabled: root.transport-enabled && root.duration > 0; label: "Playback position"; value-text: root.format-time(root.position); released(value) => { root.seek(value); } }
-                Text { width: 40px; text: root.duration > 0 ? root.format-time(root.duration) : "–:––"; color: root.secondary; font-size: 11px; vertical-alignment: center; }
+                Text { width: 40px; text: root.duration > 0 ? root.format-time(root.duration) : root.length-listed ? root.known-length : ""; color: root.secondary; font-size: 11px; vertical-alignment: center; }
             }
         }
         HorizontalLayout {
@@ -175,6 +182,8 @@ export component PlayerBar inherits Rectangle {
             spacing: 4px;
             alignment: end;
             cross-axis-alignment: center;
+            if root.ratings-right : RatingButton { width: 32px; height: 34px; enabled: root.rating-enabled && !root.rating-busy; light-mode: root.light-mode; active: root.rating == 1; label: root.rating == 1 ? "Remove like" : "Like this song on YouTube Music"; clicked => { root.rate(root.rating == 1 ? 0 : 1); } }
+            if root.ratings-right : RatingButton { width: 32px; height: 34px; negative: true; enabled: root.rating-enabled && !root.rating-busy; light-mode: root.light-mode; active: root.rating == -1; label: root.rating == -1 ? "Remove dislike" : "Dislike this song on YouTube Music"; clicked => { root.rate(root.rating == -1 ? 0 : -1); } }
             LibraryButton { width: 36px; height: 36px; show-tooltip: true; light-mode: root.light-mode; icon-path: "M 9 5 A 3 3 0 0 1 15 5 L 15 11 A 3 3 0 0 1 9 11 Z M 5 10 L 5 11 A 7 7 0 0 0 19 11 L 19 10 M 12 18 L 12 22 M 8 22 L 16 22"; label: root.lyrics-open ? "Close lyrics" : "Open lyrics"; active: root.lyrics-open; clicked => { root.toggle-lyrics(); } }
             LibraryButton { width: 36px; height: 36px; show-tooltip: true; light-mode: root.light-mode; icon-path: "M 4 6 L 20 6 M 4 12 L 14 12 M 4 18 L 14 18 M 18 12 L 23 15 L 18 18 Z"; label: root.queue-open ? "Close queue" : "Open queue"; active: root.queue-open; clicked => { root.toggle-queue(); } }
             LibraryButton { width: 36px; height: 36px; show-tooltip: true; light-mode: root.light-mode; icon-path: "M 3 4 L 21 4 L 21 20 L 3 20 Z M 12 12 L 19 12 L 19 18 L 12 18 Z"; label: "Open mini player"; clicked => { root.mini(); } }
@@ -216,17 +225,17 @@ export component PlayerBar inherits Rectangle {
                 spacing: 4px;
                 RatingButton { width: 32px; height: 36px; enabled: root.rating-enabled && !root.rating-busy; light-mode: root.light-mode; active: root.rating == 1; label: root.rating == 1 ? "Remove like" : "Like this song on YouTube Music"; clicked => { root.rate(root.rating == 1 ? 0 : 1); } }
                 RatingButton { width: 32px; height: 36px; negative: true; enabled: root.rating-enabled && !root.rating-busy; light-mode: root.light-mode; active: root.rating == -1; label: root.rating == -1 ? "Remove dislike" : "Dislike this song on YouTube Music"; clicked => { root.rate(root.rating == -1 ? 0 : -1); } }
-                LibraryButton { width: 36px; light-mode: root.light-mode; caption: "Pin"; label: root.mini-pinned ? "Unpin mini player" : "Pin mini player above other windows"; active: root.mini-pinned; clicked => { root.toggle-mini-pin(); } }
-                LibraryButton { width: 38px; light-mode: root.light-mode; caption: "↗"; label: "Expand to full Tide window"; clicked => { root.restore(); } }
+                LibraryButton { width: 36px; light-mode: root.light-mode; show-tooltip: true; icon-path: "M 9 3 L 15 3 L 14 9 L 18 13 L 6 13 L 10 9 Z M 12 13 L 12 21"; label: root.mini-pinned ? "Unpin mini player" : "Pin mini player above other windows"; active: root.mini-pinned; clicked => { root.toggle-mini-pin(); } }
+                LibraryButton { width: 38px; light-mode: root.light-mode; show-tooltip: true; icon-path: "M 14 4 L 20 4 L 20 10 M 20 4 L 13 11 M 10 20 L 4 20 L 4 14 M 4 20 L 11 13"; label: "Expand to full Tide window"; clicked => { root.restore(); } }
             }
         }
         HorizontalLayout {
             height: 25px;
             spacing: 9px;
             cross-axis-alignment: center;
-            Text { width: 38px; text: root.format-time(root.position); color: root.secondary; font-size: 11px; horizontal-alignment: right; }
+            Text { width: 38px; text: root.duration > 0 ? root.format-time(root.position) : root.length-listed ? "0:00" : ""; color: root.secondary; font-size: 11px; horizontal-alignment: right; }
             TideSlider { reset-revision: root.input-revision; light-mode: root.light-mode; horizontal-stretch: 1; minimum: 0; maximum: max(1, root.duration); value: root.position; enabled: root.transport-enabled && root.duration > 0; label: "Playback position"; value-text: root.format-time(root.position); released(value) => { root.seek(value); } }
-            Text { width: 38px; text: root.format-time(root.duration); color: root.secondary; font-size: 11px; }
+            Text { width: 38px; text: root.duration > 0 ? root.format-time(root.duration) : root.length-listed ? root.known-length : ""; color: root.secondary; font-size: 11px; }
             VolumeMark { ink: root.secondary; }
             TideSlider { reset-revision: root.input-revision; light-mode: root.light-mode; width: 105px; minimum: 0; maximum: 100; value: root.volume; step: root.volume-step; wheel-adjustable: true; label: root.volume-locked ? "Volume is set on your device in bit-perfect mode" : "Volume"; value-text: root.volume-locked ? "Device" : root.volume.to-fixed(0) + "%"; enabled: !root.volume-locked; changed(value) => { root.change-volume(value); } }
             Text { width: 38px; text: root.volume.to-fixed(0) + "%"; color: root.secondary; font-size: 11px; horizontal-alignment: right; }

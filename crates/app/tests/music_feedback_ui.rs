@@ -254,7 +254,7 @@ fn native_ratings_remain_reachable_and_do_not_take_over_transport() {
     for (guest, down_count) in [(false, 4), (true, 2)] {
         ui.set_jam_guest(guest);
         draw(&window, 1140, 800, "playlist-menu-before");
-        click(&ui, 1087.0, 373.0);
+        click(&ui, 1087.0, 421.0);
         draw(
             &window,
             1140,
@@ -301,7 +301,7 @@ fn native_ratings_remain_reachable_and_do_not_take_over_transport() {
     let captured = removed.clone();
     ui.on_remove_playlist_song(move |index| captured.borrow_mut().push(index));
     draw(&window, 1140, 800, "playlist-editable");
-    click(&ui, 1087.0, 235.0);
+    click(&ui, 1087.0, 283.0);
     draw(&window, 1140, 800, "playlist-menu-owned");
     for _ in 0..5 {
         ui.window().dispatch_event(WindowEvent::KeyPressed {

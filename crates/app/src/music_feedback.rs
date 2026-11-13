@@ -170,9 +170,7 @@ pub fn install(
     library_tx: &mpsc::SyncSender<LibraryResult>,
 ) {
     ui.set_history_feedback_enabled(state.borrow().settings.history_feedback);
-    ui.set_history_feedback_status(
-        "Only real playback is counted. Automated tests never update history.".into(),
-    );
+    ui.set_history_feedback_status("".into());
     let create_state = state.clone();
     let weak = ui.as_weak();
     ui.on_create_playlist(move |title| {
@@ -201,6 +199,27 @@ pub fn install(
                 &u,
                 "Wait for the current account action, then try again.",
             );
+        }
+    });
+    let save_state = state.clone();
+    let weak = ui.as_weak();
+    ui.on_save_detail(move || {
+        let Some(u) = weak.upgrade() else {
+            return;
+        };
+        let mut s = save_state.borrow_mut();
+        if !u.get_detail_open() || u.get_detail_busy() || u.get_detail_editable() || u.get_detail_saved() {
+            return;
+        }
+        let Some(playlist_id) = s.detail_save_target.clone() else {
+            return;
+        };
+        if begin(&mut s, FeedbackRequest::PlaylistSave { playlist_id }) {
+            u.set_collection_busy(true);
+            u.set_rating_busy(true);
+            notice(&mut s, &u, "Saving to your library…");
+        } else {
+            notice(&mut s, &u, "Wait for the current account action, then try again.");
         }
     });
     let manage_state = state.clone();
@@ -789,6 +808,16 @@ pub fn tick(s: &mut State, u: &AppWindow) {
                                 "The change was not confirmed. Refresh Library before trying again."
                             },
                         );
+                    }
+                }
+                FeedbackRequest::PlaylistSave { .. } => {
+                    if confirmed {
+                        if s.music_feedback.detail_revision == work.detail_revision {
+                            u.set_detail_saved(true);
+                        }
+                        notice(s, u, "Saved to your library on YouTube Music.");
+                    } else {
+                        notice(s, u, "Saving was not confirmed. Check your Library before trying again.");
                     }
                 }
                 _ => {}

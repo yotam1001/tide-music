@@ -1,6 +1,5 @@
-//! Native render check of Now Playing's ambient backdrop, with synthetic
-//! artwork and no account: it drifts only while a song plays with
-//! animations on.
+//! Native render check of Now Playing's backdrop, with synthetic artwork and
+//! no account: a static, seamless gradient that never moves.
 use slint::platform::software_renderer::{MinimalSoftwareWindow, RepaintBufferType};
 use slint::{ComponentHandle, PhysicalSize, Rgb8Pixel, Rgba8Pixel, SharedPixelBuffer};
 use std::rc::Rc;
@@ -53,7 +52,7 @@ fn settle(window: &MinimalSoftwareWindow) -> Vec<Rgb8Pixel> {
 }
 
 #[test]
-fn ambient_backdrop_drifts_only_while_playing_with_motion_on() {
+fn backdrop_is_static_and_seamless_while_playing() {
     let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
     slint::platform::set_platform(Box::new(Platform(window.clone()))).unwrap();
     let ui = AppWindow::new().unwrap();
@@ -88,20 +87,11 @@ fn ambient_backdrop_drifts_only_while_playing_with_motion_on() {
         let dip = (rows[1] - rows[0]).abs().min((rows[1] - rows[2]).abs());
         assert!(dip <= 8, "seam line at y={}", 71 + offset);
     }
+    // The backdrop is a static, cover-tinted gradient: a stretched thumbnail
+    // upscaled into visible blocks, and drifting it cost CPU while playing.
     let start = backdrop_strip(&frame);
-    let later = settle(&window);
-    assert_ne!(start, later, "the backdrop did not drift while playing");
+    assert_eq!(start, settle(&window), "the backdrop moved while playing");
 
     ui.set_paused(true);
-    let paused = settle(&window);
-    assert_eq!(paused, settle(&window), "the backdrop drifted while paused");
-
-    ui.set_paused(false);
-    ui.global::<ControlMotion>().set_enabled(false);
-    let still = settle(&window);
-    assert_eq!(
-        still,
-        settle(&window),
-        "the backdrop drifted with animations off"
-    );
+    assert_eq!(start, settle(&window), "pausing changed the backdrop");
 }

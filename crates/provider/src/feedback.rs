@@ -28,6 +28,10 @@ pub enum FeedbackRequest {
     PlaylistDelete {
         playlist_id: String,
     },
+    /// Save someone else's playlist, or an album, to the listener's library.
+    PlaylistSave {
+        playlist_id: String,
+    },
     PlaylistAdd {
         video_id: String,
         playlist_id: String,
@@ -58,6 +62,15 @@ fn valid_playlist_title(title: &str) -> bool {
             .any(|c| c.is_control() || matches!(c, '<' | '>'))
 }
 
+/// Playlists and albums that can be saved to a library: playlist ids
+/// (PL…, VL…, RDCLAK…, OLAK5uy_…) and album browse ids (MPRE…).
+pub fn savable_collection_id(id: &str) -> bool {
+    valid_identifier(id, 160)
+        && ["PL", "VL", "RDCLAK", "OLAK5uy_", "MPRE"]
+            .iter()
+            .any(|prefix| id.len() > prefix.len() && id.starts_with(prefix))
+}
+
 pub fn custom_playlist_id(id: &str) -> bool {
     id.starts_with("PL") && id.len() > 2 && valid_identifier(id, 160)
 }
@@ -67,7 +80,8 @@ impl FeedbackRequest {
         match self {
             Self::PlaylistCreate { .. }
             | Self::PlaylistRename { .. }
-            | Self::PlaylistDelete { .. } => "",
+            | Self::PlaylistDelete { .. }
+            | Self::PlaylistSave { .. } => "",
             Self::Rating { video_id }
             | Self::Rate { video_id, .. }
             | Self::PlaylistAdd { video_id, .. }
@@ -80,7 +94,8 @@ impl FeedbackRequest {
             Self::PlaylistAdd { playlist_id, .. }
             | Self::PlaylistRemove { playlist_id, .. }
             | Self::PlaylistRename { playlist_id, .. }
-            | Self::PlaylistDelete { playlist_id } => Some(playlist_id),
+            | Self::PlaylistDelete { playlist_id }
+            | Self::PlaylistSave { playlist_id } => Some(playlist_id),
             _ => None,
         }
     }
@@ -91,6 +106,7 @@ impl FeedbackRequest {
                 return custom_playlist_id(playlist_id) && valid_playlist_title(title)
             }
             Self::PlaylistDelete { playlist_id } => return custom_playlist_id(playlist_id),
+            Self::PlaylistSave { playlist_id } => return savable_collection_id(playlist_id),
             _ => {}
         }
         self.video_id().len() == 11
@@ -133,6 +149,11 @@ impl FeedbackRequest {
                     && result.rating.is_none()
                     && result.entry_id.is_none()
             }
+            Self::PlaylistSave { .. } => {
+                result.operation == FeedbackOperation::PlaylistSave
+                    && result.rating.is_none()
+                    && result.entry_id.is_none()
+            }
             Self::Rating { .. } => result.operation == FeedbackOperation::Rating,
             Self::Rate { rating, .. } => {
                 result.operation == FeedbackOperation::Rate && result.rating == Some(*rating)
@@ -155,6 +176,7 @@ pub enum FeedbackOperation {
     PlaylistCreate,
     PlaylistRename,
     PlaylistDelete,
+    PlaylistSave,
     PlaylistAdd,
     PlaylistRemove,
     History,
@@ -196,6 +218,26 @@ impl PlaylistDetails {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn saving_accepts_playlists_and_albums_and_binds_the_reply() {
+        for id in ["PLabc", "VLPLabc", "RDCLAK5uy_x", "OLAK5uy_abc", "MPREb_abc"] {
+            assert!(FeedbackRequest::PlaylistSave { playlist_id: id.into() }.valid(), "{id}");
+        }
+        for id in ["", "PL", "abc", "https://x", "PL a"] {
+            assert!(!FeedbackRequest::PlaylistSave { playlist_id: id.into() }.valid(), "{id}");
+        }
+        let request = FeedbackRequest::PlaylistSave { playlist_id: "MPREb_abc".into() };
+        let reply = |operation, playlist: &str| FeedbackResult {
+            operation,
+            video_id: String::new(),
+            playlist_id: Some(playlist.into()),
+            rating: None,
+            entry_id: None,
+        };
+        assert!(request.accepts(&reply(FeedbackOperation::PlaylistSave, "MPREb_abc")));
+        assert!(!request.accepts(&reply(FeedbackOperation::PlaylistSave, "PLother")));
+        assert!(!request.accepts(&reply(FeedbackOperation::PlaylistDelete, "MPREb_abc")));
+    }
     #[test]
     fn results_are_bound_to_the_exact_requested_operation_and_track() {
         let request = FeedbackRequest::Rate {

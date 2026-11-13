@@ -105,8 +105,9 @@ export component TileArtwork inherits Rectangle {
         variant: root.variant;
         seed: root.seed;
         light-mode: root.light-mode;
-        drop-shadow-blur: root.hovered ? 18px : 6px;
-        drop-shadow-offset-y: root.hovered ? 6px : 2px;
+        // No blur at rest: dense full-screen grids stay cheap to repaint.
+        drop-shadow-blur: root.hovered ? 18px : 0px;
+        drop-shadow-offset-y: root.hovered ? 6px : 0px;
         drop-shadow-color: Theme.shadow;
     }
     // Visual only: the tile underneath handles the click, so pointer input and
@@ -119,7 +120,7 @@ export component TileArtwork inherits Rectangle {
         border-radius: self.width / 2;
         background: Theme.accent;
         opacity: root.hovered ? 1 : 0;
-        drop-shadow-blur: 10px;
+        drop-shadow-blur: root.hovered ? 10px : 0px;
         drop-shadow-offset-y: 3px;
         drop-shadow-color: Theme.shadow;
         animate opacity, y { duration: ControlMotion.selection; easing: ease-out; }
@@ -309,6 +310,10 @@ export component ArtistLink inherits Rectangle {
 }
 
 export component SongRow inherits Rectangle {
+    // Queue rows: whether Move up / Move down are possible here.
+    in property <bool> can-move-up: false;
+    in property <bool> can-move-down: false;
+    callback move-by(int);
     in property <bool> editorial: false;
     in property <bool> collection-row: false;
     in property <bool> tile-mode: false;
@@ -453,7 +458,7 @@ export component SongRow inherits Rectangle {
                 }
             }
             if root.collection-row && root.width >= 700px : Text { width: root.width * 0.3; text: root.track.album; color: Theme.muted; font-size: 14px; overflow: elide; }
-            if root.show-duration && (root.collection-row || (root.track.duration != "" && root.track.duration != "—")) : Text { width: root.collection-row ? 52px : 42px; text: root.track.duration; color: Theme.muted; font-size: root.collection-row ? 13px : 11px; horizontal-alignment: right; }
+            if root.show-duration && (root.collection-row || (root.track.duration != "" && root.track.duration != "—")) : Text { width: root.collection-row ? 52px : 42px; text: root.track.duration == "—" ? "" : root.track.duration; color: Theme.muted; font-size: root.collection-row ? 13px : 11px; horizontal-alignment: right; }
             if root.show-menu && root.shared-queue : LibraryButton { width: 30px; height: 30px; show-tooltip: true; caption: "＋"; label: "Add to shared queue: " + root.track.title; light-mode: root.light-mode; enabled: root.enabled && !root.drag-in-progress; clicked => { root.queue(false); } }
             if root.show-menu : LibraryButton { width: 30px; height: 30px; show-tooltip: true; caption: "..."; label: "Actions for " + root.track.title; light-mode: root.light-mode; enabled: root.enabled && !root.drag-in-progress; clicked => { song-menu.show(); } }
         }
@@ -471,6 +476,13 @@ export component SongRow inherits Rectangle {
         ] : root.shared-queue ? [
             { title: "Add to shared queue", code: 1, enabled: root.enabled },
             { title: "Add to playlist…", code: 6, enabled: root.collection-enabled },
+        ] : root.removable && !root.current && root.draggable ? [
+            // Keyboard-reachable reordering alongside drag and drop.
+            { title: "Move up", code: 8, enabled: root.enabled && root.can-move-up },
+            { title: "Move down", code: 9, enabled: root.enabled && root.can-move-down },
+            { title: "Preview song radio", code: 2, enabled: root.enabled },
+            { title: "Add to playlist…", code: 6, enabled: root.collection-enabled },
+            { title: "Remove from queue", code: 3, enabled: root.enabled },
         ] : root.removable && !root.current ? [
             { title: "Preview song radio", code: 2, enabled: root.enabled },
             { title: "Add to playlist…", code: 6, enabled: root.collection-enabled },
@@ -499,6 +511,8 @@ export component SongRow inherits Rectangle {
                 if code == 1 { root.queue(false); }
                 if code == 2 { root.radio(); }
                 if code == 3 && root.removable { root.remove(); }
+                if code == 8 && root.can-move-up { root.move-by(-1); }
+                if code == 9 && root.can-move-down { root.move-by(1); }
                 if code == 6 && root.collection-enabled { root.add-playlist(); }
                 if code == 7 && root.collection-enabled && root.playlist-removable { root.remove-playlist(); }
             }
@@ -570,6 +584,8 @@ export component LibraryEntry inherits Rectangle {
 }
 
 export component HomeCard inherits Rectangle {
+    // "Playlist · 24 songs"; just "Playlist" when YouTube Music sends no detail.
+    private property <string> kind-subtitle: (root.item.kind == "playlist" ? "Playlist" : root.item.kind == "artist" ? "Artist" : "Album") + (root.item.subtitle != "" ? " · " + root.item.subtitle : "");
     in property <bool> editorial: false;
     in property <RecommendationRow> item;
     in property <int> source-index;
@@ -596,13 +612,13 @@ export component HomeCard inherits Rectangle {
     if root.item.kind != "song" && !root.quick : PlaylistTile {
         playlist-cover: root.item.kind == "playlist"; cover-variant: root.item.cover-variant; collection-kind: root.item.kind;
         width: parent.width; height: parent.height; editorial: root.editorial; featured: root.featured;
-        title: root.item.title; subtitle: root.featured ? root.item.subtitle : (root.item.kind == "playlist" ? "Playlist · " : root.item.kind == "artist" ? "Artist · " : "Album · ") + root.item.subtitle; artwork: root.item.artwork;
+        title: root.item.title; subtitle: root.featured ? root.item.subtitle : root.kind-subtitle; artwork: root.item.artwork;
         light-mode: root.light-mode; enabled: root.enabled && (root.item.kind == "playlist" || root.item.kind == "album" || root.item.kind == "artist");
         open => { root.select(root.source-index); }
     }
     if root.item.kind != "song" && root.quick : LibraryEntry {
         playlist-cover: root.item.kind == "playlist"; cover-variant: root.item.cover-variant;
-        width: parent.width; height: parent.height; title: root.item.title; subtitle: (root.item.kind == "playlist" ? "Playlist · " : root.item.kind == "artist" ? "Artist · " : "Album · ") + root.item.subtitle; artwork: root.item.artwork;
+        width: parent.width; height: parent.height; title: root.item.title; subtitle: root.kind-subtitle; artwork: root.item.artwork;
         light-mode: root.light-mode; enabled: root.enabled && (root.item.kind == "playlist" || root.item.kind == "album" || root.item.kind == "artist"); navigable: true;
         open => { root.select(root.source-index); }
     }
@@ -620,7 +636,8 @@ export component RatingButton inherits Rectangle {
         x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
         width: 18px; height: 18px; viewbox-width: 24; viewbox-height: 24;
         fill: root.active ? (root.light-mode ? #c48776 : #a94164) : Colors.transparent;
-        stroke: Theme.muted; stroke-width: 1.5px;
+        // Clearly visible at rest (the like state should read at a glance).
+        stroke: root.active ? Theme.accent-ink : Theme.text.with-alpha(0.82); stroke-width: 1.6px;
         commands: root.negative ? "M 17 14 L 13 21 Q 10 21 11 16 L 11 15 L 5 15 Q 3 15 3.5 13 L 5.5 5 Q 6 3 8 3 L 17 3 Z M 21 14 L 18 14 L 18 3 L 21 3 Z"
             : "M 7 10 L 11 3 Q 14 3 13 8 L 13 9 L 19 9 Q 21 9 20.5 11 L 18.5 19 Q 18 21 16 21 L 7 21 Z M 3 10 L 6 10 L 6 21 L 3 21 Z";
         opacity: root.enabled ? 1 : 0.45;
@@ -726,6 +743,8 @@ export component SidebarCollection inherits Rectangle {
 
 // Wide Home shortcut: cover on the left, title, and a play badge on hover.
 export component QuickTile inherits Rectangle {
+    // Show the play badge at rest, for one-click "Jump back in" shortcuts.
+    in property <bool> play-visible: false;
     in property <string> title;
     in property <string> kind: "playlist";
     in property <int> variant;
@@ -752,11 +771,11 @@ export component QuickTile inherits Rectangle {
         vertical-alignment: center; overflow: elide;
     }
     Rectangle {
-        x: root.width - 46px; y: (root.height - self.height) / 2 + (touch.has-hover ? 0px : 4px);
+        x: root.width - 46px; y: (root.height - self.height) / 2 + (touch.has-hover || root.play-visible ? 0px : 4px);
         width: 34px; height: 34px; border-radius: 17px;
         background: Theme.accent;
-        opacity: touch.has-hover && root.enabled ? 1 : 0;
-        drop-shadow-blur: 8px; drop-shadow-offset-y: 2px; drop-shadow-color: Theme.shadow;
+        opacity: (touch.has-hover || control.has-focus || root.play-visible) && root.enabled ? 1 : 0;
+        drop-shadow-blur: touch.has-hover ? 8px : 0px; drop-shadow-offset-y: 2px; drop-shadow-color: Theme.shadow;
         animate opacity, y { duration: ControlMotion.selection; easing: ease-out; }
         Path {
             x: (parent.width - self.width) / 2 + 1px; y: (parent.height - self.height) / 2;
@@ -765,4 +784,67 @@ export component QuickTile inherits Rectangle {
             commands: "M 7 4 L 20 12 L 7 20 Z";
         }
     }
+}
+
+// Colour tile for browsing a mood or genre, like "Browse all" in other players.
+// Static gradient only: nothing animates while idle.
+export component BrowseTile inherits Rectangle {
+    in property <string> title;
+    in property <int> seed;
+    in property <bool> enabled: true;
+    callback open();
+    height: 96px;
+    border-radius: 10px;
+    clip: true;
+    background: Theme.art(Math.mod(root.seed, 6));
+    opacity: !root.enabled ? 0.5 : touch.has-hover ? 0.88 : 1;
+    border-width: control.has-focus ? 2px : 0px;
+    border-color: Theme.focus;
+    animate opacity { duration: ControlMotion.feedback; easing: ease-out; }
+    touch := TouchArea {
+        enabled: root.enabled; mouse-cursor: pointer;
+        control := Button { width: parent.width; height: parent.height; opacity: 0; text: ""; enabled: root.enabled; accessible-label: "Browse " + root.title; clicked => { root.open(); } }
+    }
+    // A soft dark wash behind the label keeps white text readable on bright
+    // gradients (orange, teal) as well as dark ones.
+    Rectangle {
+        width: root.width; height: root.height;
+        background: @linear-gradient(160deg, #00000059 0%, #00000000 100%);
+    }
+    // A distinct mark per tile, so neighbouring tiles differ beyond colour.
+    Path {
+        x: root.width - self.width - 14px; y: root.height - self.height - 12px;
+        width: 40px; height: 40px; viewbox-width: 24; viewbox-height: 24;
+        fill: transparent; stroke: #ffffff8c; stroke-width: 1.8px;
+        commands: Math.mod(root.seed, 4) == 0 ? "M 9 18 L 9 5 L 20 3 L 20 16 M 9 18 C 9 22 3 22 3 19 C 3 16 9 15 9 18 Z M 20 16 C 20 20 14 20 14 17 C 14 14 20 13 20 16 Z"
+            : Math.mod(root.seed, 4) == 1 ? "M 3 12 L 6 12 M 8 7 L 8 17 M 12 4 L 12 20 M 16 8 L 16 16 M 20 11 L 20 13"
+            : Math.mod(root.seed, 4) == 2 ? "M 12 3 A 9 9 0 1 0 12 21 A 9 9 0 1 0 12 3 Z M 12 9 A 3 3 0 1 0 12 15 A 3 3 0 1 0 12 9 Z"
+            : "M 4 14 A 8 8 0 0 1 20 14 L 20 19 L 16 19 L 16 14 L 20 14 M 4 14 L 4 19 L 8 19 L 8 14 L 4 14";
+    }
+    Text {
+        x: 16px; y: 14px; width: root.width - 32px;
+        text: root.title; color: #ffffff; font-size: 19px; font-weight: 800; overflow: elide;
+    }
+}
+
+// Rounded filter chip; a quick way into music without typing.
+export component MoodChip inherits Rectangle {
+    in property <string> title;
+    in property <bool> enabled: true;
+    callback open();
+    height: 34px;
+    // Long or right-to-left labels (recent searches) stay inside the chip.
+    width: min(240px, label.preferred-width + 28px);
+    border-radius: 17px;
+    clip: true;
+    background: control.pressed ? Theme.pressed : touch.has-hover ? Theme.hover : Theme.raised;
+    border-width: control.has-focus ? 2px : 1px;
+    border-color: control.has-focus ? Theme.focus : Theme.outline;
+    opacity: root.enabled ? 1 : 0.5;
+    animate background { duration: ControlMotion.feedback; easing: ease-out; }
+    touch := TouchArea {
+        enabled: root.enabled; mouse-cursor: pointer;
+        control := Button { width: parent.width; height: parent.height; opacity: 0; text: ""; enabled: root.enabled; accessible-label: "Find " + root.title + " music"; clicked => { root.open(); } }
+    }
+    label := Text { x: 14px; width: root.width - 28px; height: root.height; text: root.title; color: Theme.text; font-size: 13px; font-weight: 600; vertical-alignment: center; horizontal-alignment: center; overflow: elide; }
 }

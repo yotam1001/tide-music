@@ -11,10 +11,12 @@ pub struct Group {
 pub enum Layout {
     Tiles,
     Compact,
+    /// Quick picks: one sideways row of small square song cards.
+    Picks,
 }
 
 pub fn home_groups(labels: &[String], columns: usize) -> Vec<Group> {
-    let columns = columns.clamp(1, 6);
+    let columns = columns.clamp(1, 8);
     let mut groups = Vec::new();
     let mut section = 0;
     while section < labels.len() {
@@ -25,8 +27,16 @@ pub fn home_groups(labels: &[String], columns: usize) -> Vec<Group> {
         // Shelves read as cover cards, as on YouTube Music; "Quick picks" is
         // a scannable song list there, so it stays compact.
         let quick_picks = labels[section].trim().eq_ignore_ascii_case("quick picks");
-        let tiles = columns >= 3 && end - section >= 2 && !quick_picks;
-        let row_size = if tiles { columns } else { columns.min(2) };
+        // A lone item still reads as a card instead of a half-empty list row.
+        let tiles = columns >= 3 && !quick_picks;
+        let picks = columns >= 3 && quick_picks;
+        // Card shelves (and Quick picks) are one row that scrolls sideways,
+        // as in Spotify and YouTube Music. Narrow windows use paired rows.
+        let row_size = if tiles || picks {
+            end - section
+        } else {
+            columns.min(2)
+        };
         let mut start = section;
         while start < end {
             let count = (end - start).min(row_size);
@@ -40,6 +50,8 @@ pub fn home_groups(labels: &[String], columns: usize) -> Vec<Group> {
                 },
                 layout: if tiles {
                     Layout::Tiles
+                } else if picks {
+                    Layout::Picks
                 } else {
                     Layout::Compact
                 },
@@ -67,7 +79,7 @@ mod tests {
         .into_iter()
         .map(str::to_owned)
         .collect();
-        for columns in 1..=6 {
+        for columns in 1..=8 {
             let groups = home_groups(&labels, columns);
             let indices: Vec<_> = groups
                 .iter()
@@ -75,7 +87,12 @@ mod tests {
                 .collect();
             assert_eq!(indices, (0..labels.len()).collect::<Vec<_>>());
             assert_eq!(groups.iter().filter(|g| !g.title.is_empty()).count(), 3);
-            assert!(groups.iter().all(|g| g.count <= columns));
+            // Wide windows: one scrolling shelf per section. Narrow: paired rows.
+            if columns >= 3 {
+                assert_eq!(groups.len(), 3);
+            } else {
+                assert!(groups.iter().all(|g| g.count <= columns));
+            }
             let expected = if columns >= 3 {
                 Layout::Tiles
             } else {
@@ -84,9 +101,12 @@ mod tests {
             assert_eq!(groups[0].layout, expected);
         }
         let picks = home_groups(&vec!["Quick picks".into(); 6], 6);
-        assert!(picks
-            .iter()
-            .all(|g| g.layout == Layout::Compact && g.count <= 2));
+        assert_eq!(picks.len(), 1);
+        assert_eq!((picks[0].layout, picks[0].count), (Layout::Picks, 6));
+        let narrow = home_groups(&vec!["Quick picks".into(); 6], 2);
+        assert!(narrow.iter().all(|g| g.layout == Layout::Compact && g.count <= 2));
+        let lone = home_groups(&["Listen again".into()], 6);
+        assert_eq!(lone[0].layout, Layout::Tiles);
         assert!(home_groups(&[], 0).is_empty());
     }
     #[test]

@@ -2,7 +2,7 @@
 import { LineEdit, ListView } from "std-widgets.slint";
 import { TrackRow } from "model.slint";
 import { Theme, LayoutMetrics, PreferenceRow, LibraryButton } from "theme.slint";
-import { EmptyState, ActionMenu, SongRow } from "components.slint";
+import { EmptyState, ActionMenu, SongRow, Cover } from "components.slint";
 
 // Each row tests the captured pointer against its actual bounds, including section
 // headings. Coordinates are window-relative so scrolling does not shift the pointer.
@@ -29,6 +29,9 @@ export component QueueItem inherits Rectangle {
     callback select();
     callback remove();
     callback requeue(bool);
+    in property <bool> can-move-up: false;
+    in property <bool> can-move-down: false;
+    callback move-by(int);
     callback radio();
     callback artist();
     callback hit(int, bool);
@@ -72,6 +75,9 @@ export component QueueItem inherits Rectangle {
             select => { root.select(); }
             remove => { root.remove(); }
             queue(next) => { root.requeue(next); }
+            can-move-up: root.can-move-up;
+            can-move-down: root.can-move-down;
+            move-by(delta) => { root.move-by(delta); }
             radio => { root.radio(); }
             artist => { root.artist(); }
             add-playlist => { root.add-playlist(); }
@@ -194,7 +200,8 @@ export component QueueDrawer inherits Rectangle {
         if root.related-open : ListView {
             vertical-stretch: 1; accessible-label: "Related songs";
             for track[index] in root.related-rows : HorizontalLayout {
-                height: 50px; spacing: 8px; cross-axis-alignment: center;
+                height: 56px; spacing: 12px; cross-axis-alignment: center;
+                Cover { width: 40px; height: 40px; artwork: track.artwork; light-mode: root.light-mode; seed: track.title; }
                 VerticalLayout {
                     horizontal-stretch: 1; min-width: 0px; alignment: center;
                     Text { text: track.title; overflow: elide; color: Theme.text; font-size: 14px; }
@@ -263,6 +270,10 @@ export component QueueDrawer inherits Rectangle {
                     select => { root.select(self.index); }
                     remove => { root.remove(self.index); }
                     requeue(next) => { root.requeue(self.index, next); }
+                    // Moves stay within the song's own section, as with dragging.
+                    can-move-up: !root.filtering && self.index - 1 > root.current-index && root.rows[self.index - 1].recommended == self.track.recommended;
+                    can-move-down: !root.filtering && self.index + 1 < root.rows.length && root.rows[self.index + 1].recommended == self.track.recommended;
+                    move-by(delta) => { root.cancel-drag(); root.reorder(self.index, self.index + delta); }
                     radio => { root.radio(self.index); }
                     artist => { root.artist(self.index); }
                     add-playlist => { root.add-playlist(self.index); }

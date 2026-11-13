@@ -11,6 +11,21 @@ pub(super) fn format_duration(value: Option<u64>) -> String {
     }
 }
 
+/// Total length of a list, as "21 min" or "1 hr 32 min"; empty when no song
+/// has a known length, so the header never shows a made-up total.
+pub(super) fn format_runtime(tracks: &[tide_core::Track]) -> String {
+    let total: u64 = tracks.iter().filter_map(|t| t.duration_seconds).sum();
+    if total == 0 {
+        return String::new();
+    }
+    let minutes = (total + 30) / 60;
+    match minutes {
+        0 => "under 1 min".into(),
+        m if m < 60 => format!("{m} min"),
+        m => format!("{} hr {} min", m / 60, m % 60),
+    }
+}
+
 pub(super) fn remember_duration(
     queue: &mut Queue,
     generation: u64,
@@ -45,6 +60,22 @@ mod tests {
         assert_eq!(format_duration(Some(245)), "4:05");
         assert_eq!(format_duration(None), "—");
         assert_eq!(format_duration(Some(0)), "—");
+    }
+    #[test]
+    fn runtime_sums_known_lengths_and_stays_empty_without_any() {
+        let track = |seconds| tide_core::Track {
+            artists: Vec::new(),
+            title: "song".into(),
+            artist: String::new(),
+            album: String::new(),
+            source: String::new(),
+            duration_seconds: seconds,
+            artwork_url: None,
+            recommended: false,
+        };
+        assert_eq!(format_runtime(&[track(None)]), "");
+        assert_eq!(format_runtime(&[track(Some(600)), track(None), track(Some(660))]), "21 min");
+        assert_eq!(format_runtime(&[track(Some(3600)), track(Some(1920))]), "1 hr 32 min");
     }
     #[test]
     fn late_snapshot_cannot_update_another_song_and_metadata_survives_restart() {

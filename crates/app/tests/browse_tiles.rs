@@ -114,6 +114,7 @@ fn cover_grid_and_list_preserve_playlist_actions() {
                         layout: match g.layout {
                             browse_layout::Layout::Compact => "compact",
                             browse_layout::Layout::Tiles => "tiles",
+                            browse_layout::Layout::Picks => "picks",
                         }
                         .into(),
                     })
@@ -148,7 +149,7 @@ fn cover_grid_and_list_preserve_playlist_actions() {
             assert!(!ui.get_library_grid());
             render(&window, width, light, "library-list");
             selected.set((-1, -1));
-            click(&ui, left + 100.0, 310.0);
+            click(&ui, left + 100.0, 358.0);
             assert_eq!(
                 selected.get(),
                 (1, 0),

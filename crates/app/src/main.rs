@@ -29,6 +29,7 @@ mod jam;
 #[cfg(feature = "experimental-jams")]
 mod jam_session;
 mod library_browse;
+mod library_view;
 mod listening;
 mod lyrics;
 mod metadata;
@@ -269,6 +270,11 @@ struct State {
     detail_tracks: Vec<Track>,
     related_tracks: Vec<Track>,
     detail_cover_url: Option<String>,
+    /// The playlist or album shown in detail, for "Save to library".
+    detail_save_target: Option<String>,
+    /// First card on screen in each paged Home shelf (by the shelf's first
+    /// recommendation index), so covers load where the listener has scrolled.
+    home_shelf_first: std::collections::HashMap<usize, usize>,
     artist_page: artists::Page,
     artist_album_back: Option<artists::AlbumBack>,
     artist_origin: Option<artists::Origin>,
@@ -296,6 +302,49 @@ struct State {
 }
 
 type LibraryResult = Result<tide_provider::Response, String>;
+/// Leave the maximized state, then resize on the next event-loop turn: Windows
+/// applies the un-maximize asynchronously and would otherwise restore the old
+/// size over the requested one.
+fn resize_after_unmaximize(u: &AppWindow, size: slint::LogicalSize) {
+    if !u.window().is_maximized() {
+        u.window().set_size(size);
+        return;
+    }
+    u.window().set_maximized(false);
+    let weak = u.as_weak();
+    slint::Timer::single_shot(Duration::ZERO, move || {
+        if let Some(u) = weak.upgrade() {
+            u.window().set_size(size);
+        }
+    });
+}
+
+/// Maximize once the native window exists. A request made before the window
+/// is created is dropped, so retry briefly until Windows reports it.
+fn maximize_when_ready(u: &AppWindow) {
+    fn attempt(weak: slint::Weak<AppWindow>, left: u32) {
+        slint::Timer::single_shot(Duration::from_millis(50), move || {
+            let Some(u) = weak.upgrade() else { return };
+            if u.get_collapsed() || u.get_compact_mode() || u.window().is_maximized() {
+                return;
+            }
+            u.window().set_maximized(true);
+            if left > 0 {
+                attempt(u.as_weak(), left - 1);
+            }
+        });
+    }
+    attempt(u.as_weak(), 20);
+}
+
+/// Return to a remembered window state; unknown state means full screen.
+fn restore_window(u: &AppWindow, previous: Option<(bool, slint::LogicalSize)>) {
+    match previous {
+        Some((false, size)) => u.window().set_size(size),
+        _ => u.window().set_maximized(true),
+    }
+}
+
 fn local_controls_allowed(state: &State) -> bool {
     #[cfg(feature = "experimental-jams")]
     {
@@ -512,10 +561,24 @@ fn request_library_view(
                 tide_provider::Request::Liked => "liked",
                 tide_provider::Request::Supermix => "supermix",
                 tide_provider::Request::Radio { .. } => "radio",
+                tide_provider::Request::Album { .. } => "album",
                 _ => "",
             }
             .into(),
         );
+        s.detail_save_target = match &request {
+            tide_provider::Request::Playlist { id } | tide_provider::Request::Album { id } => {
+                Some(id.clone())
+            }
+            _ => None,
+        };
+        u.set_detail_saved(false);
+        // Playlists already in the library (own or saved) need no Save button.
+        let in_library = s
+            .detail_save_target
+            .as_ref()
+            .is_some_and(|id| s.library_playlists.iter().any(|p| &p.id == id));
+        u.set_detail_savable(s.detail_save_target.is_some() && !in_library);
         let cover_id = match &request {
             tide_provider::Request::Playlist { id } | tide_provider::Request::Album { id } => {
                 Some(id.as_str())
@@ -1197,10 +1260,18 @@ fn refresh_library_models(s: &State, u: &AppWindow) {
     let mut artwork = s.artwork.borrow_mut();
     let row_height = u.global::<LayoutMetrics>().get_browse_row_height();
     let columns = u.get_library_columns().max(1) as usize;
-    let playlist_images = artwork_view::grid_visible_range(
+    let library_filter = u.get_library_filter().to_string();
+    let playlist_order = library_view::order(
+        s.library_playlists
+            .iter()
+            .map(|p| (p.title.as_str(), p.subtitle.as_str())),
+        &library_filter,
+        u.get_library_sort(),
+    );
+    let playlist_positions = artwork_view::grid_visible_range(
         u.get_library_artwork_y(),
         u.get_library_artwork_height(),
-        s.library_playlists.len(),
+        playlist_order.len(),
         columns,
         if u.get_library_tiles() {
             u.global::<LayoutMetrics>().get_library_tile_height()
@@ -1232,6 +1303,9 @@ fn refresh_library_models(s: &State, u: &AppWindow) {
                 browse_layout::Layout::Tiles => {
                     u.global::<LayoutMetrics>().get_library_tile_height()
                 }
+                browse_layout::Layout::Picks => {
+                    u.global::<LayoutMetrics>().get_home_pick_height()
+                }
             }) + u.global::<LayoutMetrics>().get_home_row_gap()
                 + if g.title.is_empty() {
                     0.0
@@ -1240,7 +1314,9 @@ fn refresh_library_models(s: &State, u: &AppWindow) {
                 }
         }),
     );
-    let home_images = artwork_view::group_image_range(&home_groups, visible_groups);
+    let home_images = artwork_view::group_image_range(&home_groups, visible_groups, |start| {
+        s.home_shelf_first.get(&start).copied().unwrap_or(0)
+    });
     u.set_home_browse_rows(update_model(
         u.get_home_browse_rows(),
         home_groups
@@ -1252,10 +1328,17 @@ fn refresh_library_models(s: &State, u: &AppWindow) {
                 layout: match g.layout {
                     browse_layout::Layout::Compact => "compact",
                     browse_layout::Layout::Tiles => "tiles",
+                    browse_layout::Layout::Picks => "picks",
                 }
                 .into(),
             })
             .collect(),
+    ));
+    let playlist_images: std::collections::HashSet<usize> =
+        playlist_positions.map(|position| playlist_order[position]).collect();
+    u.set_library_order(update_model(
+        u.get_library_order(),
+        playlist_order.iter().map(|&index| index as i32).collect(),
     ));
     let sidebar_count = sidebar_playlist_count(s);
     u.set_sidebar_playlist_count(sidebar_count as i32);
@@ -1317,10 +1400,23 @@ fn refresh_library_models(s: &State, u: &AppWindow) {
         .collect();
     u.set_recommendations(update_model(u.get_recommendations(), cards));
     let columns = u.get_library_browse_columns().max(1) as usize;
-    let images = artwork_view::grid_visible_range(
+    let card_order = library_view::order(
+        s.library_browse
+            .cards
+            .iter()
+            .map(|c| (c.title.as_str(), c.subtitle.as_str())),
+        &library_filter,
+        // History keeps its listening order.
+        if u.get_library_section() == 3 {
+            library_view::SORT_RECENT
+        } else {
+            u.get_library_sort()
+        },
+    );
+    let card_positions = artwork_view::grid_visible_range(
         u.get_library_artwork_y(),
         u.get_library_artwork_height(),
-        s.library_browse.cards.len(),
+        card_order.len(),
         columns,
         if u.get_library_tiles() && u.get_library_section() != 3 {
             u.global::<LayoutMetrics>().get_library_tile_height()
@@ -1328,6 +1424,12 @@ fn refresh_library_models(s: &State, u: &AppWindow) {
             row_height
         },
     );
+    let images: std::collections::HashSet<usize> =
+        card_positions.map(|position| card_order[position]).collect();
+    u.set_library_card_order(update_model(
+        u.get_library_card_order(),
+        card_order.iter().map(|&index| index as i32).collect(),
+    ));
     let cards = s
         .library_browse
         .cards
@@ -1559,6 +1661,7 @@ fn refresh_content_models(s: &State, u: &AppWindow) {
             &selected,
         ),
     ));
+    u.set_detail_runtime(metadata::format_runtime(&s.detail_tracks).into());
     u.set_search_rows(update_model(
         u.get_search_rows(),
         content_rows(
@@ -2654,6 +2757,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         detail_tracks: Vec::new(),
         related_tracks: Vec::new(),
         detail_cover_url: None,
+        detail_save_target: None,
+        home_shelf_first: std::collections::HashMap::new(),
         artist_page: Default::default(),
         artist_album_back: None,
         artist_origin: None,
@@ -3711,6 +3816,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         });
     }
+    {
+        let state = state.clone();
+        let weak = ui.as_weak();
+        ui.on_home_shelf_scrolled(move |start, first| {
+            if let Some(u) = weak.upgrade() {
+                let (Ok(start), Ok(first)) = (usize::try_from(start), usize::try_from(first)) else {
+                    return;
+                };
+                let mut s = state.borrow_mut();
+                if s.home_shelf_first.get(&start) != Some(&first) {
+                    s.home_shelf_first.insert(start, first);
+                    refresh_library_models(&s, &u);
+                }
+            }
+        });
+    }
+    {
+        let state = state.clone();
+        let weak = ui.as_weak();
+        ui.on_library_filter_changed(move || {
+            if let Some(u) = weak.upgrade() {
+                u.set_library_artwork_y(0.0);
+                refresh_library_models(&state.borrow(), &u);
+            }
+        });
+    }
     bind!(on_toggle_library_view, |s, u| {
         s.settings.library_grid = !u.get_library_grid();
         u.set_library_grid(s.settings.library_grid);
@@ -3718,15 +3849,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         refresh_library_models(&s, &u);
         save(&s.settings);
     });
+    // The full window's state before compact mode: maximized, or its size.
+    // None (e.g. Tide started in compact mode) returns to full screen.
+    let before_compact: Rc<Cell<Option<(bool, slint::LogicalSize)>>> = Rc::new(Cell::new(None));
+    let compact_memory = before_compact.clone();
     bind!(on_toggle_compact, |s, u| {
         s.settings.compact_mode = !u.get_compact_mode();
         u.set_compact_mode(s.settings.compact_mode);
         if !u.get_collapsed() {
-            u.window().set_size(if s.settings.compact_mode {
-                slint::LogicalSize::new(780.0, 720.0)
+            if s.settings.compact_mode {
+                compact_memory.set(Some((
+                    u.window().is_maximized(),
+                    u.window().size().to_logical(u.window().scale_factor()),
+                )));
+                resize_after_unmaximize(&u, slint::LogicalSize::new(780.0, 720.0));
             } else {
-                slint::LogicalSize::new(1140.0, 800.0)
-            });
+                restore_window(&u, compact_memory.take());
+            }
         }
         save(&s.settings);
     });
@@ -3862,20 +4001,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let weak = ui.as_weak();
         let restored_size = Rc::new(RefCell::new(slint::LogicalSize::new(1140.0, 800.0)));
+        let restored_maximized = Rc::new(Cell::new(false));
         ui.on_collapse_player(move || {
             if let Some(u) = weak.upgrade() {
                 let c = !u.get_collapsed();
                 if c {
                     *restored_size.borrow_mut() =
                         u.window().size().to_logical(u.window().scale_factor());
+                    restored_maximized.set(u.window().is_maximized());
                 }
                 u.set_collapsed(c);
-                u.window().set_size(if c {
-                    slint::LogicalSize::new(700.0, if u.get_jam_active() { 166.0 } else { 132.0 })
+                if c {
+                    resize_after_unmaximize(
+                        &u,
+                        slint::LogicalSize::new(700.0, if u.get_jam_active() { 166.0 } else { 132.0 }),
+                    );
                 } else {
                     let size = *restored_size.borrow();
-                    slint::LogicalSize::new(size.width.max(650.0), size.height.max(420.0))
-                });
+                    // Compact mode may have been chosen meanwhile; it never maximizes.
+                    restore_window(
+                        &u,
+                        Some((
+                            restored_maximized.get() && !u.get_compact_mode(),
+                            slint::LogicalSize::new(size.width.max(650.0), size.height.max(420.0)),
+                        )),
+                    );
+                }
                 u.window().request_redraw();
             }
         });
@@ -4475,6 +4626,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             u.set_error_is_account(false);
                             u.set_error_message("".into());
                             s.library_playlists = order_library(playlists.into_iter().take(200).collect());
+                            u.set_library_loaded(true);
                             u.set_library_artwork_y(0.0);
                             u.set_library_artwork_y(0.0);
                             u.set_account_name(account.into());
@@ -4500,7 +4652,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             request_library(&mut s, &u, &library_tx, tide_provider::Request::Home);
                         }
                         Ok(tide_provider::Response::Explore { cards, categories, categories_available, truncated }) => {
-                            library_browse::receive_explore(&mut s, &u, cards, categories, categories_available, truncated);
+                            library_browse::receive_explore(&mut s, &u, &library_tx, cards, categories, categories_available, truncated);
                         }
                         Ok(tide_provider::Response::Mood { cards, truncated }) => {
                             library_browse::receive(&mut s, &u, tide_provider::BrowseSection::Explore, cards, truncated);
@@ -4515,6 +4667,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 continue;
                             }
                             s.recommendations = selected;
+                            s.home_shelf_first.clear();
                             u.set_home_artwork_y(0.0);
                             refresh_library_models(&s, &u);
                             u.set_account_status(
@@ -5022,7 +5175,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     artwork_url: None,
                     id: "PLfixture".into(),
                     title: "Late night focus".into(),
-                    subtitle: "24 tracks".into(),
+                    subtitle: "5 tracks".into(),
                 },
                 tide_provider::Playlist {
                     owned: true,
@@ -5032,41 +5185,79 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     subtitle: "56 tracks".into(),
                 },
             ];
-            s.recommendations = vec![
+            // Synthetic Home in the shape YouTube Music returns: several
+            // full shelves, so screenshots reflect real use rather than
+            // one card per shelf.
+            let card = |id: &str, title: &str, subtitle: &str, kind: &str, shelf: &str| {
                 tide_provider::Card {
                     artists: Vec::new(),
                     duration_seconds: None,
                     featured_artwork_url: None,
                     artwork_url: None,
-                    id: "fixture0001".into(),
-                    title: "A Quiet Sun".into(),
-                    subtitle: "True North".into(),
-                    kind: "song".into(),
-                    shelf: "Listen again".into(),
-                },
-                tide_provider::Card {
-                    artists: Vec::new(),
-                    duration_seconds: None,
-                    featured_artwork_url: None,
-                    artwork_url: None,
-                    id: "PLfixture".into(),
-                    title: "Your evening mix".into(),
-                    subtitle: "A mix for you".into(),
-                    kind: "playlist".into(),
-                    shelf: "For you".into(),
-                },
-                tide_provider::Card {
-                    artists: Vec::new(),
-                    duration_seconds: None,
-                    featured_artwork_url: None,
-                    artwork_url: None,
-                    id: "MPREfixture".into(),
-                    title: "Midnight Geometry".into(),
-                    subtitle: "Echo Frame".into(),
-                    kind: "album".into(),
-                    shelf: "Recommended albums".into(),
-                },
-            ];
+                    id: id.into(),
+                    title: title.into(),
+                    subtitle: subtitle.into(),
+                    kind: kind.into(),
+                    shelf: shelf.into(),
+                }
+            };
+            let mut cards = Vec::new();
+            for (i, (title, artist)) in [
+                ("A Quiet Sun", "True North"),
+                ("Hollow Coast", "Echo Frame"),
+                ("Tide Lines", "Nova Wells"),
+                ("Paper Lanterns", "Maris"),
+                ("Northbound", "Glass Harbour"),
+                ("Slow Static", "Echo Frame"),
+                ("Low Orbit", "Kites at Dusk"),
+                ("Drift", "Nova Wells"),
+                ("Still Here", "Maris"),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                cards.push(card(&format!("fixqp{i:06}"), title, artist, "song", "Quick picks"));
+            }
+            for (i, (title, subtitle, kind)) in [
+                ("Late night focus", "5 songs", "playlist"),
+                ("Red Terrain", "Nova Wells", "album"),
+                ("Your evening mix", "Made for you", "playlist"),
+                ("Midnight Geometry", "Echo Frame", "album"),
+                ("Weekend favourites", "56 songs", "playlist"),
+                ("Lower Light", "True North", "album"),
+                ("Coastline radio", "From Hollow Coast", "playlist"),
+                ("Morning run", "32 songs", "playlist"),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                cards.push(card(&format!("PLfixla{i}"), title, subtitle, kind, "Listen again"));
+            }
+            for (i, title) in [
+                "Discover mix", "Chill mix", "Focus mix", "Energy mix",
+                "Throwback mix", "Indie mix", "Late night mix", "Replay mix",
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                cards.push(card(&format!("PLfixmx{i}"), title, "Made for you", "playlist", "Mixed for you"));
+            }
+            for (i, (title, artist)) in [
+                ("Glass Harbour", "Glass Harbour"),
+                ("Kites at Dusk", "Kites at Dusk"),
+                ("Salt & Signal", "Maris"),
+                ("Afterglow Tapes", "Echo Frame"),
+                ("Field Notes", "True North"),
+                ("Neon Tidal", "Nova Wells"),
+                ("Quiet Machines", "Low Orbit"),
+                ("Harbour Lights", "Glass Harbour"),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                cards.push(card(&format!("MPREfix{i}"), title, artist, "album", "Recommended albums"));
+            }
+            s.recommendations = cards;
             refresh_library_models(&s, &ui);
             ui.set_library_open(true);
             ui.set_account_connected(true);
@@ -5079,7 +5270,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 tracks: vec![
                     Track {
                         artists: Vec::new(),
-                        duration_seconds: None,
+                        duration_seconds: Some(214),
                         artwork_url: None,
                         recommended: false,
                         title: "Tide Lines".into(),
@@ -5089,7 +5280,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     },
                     Track {
                         artists: Vec::new(),
-                        duration_seconds: None,
+                        duration_seconds: Some(187),
                         artwork_url: None,
                         recommended: false,
                         title: "Hollow Coast".into(),
@@ -5099,7 +5290,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     },
                     Track {
                         artists: Vec::new(),
-                        duration_seconds: None,
+                        duration_seconds: Some(251),
                         artwork_url: None,
                         recommended: false,
                         title: "A Quiet Sun / An intentionally long title for layout verification"
@@ -5110,7 +5301,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     },
                     Track {
                         artists: Vec::new(),
-                        duration_seconds: None,
+                        duration_seconds: Some(199),
                         artwork_url: None,
                         recommended: false,
                         title: "Still Here".into(),
@@ -5120,7 +5311,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     },
                     Track {
                         artists: Vec::new(),
-                        duration_seconds: None,
+                        duration_seconds: Some(242),
                         artwork_url: None,
                         recommended: false,
                         title: "Drift".into(),
@@ -5133,6 +5324,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
             refresh(&ui, &s);
             ui.set_status_text("Visual test data · playback inactive".into());
+            // The playing list and a few past searches, as in real use.
+            ui.set_queue_source("Late night focus".into());
+            s.settings.recent_searches = vec!["night drive".into(), "Nova Wells".into(), "lofi beats".into()];
+            ui.set_recent_searches(recent_model(&s.settings));
         }
         {
             let mut s = state.borrow_mut();
@@ -5360,10 +5555,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             33.0,
             "Volume display must follow the slider"
         );
-        ui.window().set_size(slint::LogicalSize::new(1200.0, 800.0));
+        // `--smoke-size 1920x1040` captures the full-screen layout.
+        let (smoke_width, smoke_height) = std::env::args()
+            .skip_while(|a| a != "--smoke-size")
+            .nth(1)
+            .and_then(|size| {
+                let (w, h) = size.split_once('x')?;
+                Some((w.parse::<f32>().ok()?, h.parse::<f32>().ok()?))
+            })
+            .unwrap_or((1200.0, 800.0));
+        // `--smoke-size max` starts maximized like a normal launch, exercising
+        // the native maximize, compact and mini-player restore paths.
+        let smoke_maximized = std::env::args()
+            .skip_while(|a| a != "--smoke-size")
+            .nth(1)
+            .is_some_and(|size| size == "max");
+        if smoke_maximized {
+            maximize_when_ready(&ui);
+        } else {
+            ui.window().set_size(slint::LogicalSize::new(smoke_width, smoke_height));
+        }
         smoke_timer.start(
             slint::TimerMode::Repeated,
-            Duration::from_secs(2),
+            // Room for the queue drag checks to finish before the next capture,
+            // even at full-screen sizes on the software renderer.
+            Duration::from_secs(5),
             move || {
                 let Some(u) = weak.upgrade() else {
                     return;
@@ -5396,6 +5612,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 match *i {
                     0 => {
+                        if smoke_maximized {
+                            assert!(u.window().is_maximized(), "Tide must open maximized");
+                            println!("PASS: Tide opens maximized");
+                        }
                         let size = u.window().size();
                         u.invoke_switch_mode();
                         assert_eq!(size, u.window().size(), "Theme must preserve window size");
@@ -5409,11 +5629,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         u.set_library_open(true);
                     }
                     3 => {
+                        // Leaving compact returns to the window state from before it.
                         u.invoke_toggle_compact();
                         u.invoke_switch_mode();
                         u.set_detail_open(true);
                     }
                     4 => {
+                        if smoke_maximized {
+                            assert!(u.window().is_maximized(), "Leaving compact must return to full screen");
+                            println!("PASS: leaving compact mode returns to the maximized window");
+                        } else {
+                            let size = u.window().size().to_logical(u.window().scale_factor());
+                            // Windows may clip the height to the work area above the taskbar.
+                            assert!(
+                                size.width == smoke_width && size.height > 720.0 && size.height <= smoke_height,
+                                "Leaving compact must restore the previous size, got {size:?}"
+                            );
+                        }
                         u.set_detail_open(false);
                         u.set_search_open(true);
                     }
@@ -5530,6 +5762,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         u.set_home_open(true);
                     }
                     10 => {
+                        if smoke_maximized {
+                            assert!(u.window().is_maximized(), "Mini player Restore must return to full screen");
+                            println!("PASS: maximized -> mini player -> Restore returns to the maximized window");
+                        }
                         u.set_settings_open(false);
                         u.set_queue_open(false);
                         // Synthetic lyrics show Now Playing's live preview.
@@ -5705,6 +5941,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let performance = performance_args
         .map(|(output, source)| performance::start(state.clone(), &ui, output, source));
     let _updater = updater::wire(&ui, !state.borrow().settings.transient);
+    // Open full screen (maximized), like other desktop players. Compact mode
+    // keeps its small window, and tests keep their fixed sizes. The request
+    // waits for the event loop so the native window exists.
+    if !test_mode && !state.borrow().settings.compact_mode {
+        maximize_when_ready(&ui);
+    }
     let result = if listening_seconds.is_some() || smoke_autoplay_depletion {
         ui.hide()?;
         slint::run_event_loop_until_quit()
