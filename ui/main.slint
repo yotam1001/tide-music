@@ -367,7 +367,25 @@ export component AppWindow inherits Window {
     // The large cover header collapses into the compact title bar once the
     // track list scrolls, so the list gets the room, as in other players.
     private property <bool> detail-cover-visible: (root.detail-has-cover || root.detail-navigation == "liked" || root.detail-navigation == "radio")
-        && !root.detail-is-artist && root.sidebar-profile && root.detail-artwork-y > -24px;
+        && !root.detail-is-artist && root.sidebar-profile && !root.detail-scrolled;
+    // Latched from the scroll position in a change handler, never read by a
+    // layout binding: the header's size changes the list's geometry, which
+    // clamps the scroll position, so binding one to the other is a cycle that
+    // Slint aborts ("Recursion detected") while scrolling.
+    private property <bool> detail-scrolled: false;
+    // Height the list gains when the header collapses (180px to 48px).
+    private property <length> detail-header-room: 132px;
+    private property <length> detail-list-height: (root.detail-filter == "" ? root.detail-rows.length : root.detail-matches.length) * root.detail-row-height;
+    changed detail-artwork-y => {
+        if root.detail-scrolled {
+            if root.detail-artwork-y > -4px { root.detail-scrolled = false; }
+        } else if root.detail-artwork-y < -24px
+            // Collapse only if the list stays scrolled once it is taller;
+            // otherwise the clamp reopens the header and it flickers.
+            && root.detail-list-height - root.detail-artwork-height - root.detail-header-room >= -root.detail-artwork-y {
+            root.detail-scrolled = true;
+        }
+    }
     out property <string> active-navigation: root.jam-open ? "jams" : root.detail-open ? (root.detail-is-artist ? "" : root.detail-navigation) : root.search-open ? "" : root.library-open ? "library" : "home";
     in property <string> detail-note;
     in property <[TrackRow]> detail-rows;
@@ -881,7 +899,7 @@ export component AppWindow inherits Window {
                                 if !root.detail-is-artist && root.detail-rows.length > 0 && (root.detail-filter == "" || root.detail-matches.length > 0) : ListView {
                                     content-y <=> root.detail-artwork-y;
                                     changed visible-height => { root.detail-artwork-height = self.visible-height; }
-                                    vertical-stretch: 1;
+                                                                        vertical-stretch: 1;
                                     accessible-label: "Tracks in " + root.detail-title;
                                     for visible-index in (root.detail-filter == "" ? root.detail-rows.length : root.detail-matches.length) : SongRow {
                                         private property <int> source-index: root.detail-filter == "" ? visible-index : root.detail-matches[visible-index]; collection-row: root.detail-has-cover && !root.detail-is-artist; shared-queue: root.jam-guest; collection-enabled: root.collection-enabled && !root.collection-busy; playlist-removable: root.detail-editable && self.source-index < root.detail-editable-entries.length && root.detail-editable-entries[self.source-index]; enabled: root.browsing-enabled; track: root.detail-rows[self.source-index]; index: self.source-index; light-mode: root.light-mode; now-playing: root.current-index >= 0 && self.track.title == root.track-title && self.track.artist == root.track-artist; live: !root.paused; select => { root.select-detail-track(self.source-index); } queue(next) => { root.queue-detail-track(self.source-index, next); } radio => { root.start-track-radio(1, self.source-index); } artist => { root.open-artist(1, self.source-index); } add-playlist => { root.add-to-playlist(1, self.source-index); } remove-playlist => { root.remove-playlist-song(self.source-index); } }

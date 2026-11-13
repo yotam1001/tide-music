@@ -24,6 +24,7 @@ mod crash_log;
 mod crossfade;
 mod discord;
 mod discovery;
+mod generated_drive;
 mod history_feedback;
 #[cfg(feature = "experimental-jams")]
 mod jam;
@@ -2573,6 +2574,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if !discord::valid_id(settings.discord_application_id.trim()) {
         settings.discord_application_id = default_discord_application_id();
+    }
+    // Diagnostics against the real account: never save, play or resume.
+    let drive_generated = std::env::args().any(|a| a == "--drive-generated-playlists");
+    if drive_generated {
+        settings.transient = true;
+        settings.volume = Some(0.0);
+        settings.playback_bookmark = None;
+        settings.autoplay = false;
     }
     settings.queue.tracks.truncate(2000);
     if settings
@@ -5731,6 +5740,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _scroll_stress = scroll_stress
         .zip(stress_feed)
         .map(|(count, feed)| scroll_stress::start(&state, &ui, count, feed));
+    let _drive_generated = drive_generated.then(|| generated_drive::start(&state, &ui));
     let listening = listening_seconds
         .map(|seconds| listening::start(state.clone(), &ui, seconds, local_listening_source));
     // Sustained probes must not expose a second interactive player or compete
