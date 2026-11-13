@@ -110,12 +110,10 @@ fn run() -> Result<(), String> {
     while Instant::now() < deadline {
         cache.poll();
         // Now Playing uses a separate 512px cover, as in the app.
-        let large_ready = current_cover
-            .as_deref()
-            .is_none_or(|url| {
-                cache.get_or_request_current(url);
-                cache.get_or_request_large(url).size().width > 0
-            });
+        let large_ready = current_cover.as_deref().is_none_or(|url| {
+            cache.get_or_request_current(url);
+            cache.get_or_request_large(url).size().width > 0
+        });
         let loaded = wanted
             .iter()
             .filter(|url| cache.get_or_request(url).size().width > 0)

@@ -104,7 +104,9 @@ mod tests {
         assert_eq!(picks.len(), 1);
         assert_eq!((picks[0].layout, picks[0].count), (Layout::Picks, 6));
         let narrow = home_groups(&vec!["Quick picks".into(); 6], 2);
-        assert!(narrow.iter().all(|g| g.layout == Layout::Compact && g.count <= 2));
+        assert!(narrow
+            .iter()
+            .all(|g| g.layout == Layout::Compact && g.count <= 2));
         let lone = home_groups(&["Listen again".into()], 6);
         assert_eq!(lone[0].layout, Layout::Tiles);
         assert!(home_groups(&[], 0).is_empty());

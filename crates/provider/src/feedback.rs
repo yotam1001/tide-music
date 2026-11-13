@@ -220,13 +220,33 @@ mod tests {
     use super::*;
     #[test]
     fn saving_accepts_playlists_and_albums_and_binds_the_reply() {
-        for id in ["PLabc", "VLPLabc", "RDCLAK5uy_x", "OLAK5uy_abc", "MPREb_abc"] {
-            assert!(FeedbackRequest::PlaylistSave { playlist_id: id.into() }.valid(), "{id}");
+        for id in [
+            "PLabc",
+            "VLPLabc",
+            "RDCLAK5uy_x",
+            "OLAK5uy_abc",
+            "MPREb_abc",
+        ] {
+            assert!(
+                FeedbackRequest::PlaylistSave {
+                    playlist_id: id.into()
+                }
+                .valid(),
+                "{id}"
+            );
         }
         for id in ["", "PL", "abc", "https://x", "PL a"] {
-            assert!(!FeedbackRequest::PlaylistSave { playlist_id: id.into() }.valid(), "{id}");
+            assert!(
+                !FeedbackRequest::PlaylistSave {
+                    playlist_id: id.into()
+                }
+                .valid(),
+                "{id}"
+            );
         }
-        let request = FeedbackRequest::PlaylistSave { playlist_id: "MPREb_abc".into() };
+        let request = FeedbackRequest::PlaylistSave {
+            playlist_id: "MPREb_abc".into(),
+        };
         let reply = |operation, playlist: &str| FeedbackResult {
             operation,
             video_id: String::new(),

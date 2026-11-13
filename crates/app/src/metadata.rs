@@ -74,8 +74,14 @@ mod tests {
             recommended: false,
         };
         assert_eq!(format_runtime(&[track(None)]), "");
-        assert_eq!(format_runtime(&[track(Some(600)), track(None), track(Some(660))]), "21 min");
-        assert_eq!(format_runtime(&[track(Some(3600)), track(Some(1920))]), "1 hr 32 min");
+        assert_eq!(
+            format_runtime(&[track(Some(600)), track(None), track(Some(660))]),
+            "21 min"
+        );
+        assert_eq!(
+            format_runtime(&[track(Some(3600)), track(Some(1920))]),
+            "1 hr 32 min"
+        );
     }
     #[test]
     fn late_snapshot_cannot_update_another_song_and_metadata_survives_restart() {

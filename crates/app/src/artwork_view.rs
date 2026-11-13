@@ -120,13 +120,21 @@ mod tests {
         }
         // One long scrolling shelf: only its first cards load.
         let groups = crate::browse_layout::home_groups(&vec!["Mixes".into(); 200], 6);
-        assert_eq!(group_image_range(&groups, 0..1, |_| 0), (0..20).collect::<Vec<_>>());
+        assert_eq!(
+            group_image_range(&groups, 0..1, |_| 0),
+            (0..20).collect::<Vec<_>>()
+        );
         assert!(group_image_range(&groups, 0..0, |_| 0).is_empty());
         // Paged to card 50: covers follow the cards on screen.
-        assert_eq!(group_image_range(&groups, 0..1, |_| 50), (50..70).collect::<Vec<_>>());
+        assert_eq!(
+            group_image_range(&groups, 0..1, |_| 50),
+            (50..70).collect::<Vec<_>>()
+        );
         assert_eq!(group_image_range(&groups, 0..1, |_| 999), vec![199]);
         // Several shelves share the fixed bound, each starting at its first card.
-        let labels: Vec<String> = (0..10).flat_map(|s| vec![format!("Shelf {s}"); 20]).collect();
+        let labels: Vec<String> = (0..10)
+            .flat_map(|s| vec![format!("Shelf {s}"); 20])
+            .collect();
         let groups = crate::browse_layout::home_groups(&labels, 6);
         let images = group_image_range(&groups, 0..10, |_| 0);
         assert_eq!(images.len(), MAX_VISIBLE_IMAGES);

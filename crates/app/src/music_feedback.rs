@@ -266,7 +266,11 @@ pub fn install(
             return;
         };
         let mut s = save_state.borrow_mut();
-        if !u.get_detail_open() || u.get_detail_busy() || u.get_detail_editable() || u.get_detail_saved() {
+        if !u.get_detail_open()
+            || u.get_detail_busy()
+            || u.get_detail_editable()
+            || u.get_detail_saved()
+        {
             return;
         }
         let Some(playlist_id) = s.detail_save_target.clone() else {
@@ -277,7 +281,11 @@ pub fn install(
             u.set_rating_busy(true);
             notice(&mut s, &u, "Saving to your library…");
         } else {
-            notice(&mut s, &u, "Wait for the current account action, then try again.");
+            notice(
+                &mut s,
+                &u,
+                "Wait for the current account action, then try again.",
+            );
         }
     });
     let manage_state = state.clone();
@@ -853,7 +861,11 @@ pub fn tick(s: &mut State, u: &AppWindow) {
                         }
                         notice(s, u, "Saved to your library on YouTube Music.");
                     } else {
-                        notice(s, u, "Saving was not confirmed. Check your Library before trying again.");
+                        notice(
+                            s,
+                            u,
+                            "Saving was not confirmed. Check your Library before trying again.",
+                        );
                     }
                 }
                 _ => {}

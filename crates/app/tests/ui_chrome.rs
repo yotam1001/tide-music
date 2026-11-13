@@ -220,7 +220,10 @@ fn settings_theme_account_and_song_menu_remain_independent() {
         // account or resizing, and it does not close the panel.
         if height >= 700 {
             click(&ui, width as f32 - 82.0, 32.0);
-            assert!(ui.get_settings_open(), "Settings is inaccessible at {width}");
+            assert!(
+                ui.get_settings_open(),
+                "Settings is inaccessible at {width}"
+            );
             draw(&window, width, height);
             click(&ui, width as f32 - 45.0, 397.0);
             assert!(

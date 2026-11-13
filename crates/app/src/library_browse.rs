@@ -206,9 +206,15 @@ pub(super) fn wire(ui: &AppWindow, state: Rc<RefCell<State>>, tx: mpsc::SyncSend
 }
 /// Index of the Explore category for a mood/genre name such as "Focus" or
 /// "R&B": exact title first, then a title that starts with it, then contains it.
-pub(super) fn category_for(categories: &[tide_provider::ExploreCategory], name: &str) -> Option<usize> {
+pub(super) fn category_for(
+    categories: &[tide_provider::ExploreCategory],
+    name: &str,
+) -> Option<usize> {
     fn key(text: &str) -> String {
-        text.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect()
+        text.chars()
+            .filter(|c| c.is_alphanumeric())
+            .flat_map(char::to_lowercase)
+            .collect()
     }
     let wanted = key(name);
     if wanted.is_empty() {
@@ -289,18 +295,34 @@ mod tests {
     use super::*;
     #[test]
     fn moods_and_genres_find_their_explore_pages() {
-        let categories: Vec<_> = ["Chill", "Focus", "Hip-hop", "R&B & soul", "Dance & electronic", "K-pop", "Chilled R&B"]
-            .into_iter()
-            .map(|title| tide_provider::ExploreCategory {
-                title: title.into(),
-                group: "Moods & genres".into(),
-                params: String::new(),
-            })
-            .collect();
+        let categories: Vec<_> = [
+            "Chill",
+            "Focus",
+            "Hip-hop",
+            "R&B & soul",
+            "Dance & electronic",
+            "K-pop",
+            "Chilled R&B",
+        ]
+        .into_iter()
+        .map(|title| tide_provider::ExploreCategory {
+            title: title.into(),
+            group: "Moods & genres".into(),
+            params: String::new(),
+        })
+        .collect();
         assert_eq!(category_for(&categories, "Focus"), Some(1));
-        assert_eq!(category_for(&categories, "Chill"), Some(0), "exact title beats a prefix match");
+        assert_eq!(
+            category_for(&categories, "Chill"),
+            Some(0),
+            "exact title beats a prefix match"
+        );
         assert_eq!(category_for(&categories, "Hip-hop"), Some(2));
-        assert_eq!(category_for(&categories, "R&B"), Some(3), "prefix beats a later contains match");
+        assert_eq!(
+            category_for(&categories, "R&B"),
+            Some(3),
+            "prefix beats a later contains match"
+        );
         assert_eq!(category_for(&categories, "Electronic"), Some(4));
         assert_eq!(category_for(&categories, "K-Pop"), Some(5));
         assert_eq!(category_for(&categories, "Throwback"), None);

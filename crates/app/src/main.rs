@@ -1306,9 +1306,7 @@ fn refresh_library_models(s: &State, u: &AppWindow) {
                 browse_layout::Layout::Tiles => {
                     u.global::<LayoutMetrics>().get_library_tile_height()
                 }
-                browse_layout::Layout::Picks => {
-                    u.global::<LayoutMetrics>().get_home_pick_height()
-                }
+                browse_layout::Layout::Picks => u.global::<LayoutMetrics>().get_home_pick_height(),
             }) + u.global::<LayoutMetrics>().get_home_row_gap()
                 + if g.title.is_empty() {
                     0.0
@@ -1337,8 +1335,9 @@ fn refresh_library_models(s: &State, u: &AppWindow) {
             })
             .collect(),
     ));
-    let playlist_images: std::collections::HashSet<usize> =
-        playlist_positions.map(|position| playlist_order[position]).collect();
+    let playlist_images: std::collections::HashSet<usize> = playlist_positions
+        .map(|position| playlist_order[position])
+        .collect();
     u.set_library_order(update_model(
         u.get_library_order(),
         playlist_order.iter().map(|&index| index as i32).collect(),
@@ -1427,8 +1426,9 @@ fn refresh_library_models(s: &State, u: &AppWindow) {
             row_height
         },
     );
-    let images: std::collections::HashSet<usize> =
-        card_positions.map(|position| card_order[position]).collect();
+    let images: std::collections::HashSet<usize> = card_positions
+        .map(|position| card_order[position])
+        .collect();
     u.set_library_card_order(update_model(
         u.get_library_card_order(),
         card_order.iter().map(|&index| index as i32).collect(),
@@ -3861,7 +3861,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let weak = ui.as_weak();
         ui.on_home_shelf_scrolled(move |start, first| {
             if let Some(u) = weak.upgrade() {
-                let (Ok(start), Ok(first)) = (usize::try_from(start), usize::try_from(first)) else {
+                let (Ok(start), Ok(first)) = (usize::try_from(start), usize::try_from(first))
+                else {
                     return;
                 };
                 let mut s = state.borrow_mut();
@@ -4054,7 +4055,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if c {
                     resize_after_unmaximize(
                         &u,
-                        slint::LogicalSize::new(700.0, if u.get_jam_active() { 166.0 } else { 132.0 }),
+                        slint::LogicalSize::new(
+                            700.0,
+                            if u.get_jam_active() { 166.0 } else { 132.0 },
+                        ),
                     );
                 } else {
                     let size = *restored_size.borrow();
@@ -5256,7 +5260,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .into_iter()
             .enumerate()
             {
-                cards.push(card(&format!("fixqp{i:06}"), title, artist, "song", "Quick picks"));
+                cards.push(card(
+                    &format!("fixqp{i:06}"),
+                    title,
+                    artist,
+                    "song",
+                    "Quick picks",
+                ));
             }
             for (i, (title, subtitle, kind)) in [
                 ("Late night focus", "5 songs", "playlist"),
@@ -5271,16 +5281,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .into_iter()
             .enumerate()
             {
-                cards.push(card(&format!("PLfixla{i}"), title, subtitle, kind, "Listen again"));
+                cards.push(card(
+                    &format!("PLfixla{i}"),
+                    title,
+                    subtitle,
+                    kind,
+                    "Listen again",
+                ));
             }
             for (i, title) in [
-                "Discover mix", "Chill mix", "Focus mix", "Energy mix",
-                "Throwback mix", "Indie mix", "Late night mix", "Replay mix",
+                "Discover mix",
+                "Chill mix",
+                "Focus mix",
+                "Energy mix",
+                "Throwback mix",
+                "Indie mix",
+                "Late night mix",
+                "Replay mix",
             ]
             .into_iter()
             .enumerate()
             {
-                cards.push(card(&format!("PLfixmx{i}"), title, "Made for you", "playlist", "Mixed for you"));
+                cards.push(card(
+                    &format!("PLfixmx{i}"),
+                    title,
+                    "Made for you",
+                    "playlist",
+                    "Mixed for you",
+                ));
             }
             for (i, (title, artist)) in [
                 ("Glass Harbour", "Glass Harbour"),
@@ -5295,7 +5323,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .into_iter()
             .enumerate()
             {
-                cards.push(card(&format!("MPREfix{i}"), title, artist, "album", "Recommended albums"));
+                cards.push(card(
+                    &format!("MPREfix{i}"),
+                    title,
+                    artist,
+                    "album",
+                    "Recommended albums",
+                ));
             }
             s.recommendations = cards;
             refresh_library_models(&s, &ui);
@@ -5366,7 +5400,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ui.set_status_text("Visual test data · playback inactive".into());
             // The playing list and a few past searches, as in real use.
             ui.set_queue_source("Late night focus".into());
-            s.settings.recent_searches = vec!["night drive".into(), "Nova Wells".into(), "lofi beats".into()];
+            s.settings.recent_searches = vec![
+                "night drive".into(),
+                "Nova Wells".into(),
+                "lofi beats".into(),
+            ];
             ui.set_recent_searches(recent_model(&s.settings));
         }
         {
@@ -5613,7 +5651,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if smoke_maximized {
             maximize_when_ready(&ui);
         } else {
-            ui.window().set_size(slint::LogicalSize::new(smoke_width, smoke_height));
+            ui.window()
+                .set_size(slint::LogicalSize::new(smoke_width, smoke_height));
         }
         smoke_timer.start(
             slint::TimerMode::Repeated,
