@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.4.25 - 2026-11-14
+
+- Songs start faster when they weren't ready in advance: skipping twice
+  quickly now plays in about 3.6 s instead of about 4.4 s. Tide installs
+  yt-dlp's unpacked build, which starts about 0.7 s sooner on every song, and a
+  song that was already being prepared is no longer prepared a second time.
+- Fix playlist and album covers on Home jittering: the sharper covers no
+  longer push each other out of memory several times a second.
+- Opening a page while another one is still loading now opens it next
+  instead of ignoring the click.
+- Home loads its "Based on your recent listening" shelf alongside the rest of
+  Home, and covers download three at a time.
+
 ## 0.4.24 - 2026-11-13
 
 - A redesigned full-screen interface. Home has mood chips that open YouTube
