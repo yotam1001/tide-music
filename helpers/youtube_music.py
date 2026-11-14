@@ -625,13 +625,9 @@ LISTENING_SEED_COUNT = 3
 LISTENING_PER_ARTIST = 2
 
 
-def listening_cards(client, seen):
-    """A varied shelf continuing several recent songs, like YouTube Music's
-    "Because you listened" rows mixed together. Three different recent songs
-    (preferring different artists) each contribute a few of their Up next
-    picks, interleaved, with at most two songs per artist, so one song or
-    genre can't fill the row. The seeds change between refreshes.
-    Optional: any failure leaves Home as the service returned it."""
+def listening_lists(client):
+    """Fetch Up next picks for a few recent songs (network only), so Home can
+    run it alongside get_home. Optional: any failure returns no lists."""
     import random
     from concurrent.futures import ThreadPoolExecutor
     try:
@@ -663,9 +659,20 @@ def listening_cards(client, seen):
             return radio_tracks(items if isinstance(items, list) else [], video, exclude)
 
         with ThreadPoolExecutor(max_workers=len(seeds)) as pool:
-            lists = list(pool.map(picks, seeds))
+            return list(pool.map(picks, seeds))
     except Exception:
         return []
+
+
+def listening_cards(client, seen, lists=None):
+    """A varied shelf continuing several recent songs, like YouTube Music's
+    "Because you listened" rows mixed together. Three different recent songs
+    (preferring different artists) each contribute a few of their Up next
+    picks, interleaved, with at most two songs per artist, so one song or
+    genre can't fill the row. The seeds change between refreshes.
+    Optional: any failure leaves Home as the service returned it."""
+    if lists is None:
+        lists = listening_lists(client)
     cards, per_artist = [], {}
     for round_index in range(MAX_RADIO_TRACKS):
         for tracks_for_seed in lists:
@@ -1482,61 +1489,70 @@ def run(client, request):
     if action == "home":
         # Keep every shelf in provider order; the app picks from each one.
         # The API may overshoot its row limit; cap our output too.
-        shelves = client.get_home(limit=MAX_HOME_SHELVES)
-        cards = []
-        seen = set()
-        # ytmusicapi includes description shelves with string contents and None
-        # entries for unsupported mixed content. Keep the playable shelf rows.
-        if not isinstance(shelves, list):
-            return {"type": "home", "cards": cards}
-        shelves = [shelf for shelf in shelves if isinstance(shelf, dict)
-                   and isinstance(shelf.get("contents"), list)]
-        for shelf in shelves[:MAX_HOME_SHELVES]:
-            for item in shelf["contents"][:MAX_HOME_ITEMS_PER_SHELF]:
-                if not isinstance(item, dict) or item.get("isAvailable") is False:
-                    continue
-                kind = clean(item.get("type") or "unknown", 30).lower()
-                video = identifier(item.get("videoId"), True)
-                playlist = identifier(item.get("playlistId"))
-                if video:
-                    kind, item_id = "song", video
-                elif playlist and kind not in ("album", "artist"):
-                    kind, item_id = "playlist", playlist
-                else:
-                    item_id = identifier(item.get("browseId"))
-                    if item_id.startswith("MPRE"):
-                        kind = "album"
-                    elif item_id.startswith("UC"):
-                        kind = "artist"
-                key = (kind, item_id)
-                if not item_id or key in seen:
-                    continue
-                seen.add(key)
-                thumbnail = artwork_url(item)
-                cards.append({"id": item_id, "title": clean(item.get("title")),
-                              "subtitle": artist_names(item), "artists": artist_links(item),
-                              "kind": kind, "shelf": clean(shelf.get("title")),
-                              "artwork_url": thumbnail,
-                              "featured_artwork_url": featured_artwork_url(item, thumbnail),
-                              "duration_seconds": duration_seconds(item)})
-                if len(cards) >= MAX_HOME_CARDS:
-                    break
+        # Recent-listening picks don't depend on Home: fetch them meanwhile.
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=1) as background:
+            listening = background.submit(listening_lists, client)
+            return home_cards(client, listening)
+    raise ValueError("unsupported action")
+
+
+def home_cards(client, listening):
+    """Home shelves in provider order plus the recent-listening shelf."""
+    shelves = client.get_home(limit=MAX_HOME_SHELVES)
+    cards = []
+    seen = set()
+    # ytmusicapi includes description shelves with string contents and None
+    # entries for unsupported mixed content. Keep the playable shelf rows.
+    if not isinstance(shelves, list):
+        return {"type": "home", "cards": cards}
+    shelves = [shelf for shelf in shelves if isinstance(shelf, dict)
+               and isinstance(shelf.get("contents"), list)]
+    for shelf in shelves[:MAX_HOME_SHELVES]:
+        for item in shelf["contents"][:MAX_HOME_ITEMS_PER_SHELF]:
+            if not isinstance(item, dict) or item.get("isAvailable") is False:
+                continue
+            kind = clean(item.get("type") or "unknown", 30).lower()
+            video = identifier(item.get("videoId"), True)
+            playlist = identifier(item.get("playlistId"))
+            if video:
+                kind, item_id = "song", video
+            elif playlist and kind not in ("album", "artist"):
+                kind, item_id = "playlist", playlist
+            else:
+                item_id = identifier(item.get("browseId"))
+                if item_id.startswith("MPRE"):
+                    kind = "album"
+                elif item_id.startswith("UC"):
+                    kind = "artist"
+            key = (kind, item_id)
+            if not item_id or key in seen:
+                continue
+            seen.add(key)
+            thumbnail = artwork_url(item)
+            cards.append({"id": item_id, "title": clean(item.get("title")),
+                          "subtitle": artist_names(item), "artists": artist_links(item),
+                          "kind": kind, "shelf": clean(shelf.get("title")),
+                          "artwork_url": thumbnail,
+                          "featured_artwork_url": featured_artwork_url(item, thumbnail),
+                          "duration_seconds": duration_seconds(item)})
             if len(cards) >= MAX_HOME_CARDS:
                 break
-        # A fresh, varied shelf from recent listening, after the first two
-        # shelves so YouTube Music's own lead rows stay on top.
-        extra = listening_cards(client, seen)
-        if extra:
-            shelves_seen, split = [], len(cards)
-            for index, card in enumerate(cards):
-                if card["shelf"] not in shelves_seen:
-                    shelves_seen.append(card["shelf"])
-                    if len(shelves_seen) == 3:
-                        split = index
-                        break
-            cards = cards[:split] + extra + cards[split:]
-        return {"type": "home", "cards": cards}
-    raise ValueError("unsupported action")
+        if len(cards) >= MAX_HOME_CARDS:
+            break
+    # A fresh, varied shelf from recent listening, after the first two
+    # shelves so YouTube Music's own lead rows stay on top.
+    extra = listening_cards(client, seen, listening.result())
+    if extra:
+        shelves_seen, split = [], len(cards)
+        for index, card in enumerate(cards):
+            if card["shelf"] not in shelves_seen:
+                shelves_seen.append(card["shelf"])
+                if len(shelves_seen) == 3:
+                    split = index
+                    break
+        cards = cards[:split] + extra + cards[split:]
+    return {"type": "home", "cards": cards}
 
 
 def main():

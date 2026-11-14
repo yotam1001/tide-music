@@ -271,14 +271,24 @@ impl PlaybackHandle {
             return Err("The playback engine is shutting down.".into());
         }
         let epoch = next_epoch(self.supersede_epoch.load(Ordering::Acquire));
-        self.command_tx
-            .try_send(WorkerCommand::Load(PendingLoad {
-                prepared: self.preparation.take_for(&validated.source),
-                source: validated.source,
-                generation,
-                epoch,
-            }))
-            .map_err(command_queue_error)?;
+        let (prepared, promised) = match self.preparation.take_for(&validated.source) {
+            prefetch::Taken::Ready(stream) => (Some(stream), None),
+            prefetch::Taken::InFlight(token) => (None, Some(token)),
+            prefetch::Taken::None => (None, None),
+        };
+        if let Err(error) = self.command_tx.try_send(WorkerCommand::Load(PendingLoad {
+            prepared,
+            promised,
+            source: validated.source,
+            generation,
+            epoch,
+        })) {
+            // No load will wait for it: don't leave the extraction promoted.
+            if let Some(token) = promised {
+                self.preparation.abandon(token);
+            }
+            return Err(command_queue_error(error));
+        }
 
         self.supersede_epoch.store(epoch, Ordering::Release);
         self.desired_generation.store(generation, Ordering::Release);
@@ -834,6 +844,8 @@ struct PendingLoad {
     generation: u64,
     epoch: u64,
     prepared: Option<PreparedStream>,
+    /// Token of the upcoming-song extraction already running for this source.
+    promised: Option<u64>,
 }
 
 #[cfg(windows)]
@@ -885,6 +897,11 @@ async fn run_worker(
     let mut next_session_id = 1_u64;
     let mut watchdog = tokio::time::interval(Duration::from_millis(250));
     watchdog.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    // A launched player waiting for the extraction already running for its
+    // song. Polled on its own branch so commands keep flowing meanwhile.
+    let mut pending_promise: Option<(u64, Instant)> = None;
+    let mut promise_poll = tokio::time::interval(Duration::from_millis(20));
+    promise_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let preparation_task = tokio::spawn(prefetch::run(
         runtimes.clone(),
         Arc::clone(&preparation),
@@ -908,6 +925,7 @@ async fn run_worker(
                             load.epoch == supersede_epoch.load(Ordering::Acquire)
                         };
                         if !current { continue; }
+                        if let Some((token, _)) = pending_promise.take() { preparation.abandon(token); }
                         if let Some(mut old) = player.take() { terminate_player(&mut old).await; }
                         state = PlayerState::default();
                         track = Some(recovery::Track::new(load, Instant::now()));
@@ -921,6 +939,7 @@ async fn run_worker(
                             epoch == supersede_epoch.load(Ordering::Acquire)
                         };
                         if !current { continue; }
+                        if let Some((token, _)) = pending_promise.take() { preparation.abandon(token); }
                         track = None;
                         state = PlayerState::default();
                         if let Some(mut running) = player.take() { terminate_player(&mut running).await; }
@@ -1099,6 +1118,35 @@ async fn run_worker(
                     _ => {}
                 }
             }
+            _ = promise_poll.tick(), if pending_promise.is_some() => {
+                let Some((token, since)) = pending_promise else { continue; };
+                let live = !*shutdown_rx.borrow() && track.as_ref().is_some_and(|current|
+                    current.load.epoch == supersede_epoch.load(Ordering::Acquire));
+                let outcome = if !live {
+                    None
+                } else if let Some(result) = preparation.promoted_result(token) {
+                    timing("promoted_wait", since.elapsed());
+                    Some(result)
+                } else if since.elapsed() >= PROMOTED_WAIT {
+                    Some(None)
+                } else {
+                    continue;
+                };
+                pending_promise = None;
+                match outcome {
+                    // Stopped, replaced or shutting down: never send this load.
+                    None => preparation.abandon(token),
+                    Some(stream) => {
+                        // A failure or timeout falls back to mpv's own extractor.
+                        if stream.is_none() { preparation.abandon(token); }
+                        if let (Some(current), Some(running)) = (track.as_mut(), player.as_mut()) {
+                            let mut load = current.load.clone();
+                            load.prepared = stream;
+                            fault = begin_load_at(running, &mut state, &mut load, current.position).await.is_err();
+                        }
+                    }
+                }
+            }
             _ = watchdog.tick() => {
                 let accepted = {
                     let _gate = send_gate.lock().unwrap_or_else(|p| p.into_inner());
@@ -1108,20 +1156,27 @@ async fn run_worker(
                     if current.load.epoch != supersede_epoch.load(Ordering::Acquire) { continue; }
                     let now = Instant::now();
                     if current.retry_at.is_some_and(|retry_at| now >= retry_at) {
+                        if let Some((token, _)) = pending_promise.take() { preparation.abandon(token); }
                         if let Some(mut old) = player.take() { terminate_player(&mut old).await; }
                         state = PlayerState::default();
                         current.apply_seek(&accepted, now);
                         current.session_started(now);
                         let volume = f64::from_bits(desired_volume.load(Ordering::Acquire));
+                        let launch_started = Instant::now();
                         match launch_player(&runtimes, volume, &mut shutdown_rx, &ipc_event_tx,
                             &supersede_epoch, PlayerLaunch { session_id: next_session_id,
                                 epoch: current.load.epoch, cookie_updates: Arc::clone(&cookie_updates) }).await {
                             Ok(Some(mut running)) => {
+                                timing("mpv_launch", launch_started.elapsed());
                                 next_session_id = next_session_id.wrapping_add(1).max(1);
                                 let options = audio_options.lock().unwrap_or_else(|p| p.into_inner()).clone();
                                 if observe_properties(&mut running).await.is_err()
                                     || apply_audio_options(&mut running, &options).await.is_err() {
                                     fault = true;
+                                } else if let Some(token) = current.load.promised.take() {
+                                    // mpv started meanwhile; load once the extraction already
+                                    // running for this song finishes instead of repeating it.
+                                    pending_promise = Some((token, Instant::now()));
                                 } else {
                                     let mut load = current.load.clone();
                                     // Resume via mpv's per-file start option before audio starts.
@@ -1132,6 +1187,7 @@ async fn run_worker(
                             }
                             Ok(None) => {
                                 if *shutdown_rx.borrow() { break; }
+                                if let Some(token) = current.load.promised.take() { preparation.abandon(token); }
                                 track = None;
                             }
                             Err(_) => { fault = true; }
@@ -1169,11 +1225,17 @@ async fn run_worker(
                     false
                 }
             };
+            if let Some((token, _)) = pending_promise.take() {
+                preparation.abandon(token);
+            }
             if let Some(mut failed) = player.take() {
                 terminate_player(&mut failed).await;
             }
             state = PlayerState::default();
             if !retry {
+                if let Some(token) = track.as_mut().and_then(|t| t.load.promised.take()) {
+                    preparation.abandon(token);
+                }
                 track = None;
             }
         }
@@ -1186,6 +1248,11 @@ async fn run_worker(
     let _gate = send_gate.lock().unwrap_or_else(|p| p.into_inner());
     reset_snapshot(&mut snapshot_write(&snapshot));
 }
+
+/// How long a launched player waits for its promised extraction; longer than
+/// the resolver's own timeout, which normally completes the promise first.
+#[cfg(windows)]
+const PROMOTED_WAIT: Duration = Duration::from_secs(50);
 
 #[cfg(windows)]
 async fn launch_player(
@@ -1430,6 +1497,23 @@ fn unique_pipe_path() -> String {
 /// with no extractor error to classify. These clients give URLs mpv can open.
 pub(crate) const PLAYER_CLIENTS: &str = "web_music,visionos";
 
+/// Opt-in diagnostics: with `TIDE_TIMINGS_LOG` set to a file path, append one
+/// `event milliseconds` line per measured span. Names and numbers only; never
+/// sources, URLs or account details.
+pub(crate) fn timing(event: &'static str, elapsed: Duration) {
+    use std::io::Write;
+    let Some(path) = std::env::var_os("TIDE_TIMINGS_LOG") else {
+        return;
+    };
+    if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(path) {
+        let at = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+        let _ = writeln!(file, "{at} {event} {}", elapsed.as_millis());
+    }
+}
+
 /// The `--extractor-args` value shared by playback and preparation.
 pub(crate) fn extractor_args(account_index: u32) -> String {
     let clients =
@@ -1573,6 +1657,7 @@ async fn begin_load_at(
             generation: load.generation,
             epoch: load.epoch,
             prepared: None,
+            promised: None,
         });
         prepared.load_command()
     } else {
@@ -2269,6 +2354,7 @@ mod tests {
                 generation: 3,
                 epoch: 9,
                 prepared: None,
+                promised: None,
             }),
             ..PlayerState::default()
         };

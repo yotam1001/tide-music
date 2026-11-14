@@ -37,6 +37,19 @@ struct State {
     source: Option<String>,
     ready: Option<PreparedStream>,
     retry_after: Option<Instant>,
+    /// An extraction a load is now waiting for. While it runs, requests for
+    /// another upcoming song wait in `deferred`: only one resolver ever exists.
+    promoted: Option<u64>,
+    promoted_result: Option<(u64, Option<PreparedStream>)>,
+    deferred: Option<Option<String>>,
+}
+
+/// What a load takes from the preparation slot.
+pub(super) enum Taken {
+    None,
+    Ready(PreparedStream),
+    /// The matching extraction is still running; wait for this token.
+    InFlight(u64),
 }
 
 pub(super) struct Preparation {
@@ -55,6 +68,9 @@ impl Preparation {
                     source: None,
                     ready: None,
                     retry_after: None,
+                    promoted: None,
+                    promoted_result: None,
+                    deferred: None,
                 }),
                 token: AtomicU64::new(0),
                 closed: AtomicBool::new(false),
@@ -73,6 +89,20 @@ impl Preparation {
         if self.closed.load(Ordering::Acquire) {
             return;
         }
+        if state.promoted.is_some() {
+            state.deferred = Some(source);
+            return;
+        }
+        Self::request(&self.token, &self.requests, &mut state, source, now);
+    }
+
+    fn request(
+        token: &AtomicU64,
+        requests: &watch::Sender<Request>,
+        state: &mut State,
+        source: Option<String>,
+        now: Instant,
+    ) {
         let expired = state.ready.as_ref().is_some_and(|s| !s.is_fresh());
         let retry_due =
             source.is_some() && state.retry_after.is_some_and(|deadline| now >= deadline);
@@ -82,12 +112,29 @@ impl Preparation {
         state.source = source.clone();
         state.ready = None;
         state.retry_after = None;
-        let token = self.token.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
-        self.requests.send_replace(Request { source, token });
+        let token = token.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
+        requests.send_replace(Request { source, token });
     }
 
     pub(super) fn clear(&self) {
-        self.set(None);
+        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        if self.closed.load(Ordering::Acquire) {
+            return;
+        }
+        // Also stops an extraction a stopped load was waiting for.
+        let waiting = state.promoted.take().is_some();
+        state.promoted_result = None;
+        state.deferred = None;
+        if waiting {
+            state.source = Some(String::new());
+        }
+        Self::request(
+            &self.token,
+            &self.requests,
+            &mut state,
+            None,
+            Instant::now(),
+        );
     }
 
     pub(super) fn close(&self) {
@@ -97,12 +144,32 @@ impl Preparation {
         state.source = None;
         state.ready = None;
         state.retry_after = None;
+        state.promoted = None;
+        state.promoted_result = None;
+        state.deferred = None;
         self.requests.send_replace(Request::default());
     }
 
-    pub(super) fn take_for(&self, source: &str) -> Option<PreparedStream> {
+    /// Hand a load the matching prepared stream. A matching extraction that is
+    /// still running is kept and promoted instead of being cancelled, so the
+    /// load never starts the same extraction a second time.
+    pub(super) fn take_for(&self, source: &str) -> Taken {
         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        let result = if state.source.as_deref() == Some(source) {
+        state.promoted = None;
+        state.promoted_result = None;
+        state.deferred = None;
+        let matching = state.source.as_deref() == Some(source);
+        if matching
+            && state.ready.is_none()
+            && state.retry_after.is_none()
+            && !self.closed.load(Ordering::Acquire)
+        {
+            let token = self.token.load(Ordering::Acquire);
+            state.source = None;
+            state.promoted = Some(token);
+            return Taken::InFlight(token);
+        }
+        let result = if matching {
             state.ready.take().filter(PreparedStream::is_fresh)
         } else {
             None
@@ -115,7 +182,46 @@ impl Preparation {
             source: None,
             token,
         });
-        result
+        result.map_or(Taken::None, Taken::Ready)
+    }
+
+    /// The promoted extraction's result once it finished: `Some(None)` means
+    /// it failed and the load should use the ordinary extractor.
+    pub(super) fn promoted_result(&self, token: u64) -> Option<Option<PreparedStream>> {
+        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        if self.closed.load(Ordering::Acquire) {
+            return Some(None);
+        }
+        match &state.promoted_result {
+            Some((done, _)) if *done == token => state
+                .promoted_result
+                .take()
+                .map(|(_, s)| s.filter(PreparedStream::is_fresh)),
+            _ if state.promoted != Some(token) => Some(None),
+            _ => None,
+        }
+    }
+
+    /// The waiting load was replaced: stop its extraction and run whatever
+    /// upcoming-song request arrived meanwhile.
+    pub(super) fn abandon(&self, token: u64) {
+        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        if state.promoted != Some(token) {
+            return;
+        }
+        state.promoted = None;
+        let deferred = state.deferred.take().flatten();
+        if self.closed.load(Ordering::Acquire) {
+            return;
+        }
+        state.source = Some(String::new()); // force a fresh token
+        Self::request(
+            &self.token,
+            &self.requests,
+            &mut state,
+            deferred,
+            Instant::now(),
+        );
     }
 
     pub(super) fn is_ready(&self, source: &str) -> bool {
@@ -133,10 +239,32 @@ impl Preparation {
         if !self.current(token) {
             return;
         }
+        if state.promoted == Some(token) {
+            state.promoted = None;
+            let failed = stream.is_none();
+            state.promoted_result = Some((token, stream));
+            let deferred = state.deferred.take();
+            // After a failure the load falls back to mpv's own extractor. Keep
+            // a single resolver: the app asks again once that song has loaded.
+            if let Some(deferred) = deferred.filter(|_| !failed) {
+                Self::request(&self.token, &self.requests, &mut state, deferred, now);
+            }
+            return;
+        }
         // The timer may retry the same candidate after a bounded delay. Until
         // then it deduplicates failures just like an extraction in progress.
         state.retry_after = stream.is_none().then(|| now + RETRY_DELAY);
         state.ready = stream;
+    }
+}
+
+#[cfg(test)]
+impl Taken {
+    fn is_some(&self) -> bool {
+        matches!(self, Taken::Ready(_))
+    }
+    fn is_none(&self) -> bool {
+        matches!(self, Taken::None)
     }
 }
 
@@ -286,6 +414,9 @@ fn resolve(
         }
     }
     let bytes = output.join().ok()??;
+    if completed_status.is_some() {
+        super::timing("resolve", started.elapsed());
+    }
     if !completed_status.is_some_and(|status| status.success())
         || !preparation.current(request.token)
     {
@@ -566,6 +697,74 @@ mod tests {
         let stopped = preparation.token.load(Ordering::Acquire);
         preparation.set_at(None, Instant::now() + RETRY_DELAY * 2);
         assert_eq!(preparation.token.load(Ordering::Acquire), stopped);
+    }
+
+    #[test]
+    fn load_keeps_the_running_extraction_and_defers_the_next_request() {
+        let (preparation, _) = Preparation::new();
+        preparation.set(Some("song".into()));
+        let token = preparation.token.load(Ordering::Acquire);
+        let Taken::InFlight(promised) = preparation.take_for("song") else {
+            panic!("A running extraction was cancelled instead of promoted");
+        };
+        assert_eq!(promised, token);
+        assert!(preparation.current(token));
+        // The queue asks for the following song: it must wait, not cancel.
+        preparation.set(Some("after".into()));
+        assert!(preparation.current(token));
+        assert!(preparation.promoted_result(token).is_none());
+        preparation.complete(token, Some(stream()), Instant::now());
+        assert!(matches!(preparation.promoted_result(token), Some(Some(_))));
+        assert!(!preparation.current(token));
+        assert_eq!(
+            preparation.state.lock().unwrap().source.as_deref(),
+            Some("after")
+        );
+        // A failed promise falls back to the ordinary extractor.
+        let failed = preparation.token.load(Ordering::Acquire);
+        preparation.state.lock().unwrap().source = Some("next".into());
+        assert!(matches!(preparation.take_for("next"), Taken::InFlight(t) if t == failed));
+        preparation.set(Some("later".into()));
+        preparation.complete(failed, None, Instant::now());
+        assert!(matches!(preparation.promoted_result(failed), Some(None)));
+        // mpv's extractor now runs for the failed song; no second resolver starts.
+        assert!(preparation.state.lock().unwrap().source.is_none());
+        assert_eq!(preparation.token.load(Ordering::Acquire), failed);
+        assert!(preparation.state.lock().unwrap().retry_after.is_none());
+    }
+
+    #[test]
+    fn replaced_or_stopped_load_cancels_its_promised_extraction() {
+        let (preparation, _) = Preparation::new();
+        preparation.set(Some("song".into()));
+        let Taken::InFlight(token) = preparation.take_for("song") else {
+            panic!("expected a promoted extraction");
+        };
+        preparation.set(Some("after".into()));
+        preparation.abandon(token);
+        assert!(!preparation.current(token));
+        assert!(matches!(preparation.promoted_result(token), Some(None)));
+        assert_eq!(
+            preparation.state.lock().unwrap().source.as_deref(),
+            Some("after")
+        );
+        let Taken::InFlight(second) = preparation.take_for("after") else {
+            panic!("expected a promoted extraction");
+        };
+        // Another load supersedes the waiting one and cancels the extraction.
+        assert!(preparation.take_for("other").is_none());
+        assert!(!preparation.current(second));
+        preparation.set(Some("song".into()));
+        let Taken::InFlight(third) = preparation.take_for("song") else {
+            panic!("expected a promoted extraction");
+        };
+        preparation.clear();
+        assert!(!preparation.current(third));
+        // A failed attempt waiting for its retry is not promoted.
+        preparation.set(Some("failing".into()));
+        let failing = preparation.token.load(Ordering::Acquire);
+        preparation.complete(failing, None, Instant::now());
+        assert!(preparation.take_for("failing").is_none());
     }
 
     #[test]

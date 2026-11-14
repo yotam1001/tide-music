@@ -265,6 +265,8 @@ struct State {
     cookie_updates_applied: u64,
     cookie_updates_not_applied: u64,
     library_worker: Option<std::thread::JoinHandle<()>>,
+    /// The latest page the listener opened while another page was loading.
+    queued_library_request: Option<tide_provider::Request>,
     library_cancel: Arc<AtomicBool>,
     library_playlists: Vec<tide_provider::Playlist>,
     library_browse: library_browse::Browse,
@@ -480,8 +482,20 @@ fn request_library_view(
         return;
     }
     if s.library_worker.is_some() || s.pending_saved_connection.is_some() {
+        // Latest navigation wins: remember the newest page instead of
+        // dropping the click, and open it when the current request finishes.
+        if s.pending_saved_connection.is_none()
+            && radio_seed.is_none()
+            && !s.shuffle_request
+            && is_navigation(&request)
+        {
+            s.queued_library_request = Some(request);
+        }
+        // A Shuffle click that could not start must not shuffle a later playlist.
+        s.shuffle_request = false;
         return;
     }
+    s.queued_library_request = None;
     let connecting = matches!(
         request,
         tide_provider::Request::Connect { .. } | tide_provider::Request::SwitchAccount { .. }
@@ -649,6 +663,39 @@ fn request_library_view(
     s.library_worker = Some(std::thread::spawn(move || {
         let _ = tx.try_send(provider.execute(request, cancel));
     }));
+}
+
+/// The first visible cards, in screen order, that may show a large cover:
+/// never more than the large-cover cache holds.
+fn feature_slots(visible: &[usize], eligible: impl Fn(usize) -> bool, enabled: bool) -> Vec<usize> {
+    if !enabled {
+        return Vec::new();
+    }
+    let mut ordered: Vec<usize> = visible.iter().copied().filter(|&i| eligible(i)).collect();
+    ordered.sort_unstable();
+    ordered.truncate(artwork::FEATURE_CAPACITY);
+    ordered
+}
+
+/// Requests that only show a page; a newer one makes an older one irrelevant.
+fn is_navigation(request: &tide_provider::Request) -> bool {
+    use tide_provider::Request::*;
+    matches!(
+        request,
+        Library
+            | LibraryAlbums
+            | LibraryArtists
+            | History
+            | Explore
+            | Mood { .. }
+            | Album { .. }
+            | Playlist { .. }
+            | Liked
+            | Supermix
+            | Home
+            | Artist { .. }
+            | Artists { .. }
+    )
 }
 
 /// The song autoplay continues from: the most recent one the listener picked
@@ -973,6 +1020,7 @@ fn stage_saved_connection(
     s.rejected_saved_connection = None;
     s.connection_retry = connection::AdoptionRetry::new();
     s.library_cancel.store(true, Ordering::Release);
+    s.queued_library_request = None;
     s.pending_saved_connection = Some(saved.clone());
     s.library_retry = None;
     s.library_request = None;
@@ -1369,6 +1417,19 @@ fn refresh_library_models(s: &State, u: &AppWindow) {
         })
         .collect();
     u.set_library_playlists(update_model(u.get_library_playlists(), playlists));
+    // A fixed set of at most FEATURE_CAPACITY cards gets the large cover; the
+    // rest always use thumbnails. Otherwise more large covers than the cache
+    // holds evict each other on every refresh and the cards keep swapping
+    // between the large and the thumbnail rendition, which reads as jitter.
+    let featured: Vec<usize> = feature_slots(
+        &home_images,
+        |index| {
+            s.recommendations
+                .get(index)
+                .is_some_and(|p| p.featured_artwork_url.is_some() && p.kind != "song")
+        },
+        u.get_home_columns() >= 3 && u.get_home_artwork_visible(),
+    );
     let cards: Vec<RecommendationRow> = s
         .recommendations
         .iter()
@@ -1384,7 +1445,7 @@ fn refresh_library_models(s: &State, u: &AppWindow) {
                 let large = p
                     .featured_artwork_url
                     .as_deref()
-                    .filter(|_| p.kind != "song" && u.get_home_columns() >= 3)
+                    .filter(|_| featured.contains(&index))
                     .map(|url| artwork.get_or_request_feature(url))
                     .unwrap_or_default();
                 if large.size().width > 0 {
@@ -2787,6 +2848,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         cookie_updates_applied: 0,
         cookie_updates_not_applied: 0,
         library_worker: None,
+        queued_library_request: None,
         library_cancel: Arc::new(AtomicBool::new(false)),
         library_playlists: Vec::new(),
         library_browse: library_browse::Browse::default(),
@@ -4639,6 +4701,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                         }
                     }
+                    // A detail page the listener already left: skip it and open
+                    // the newer page now. Errors, retries and the
+                    // playback session refresh above still apply.
+                    if s.queued_library_request.is_some()
+                        && matches!(s.library_action, LibraryAction::Preview { radio_seed: None, .. } | LibraryAction::Artist)
+                        && s.library_request.as_ref().is_some_and(is_navigation)
+                        && result.is_ok()
+                    {
+                        if let Some(next) = s.queued_library_request.take() {
+                            request_library_view(&mut s, &u, &library_tx, next, None);
+                        }
+                        continue;
+                    }
                     if let LibraryAction::Related { generation } = s.library_action {
                         if generation == s.generation && u.get_related_open() && s.account_verified {
                             if let Ok(tide_provider::Response::Tracks { tracks, .. }) = result {
@@ -4910,6 +4985,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 if s.library_worker.is_none() && s.pending_saved_connection.is_some() {
                     adopt_saved_connection(&mut s, &u, &library_tx);
+                }
+                if s.library_worker.is_none() && s.pending_saved_connection.is_none() {
+                    if let Some(next) = s.queued_library_request.take() {
+                        request_library_view(&mut s, &u, &library_tx, next, None);
+                    }
                 }
                 #[cfg(feature = "experimental-jams")]
                 jam::tick(&mut s, &u, &library_tx);
@@ -6102,6 +6182,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn only_page_views_are_queued_behind_a_loading_page() {
+        use tide_provider::Request;
+        // Opening pages is latest-wins; playback and account work never is.
+        assert!(super::is_navigation(&Request::Home));
+        assert!(super::is_navigation(&Request::Playlist {
+            id: "PLx".into()
+        }));
+        assert!(super::is_navigation(&Request::Liked));
+        assert!(!super::is_navigation(&Request::Radio {
+            video_id: "x".into()
+        }));
+        assert!(!super::is_navigation(&Request::Search {
+            query: "x".into(),
+            kind: tide_provider::SearchKind::All
+        }));
+    }
+
+    #[test]
+    fn large_covers_stay_within_the_cache_so_cards_never_swap_renditions() {
+        // Eight visible playlist cards used to request eight large covers for a
+        // four-entry cache, evicting each other on every refresh.
+        let visible: Vec<usize> = (0..12).rev().collect();
+        let slots = super::feature_slots(&visible, |i| i % 3 != 0, true);
+        assert_eq!(slots, vec![1, 2, 4, 5]);
+        assert!(slots.len() <= crate::artwork::FEATURE_CAPACITY);
+        assert_eq!(super::feature_slots(&visible, |i| i % 3 != 0, true), slots);
+        assert!(super::feature_slots(&visible, |_| true, false).is_empty());
+    }
 
     #[test]
     fn upgrade_restores_preferences_even_if_queue_or_other_fields_are_incompatible() {

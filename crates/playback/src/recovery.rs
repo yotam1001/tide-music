@@ -52,6 +52,12 @@ impl Track {
     }
 
     pub fn file_loaded(&mut self, now: Instant) {
+        if !self.loaded {
+            super::timing(
+                "load_to_file_loaded",
+                now.duration_since(self.loading_since),
+            );
+        }
         self.loaded = true;
         self.progress_since = now;
     }
@@ -268,6 +274,7 @@ mod tests {
                 generation: 2,
                 epoch: 3,
                 prepared: None,
+                promised: None,
             },
             now,
         )
