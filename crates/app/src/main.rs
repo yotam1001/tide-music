@@ -265,6 +265,8 @@ struct State {
     cookie_updates_applied: u64,
     cookie_updates_not_applied: u64,
     library_worker: Option<std::thread::JoinHandle<()>>,
+    /// The latest page the listener opened while another page was loading.
+    queued_library_request: Option<tide_provider::Request>,
     library_cancel: Arc<AtomicBool>,
     library_playlists: Vec<tide_provider::Playlist>,
     library_browse: library_browse::Browse,
@@ -480,8 +482,18 @@ fn request_library_view(
         return;
     }
     if s.library_worker.is_some() || s.pending_saved_connection.is_some() {
+        // Latest navigation wins: remember the newest page instead of
+        // dropping the click, and open it when the current request finishes.
+        if s.pending_saved_connection.is_none()
+            && radio_seed.is_none()
+            && !s.shuffle_request
+            && is_navigation(&request)
+        {
+            s.queued_library_request = Some(request);
+        }
         return;
     }
+    s.queued_library_request = None;
     let connecting = matches!(
         request,
         tide_provider::Request::Connect { .. } | tide_provider::Request::SwitchAccount { .. }
@@ -649,6 +661,27 @@ fn request_library_view(
     s.library_worker = Some(std::thread::spawn(move || {
         let _ = tx.try_send(provider.execute(request, cancel));
     }));
+}
+
+/// Requests that only show a page; a newer one makes an older one irrelevant.
+fn is_navigation(request: &tide_provider::Request) -> bool {
+    use tide_provider::Request::*;
+    matches!(
+        request,
+        Library
+            | LibraryAlbums
+            | LibraryArtists
+            | History
+            | Explore
+            | Mood { .. }
+            | Album { .. }
+            | Playlist { .. }
+            | Liked
+            | Supermix
+            | Home
+            | Artist { .. }
+            | Artists { .. }
+    )
 }
 
 /// The song autoplay continues from: the most recent one the listener picked
@@ -973,6 +1006,7 @@ fn stage_saved_connection(
     s.rejected_saved_connection = None;
     s.connection_retry = connection::AdoptionRetry::new();
     s.library_cancel.store(true, Ordering::Release);
+    s.queued_library_request = None;
     s.pending_saved_connection = Some(saved.clone());
     s.library_retry = None;
     s.library_request = None;
@@ -2787,6 +2821,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         cookie_updates_applied: 0,
         cookie_updates_not_applied: 0,
         library_worker: None,
+        queued_library_request: None,
         library_cancel: Arc::new(AtomicBool::new(false)),
         library_playlists: Vec::new(),
         library_browse: library_browse::Browse::default(),
@@ -4615,6 +4650,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     u.set_account_busy(false);
                     u.set_detail_busy(false);
                     let playback_session_updated = sync_playback_cookies(&mut s);
+                    // A detail page the listener already left: skip it and open
+                    // the newer page now. Other results still apply first.
+                    if s.queued_library_request.is_some()
+                        && matches!(s.library_action, LibraryAction::Preview { radio_seed: None, .. } | LibraryAction::Artist)
+                        && s.library_request.as_ref().is_some_and(is_navigation)
+                    {
+                        if let Some(next) = s.queued_library_request.take() {
+                            request_library_view(&mut s, &u, &library_tx, next, None);
+                        }
+                        continue;
+                    }
                     if matches!(
                         &result,
                         Ok(tide_provider::Response::Library { .. }
@@ -4910,6 +4956,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 if s.library_worker.is_none() && s.pending_saved_connection.is_some() {
                     adopt_saved_connection(&mut s, &u, &library_tx);
+                }
+                if s.library_worker.is_none() && s.pending_saved_connection.is_none() {
+                    if let Some(next) = s.queued_library_request.take() {
+                        request_library_view(&mut s, &u, &library_tx, next, None);
+                    }
                 }
                 #[cfg(feature = "experimental-jams")]
                 jam::tick(&mut s, &u, &library_tx);

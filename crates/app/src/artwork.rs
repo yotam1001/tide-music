@@ -30,6 +30,9 @@ const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 const MAX_SOURCE_PIXELS: u64 = 1_000_000;
 const MAX_URL_BYTES: usize = 4096;
 const NEGATIVE_TTL: Duration = Duration::from_secs(60);
+/// Small parallelism hides per-image latency on artwork-led pages while
+/// staying a few idle threads and connections.
+const FETCHERS: usize = 3;
 
 struct Request {
     url: String,
@@ -37,7 +40,7 @@ struct Request {
     generation: u64,
 }
 
-// One background fetch at a time. The current song jumps ahead of list covers.
+// A few background fetches at a time. The current song jumps ahead of list covers.
 #[derive(Default)]
 struct RequestQueue {
     items: Mutex<VecDeque<Request>>,
@@ -159,18 +162,32 @@ impl ArtworkCache {
 
     pub fn new() -> Self {
         let requests = Arc::new(RequestQueue::default());
-        let request_rx = requests.clone();
         let (result_tx, results) = mpsc::sync_channel(PENDING_CAPACITY);
         let generation = Arc::new(AtomicU64::new(0));
         let stopped = Arc::new(AtomicBool::new(false));
-        let worker_generation = generation.clone();
-        let worker_stopped = stopped.clone();
-        // Dropping the handle detaches the worker. Shutdown never joins an HTTP
-        // request on the UI thread; closed channels and the flag end the worker.
-        let spawned = std::thread::Builder::new()
-            .name("artwork".into())
-            .spawn(move || worker(request_rx, result_tx, worker_generation, worker_stopped))
-            .is_ok();
+        let agent = agent();
+        // Dropping the handles detaches the workers. Shutdown never joins an HTTP
+        // request on the UI thread; closed channels and the flag end the workers.
+        let mut spawned = false;
+        for index in 0..FETCHERS {
+            let request_rx = requests.clone();
+            let result_tx = result_tx.clone();
+            let worker_generation = generation.clone();
+            let worker_stopped = stopped.clone();
+            let agent = agent.clone();
+            spawned |= std::thread::Builder::new()
+                .name(format!("artwork-{index}"))
+                .spawn(move || {
+                    worker(
+                        agent,
+                        request_rx,
+                        result_tx,
+                        worker_generation,
+                        worker_stopped,
+                    )
+                })
+                .is_ok();
+        }
         Self {
             entries: VecDeque::with_capacity(CACHE_CAPACITY),
             pending: HashSet::with_capacity(PENDING_CAPACITY),
@@ -334,7 +351,7 @@ impl Drop for ArtworkCache {
         self.stopped.store(true, Ordering::Release);
         if let Some(requests) = self.requests.take() {
             let _guard = requests.items.lock().unwrap();
-            requests.wake.notify_one();
+            requests.wake.notify_all();
         }
     }
 }
@@ -364,23 +381,27 @@ fn allowed_url(value: &str) -> bool {
     })
 }
 
+fn agent() -> ureq::Agent {
+    let config = ureq::Agent::config_builder()
+        .https_only(true)
+        .max_redirects(0)
+        .timeout_global(Some(Duration::from_secs(5)))
+        .max_idle_connections(FETCHERS)
+        .max_idle_connections_per_host(FETCHERS)
+        .input_buffer_size(16 * 1024)
+        .output_buffer_size(4096)
+        .max_response_header_size(16 * 1024)
+        .build();
+    config.into()
+}
+
 fn worker(
+    agent: ureq::Agent,
     requests: Arc<RequestQueue>,
     results: SyncSender<Completion>,
     generation: Arc<AtomicU64>,
     stopped: Arc<AtomicBool>,
 ) {
-    let config = ureq::Agent::config_builder()
-        .https_only(true)
-        .max_redirects(0)
-        .timeout_global(Some(Duration::from_secs(5)))
-        .max_idle_connections(1)
-        .max_idle_connections_per_host(1)
-        .input_buffer_size(16 * 1024)
-        .output_buffer_size(4096)
-        .max_response_header_size(16 * 1024)
-        .build();
-    let agent: ureq::Agent = config.into();
     while let Some(request) = requests.next(&stopped) {
         if stopped.load(Ordering::Acquire) {
             break;

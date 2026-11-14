@@ -271,9 +271,15 @@ impl PlaybackHandle {
             return Err("The playback engine is shutting down.".into());
         }
         let epoch = next_epoch(self.supersede_epoch.load(Ordering::Acquire));
+        let (prepared, promised) = match self.preparation.take_for(&validated.source) {
+            prefetch::Taken::Ready(stream) => (Some(stream), None),
+            prefetch::Taken::InFlight(token) => (None, Some(token)),
+            prefetch::Taken::None => (None, None),
+        };
         self.command_tx
             .try_send(WorkerCommand::Load(PendingLoad {
-                prepared: self.preparation.take_for(&validated.source),
+                prepared,
+                promised,
                 source: validated.source,
                 generation,
                 epoch,
@@ -834,6 +840,8 @@ struct PendingLoad {
     generation: u64,
     epoch: u64,
     prepared: Option<PreparedStream>,
+    /// Token of the upcoming-song extraction already running for this source.
+    promised: Option<u64>,
 }
 
 #[cfg(windows)]
@@ -1113,10 +1121,12 @@ async fn run_worker(
                         current.apply_seek(&accepted, now);
                         current.session_started(now);
                         let volume = f64::from_bits(desired_volume.load(Ordering::Acquire));
+                        let launch_started = Instant::now();
                         match launch_player(&runtimes, volume, &mut shutdown_rx, &ipc_event_tx,
                             &supersede_epoch, PlayerLaunch { session_id: next_session_id,
                                 epoch: current.load.epoch, cookie_updates: Arc::clone(&cookie_updates) }).await {
                             Ok(Some(mut running)) => {
+                                timing("mpv_launch", launch_started.elapsed());
                                 next_session_id = next_session_id.wrapping_add(1).max(1);
                                 let options = audio_options.lock().unwrap_or_else(|p| p.into_inner()).clone();
                                 if observe_properties(&mut running).await.is_err()
@@ -1124,6 +1134,12 @@ async fn run_worker(
                                     fault = true;
                                 } else {
                                     let mut load = current.load.clone();
+                                    // mpv started meanwhile; now use the extraction that was
+                                    // already running for this song instead of repeating it.
+                                    if let Some(token) = current.load.promised.take() {
+                                        load.prepared = wait_promoted(&preparation, token,
+                                            &shutdown_rx, &supersede_epoch, load.epoch).await;
+                                    }
                                     // Resume via mpv's per-file start option before audio starts.
                                     // Starting paused prevents any accepted pause racing loading.
                                     fault = begin_load_at(&mut running, &mut state, &mut load, current.position).await.is_err();
@@ -1185,6 +1201,35 @@ async fn run_worker(
     let _ = preparation_task.await;
     let _gate = send_gate.lock().unwrap_or_else(|p| p.into_inner());
     reset_snapshot(&mut snapshot_write(&snapshot));
+}
+
+/// Longer than the resolver's own timeout, which completes the promise.
+#[cfg(windows)]
+const PROMOTED_WAIT: Duration = Duration::from_secs(50);
+
+#[cfg(windows)]
+async fn wait_promoted(
+    preparation: &Preparation,
+    token: u64,
+    shutdown_rx: &watch::Receiver<bool>,
+    desired_epoch: &AtomicU64,
+    epoch: u64,
+) -> Option<PreparedStream> {
+    let started = Instant::now();
+    loop {
+        if let Some(result) = preparation.promoted_result(token) {
+            timing("promoted_wait", started.elapsed());
+            return result;
+        }
+        if *shutdown_rx.borrow()
+            || desired_epoch.load(Ordering::Acquire) != epoch
+            || started.elapsed() >= PROMOTED_WAIT
+        {
+            preparation.abandon(token);
+            return None;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
 }
 
 #[cfg(windows)]
@@ -1430,6 +1475,23 @@ fn unique_pipe_path() -> String {
 /// with no extractor error to classify. These clients give URLs mpv can open.
 pub(crate) const PLAYER_CLIENTS: &str = "web_music,visionos";
 
+/// Opt-in diagnostics: with `TIDE_TIMINGS_LOG` set to a file path, append one
+/// `event milliseconds` line per measured span. Names and numbers only; never
+/// sources, URLs or account details.
+pub(crate) fn timing(event: &'static str, elapsed: Duration) {
+    use std::io::Write;
+    let Some(path) = std::env::var_os("TIDE_TIMINGS_LOG") else {
+        return;
+    };
+    if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(path) {
+        let at = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+        let _ = writeln!(file, "{at} {event} {}", elapsed.as_millis());
+    }
+}
+
 /// The `--extractor-args` value shared by playback and preparation.
 pub(crate) fn extractor_args(account_index: u32) -> String {
     let clients =
@@ -1573,6 +1635,7 @@ async fn begin_load_at(
             generation: load.generation,
             epoch: load.epoch,
             prepared: None,
+            promised: None,
         });
         prepared.load_command()
     } else {
@@ -2269,6 +2332,7 @@ mod tests {
                 generation: 3,
                 epoch: 9,
                 prepared: None,
+                promised: None,
             }),
             ..PlayerState::default()
         };
