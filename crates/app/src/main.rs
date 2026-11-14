@@ -663,6 +663,18 @@ fn request_library_view(
     }));
 }
 
+/// The first visible cards, in screen order, that may show a large cover:
+/// never more than the large-cover cache holds.
+fn feature_slots(visible: &[usize], eligible: impl Fn(usize) -> bool, enabled: bool) -> Vec<usize> {
+    if !enabled {
+        return Vec::new();
+    }
+    let mut ordered: Vec<usize> = visible.iter().copied().filter(|&i| eligible(i)).collect();
+    ordered.sort_unstable();
+    ordered.truncate(artwork::FEATURE_CAPACITY);
+    ordered
+}
+
 /// Requests that only show a page; a newer one makes an older one irrelevant.
 fn is_navigation(request: &tide_provider::Request) -> bool {
     use tide_provider::Request::*;
@@ -1403,6 +1415,19 @@ fn refresh_library_models(s: &State, u: &AppWindow) {
         })
         .collect();
     u.set_library_playlists(update_model(u.get_library_playlists(), playlists));
+    // A fixed set of at most FEATURE_CAPACITY cards gets the large cover; the
+    // rest always use thumbnails. Otherwise more large covers than the cache
+    // holds evict each other on every refresh and the cards keep swapping
+    // between the large and the thumbnail rendition, which reads as jitter.
+    let featured: Vec<usize> = feature_slots(
+        &home_images,
+        |index| {
+            s.recommendations
+                .get(index)
+                .is_some_and(|p| p.featured_artwork_url.is_some() && p.kind != "song")
+        },
+        u.get_home_columns() >= 3 && u.get_home_artwork_visible(),
+    );
     let cards: Vec<RecommendationRow> = s
         .recommendations
         .iter()
@@ -1418,7 +1443,7 @@ fn refresh_library_models(s: &State, u: &AppWindow) {
                 let large = p
                     .featured_artwork_url
                     .as_deref()
-                    .filter(|_| p.kind != "song" && u.get_home_columns() >= 3)
+                    .filter(|_| featured.contains(&index))
                     .map(|url| artwork.get_or_request_feature(url))
                     .unwrap_or_default();
                 if large.size().width > 0 {
@@ -6153,6 +6178,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn large_covers_stay_within_the_cache_so_cards_never_swap_renditions() {
+        // Eight visible playlist cards used to request eight large covers for a
+        // four-entry cache, evicting each other on every refresh.
+        let visible: Vec<usize> = (0..12).rev().collect();
+        let slots = super::feature_slots(&visible, |i| i % 3 != 0, true);
+        assert_eq!(slots, vec![1, 2, 4, 5]);
+        assert!(slots.len() <= crate::artwork::FEATURE_CAPACITY);
+        assert_eq!(super::feature_slots(&visible, |i| i % 3 != 0, true), slots);
+        assert!(super::feature_slots(&visible, |_| true, false).is_empty());
+    }
 
     #[test]
     fn upgrade_restores_preferences_even_if_queue_or_other_fields_are_incompatible() {

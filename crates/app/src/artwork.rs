@@ -23,7 +23,9 @@ const PENDING_CAPACITY: usize = 32;
 // Fits the artwork-led shelves without retaining full-resolution source images.
 const SIDE: u32 = 160;
 const FEATURE_SIDE: u32 = 320;
-const FEATURE_CAPACITY: usize = 4;
+/// Large covers kept at once. Callers must not show more than this many at a
+/// time, or they evict each other and the cards swap renditions (jitter).
+pub const FEATURE_CAPACITY: usize = 4;
 /// Now Playing's large cover; one at a time, evicted like any other entry.
 const LARGE_SIDE: u32 = 512;
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
