@@ -276,15 +276,19 @@ impl PlaybackHandle {
             prefetch::Taken::InFlight(token) => (None, Some(token)),
             prefetch::Taken::None => (None, None),
         };
-        self.command_tx
-            .try_send(WorkerCommand::Load(PendingLoad {
-                prepared,
-                promised,
-                source: validated.source,
-                generation,
-                epoch,
-            }))
-            .map_err(command_queue_error)?;
+        if let Err(error) = self.command_tx.try_send(WorkerCommand::Load(PendingLoad {
+            prepared,
+            promised,
+            source: validated.source,
+            generation,
+            epoch,
+        })) {
+            // No load will wait for it: don't leave the extraction promoted.
+            if let Some(token) = promised {
+                self.preparation.abandon(token);
+            }
+            return Err(command_queue_error(error));
+        }
 
         self.supersede_epoch.store(epoch, Ordering::Release);
         self.desired_generation.store(generation, Ordering::Release);
@@ -893,6 +897,11 @@ async fn run_worker(
     let mut next_session_id = 1_u64;
     let mut watchdog = tokio::time::interval(Duration::from_millis(250));
     watchdog.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    // A launched player waiting for the extraction already running for its
+    // song. Polled on its own branch so commands keep flowing meanwhile.
+    let mut pending_promise: Option<(u64, Instant)> = None;
+    let mut promise_poll = tokio::time::interval(Duration::from_millis(20));
+    promise_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let preparation_task = tokio::spawn(prefetch::run(
         runtimes.clone(),
         Arc::clone(&preparation),
@@ -916,6 +925,7 @@ async fn run_worker(
                             load.epoch == supersede_epoch.load(Ordering::Acquire)
                         };
                         if !current { continue; }
+                        if let Some((token, _)) = pending_promise.take() { preparation.abandon(token); }
                         if let Some(mut old) = player.take() { terminate_player(&mut old).await; }
                         state = PlayerState::default();
                         track = Some(recovery::Track::new(load, Instant::now()));
@@ -929,6 +939,7 @@ async fn run_worker(
                             epoch == supersede_epoch.load(Ordering::Acquire)
                         };
                         if !current { continue; }
+                        if let Some((token, _)) = pending_promise.take() { preparation.abandon(token); }
                         track = None;
                         state = PlayerState::default();
                         if let Some(mut running) = player.take() { terminate_player(&mut running).await; }
@@ -1107,6 +1118,35 @@ async fn run_worker(
                     _ => {}
                 }
             }
+            _ = promise_poll.tick(), if pending_promise.is_some() => {
+                let Some((token, since)) = pending_promise else { continue; };
+                let live = !*shutdown_rx.borrow() && track.as_ref().is_some_and(|current|
+                    current.load.epoch == supersede_epoch.load(Ordering::Acquire));
+                let outcome = if !live {
+                    None
+                } else if let Some(result) = preparation.promoted_result(token) {
+                    timing("promoted_wait", since.elapsed());
+                    Some(result)
+                } else if since.elapsed() >= PROMOTED_WAIT {
+                    Some(None)
+                } else {
+                    continue;
+                };
+                pending_promise = None;
+                match outcome {
+                    // Stopped, replaced or shutting down: never send this load.
+                    None => preparation.abandon(token),
+                    Some(stream) => {
+                        // A failure or timeout falls back to mpv's own extractor.
+                        if stream.is_none() { preparation.abandon(token); }
+                        if let (Some(current), Some(running)) = (track.as_mut(), player.as_mut()) {
+                            let mut load = current.load.clone();
+                            load.prepared = stream;
+                            fault = begin_load_at(running, &mut state, &mut load, current.position).await.is_err();
+                        }
+                    }
+                }
+            }
             _ = watchdog.tick() => {
                 let accepted = {
                     let _gate = send_gate.lock().unwrap_or_else(|p| p.into_inner());
@@ -1116,6 +1156,7 @@ async fn run_worker(
                     if current.load.epoch != supersede_epoch.load(Ordering::Acquire) { continue; }
                     let now = Instant::now();
                     if current.retry_at.is_some_and(|retry_at| now >= retry_at) {
+                        if let Some((token, _)) = pending_promise.take() { preparation.abandon(token); }
                         if let Some(mut old) = player.take() { terminate_player(&mut old).await; }
                         state = PlayerState::default();
                         current.apply_seek(&accepted, now);
@@ -1132,14 +1173,12 @@ async fn run_worker(
                                 if observe_properties(&mut running).await.is_err()
                                     || apply_audio_options(&mut running, &options).await.is_err() {
                                     fault = true;
+                                } else if let Some(token) = current.load.promised.take() {
+                                    // mpv started meanwhile; load once the extraction already
+                                    // running for this song finishes instead of repeating it.
+                                    pending_promise = Some((token, Instant::now()));
                                 } else {
                                     let mut load = current.load.clone();
-                                    // mpv started meanwhile; now use the extraction that was
-                                    // already running for this song instead of repeating it.
-                                    if let Some(token) = current.load.promised.take() {
-                                        load.prepared = wait_promoted(&preparation, token,
-                                            &shutdown_rx, &supersede_epoch, load.epoch).await;
-                                    }
                                     // Resume via mpv's per-file start option before audio starts.
                                     // Starting paused prevents any accepted pause racing loading.
                                     fault = begin_load_at(&mut running, &mut state, &mut load, current.position).await.is_err();
@@ -1148,6 +1187,7 @@ async fn run_worker(
                             }
                             Ok(None) => {
                                 if *shutdown_rx.borrow() { break; }
+                                if let Some(token) = current.load.promised.take() { preparation.abandon(token); }
                                 track = None;
                             }
                             Err(_) => { fault = true; }
@@ -1185,11 +1225,17 @@ async fn run_worker(
                     false
                 }
             };
+            if let Some((token, _)) = pending_promise.take() {
+                preparation.abandon(token);
+            }
             if let Some(mut failed) = player.take() {
                 terminate_player(&mut failed).await;
             }
             state = PlayerState::default();
             if !retry {
+                if let Some(token) = track.as_mut().and_then(|t| t.load.promised.take()) {
+                    preparation.abandon(token);
+                }
                 track = None;
             }
         }
@@ -1203,34 +1249,10 @@ async fn run_worker(
     reset_snapshot(&mut snapshot_write(&snapshot));
 }
 
-/// Longer than the resolver's own timeout, which completes the promise.
+/// How long a launched player waits for its promised extraction; longer than
+/// the resolver's own timeout, which normally completes the promise first.
 #[cfg(windows)]
 const PROMOTED_WAIT: Duration = Duration::from_secs(50);
-
-#[cfg(windows)]
-async fn wait_promoted(
-    preparation: &Preparation,
-    token: u64,
-    shutdown_rx: &watch::Receiver<bool>,
-    desired_epoch: &AtomicU64,
-    epoch: u64,
-) -> Option<PreparedStream> {
-    let started = Instant::now();
-    loop {
-        if let Some(result) = preparation.promoted_result(token) {
-            timing("promoted_wait", started.elapsed());
-            return result;
-        }
-        if *shutdown_rx.borrow()
-            || desired_epoch.load(Ordering::Acquire) != epoch
-            || started.elapsed() >= PROMOTED_WAIT
-        {
-            preparation.abandon(token);
-            return None;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-}
 
 #[cfg(windows)]
 async fn launch_player(

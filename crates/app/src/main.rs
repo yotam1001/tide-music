@@ -491,6 +491,8 @@ fn request_library_view(
         {
             s.queued_library_request = Some(request);
         }
+        // A Shuffle click that could not start must not shuffle a later playlist.
+        s.shuffle_request = false;
         return;
     }
     s.queued_library_request = None;
@@ -4675,17 +4677,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     u.set_account_busy(false);
                     u.set_detail_busy(false);
                     let playback_session_updated = sync_playback_cookies(&mut s);
-                    // A detail page the listener already left: skip it and open
-                    // the newer page now. Other results still apply first.
-                    if s.queued_library_request.is_some()
-                        && matches!(s.library_action, LibraryAction::Preview { radio_seed: None, .. } | LibraryAction::Artist)
-                        && s.library_request.as_ref().is_some_and(is_navigation)
-                    {
-                        if let Some(next) = s.queued_library_request.take() {
-                            request_library_view(&mut s, &u, &library_tx, next, None);
-                        }
-                        continue;
-                    }
                     if matches!(
                         &result,
                         Ok(tide_provider::Response::Library { .. }
@@ -4709,6 +4700,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 u.set_account_status("Account data loaded; playback session update will be retried on the next refresh.".into());
                             }
                         }
+                    }
+                    // A detail page the listener already left: skip it and open
+                    // the newer page now. Errors, retries and the
+                    // playback session refresh above still apply.
+                    if s.queued_library_request.is_some()
+                        && matches!(s.library_action, LibraryAction::Preview { radio_seed: None, .. } | LibraryAction::Artist)
+                        && s.library_request.as_ref().is_some_and(is_navigation)
+                        && result.is_ok()
+                    {
+                        if let Some(next) = s.queued_library_request.take() {
+                            request_library_view(&mut s, &u, &library_tx, next, None);
+                        }
+                        continue;
                     }
                     if let LibraryAction::Related { generation } = s.library_action {
                         if generation == s.generation && u.get_related_open() && s.account_verified {
@@ -6178,6 +6182,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn only_page_views_are_queued_behind_a_loading_page() {
+        use tide_provider::Request;
+        // Opening pages is latest-wins; playback and account work never is.
+        assert!(super::is_navigation(&Request::Home));
+        assert!(super::is_navigation(&Request::Playlist {
+            id: "PLx".into()
+        }));
+        assert!(super::is_navigation(&Request::Liked));
+        assert!(!super::is_navigation(&Request::Radio {
+            video_id: "x".into()
+        }));
+        assert!(!super::is_navigation(&Request::Search {
+            query: "x".into(),
+            kind: tide_provider::SearchKind::All
+        }));
+    }
+
     #[test]
     fn large_covers_stay_within_the_cache_so_cards_never_swap_renditions() {
         // Eight visible playlist cards used to request eight large covers for a

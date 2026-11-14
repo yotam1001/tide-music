@@ -241,8 +241,12 @@ impl Preparation {
         }
         if state.promoted == Some(token) {
             state.promoted = None;
+            let failed = stream.is_none();
             state.promoted_result = Some((token, stream));
-            if let Some(deferred) = state.deferred.take() {
+            let deferred = state.deferred.take();
+            // After a failure the load falls back to mpv's own extractor. Keep
+            // a single resolver: the app asks again once that song has loaded.
+            if let Some(deferred) = deferred.filter(|_| !failed) {
                 Self::request(&self.token, &self.requests, &mut state, deferred, now);
             }
             return;
@@ -720,8 +724,12 @@ mod tests {
         let failed = preparation.token.load(Ordering::Acquire);
         preparation.state.lock().unwrap().source = Some("next".into());
         assert!(matches!(preparation.take_for("next"), Taken::InFlight(t) if t == failed));
+        preparation.set(Some("later".into()));
         preparation.complete(failed, None, Instant::now());
         assert!(matches!(preparation.promoted_result(failed), Some(None)));
+        // mpv's extractor now runs for the failed song; no second resolver starts.
+        assert!(preparation.state.lock().unwrap().source.is_none());
+        assert_eq!(preparation.token.load(Ordering::Acquire), failed);
         assert!(preparation.state.lock().unwrap().retry_after.is_none());
     }
 
