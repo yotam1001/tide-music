@@ -159,3 +159,34 @@ loading/stall/pause watchdog deadlines.
 The command and event behavior follows the upstream [mpv manual's JSON IPC,
 Windows named-pipe, audio/video, cache, and yt-dlp sections](https://mpv.io/manual/stable/)
 and Microsoft's [Job Objects lifecycle documentation](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects).
+
+## Unix / macOS ownership
+
+The same bounded JSON protocol, retry/recovery state machine, account cookie
+snapshots and prefetch worker run over a Tokio UnixStream. Each session reserves
+its own 0700 directory under `$TMPDIR/tide-<uid>` (short `/tmp` fallback), validates
+ownership and rejects unsafe preexisting directories. Normal teardown removes
+its socket and session directory. Crashes may leave these inert directories;
+new sessions never reuse them.
+
+macOS searches TIDE_RUNTIME_DIR, Contents/Resources/bin, the executable directory,
+checkout .tools/runtime ancestors, /opt/homebrew/bin, /usr/local/bin, then PATH.
+It uses mpv and yt-dlp without extensions and CoreAudio output device IDs.
+
+Every Unix helper starts in a new process group. Normal drop sends SIGTERM,
+allows 900 ms, then SIGKILL and reaps the direct child. Group containment covers
+ordinary descendants, not programs deliberately escaping their process group.
+For mpv, a separate Unix socket pair is inherited as stdin with
+`--input-ipc-client=fd://0`. Tide alone owns the opposite end (CLOEXEC); closing
+it, including kernel closure when Tide crashes, makes mpv quit according to
+[mpv's documented input-ipc-client contract](https://mpv.io/manual/master/#options-input-ipc-client).
+The named socket remains the ordinary command transport. No polling watchdog
+or assumption about input-ipc-server disconnect is involved. As with any
+cooperative exit mechanism, an unresponsive mpv cannot guarantee bounded exit
+after an uncatchable Tide crash; normal teardown has SIGKILL fallback. Independent
+yt-dlp prefetch helpers have process-group cleanup on normal shutdown, but no
+kernel parent-death guarantee on macOS after a Tide crash.
+
+The macOS playback-smoke CI job installs real mpv/yt-dlp, exercises generated
+local silence through the engine/null output (effects and fault recovery), and
+checks that lifetime EOF alone exits mpv, without sending quit or a signal.
