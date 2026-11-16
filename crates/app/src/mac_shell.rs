@@ -115,5 +115,8 @@ fn menu_action(weak: &slint::Weak<AppWindow>, action: MenuAction) {
         MenuAction::HideWindow => {
             let _ = platform::hide_app();
         }
+        MenuAction::Quit => {
+            let _ = slint::quit_event_loop();
+        }
     }
 }

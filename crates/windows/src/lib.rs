@@ -225,3 +225,20 @@ pub mod discord_pipe;
 #[cfg(all(windows, feature = "native-login"))]
 pub mod login;
 pub mod mini;
+
+/// Reveal a file using the platform file manager.
+pub fn reveal_in_file_manager(path: &std::path::Path) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        std::process::Command::new("explorer.exe")
+            .arg(format!("/select,{}", path.display()))
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+        Err("File manager integration is available on Windows only".into())
+    }
+}
