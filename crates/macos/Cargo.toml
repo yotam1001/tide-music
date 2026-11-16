@@ -1,0 +1,9 @@
+[package]
+name = "tide-macos"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# AppKit / MediaPlayer / CoreAudio / Carbon bindings land with the implementation.
+# Off macOS this crate builds as documented stubs so Windows checks stay green.
+[dependencies]

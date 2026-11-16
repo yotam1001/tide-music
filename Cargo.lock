@@ -4262,6 +4262,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "tide-macos"
+version = "0.4.26"
+
+[[package]]
 name = "tide-music"
 version = "0.4.26"
 dependencies = [
