@@ -217,8 +217,11 @@ def main():
             run('hdiutil', 'create', '-ov', '-volname', 'Tide', '-srcfolder', stage,
                 '-format', 'UDZO', dmg)
             notarize(dmg)
+            # Stable names for releases/latest/download links on the website.
             if arch == 'arm64':
                 shutil.copy2(dmg, out / 'Tide.dmg')
+            else:
+                shutil.copy2(dmg, out / 'Tide-Intel.dmg')
             print(f'{dmg.name}: {dmg.stat().st_size} bytes', flush=True)
 
 

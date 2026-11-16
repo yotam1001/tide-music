@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+## 0.4.27 - 2026-11-17
+
+- **Tide for Mac (preview).** A native Mac build for macOS 14 Sonoma and
+  later, on Apple Silicon and Intel. Download Tide.dmg and drag Tide into
+  Applications. It is not signed by Apple yet, so the first launch needs
+  Control-click → Open (or Open Anyway in Privacy & Security on macOS 15+).
+  This first Mac build has only been tested on GitHub's Mac build machines,
+  not on a physical Mac, so please report anything that breaks.
+  - Control Center, the lock screen, media keys and AirPods show and control
+    the playing song.
+  - A native menu bar with ⌘ shortcuts, a Dock menu, and an optional menu bar
+    icon (Settings → Advanced → Show Tide in the menu bar).
+  - Closing the window keeps the music playing; click the Dock icon to come
+    back and press ⌘Q to quit.
+  - Native Google sign-in, with the session encrypted and its key kept in your
+    login Keychain.
+  - Optional banners when the song changes, and a pinned Mini player that
+    floats over every Space and full-screen app.
+- **Trackpad swipes.** Swipe two fingers right on the player bar or Mini
+  player for the next song, or left for the previous one. Each swipe skips
+  once. On Windows 11, Settings → Advanced → Set up four-finger swipes… opens
+  touchpad settings so four-finger swipes can skip songs from anywhere.
+
 ## 0.4.26 - 2026-11-16
 
 - Library lists now hold up to 1,000 saved albums, artists, history items
