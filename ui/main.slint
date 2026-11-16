@@ -233,6 +233,11 @@ export component AppWindow inherits Window {
     in property <string> feedback-notice;
     callback rate-song(int);
     callback dismiss-feedback();
+    // One-time corner notice: 0 none, 1 star on GitHub, 2 crash log.
+    in-out property <int> app-prompt: 0;
+    in property <bool> crash-log-available;
+    callback app-prompt-answer(bool);
+    callback open-crash-log();
     in property <bool> detail-editable: false;
     // The open playlist/album was saved to the library in this session.
     in property <bool> detail-saved: false;
@@ -1898,6 +1903,7 @@ export component AppWindow inherits Window {
                                         PreferenceRow { title: "Check for updates on startup"; checked: root.auto-update-checks; light-mode: root.light-mode; toggled => { root.toggle-update-checks(); } }
                                         Text { height: 18px; text: "Mini opacity · " + root.mini-opacity.to-fixed(0) + "%"; color: root.secondary; font-size: 12px; }
                                         TideSlider { height: 28px; light-mode: root.light-mode; minimum: 60; maximum: 100; value: root.mini-opacity; label: "Mini player opacity"; value-text: root.mini-opacity.to-fixed(0) + "%"; released(value) => { root.change-mini-opacity(value); } }
+                                        if root.crash-log-available : LibraryButton { height: 34px; caption: "Open crash log"; label: "Show the crash log file in its folder. Review it before sharing it in a bug report."; light-mode: root.light-mode; clicked => { root.open-crash-log(); } }
                                         AboutSlint { height: 112px; horizontal-stretch: 0; }
                                     }
                                 }
@@ -2321,6 +2327,44 @@ export component AppWindow inherits Window {
                     if root.playlist-choices.length == 0 : Text { vertical-stretch: 1; min-height: 40px; text: root.playlist-choices-busy ? "Refreshing your playlists…" : "No editable playlists loaded. Refresh your playlists, or create one in YouTube Music."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
                     LibraryButton { height: 32px; light-mode: root.light-mode; caption: root.playlist-choices-busy ? "Refreshing…" : "Refresh playlists"; enabled: !root.playlist-choices-busy; label: "Refresh editable playlists from your selected account"; clicked => { root.refresh-playlist-choices(); } }
                     Text { height: 28px; text: "Saved to your selected YouTube Music account. Your playback queue stays separate."; color: root.secondary; font-size: 11px; wrap: word-wrap; }
+                }
+            }
+        }
+        if !root.collapsed && root.app-prompt != 0 : Rectangle {
+            x: root.width - self.width - 18px;
+            y: root.height - self.height - 122px - (root.feedback-notice != "" ? 86px : 0px);
+            width: min(360px, root.width - 36px); height: prompt-layout.preferred-height;
+            background: root.surface; border-width: 1px; border-color: root.outline; border-radius: 12px;
+            drop-shadow-blur: 24px; drop-shadow-offset-y: 8px; drop-shadow-color: Theme.shadow;
+            TouchArea { }
+            prompt-layout := VerticalLayout {
+                padding: 14px; spacing: 10px;
+                HorizontalLayout {
+                    spacing: 10px; cross-axis-alignment: start;
+                    Path {
+                        width: 20px; height: 20px; viewbox-width: 24; viewbox-height: 24;
+                        commands: root.app-prompt == 1
+                            ? "M 12 2 L 15.1 8.3 L 22 9.3 L 17 14.1 L 18.2 21 L 12 17.8 L 5.8 21 L 7 14.1 L 2 9.3 L 8.9 8.3 Z"
+                            : "M 12 3 L 22 20 L 2 20 Z M 12 9 L 12 14 M 12 16.5 L 12 17.5";
+                        fill: root.app-prompt == 1 ? Theme.accent : transparent;
+                        stroke: root.app-prompt == 1 ? transparent : Theme.accent; stroke-width: 2px;
+                    }
+                    VerticalLayout {
+                        horizontal-stretch: 1; spacing: 3px;
+                        Text { text: root.app-prompt == 1 ? "Enjoying Tide?" : "Tide closed unexpectedly"; color: root.foreground; font-size: 14px; font-weight: 700; wrap: word-wrap; }
+                        Text {
+                            text: root.app-prompt == 1
+                                ? "Tide is free and open source. A star on GitHub helps other people find it."
+                                : "A crash log was saved on this PC. Attaching it to a bug report helps fix the problem. Review it before sharing.";
+                            color: root.secondary; font-size: 12px; wrap: word-wrap; accessible-live-region: polite;
+                        }
+                    }
+                    LibraryButton { width: 28px; height: 28px; light-mode: root.light-mode; caption: "×"; label: "Dismiss this message"; clicked => { root.app-prompt-answer(false); } }
+                }
+                HorizontalLayout {
+                    height: 32px; spacing: 8px; alignment: end;
+                    LibraryButton { width: 84px; height: 32px; light-mode: root.light-mode; caption: "Not now"; label: "Dismiss this message"; clicked => { root.app-prompt-answer(false); } }
+                    LibraryButton { width: 140px; height: 32px; quiet: false; active: true; light-mode: root.light-mode; caption: root.app-prompt == 1 ? "Star on GitHub" : "Open crash log"; label: root.app-prompt == 1 ? "Open Tide on GitHub to star it" : "Show the crash log file in its folder"; clicked => { root.app-prompt-answer(true); } }
                 }
             }
         }

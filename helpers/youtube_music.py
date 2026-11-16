@@ -33,7 +33,7 @@ MAX_HOME_SHELVES = 9
 MAX_HOME_ITEMS_PER_SHELF = 30
 MAX_HOME_CARDS = MAX_HOME_SHELVES * MAX_HOME_ITEMS_PER_SHELF
 MAX_SUPERMIX_SHELVES = 20
-MAX_LIBRARY_CARDS = 200
+MAX_LIBRARY_CARDS = 1000
 MAX_SEARCH_CARDS = 40
 MAX_EXPLORE_CATEGORIES = 128
 ARTWORK_SIDE = 160  # Match the bounded native thumbnail cache, not full-size artwork.
@@ -1410,13 +1410,13 @@ def run(client, request):
                 "releases": releases}
     if action == "library":
         info = client.get_account_info()
-        playlists = client.get_library_playlists(limit=201)
+        playlists = client.get_library_playlists(limit=MAX_LIBRARY_CARDS + 1)
         return {"type": "library", "account": clean(info.get("accountName") or info.get("name") or "YouTube Music"),
                 "playlists": [{"id": identifier(p.get("playlistId")), "title": clean(p.get("title")),
                                "subtitle": playlist_count_label(p.get("count")),
                                "artwork_url": artwork_url(p), "owned": p.get("owned") is True}
-                              for p in playlists[:200] if isinstance(p, dict) and identifier(p.get("playlistId"))],
-                "truncated": len(playlists) > 200}
+                              for p in playlists[:MAX_LIBRARY_CARDS] if isinstance(p, dict) and identifier(p.get("playlistId"))],
+                "truncated": len(playlists) > MAX_LIBRARY_CARDS}
     if action == "supermix":
         # Resolve this account's dynamic mix on demand, independently of Home's
         # small display pool. Never substitute another mix or a public playlist.

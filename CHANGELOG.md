@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Library lists now hold up to 1,000 saved albums, artists, history items
+  and playlists instead of stopping at 200.
+- If Tide closed unexpectedly, the next launch shows a small notice with an
+  Open crash log button. The log can also be opened any time from
+  Settings → Advanced, and the bug report form now asks for it.
+- A one-time note asking you to star Tide on GitHub, shown after a few
+  launches. It never comes back once dismissed.
+
 ## 0.4.25 - 2026-11-14
 
 - Songs start faster when they weren't ready in advance: skipping twice

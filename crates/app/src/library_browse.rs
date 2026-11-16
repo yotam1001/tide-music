@@ -89,7 +89,7 @@ pub(super) fn receive(
     }
     s.library_browse.cards = cards
         .into_iter()
-        .take(200)
+        .take(tide_core::MAX_LIBRARY_ITEMS)
         .filter(|card| accepts(section, card))
         .collect();
     u.set_library_loaded(true);
@@ -97,7 +97,7 @@ pub(super) fn receive(
         if truncated && section == BrowseSection::Explore {
             "Showing a limited selection from YouTube Music"
         } else if truncated {
-            "Showing the first 200 items from YouTube Music"
+            "Showing the first 1,000 items from YouTube Music"
         } else {
             ""
         }

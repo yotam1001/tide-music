@@ -444,7 +444,7 @@ pub fn install(
             .library_playlists
             .iter()
             .filter(|p| p.owned)
-            .take(200)
+            .take(tide_core::MAX_LIBRARY_ITEMS)
             .cloned()
             .collect();
         s.music_feedback.picker = Some(Picker {
@@ -774,7 +774,7 @@ pub fn tick(s: &mut State, u: &AppWindow) {
                             owned: true,
                         },
                     );
-                    s.library_playlists.truncate(200);
+                    s.library_playlists.truncate(tide_core::MAX_LIBRARY_ITEMS);
                     refresh_library_models(s, u);
                     notice(s, u, "Private playlist created.");
                 } else {
@@ -960,7 +960,7 @@ pub fn tick(s: &mut State, u: &AppWindow) {
                 .library_playlists
                 .iter()
                 .filter(|p| p.owned)
-                .take(200)
+                .take(tide_core::MAX_LIBRARY_ITEMS)
                 .cloned()
                 .collect();
             picker.refreshing = false;
