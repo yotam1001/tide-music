@@ -117,7 +117,7 @@ fn verify(
     })
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 pub(super) fn test_authorization(version: &str, digest: &str, size: u64) -> Authorization {
     use ring::{
         rand::SystemRandom,

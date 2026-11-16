@@ -175,6 +175,7 @@ pub(super) use recording::wire;
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(not(target_os = "macos"))]
     #[test]
     fn captured_chords_match_supported_global_bindings() {
         assert_eq!(
@@ -198,6 +199,34 @@ mod tests {
             .unwrap()
             .is_none());
         assert!(encode("password text", true, false, false, false)
+            .unwrap()
+            .is_none());
+    }
+
+    /// Slint reports ⌘ as `control` and the physical Control key as `meta` on macOS.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn captured_chords_use_mac_modifier_names() {
+        assert_eq!(
+            encode("p", true, true, false, false).unwrap().as_deref(),
+            Some("Cmd+Option+P")
+        );
+        assert_eq!(
+            encode(" ", false, true, true, false).unwrap().as_deref(),
+            Some("Option+Shift+Space")
+        );
+        assert_eq!(
+            encode("p", false, false, false, true).unwrap().as_deref(),
+            Some("Ctrl+P")
+        );
+        assert_eq!(
+            encode("\u{f70f}", true, false, false, false)
+                .unwrap()
+                .as_deref(),
+            Some("Cmd+F12")
+        );
+        assert!(encode("p", false, false, true, false).is_err());
+        assert!(encode("\u{0011}", true, false, false, false)
             .unwrap()
             .is_none());
     }

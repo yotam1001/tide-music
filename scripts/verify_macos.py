@@ -14,6 +14,8 @@ def main():
     app = args.app.resolve()
     run('plutil', '-lint', app / 'Contents/Info.plist')
     run('codesign', '--verify', '--strict', '--verbose=2', app)
+    if not (app / 'Contents/MacOS/tide-login').is_file():
+        raise RuntimeError('Native sign-in helper is missing')
     for path in app.rglob('*'):
         if macho(path):
             deps = subprocess.check_output(['otool', '-L', str(path)], text=True)

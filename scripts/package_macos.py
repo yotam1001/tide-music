@@ -172,13 +172,18 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     arches = ['arm64', 'x86_64'] if args.arch == 'universal' else [args.arch]
     binaries = []
+    logins = []
     for arch in arches:
         target = ('aarch64' if arch == 'arm64' else arch) + '-apple-darwin'
         run('rustup', 'target', 'add', target)
         run('cargo', 'build', '--release', '--locked', '-p', 'tide-music',
             '--no-default-features', '--target', target)
+        # Native sign-in runs in its own owned helper process beside the player.
+        run('cargo', 'build', '--release', '--locked', '-p', 'tide-provider',
+            '--features', 'native-login', '--bin', 'tide-login', '--target', target)
         target_dir = Path(os.environ.get('CARGO_TARGET_DIR', ROOT / 'target'))
         binaries.append(target_dir / target / 'release/tide-music')
+        logins.append(target_dir / target / 'release/tide-login')
     # Runtime builds are per arch: universal emits two DMGs with a universal Tide.
     for arch in arches:
         with tempfile.TemporaryDirectory(prefix='tide-macos-') as temporary:
@@ -190,10 +195,13 @@ def main():
             (contents / 'MacOS').mkdir(parents=True)
             (resources / 'bin').mkdir(parents=True)
             binary = contents / 'MacOS/tide-music'
+            login = contents / 'MacOS/tide-login'
             if len(binaries) == 2:
                 run('lipo', '-create', *binaries, '-output', binary)
+                run('lipo', '-create', *logins, '-output', login)
             else:
                 shutil.copy2(binaries[0], binary)
+                shutil.copy2(logins[0], login)
             (contents / 'Info.plist').write_text((PACK / 'Info.plist').read_text().replace('@VERSION@', version))
             icon(resources, work)
             shutil.copytree(PACK / 'licenses', resources / 'licenses')
