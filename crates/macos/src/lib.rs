@@ -1,10 +1,10 @@
-//! macOS platform integration for Tide. Mirrors the public API of `tide-windows`;
-//! see docs/MACOS_PORT.md. This file currently holds the stub contract only.
+//! Native macOS integrations. Create and drop UI resources on the main thread.
+#[cfg(not(target_os = "macos"))]
 use std::ffi::c_void;
+#[cfg(not(target_os = "macos"))]
 use std::path::Path;
-
+#[cfg(not(target_os = "macos"))]
 const UNSUPPORTED: &str = "This system integration is available on macOS only.";
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum MediaAction {
     Play,
@@ -34,136 +34,114 @@ pub enum MenuAction {
     HideWindow,
 }
 
-pub struct MediaSession;
+#[cfg(target_os = "macos")]
+mod native;
+#[cfg(target_os = "macos")]
+pub use native::*;
+#[cfg(not(target_os = "macos"))]
+mod stubs {
+    use super::*;
+    pub struct MediaSession;
 
-pub fn start(
-    _view: *mut c_void,
-    _callback: impl Fn(MediaAction) + Send + 'static,
-) -> Result<MediaSession, String> {
-    Err(UNSUPPORTED.into())
-}
-
-impl MediaSession {
-    pub fn set_close_to_tray(&self, _enabled: bool) {}
-
-    pub fn set_thumbnail(&mut self, _png: Option<&[u8]>) -> Result<(), String> {
+    pub fn start(
+        _view: *mut c_void,
+        _callback: impl Fn(MediaAction) + Send + 'static,
+    ) -> Result<MediaSession, String> {
         Err(UNSUPPORTED.into())
     }
 
-    pub fn update(
-        &mut self,
-        _title: &str,
-        _artist: &str,
-        _album: &str,
-        _playing: bool,
-        _position: f64,
-        _duration: f64,
-    ) -> Result<(), String> {
-        Err(UNSUPPORTED.into())
-    }
-}
+    impl MediaSession {
+        pub fn set_close_to_tray(&self, _enabled: bool) {}
 
-pub fn install_app_menu(_callback: impl Fn(MenuAction) + 'static) -> Result<(), String> {
-    Err(UNSUPPORTED.into())
-}
+        pub fn set_thumbnail(&mut self, _png: Option<&[u8]>) -> Result<(), String> {
+            Err(UNSUPPORTED.into())
+        }
 
-pub fn notify_song(_title: &str, _artist: &str) -> Result<(), String> {
-    Err(UNSUPPORTED.into())
-}
-
-pub fn open_web_page(_url: &str) -> Result<(), String> {
-    Err(UNSUPPORTED.into())
-}
-
-pub fn reveal_in_file_manager(_path: &Path) -> Result<(), String> {
-    Err(UNSUPPORTED.into())
-}
-
-pub fn app_light_theme() -> Option<bool> {
-    None
-}
-
-pub fn local_hour() -> Option<u8> {
-    None
-}
-
-pub fn client_animations_enabled() -> bool {
-    true
-}
-
-pub fn window_work_area(_view: *mut c_void) -> Result<[i32; 4], String> {
-    Err(UNSUPPORTED.into())
-}
-
-pub fn fit_window_to_work_area(_view: *mut c_void, _work: [i32; 4]) -> Result<(), String> {
-    Err(UNSUPPORTED.into())
-}
-
-pub struct OutputWatcher;
-
-impl OutputWatcher {
-    pub fn new() -> Result<Self, String> {
-        Err(UNSUPPORTED.into())
-    }
-
-    pub fn take_available(&self) -> Option<bool> {
-        None
-    }
-}
-
-pub mod mini {
-    use std::ffi::c_void;
-
-    #[derive(Default)]
-    pub struct MiniWindow;
-
-    impl MiniWindow {
-        pub fn apply(
+        pub fn update(
             &mut self,
-            _view: *mut c_void,
-            _pinned: bool,
-            _opacity: u8,
+            _title: &str,
+            _artist: &str,
+            _album: &str,
+            _playing: bool,
+            _position: f64,
+            _duration: f64,
         ) -> Result<(), String> {
-            Err(super::UNSUPPORTED.into())
+            Err(UNSUPPORTED.into())
         }
     }
-}
 
-pub mod shortcuts {
-    use super::MediaAction;
-
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    pub struct Chord {
-        modifiers: u32,
-        key: u32,
+    pub fn install_app_menu(_callback: impl Fn(MenuAction) + 'static) -> Result<(), String> {
+        Err(UNSUPPORTED.into())
     }
 
-    pub fn layout_key_name(_character: char) -> Option<String> {
+    pub fn notify_song(_title: &str, _artist: &str) -> Result<(), String> {
+        Err(UNSUPPORTED.into())
+    }
+
+    pub fn open_web_page(_url: &str) -> Result<(), String> {
+        Err(UNSUPPORTED.into())
+    }
+
+    pub fn reveal_in_file_manager(_path: &Path) -> Result<(), String> {
+        Err(UNSUPPORTED.into())
+    }
+
+    pub fn app_light_theme() -> Option<bool> {
         None
     }
 
-    pub fn parse_bindings(_values: &[String; 3]) -> Result<[Option<Chord>; 3], String> {
-        Err(super::UNSUPPORTED.into())
+    pub fn local_hour() -> Option<u8> {
+        None
     }
 
-    pub struct GlobalShortcuts;
+    pub fn client_animations_enabled() -> bool {
+        true
+    }
 
-    impl GlobalShortcuts {
-        pub fn new(_callback: impl Fn(MediaAction) + Send + 'static) -> Result<Self, String> {
-            Err(super::UNSUPPORTED.into())
+    pub fn window_work_area(_view: *mut c_void) -> Result<[i32; 4], String> {
+        Err(UNSUPPORTED.into())
+    }
+
+    pub fn fit_window_to_work_area(_view: *mut c_void, _work: [i32; 4]) -> Result<(), String> {
+        Err(UNSUPPORTED.into())
+    }
+
+    pub struct OutputWatcher;
+
+    impl OutputWatcher {
+        pub fn new() -> Result<Self, String> {
+            Err(UNSUPPORTED.into())
         }
 
-        pub fn apply(&mut self, _chords: [Option<Chord>; 3]) -> Result<(), String> {
-            Err(super::UNSUPPORTED.into())
+        pub fn take_available(&self) -> Option<bool> {
+            None
         }
     }
 
-    #[allow(dead_code)]
-    fn _fields(chord: Chord) -> (u32, u32) {
-        (chord.modifiers, chord.key)
+    pub mod mini {
+        use std::ffi::c_void;
+
+        #[derive(Default)]
+        pub struct MiniWindow;
+
+        impl MiniWindow {
+            pub fn apply(
+                &mut self,
+                _view: *mut c_void,
+                _pinned: bool,
+                _opacity: u8,
+            ) -> Result<(), String> {
+                Err(super::UNSUPPORTED.into())
+            }
+        }
     }
 }
-
+#[cfg(not(target_os = "macos"))]
+pub use stubs::*;
+#[cfg(target_os = "macos")]
+pub mod discord_pipe;
+pub mod shortcuts;
+#[cfg(not(target_os = "macos"))]
 pub mod discord_pipe {
     use std::io;
     use std::time::{Duration, Instant};
