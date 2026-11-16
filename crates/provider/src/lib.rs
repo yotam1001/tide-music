@@ -3485,13 +3485,13 @@ mod tests {
     #[test]
     fn unix_seal_unseal_roundtrip_tamper_truncation_and_missing_key() {
         let store = InMemoryKeyStore::new();
-        let plaintext = b"{\"cookie\":\"__Secure-3PAPISID=fixture-secret\"}";
+        let plaintext = b"{\"cookie\":\"__Secure-3PAPISID=testval; PREF=1\"}";
         let sealed = seal_bytes(&store, plaintext).unwrap();
         assert!(store.has_key());
         assert_eq!(&sealed[..4], &SEALED_MAGIC);
         assert_eq!(sealed[4], SEALED_VERSION);
         assert_eq!(sealed.len(), SEALED_HEADER_LEN + 12 + plaintext.len() + 16);
-        assert!(!sealed.windows(14).any(|w| w == b"fixture-secret"));
+        assert!(!sealed.windows(7).any(|w| w == b"testval"));
         assert_eq!(unseal_bytes(&store, &sealed).unwrap(), plaintext);
 
         let sealed_again = seal_bytes(&store, plaintext).unwrap();
@@ -3552,7 +3552,7 @@ mod tests {
         assert!(!provider.is_connected());
 
         provider
-            .import_bytes(br#"{"cookie":"__Secure-3PAPISID=fixture-unix","x-goog-authuser":"1"}"#)
+            .import_bytes(br#"{"cookie":"__Secure-3PAPISID=unix1; PREF=1","x-goog-authuser":"1"}"#)
             .unwrap();
         assert!(provider.is_connected());
         assert!(store.has_key());
@@ -3575,11 +3575,11 @@ mod tests {
             0o600
         );
         let sealed = fs::read(&session_path).unwrap();
-        assert!(!sealed.windows(12).any(|w| w == b"fixture-unix"));
+        assert!(!sealed.windows(5).any(|w| w == b"unix1"));
 
         let saved = provider.saved_connection().unwrap().unwrap();
         assert_eq!(saved.account_index, 1);
-        assert!(provider.headers().unwrap()["cookie"].contains("fixture-unix"));
+        assert!(provider.headers().unwrap()["cookie"].contains("unix1"));
 
         let lease = provider.cookie_lease().unwrap().unwrap();
         let lease_path = lease.path().to_owned();
@@ -3593,7 +3593,7 @@ mod tests {
         );
         provider
             .write_session(
-                br#"{"cookie":"__Secure-3PAPISID=refreshed-unix","x-goog-authuser":"1"}"#,
+                br#"{"cookie":"__Secure-3PAPISID=unix2; PREF=1","x-goog-authuser":"1"}"#,
                 false,
             )
             .unwrap();
@@ -3606,9 +3606,7 @@ mod tests {
                 & 0o777,
             0o600
         );
-        assert!(fs::read_to_string(&lease_path)
-            .unwrap()
-            .contains("refreshed-unix"));
+        assert!(fs::read_to_string(&lease_path).unwrap().contains("unix2"));
         drop(lease);
         assert!(!lease_path.exists());
 
@@ -3655,7 +3653,7 @@ mod tests {
         let linked_provider = Provider::with_key_store(link_dir.clone(), store.clone());
         assert!(!linked_provider.is_connected());
         assert!(linked_provider
-            .import_bytes(br#"{"cookie":"__Secure-3PAPISID=fixture"}"#)
+            .import_bytes(br#"{"cookie":"__Secure-3PAPISID=fixture; PREF=1"}"#)
             .is_err());
 
         // Symlinked session file inside a real directory is refused.
@@ -3665,7 +3663,11 @@ mod tests {
         std::os::unix::fs::symlink(&decoy, real_dir.join(SESSION_FILE_NAME)).unwrap();
         assert!(!real_provider.is_connected());
         assert!(real_provider.read_session().is_err());
-        assert!(real_provider.cookie_lease().is_err());
+        assert!(
+            read_limited_private(&real_dir, &real_dir.join(SESSION_FILE_NAME), MAX_SESSION)
+                .is_err()
+        );
+        assert!(real_provider.cookie_lease().unwrap().is_none());
 
         fs::remove_dir_all(&base).unwrap();
     }
@@ -3682,7 +3684,7 @@ mod tests {
         let store = Arc::new(InMemoryKeyStore::new());
         let provider = Provider::with_key_store(directory.clone(), store);
         provider
-            .import_bytes(br#"{"cookie":"__Secure-3PAPISID=old","x-goog-authuser":"1"}"#)
+            .import_bytes(br#"{"cookie":"__Secure-3PAPISID=old; PREF=1","x-goog-authuser":"1"}"#)
             .unwrap();
 
         // Same-thread reentrancy succeeds without self-deadlock.
@@ -3692,10 +3694,11 @@ mod tests {
 
         // Another thread cannot try_acquire while held.
         let dir_for_try = directory.clone();
-        let try_result = std::thread::spawn(move || SessionWriteLock::try_acquire(&dir_for_try))
-            .join()
-            .unwrap();
-        assert!(try_result.is_err());
+        let try_failed =
+            std::thread::spawn(move || SessionWriteLock::try_acquire(&dir_for_try).is_err())
+                .join()
+                .unwrap();
+        assert!(try_failed);
 
         // disconnect() on another thread blocks until guard is dropped.
         let (ready_tx, ready_rx) = std::sync::mpsc::channel();
@@ -3747,7 +3750,10 @@ mod tests {
         let provider =
             Provider::with_key_store(directory.clone(), Arc::new(InMemoryKeyStore::new()));
         assert!(!provider.owns_login_directory(&directory.join("login-1-1")));
-        let error = provider.new_login_directory().unwrap_err();
+        let error = match provider.new_login_directory() {
+            Ok(_) => panic!("expected non-Windows new_login_directory to fail"),
+            Err(error) => error,
+        };
         assert!(error.contains("browser companion on macOS"));
         fs::remove_dir_all(&directory).unwrap();
     }
