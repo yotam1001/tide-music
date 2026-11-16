@@ -2449,7 +2449,7 @@ fn unseal_bytes(key_store: &dyn SessionKeyStore, sealed: &[u8]) -> Result<Vec<u8
 
     let mut buffer = zeroize::Zeroizing::new(ciphertext.to_vec());
     let plaintext = key
-        .open_in_place(nonce, Aad::from(header), &mut *buffer)
+        .open_in_place(nonce, Aad::from(header), &mut buffer)
         .map_err(|_| "macOS could not unlock the saved session. Reconnect your account")?;
     Ok(plaintext.to_vec())
 }
