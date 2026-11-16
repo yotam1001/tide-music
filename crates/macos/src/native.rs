@@ -262,6 +262,9 @@ impl MediaSession {
         if main_thread().is_err() {
             return;
         }
+        if !enabled {
+            STATUS_CALLBACK.with_borrow_mut(|callback| *callback = None);
+        }
         unsafe {
             let bar: Obj = msg_send![class!(NSStatusBar), systemStatusBar];
             if let Some(item) = self.status.borrow_mut().take() {
@@ -338,9 +341,13 @@ impl MediaSession {
             }
             self.song = format!("{title} — {artist}").chars().take(72).collect();
             self.playing = playing;
+            let center: Obj = msg_send![class!(MPNowPlayingInfoCenter), defaultCenter];
+            let _: () =
+                msg_send![&*center, setPlaybackState: if playing { 1usize } else { 2usize }];
             self.publish();
-            if self.status.borrow().is_some() {
-                self.set_close_to_tray(true);
+            if let Some(item) = self.status.borrow().as_ref() {
+                let menu = status_menu(&self.song, self.playing, self.sender.clone());
+                let _: () = msg_send![&**item, setMenu: &*menu];
             }
             Ok(())
         }
@@ -359,8 +366,9 @@ impl Drop for MediaSession {
         let _ = &self.center;
     }
 }
+type MenuCallback = Box<dyn Fn(MenuAction)>;
 thread_local! {
-    static MENU_CALLBACK:RefCell<Option<Box<dyn Fn(MenuAction)>>> = RefCell::new(None);
+    static MENU_CALLBACK:RefCell<Option<MenuCallback>> = RefCell::new(None);
     static MENU_TARGET:RefCell<Option<Obj>> = const { RefCell::new(None) };
     static STATUS_CALLBACK:RefCell<Option<mpsc::Sender<MediaAction>>> = const { RefCell::new(None) };
     static DOCK_MENU:RefCell<Option<Obj>> = const { RefCell::new(None) };

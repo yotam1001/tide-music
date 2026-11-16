@@ -27,12 +27,12 @@ unsafe impl objc2::encode::RefEncode for Address {
         objc2::encode::Encoding::Pointer(&<Self as objc2::encode::Encode>::ENCODING);
 }
 const DEFAULT: Address = Address {
-    selector: u32::from_be_bytes(*b"dOut"),
+    selector: objc2_core_audio::kAudioHardwarePropertyDefaultOutputDevice,
     scope: u32::from_be_bytes(*b"glob"),
     element: 0,
 };
 const ALIVE: Address = Address {
-    selector: u32::from_be_bytes(*b"livn"),
+    selector: objc2_core_audio::kAudioDevicePropertyDeviceIsAlive,
     ..DEFAULT
 };
 type Listener = block2::Block<dyn Fn(u32, *const Address)>;
@@ -78,6 +78,7 @@ fn read(object: u32, address: &Address) -> u32 {
     value
 }
 struct State {
+    stopped: bool,
     device: u32,
     pending: Arc<AtomicU8>,
     alive: RcBlock<dyn Fn(u32, *const Address)>,
@@ -104,6 +105,7 @@ impl OutputWatcher {
             );
         });
         let state = Arc::new(Mutex::new(State {
+            stopped: false,
             device: 0,
             pending,
             alive,
@@ -112,6 +114,9 @@ impl OutputWatcher {
         let changed = RcBlock::new(move |_: u32, _: *const Address| {
             if let Some(state) = weak.upgrade() {
                 let mut state = state.lock().unwrap_or_else(|e| e.into_inner());
+                if state.stopped {
+                    return;
+                }
                 unsafe {
                     if state.device != 0 {
                         AudioObjectRemovePropertyListenerBlock(
@@ -141,6 +146,9 @@ impl OutputWatcher {
                 );
             }
         });
+        // Hold the state lock across installation and initialization so an early
+        // default-device callback cannot install a duplicate alive listener.
+        let mut s = state.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
             if AudioObjectAddPropertyListenerBlock(1, &DEFAULT, std::ptr::null_mut(), &changed) != 0
             {
@@ -148,7 +156,6 @@ impl OutputWatcher {
             }
         }
         {
-            let mut s = state.lock().unwrap();
             s.device = read(1, &DEFAULT);
             unsafe {
                 if s.device != 0 {
@@ -161,6 +168,7 @@ impl OutputWatcher {
                 }
             }
         }
+        drop(s);
         Ok(Self { state, changed })
     }
     pub fn take_available(&self) -> Option<bool> {
@@ -179,6 +187,7 @@ impl OutputWatcher {
 }
 impl Drop for OutputWatcher {
     fn drop(&mut self) {
+        self.state.lock().unwrap_or_else(|e| e.into_inner()).stopped = true;
         unsafe {
             AudioObjectRemovePropertyListenerBlock(
                 1,
