@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 use std::process::{Command, Stdio};
 #[cfg(any(windows, unix))]
 use std::time::Instant;
@@ -456,7 +456,7 @@ pub enum Response {
 }
 
 // Keep refreshed credentials inside the provider; callers receive metadata only.
-#[cfg(any(windows, test))]
+#[cfg(any(windows, unix, test))]
 struct HelperReply {
     response: Response,
     refreshed: RefreshedHeaders,
@@ -475,24 +475,24 @@ impl Drop for RefreshedHeaders {
 
 // Deserialize only the optional credentials a second time. Serde skips the
 // already-decoded track/card metadata without allocating another JSON tree.
-#[cfg(any(windows, test))]
+#[cfg(any(windows, unix, test))]
 #[derive(Default, Deserialize)]
 #[serde(transparent)]
 struct RefreshedJson(serde_json::Value);
-#[cfg(any(windows, test))]
+#[cfg(any(windows, unix, test))]
 impl Drop for RefreshedJson {
     fn drop(&mut self) {
         zeroize_json(&mut self.0);
     }
 }
-#[cfg(any(windows, test))]
+#[cfg(any(windows, unix, test))]
 #[derive(Deserialize)]
 struct RefreshEnvelope {
     #[serde(default)]
     refreshed_headers: RefreshedJson,
 }
 
-#[cfg(any(windows, test))]
+#[cfg(any(windows, unix, test))]
 fn decode_helper_reply(bytes: &[u8]) -> Result<HelperReply, &'static str> {
     // Parse data independently so an invalid optional update cannot hide valid
     // library results or turn a transient error into a rejected session.
@@ -529,7 +529,7 @@ fn decode_helper_reply(bytes: &[u8]) -> Result<HelperReply, &'static str> {
     })
 }
 
-#[cfg(any(windows, test))]
+#[cfg(any(windows, unix, test))]
 fn zeroize_json(value: &mut serde_json::Value) {
     match value {
         serde_json::Value::String(value) => value.zeroize(),
@@ -898,7 +898,7 @@ impl Provider {
         }
         index
     }
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     fn save_verified_session(
         &self,
         mut headers: BTreeMap<String, String>,
@@ -920,7 +920,7 @@ impl Provider {
         result?;
         Ok(Response::Connected)
     }
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     fn save_verified_session_for_connection(
         &self,
         mut headers: BTreeMap<String, String>,
@@ -949,7 +949,7 @@ impl Provider {
 
     /// Verify before replacing a saved session. A connection changed while the
     /// network request was in flight must not be overwritten by its result.
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     pub fn import_browser_session(
         &self,
         bytes: &[u8],
@@ -999,7 +999,7 @@ impl Provider {
         }
     }
 
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, unix)))]
     pub fn import_browser_session(
         &self,
         _bytes: &[u8],
@@ -1008,7 +1008,7 @@ impl Provider {
         Err(SessionImportError::StorageError)
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     fn import_baseline(&self) -> Result<Option<Vec<u8>>, SessionImportError> {
         let _lock = SessionWriteLock::acquire(&self.directory)
             .map_err(|_| SessionImportError::StorageError)?;
@@ -1022,7 +1022,7 @@ impl Provider {
         }
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     fn commit_browser_session(
         &self,
         mut headers: BTreeMap<String, String>,
@@ -1482,7 +1482,7 @@ impl Provider {
         Ok(true)
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     fn persist_refreshed_headers(
         &self,
         refreshed: &RefreshedHeaders,
@@ -1588,7 +1588,7 @@ impl Provider {
         accepted
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     pub fn execute(&self, request: Request, cancel: Arc<AtomicBool>) -> Result<Response, String> {
         if let Request::Connect {
             ref database,
@@ -1713,7 +1713,7 @@ impl Provider {
             response => Ok(response),
         }
     }
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, unix)))]
     pub fn execute(&self, _: Request, _: Arc<AtomicBool>) -> Result<Response, String> {
         Err("Account integration currently requires Windows".into())
     }
@@ -1979,7 +1979,7 @@ fn cookie_jar(cookie: &str) -> Result<String, &'static str> {
     Ok(std::mem::take(&mut *jar))
 }
 
-#[cfg(any(windows, test))]
+#[cfg(any(windows, unix, test))]
 fn scoped_header_cookies(cookie: &str) -> Result<ScopedCookies, &'static str> {
     if cookie.len() > 32768 {
         return Err("Session cookie exceeds the size limit");
@@ -1996,7 +1996,7 @@ impl Drop for ScopedCookies {
         }
     }
 }
-#[cfg(any(windows, test))]
+#[cfg(any(windows, unix, test))]
 fn same_authentication_cookies(before: &str, current: &str) -> bool {
     let (Ok(before), Ok(current)) = (
         scoped_header_cookies(before),
@@ -2094,20 +2094,36 @@ fn scoped_cookie_snapshot(bytes: &[u8]) -> Result<ScopedCookies, &'static str> {
     Ok(cookies)
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 fn execute_helper(
     input: &[u8],
     cancel: Arc<AtomicBool>,
     timeout: Duration,
 ) -> Result<HelperReply, String> {
+    // Windows: managed embeddable Python beside the player. macOS: a bundled
+    // standalone CPython in Tide.app/Contents/Resources (found from
+    // Contents/MacOS through the ancestor walk), or a developer venv.
+    #[cfg(windows)]
     let python = runtime_path(
         "TIDE_PROVIDER_PYTHON",
-        ".tools/provider-venv/Scripts/python.exe",
+        &[".tools/provider-venv/Scripts/python.exe"],
         "python",
+    );
+    #[cfg(unix)]
+    let python = runtime_path(
+        "TIDE_PROVIDER_PYTHON",
+        &[
+            "Resources/python/bin/python3",
+            ".tools/provider-venv/bin/python3",
+        ],
+        "python3",
     );
     let helper = runtime_path(
         "TIDE_PROVIDER_HELPER",
-        "helpers/youtube_music.py",
+        &[
+            "Resources/helpers/youtube_music.py",
+            "helpers/youtube_music.py",
+        ],
         "tools/youtube_music.py",
     );
     let mut command = Command::new(python);
@@ -2118,7 +2134,13 @@ fn execute_helper(
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
     let mut child = tide_playback::OwnedProcess::spawn(&mut command)
-        .map_err(|_| "Account helper unavailable. Run scripts/setup-provider.ps1")?;
+        .map_err(|_| {
+            if cfg!(windows) {
+                "Account helper unavailable. Run scripts/setup-provider.ps1"
+            } else {
+                "Account helper unavailable. Reinstall Tide, or run scripts/setup-provider-macos.sh in a checkout"
+            }
+        })?;
     let mut stdin = child
         .take_stdin()
         .ok_or("Account helper input unavailable")?;
@@ -2176,7 +2198,12 @@ fn execute_helper(
     let response: Result<Response, String> = match reply.response {
         Response::Error { code } if code == "lyrics_unavailable" => Ok(Response::Error { code }),
         Response::Error { code } if code == "runtime" => {
-            Err("Install the optional account helper with scripts/setup-provider.ps1".into())
+            Err(if cfg!(windows) {
+                "Install the optional account helper with scripts/setup-provider.ps1"
+            } else {
+                "The account helper is incomplete. Reinstall Tide, or run scripts/setup-provider-macos.sh in a checkout"
+            }
+            .into())
         }
         Response::Error { code } if code == "profile" => {
             Err("Select cookies.sqlite inside your Zen profile, or use Import session for a custom profile".into())
@@ -2221,8 +2248,8 @@ fn execute_helper(
     })
 }
 
-#[cfg(windows)]
-fn runtime_path(variable: &str, relative: &str, fallback: &str) -> PathBuf {
+#[cfg(any(windows, unix))]
+fn runtime_path(variable: &str, relatives: &[&str], fallback: &str) -> PathBuf {
     if let Some(path) = std::env::var_os(variable) {
         return path.into();
     }
@@ -2232,9 +2259,11 @@ fn runtime_path(variable: &str, relative: &str, fallback: &str) -> PathBuf {
                 return parent.join(fallback);
             }
             for directory in parent.ancestors().take(5) {
-                let path = directory.join(relative);
-                if path.is_file() {
-                    return path;
+                for relative in relatives {
+                    let path = directory.join(relative);
+                    if path.is_file() {
+                        return path;
+                    }
                 }
             }
         }

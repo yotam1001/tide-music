@@ -14,8 +14,10 @@ serde_json = "1"
 tide-core = { path = "../core" }
 zeroize = "1"
 
-[target.'cfg(windows)'.dependencies]
+[target.'cfg(any(windows, unix))'.dependencies]
 tide-playback = { path = "../playback" }
+
+[target.'cfg(windows)'.dependencies]
 tide-windows = { path = "../windows", optional = true, features = ["native-login"] }
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Security_Cryptography", "Win32_System_Threading", "Win32_Storage_FileSystem"] }
 
