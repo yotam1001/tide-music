@@ -25,6 +25,9 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo check --workspace --all-targets --locked
       - run: cargo clippy --workspace --lib --bins --locked -- -D warnings
+      - run: cargo check -p tide-provider --features native-login --bins
+      - run: cargo clippy -p tide-provider -p tide-macos --features tide-provider/native-login,tide-macos/native-login --lib --bins -- -D warnings
+      - run: cargo run -p tide-provider --features native-login --bin tide-login -- --probe
       - run: cargo test --workspace --locked
 
   playback-smoke:

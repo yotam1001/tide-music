@@ -1,20 +1,25 @@
 //! A separate owned login helper; the player never loads WebView2.
 use super::*;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 use std::process::{Command, Stdio};
 
 pub(super) struct Login {
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     process: RefCell<Option<tide_playback::OwnedProcess>>,
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     deadline: Cell<Option<Instant>>,
     timer: slint::Timer,
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     cleanup_timer: slint::Timer,
 }
 
 fn helper_path(executable: &Path) -> Option<PathBuf> {
-    let helper = executable.parent()?.join("tide-login.exe");
+    let name = if cfg!(target_os = "macos") {
+        "tide-login"
+    } else {
+        "tide-login.exe"
+    };
+    let helper = executable.parent()?.join(name);
     let metadata = std::fs::symlink_metadata(&helper).ok()?;
     #[cfg(windows)]
     {
@@ -26,7 +31,7 @@ fn helper_path(executable: &Path) -> Option<PathBuf> {
     (metadata.is_file() && !metadata.file_type().is_symlink()).then_some(helper)
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 fn outcome_message(code: i32) -> &'static str {
     match code {
         0 => "Connection saved. Tide is checking your library.",
@@ -34,6 +39,9 @@ fn outcome_message(code: i32) -> &'static str {
         3 => "YouTube Music rejected this session. Reopen sign-in and select the profile you use for music.",
         4 => "YouTube Music couldn’t verify your session. Check your connection and try again.",
         5 => "Your saved connection changed during sign-in. Check which profile is connected and retry if needed.",
+        #[cfg(target_os = "macos")]
+        6 => "Tide could not save the verified session in the macOS Keychain. Try again from your usual macOS account.",
+        #[cfg(not(target_os = "macos"))]
         6 => "Tide couldn’t save the verified session in Windows. Try again from your usual Windows account.",
         7 => "Sign-in timed out. Reopen the window when you’re ready to finish.",
         _ => "Sign-in could not finish. Retry or use the browser companion below.",
@@ -42,26 +50,26 @@ fn outcome_message(code: i32) -> &'static str {
 
 pub(super) fn wire(ui: &AppWindow, state: Rc<RefCell<State>>) -> Rc<Login> {
     let login = Rc::new(Login {
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "macos"))]
         process: RefCell::new(None),
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "macos"))]
         deadline: Cell::new(None),
         timer: slint::Timer::default(),
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "macos"))]
         cleanup_timer: slint::Timer::default(),
     });
     let path = std::env::current_exe()
         .ok()
         .and_then(|exe| helper_path(&exe));
-    ui.set_native_login_available(cfg!(windows) && path.is_some());
+    ui.set_native_login_available(cfg!(any(windows, target_os = "macos")) && path.is_some());
     let weak = ui.as_weak();
     let owner = Rc::downgrade(&login);
     ui.on_native_sign_in(move || {
         let (Some(ui), Some(login)) = (weak.upgrade(), owner.upgrade()) else { return; };
         if ui.get_account_busy() || ui.get_native_login_busy() || !local_controls_allowed(&state.borrow()) { return; }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "macos")))]
         let _ = (&login, &path, &ui);
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "macos"))]
         if let Some(path) = &path {
             let mut command = Command::new(path);
             command.current_dir(path.parent().expect("helper has parent"))
@@ -113,7 +121,7 @@ pub(super) fn wire(ui: &AppWindow, state: Rc<RefCell<State>>) -> Rc<Login> {
 impl Login {
     fn stop(&self, ui: &AppWindow) {
         self.timer.stop();
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "macos"))]
         {
             self.process.borrow_mut().take(); // Drop kills only this helper's owned tree.
             self.deadline.set(None);
@@ -136,15 +144,20 @@ mod tests {
     use super::*;
     #[test]
     fn login_helper_is_only_resolved_beside_the_player() {
+        let name = if cfg!(target_os = "macos") {
+            "tide-login"
+        } else {
+            "tide-login.exe"
+        };
         let root = std::env::temp_dir().join(format!("tide-helper-path-{}", std::process::id()));
         std::fs::create_dir(&root).unwrap();
         assert!(helper_path(&root.join("tide-music.exe")).is_none());
-        std::fs::write(root.join("tide-login.exe"), b"fixture").unwrap();
+        std::fs::write(root.join(name), b"fixture").unwrap();
         assert_eq!(
             helper_path(&root.join("tide-music.exe")),
-            Some(root.join("tide-login.exe"))
+            Some(root.join(name))
         );
-        std::fs::remove_file(root.join("tide-login.exe")).unwrap();
+        std::fs::remove_file(root.join(name)).unwrap();
         std::fs::remove_dir(root).unwrap();
     }
 }

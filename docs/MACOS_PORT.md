@@ -21,7 +21,7 @@ on Windows: opt-in, never in the stable bundle until explicitly approved.
 | Output changes | `IMMNotificationClient` | CoreAudio default-output property listener |
 | Mini pin/opacity | `HWND_TOPMOST` + layered alpha | `NSWindow` floating level + `alphaValue`, joins all Spaces |
 | Discord | `\\.\pipe\discord-ipc-N` | `$TMPDIR/discord-ipc-N` Unix socket |
-| Sign-in | WebView2 helper `tide-login.exe` | browser companion first; native WKWebView helper is a later step |
+| Sign-in | WebView2 helper `tide-login.exe` | ephemeral WKWebView helper `tide-login` |
 | Installer | `TideSetup.exe` | `Tide.dmg` with `Tide.app` (ad-hoc signed until a Developer ID exists) |
 
 ## macOS-only features
@@ -95,3 +95,11 @@ There is no Mac in the loop yet, so `.github/workflows/macos.yml` runs on
 `macos-latest` (arm64) for every `mac/**` push and pull request: fmt, check,
 clippy, unit tests and a bundle build. Real-hardware checks still needed before a
 release: sign-in, audio output switching, media keys, Gatekeeper first launch.
+
+## Native sign-in packaging
+
+Ship `Contents/MacOS/tide-login`, built with
+`cargo build -p tide-provider --bin tide-login --features tide-provider/native-login`.
+The helper uses a non-persistent WebKit store on its main thread. Its offline
+`--probe` creates an offscreen window and WebView without Google traffic.
+Real Google sign-in and profile selection still require validation on a Mac.

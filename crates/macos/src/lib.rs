@@ -192,3 +192,6 @@ pub mod discord_pipe {
         }
     }
 }
+
+#[cfg(feature = "native-login")]
+pub mod login;

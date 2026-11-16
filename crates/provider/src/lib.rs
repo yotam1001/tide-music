@@ -825,7 +825,7 @@ impl Provider {
                     .is_ok_and(|meta| meta.is_file())
         }
     }
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     pub fn owns_login_directory(&self, path: &Path) -> bool {
         if directory_is_linked(path) || directory_is_linked(&self.directory) {
             return false;
@@ -845,13 +845,13 @@ impl Provider {
                     pid.parse::<u32>().is_ok_and(|pid| pid != 0) && counter.parse::<u64>().is_ok()
                 })
     }
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "macos")))]
     pub fn owns_login_directory(&self, _path: &Path) -> bool {
         false
     }
     /// Allocate a fresh profile underneath the existing private account store.
     /// The caller owns its lifetime, never a user-selected browser directory.
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     pub fn new_login_directory(&self) -> Result<LoginDirectory, String> {
         if directory_is_linked(&self.directory) {
             return Err("Login profile storage must be an ordinary private directory".into());
@@ -862,7 +862,14 @@ impl Provider {
                 std::process::id(),
                 LEASE_COUNTER.fetch_add(1, Ordering::Relaxed)
             ));
-            match fs::create_dir(&path) {
+            #[cfg(windows)]
+            let created = fs::create_dir(&path);
+            #[cfg(target_os = "macos")]
+            let created = {
+                use std::os::unix::fs::DirBuilderExt;
+                fs::DirBuilder::new().mode(0o700).create(&path)
+            };
+            match created {
                 Ok(()) => {
                     let directory = LoginDirectory {
                         path,
@@ -877,7 +884,7 @@ impl Provider {
         }
         Err("Could not create an isolated login profile".into())
     }
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "macos")))]
     pub fn new_login_directory(&self) -> Result<LoginDirectory, String> {
         Err(
             "Native sign-in is only available on Windows; use the browser companion on macOS"
@@ -3767,7 +3774,7 @@ mod tests {
         fs::remove_dir_all(&directory).unwrap();
     }
 
-    #[cfg(unix)]
+    #[cfg(all(unix, not(target_os = "macos")))]
     #[test]
     fn unix_native_login_points_to_browser_companion() {
         let directory = std::env::temp_dir().join(format!(
@@ -3785,5 +3792,32 @@ mod tests {
         };
         assert!(error.contains("browser companion on macOS"));
         fs::remove_dir_all(&directory).unwrap();
+    }
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn mac_login_directory_is_private_owned_and_rejects_links() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let directory = std::env::temp_dir().join(format!(
+            "tide-mac-login-{}-{}",
+            std::process::id(),
+            LEASE_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        private_directory(&directory).unwrap();
+        let provider =
+            Provider::with_key_store(directory.clone(), Arc::new(InMemoryKeyStore::new()));
+        let login = provider.new_login_directory().unwrap();
+        assert!(provider.owns_login_directory(login.path()));
+        assert_eq!(
+            fs::metadata(login.path()).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        let link = directory.join("login-1-1");
+        symlink(login.path(), &link).unwrap();
+        assert!(!provider.owns_login_directory(&link));
+        fs::remove_file(link).unwrap();
+        let path = login.path().to_owned();
+        drop(login);
+        assert!(!path.exists());
+        fs::remove_dir(directory).unwrap();
     }
 }
