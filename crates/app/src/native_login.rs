@@ -9,6 +9,7 @@ pub(super) struct Login {
     #[cfg(windows)]
     deadline: Cell<Option<Instant>>,
     timer: slint::Timer,
+    #[cfg(windows)]
     cleanup_timer: slint::Timer,
 }
 
@@ -46,6 +47,7 @@ pub(super) fn wire(ui: &AppWindow, state: Rc<RefCell<State>>) -> Rc<Login> {
         #[cfg(windows)]
         deadline: Cell::new(None),
         timer: slint::Timer::default(),
+        #[cfg(windows)]
         cleanup_timer: slint::Timer::default(),
     });
     let path = std::env::current_exe()
