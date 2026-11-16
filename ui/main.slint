@@ -216,6 +216,11 @@ export component AppWindow inherits Window {
     callback toggle-media-controls();
     in property <bool> close-to-tray: false;
     callback toggle-close-to-tray();
+    in property <bool> trackpad-swipe: true;
+    in property <bool> swipe-reversed: false;
+    callback toggle-trackpad-swipe();
+    callback toggle-swipe-reversed();
+    callback open-touchpad-settings();
     in property <bool> discord-presence-enabled: false;
     in-out property <string> discord-application-id;
     in property <string> discord-status: "Off — listening activity stays private";
@@ -1899,6 +1904,9 @@ export component AppWindow inherits Window {
                                         if root.windows-theme-supported : PreferenceRow { title: "Follow Windows theme"; checked: root.follow-windows-theme; light-mode: root.light-mode; toggled => { root.toggle-follow-windows-theme(); } }
                                         PreferenceRow { title: "Windows media keys"; checked: root.media-controls-enabled; light-mode: root.light-mode; toggled => { root.toggle-media-controls(); } }
                                         if root.media-controls-enabled : PreferenceRow { title: "Keep playing when I close Tide"; checked: root.close-to-tray; light-mode: root.light-mode; toggled => { root.toggle-close-to-tray(); } }
+                                        PreferenceRow { title: "Swipe the player to change songs"; detail: "Two-finger trackpad swipe over the player bar: right for next, left for previous."; checked: root.trackpad-swipe; light-mode: root.light-mode; toggled => { root.toggle-trackpad-swipe(); } }
+                                        if root.trackpad-swipe : PreferenceRow { title: "Reverse swipe direction"; checked: root.swipe-reversed; light-mode: root.light-mode; toggled => { root.toggle-swipe-reversed(); } }
+                                        if root.windows-theme-supported : LibraryButton { height: 34px; caption: "Set up four-finger swipes…"; label: "Open Windows touchpad settings. Under Four-finger gestures, choose Change audio and volume to skip songs from anywhere."; light-mode: root.light-mode; clicked => { root.open-touchpad-settings(); } }
                                         PreferenceRow { title: "Skip known disliked songs"; checked: root.skip-disliked; light-mode: root.light-mode; toggled => { root.toggle-skip-disliked(); } }
                                         PreferenceRow { title: "Check for updates on startup"; checked: root.auto-update-checks; light-mode: root.light-mode; toggled => { root.toggle-update-checks(); } }
                                         Text { height: 18px; text: "Mini opacity · " + root.mini-opacity.to-fixed(0) + "%"; color: root.secondary; font-size: 12px; }
@@ -2147,6 +2155,8 @@ export component AppWindow inherits Window {
                 }
             }
             PlayerBar {
+                swipe-enabled: root.trackpad-swipe;
+                swipe-reversed: root.swipe-reversed;
                 // The song's listed length, shown before playback reports one.
                 known-length: root.current-index >= 0 && root.current-index < root.rows.length ? root.rows[root.current-index].duration : "";
                 volume-locked: root.bit-perfect;

@@ -45,6 +45,36 @@ pub fn open_web_page(url: &str) -> Result<(), String> {
     }
 }
 
+/// Open Settings → Bluetooth & devices → Touchpad, where Windows 11 maps
+/// three- and four-finger swipes to Previous/Next track ("Change audio and
+/// volume"). Tide receives those as media keys. Fixed URI, never caller input.
+#[cfg(windows)]
+pub fn open_touchpad_settings() -> Result<(), String> {
+    use windows::core::w;
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+    let result = unsafe {
+        ShellExecuteW(
+            None,
+            w!("open"),
+            w!("ms-settings:devices-touchpad"),
+            windows::core::PCWSTR::null(),
+            windows::core::PCWSTR::null(),
+            SW_SHOWNORMAL,
+        )
+    };
+    if result.0 as isize <= 32 {
+        Err("Could not open touchpad settings".into())
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(not(windows))]
+pub fn open_touchpad_settings() -> Result<(), String> {
+    Err("Touchpad settings are available on Windows".into())
+}
+
 #[cfg(not(windows))]
 pub fn open_web_page(_url: &str) -> Result<(), String> {
     Err("Browser integration is currently available on Windows".into())
