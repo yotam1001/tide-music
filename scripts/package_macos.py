@@ -5,13 +5,12 @@ import json
 import os
 from pathlib import Path
 import platform
-import plistlib
+import re
 import shutil
 import subprocess
 import tarfile
 import tempfile
 import tomllib
-import urllib.request
 import zipfile
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -43,6 +42,7 @@ def runtime(arch, resources, work):
         t.extractall(unpack, filter='data')
     # Preserve @executable_path/../Frameworks, adjacent lib/, resources, etc.
     shutil.copytree(unpack / 'mpv.app', resources / 'mpv.app', symlinks=True)
+    relocate(resources / 'mpv.app')
     (resources / 'bin/mpv').symlink_to('../mpv.app/Contents/MacOS/mpv')
     ytdlp = lock['yt-dlp']
     download(ytdlp, resources / 'bin/yt-dlp')
@@ -76,6 +76,23 @@ def icon(resources, work):
 def macho(path):
     return path.is_file() and not path.is_symlink() and 'Mach-O' in subprocess.check_output(
         ['file', '-b', str(path)], text=True)
+
+
+def relocate(bundle):
+    """Remove upstream Homebrew install IDs/search paths before re-signing."""
+    for path in bundle.rglob('*'):
+        if not macho(path):
+            continue
+        commands = subprocess.check_output(['otool', '-l', str(path)], text=True)
+        for block in commands.split('Load command '):
+            if 'cmd LC_RPATH\n' in block:
+                match = re.search(r'path (.+) \(offset', block)
+                if match and match[1].startswith(('/opt/homebrew/', '/usr/local/')):
+                    run('install_name_tool', '-delete_rpath', match[1], path)
+            if 'cmd LC_ID_DYLIB\n' in block:
+                match = re.search(r'name (.+) \(offset', block)
+                if match and match[1].startswith(('/opt/homebrew/', '/usr/local/')):
+                    run('install_name_tool', '-id', '@rpath/' + path.name, path)
 
 
 def sign(app):

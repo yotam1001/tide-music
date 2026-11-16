@@ -20,6 +20,11 @@ def main():
             print(deps)
             if '/opt/homebrew/' in deps or '/usr/local/' in deps:
                 raise RuntimeError(f'Nonportable dependency in {path}')
+            commands = subprocess.check_output(['otool', '-l', str(path)], text=True)
+            for block in commands.split('Load command '):
+                if 'cmd LC_RPATH\n' in block and any(
+                        prefix in block for prefix in ['/opt/homebrew/', '/usr/local/']):
+                    raise RuntimeError(f'Nonportable runtime search path in {path}')
     if not args.no_runtime:
         run(app / 'Contents/Resources/bin/mpv', '--version')
         run(app / 'Contents/Resources/bin/yt-dlp', '--version')
