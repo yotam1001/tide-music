@@ -14,7 +14,7 @@ $taskFlags += "--remap-path-prefix=$taskRoot=."
 if ($taskLocalCargo) {
     $taskFlags += '-Clink-self-contained=yes'
 }
-$taskBuildArgs = @('build', '--release', '-p', 'tide-music', '--locked')
+$taskBuildArgs = @('build', '--release', '-p', 'tide-music', '--locked', '--no-default-features')
 if ($IncludeBrowserHost -or $IncludeNativeLogin) { $taskBuildArgs += @('-p', 'tide-provider', '--bins') }
 if ($IncludeNativeLogin) { $taskBuildArgs += @('--features', 'tide-provider/native-login') }
 if ($StaticMsvcRuntime) {

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.4.26 - 2026-11-16
+
 - Library lists now hold up to 1,000 saved albums, artists, history items
   and playlists instead of stopping at 200.
 - If Tide closed unexpectedly, the next launch shows a small notice with an
