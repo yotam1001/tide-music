@@ -6,7 +6,13 @@ license.workspace = true
 
 # AppKit / MediaPlayer / CoreAudio / Carbon bindings land with the implementation.
 # Off macOS this crate builds as documented stubs so Windows checks stay green.
+[features]
+native-login = ["dep:zeroize", "dep:serde_json", "dep:url", "dep:objc2-web-kit"]
+
 [dependencies]
+zeroize = { version = "1", optional = true }
+serde_json = { version = "1", optional = true }
+url = { version = "2", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "=0.6.5"
@@ -17,3 +23,5 @@ objc2-user-notifications = "=0.3.2"
 block2 = "=0.6.2"
 libc = "0.2"
 objc2-core-audio = "=0.3.2"
+
+objc2-web-kit = { version = "=0.3.2", optional = true }
