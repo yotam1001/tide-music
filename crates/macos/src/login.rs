@@ -150,7 +150,15 @@ mod native {
             fn response(&self, _: &AnyObject, response: &AnyObject, handler: &Block<dyn Fn(isize)>) {
                 unsafe {
                     let show: Bool = msg_send![response, canShowMIMEType];
-                    handler.call((if show.as_bool() { 1 } else { 0 },));
+                    let reply: Obj = msg_send![response, response];
+                    let url: Option<Obj> = msg_send![&*reply, URL];
+                    let trusted = url.is_some_and(|u| allowed(&url_string(&u)));
+                    let http: Bool = msg_send![&*reply, isKindOfClass: class!(NSHTTPURLResponse)];
+                    let attachment = if http.as_bool() {
+                        let disposition: Option<Retained<NSString>> = msg_send![&*reply, valueForHTTPHeaderField: &*string("Content-Disposition")];
+                        disposition.is_some_and(|d| d.to_string().to_ascii_lowercase().contains("attachment"))
+                    } else { true };
+                    handler.call((if trusted && show.as_bool() && !attachment { 1 } else { 0 },));
                 }
             }
             #[unsafe(method(webView:createWebViewWithConfiguration:forNavigationAction:windowFeatures:))]
