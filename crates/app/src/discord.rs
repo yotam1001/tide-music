@@ -1,7 +1,7 @@
 //! Opt-in, metadata-only Discord activity. Latest-value slot bounds memory.
-#[cfg(any(windows, test))]
+#[cfg(any(native_shell, test))]
 use serde_json::{json, Value};
-#[cfg(any(windows, test))]
+#[cfg(any(native_shell, test))]
 use std::time::{Duration, Instant};
 use std::{
     sync::{
@@ -49,7 +49,7 @@ pub fn valid_id(id: &str) -> bool {
         && id.bytes().all(|b| b.is_ascii_digit())
         && id.parse::<u64>().is_ok_and(|v| v > 0)
 }
-#[cfg(any(windows, test))]
+#[cfg(any(native_shell, test))]
 fn payload(activity: Option<&Activity>, nonce: u64) -> Value {
     let activity = activity.map(|a| {
         let mut value = json!({"type":2,"details":a.title});
@@ -163,13 +163,13 @@ impl Drop for Worker {
         }
     }
 }
-#[cfg(any(windows, test))]
+#[cfg(any(native_shell, test))]
 trait Transport {
     fn send(&self, opcode: u32, data: &[u8], deadline: Instant) -> std::io::Result<()>;
     fn receive(&self, deadline: Instant) -> std::io::Result<(u32, Vec<u8>)>;
 }
-#[cfg(windows)]
-impl Transport for tide_windows::discord_pipe::DiscordPipe {
+#[cfg(native_shell)]
+impl Transport for crate::platform::discord_pipe::DiscordPipe {
     fn send(&self, opcode: u32, data: &[u8], deadline: Instant) -> std::io::Result<()> {
         self.send(opcode, data, deadline)
     }
@@ -177,7 +177,7 @@ impl Transport for tide_windows::discord_pipe::DiscordPipe {
         self.receive(deadline)
     }
 }
-#[cfg(any(windows, test))]
+#[cfg(any(native_shell, test))]
 fn request(pipe: &impl Transport, opcode: u32, data: Value, nonce: Option<&str>) -> Result<(), ()> {
     let deadline = Instant::now() + Duration::from_millis(500);
     pipe.send(
@@ -208,9 +208,9 @@ fn request(pipe: &impl Transport, opcode: u32, data: Value, nonce: Option<&str>)
     }
     Err(())
 }
-#[cfg(windows)]
+#[cfg(native_shell)]
 fn run(id: String, shared: Arc<(Mutex<Latest>, Condvar)>, status: Arc<AtomicU8>) {
-    use tide_windows::discord_pipe::DiscordPipe;
+    use crate::platform::discord_pipe::DiscordPipe;
     let mut pipe = None;
     let mut sent_revision = u64::MAX;
     let mut nonce = 0u64;
@@ -274,7 +274,7 @@ fn run(id: String, shared: Arc<(Mutex<Latest>, Condvar)>, status: Arc<AtomicU8>)
         let _ = connection.send(1, &bytes, DiscordPipe::deadline());
     }
 }
-#[cfg(not(windows))]
+#[cfg(not(native_shell))]
 fn run(_id: String, shared: Arc<(Mutex<Latest>, Condvar)>, _status: Arc<AtomicU8>) {
     let (lock, wake) = &*shared;
     if let Ok(state) = lock.lock() {

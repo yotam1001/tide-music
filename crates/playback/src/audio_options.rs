@@ -83,8 +83,8 @@ impl AudioOptions {
         (SILENT_GAIN_DB..=0.0).contains(&self.gain_db)
             && usize::from(self.equalizer) < EQUALIZER_PRESETS.len()
             && (self.device == "auto"
-                || (self.device.starts_with("wasapi/")
-                    && self.device.len() > 7
+                || (self.device.starts_with(device_prefix())
+                    && self.device.len() > device_prefix().len()
                     && self.device.len() <= 512
                     && !self.device.chars().any(char::is_control)))
     }
@@ -147,6 +147,15 @@ pub(crate) fn devices(value: &Value) -> Vec<AudioDevice> {
         })
         .collect()
 }
+fn device_prefix() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "coreaudio/"
+    } else if cfg!(windows) {
+        "wasapi/"
+    } else {
+        "alsa/"
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -156,10 +165,13 @@ mod tests {
         let value = json!([{"name":"wasapi/123", "description":"Headphones"},
             {"name":"auto","description":"Default"}, {"name":"https://host","description":"bad"},
             {"name":"wasapi/abc\n", "description":"bad"}]);
+        let value =
+            serde_json::from_str::<Value>(&value.to_string().replace("wasapi/", device_prefix()))
+                .unwrap();
         assert_eq!(
             devices(&value),
             vec![AudioDevice {
-                name: "wasapi/123".into(),
+                name: format!("{}123", device_prefix()),
                 description: "Headphones".into()
             }]
         );

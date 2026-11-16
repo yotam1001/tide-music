@@ -35,12 +35,15 @@ mod library_browse;
 mod library_view;
 mod listening;
 mod lyrics;
+#[cfg(target_os = "macos")]
+mod mac_shell;
 mod metadata;
 mod music_feedback;
 mod native_login;
-#[cfg(any(windows, test))]
+#[cfg(any(native_shell, test))]
 mod output_recovery;
 mod performance;
+mod platform;
 mod playback_feedback;
 mod radio;
 mod scroll_stress;
@@ -112,6 +115,8 @@ struct Settings {
     star_prompt_done: bool,
     /// Time of the last crash log the listener was told about.
     crash_seen: u64,
+    /// macOS: show a banner when the song changes. Off by default.
+    notify_song_change: bool,
     /// Two-finger horizontal swipe over the player changes songs.
     #[serde(default = "enabled_by_default")]
     trackpad_swipe: bool,
@@ -154,6 +159,7 @@ impl Default for Settings {
             launches: 0,
             star_prompt_done: false,
             crash_seen: 0,
+            notify_song_change: false,
             trackpad_swipe: true,
             swipe_reversed: false,
             transient: false,
@@ -164,9 +170,9 @@ fn default_discord_application_id() -> String {
     discord::APPLICATION_ID.to_owned()
 }
 fn preferred_light_mode(settings: &Settings) -> bool {
-    #[cfg(windows)]
+    #[cfg(native_shell)]
     if settings.follow_windows_theme {
-        return tide_windows::app_light_theme().unwrap_or(settings.light_mode);
+        return platform::app_light_theme().unwrap_or(settings.light_mode);
     }
     settings.light_mode
 }
@@ -381,8 +387,14 @@ async fn select_zen_session(index: i32) -> Option<tide_provider::Request> {
         .set_title("Connect your Zen session: select cookies.sqlite in your profile")
         .add_filter("Zen cookie database", &["sqlite"])
         .set_file_name("cookies.sqlite");
-    if let Some(appdata) = std::env::var_os("APPDATA") {
-        dialog = dialog.set_directory(PathBuf::from(appdata).join("zen/Profiles"));
+    #[cfg(target_os = "macos")]
+    let profiles = std::env::var_os("HOME")
+        .map(|home| PathBuf::from(home).join("Library/Application Support/zen/Profiles"));
+    #[cfg(not(target_os = "macos"))]
+    let profiles =
+        std::env::var_os("APPDATA").map(|appdata| PathBuf::from(appdata).join("zen/Profiles"));
+    if let Some(profiles) = profiles.filter(|path| path.is_dir()) {
+        dialog = dialog.set_directory(profiles);
     }
     dialog
         .pick_file()
@@ -1604,6 +1616,7 @@ fn restore_settings(value: serde_json::Value) -> Settings {
         launches,
         star_prompt_done,
         crash_seen,
+        notify_song_change,
         trackpad_swipe,
         swipe_reversed,
     );
@@ -2113,28 +2126,21 @@ fn report_error(state: &mut State, ui: &AppWindow, error: String) {
     ui.set_status_text(error.into());
 }
 
-fn start_window_media(ui: &AppWindow) -> Result<tide_windows::MediaSession, String> {
-    #[cfg(windows)]
+fn start_window_media(ui: &AppWindow) -> Result<platform::MediaSession, String> {
+    #[cfg(native_shell)]
     {
-        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-        let window = ui.window().window_handle();
-        let handle = window
-            .window_handle()
-            .map_err(|_| "Native window is not ready".to_string())?;
-        let RawWindowHandle::Win32(handle) = handle.as_raw() else {
-            return Err("Windows media controls need a native window".into());
-        };
+        let view = platform::native_view(ui.window()).ok_or("Native window is not ready")?;
         let weak = ui.as_weak();
-        tide_windows::start(handle.hwnd.get() as *mut std::ffi::c_void, move |action| {
+        platform::start(view, move |action| {
             let (code, value) = match action {
-                tide_windows::MediaAction::Play => (0, 0.0),
-                tide_windows::MediaAction::Pause => (1, 0.0),
-                tide_windows::MediaAction::Toggle => (2, 0.0),
-                tide_windows::MediaAction::Next => (3, 0.0),
-                tide_windows::MediaAction::Previous => (4, 0.0),
-                tide_windows::MediaAction::Stop => (5, 0.0),
-                tide_windows::MediaAction::Seek(seconds) => (6, seconds as f32),
-                tide_windows::MediaAction::ShowMini => (7, 0.0),
+                platform::MediaAction::Play => (0, 0.0),
+                platform::MediaAction::Pause => (1, 0.0),
+                platform::MediaAction::Toggle => (2, 0.0),
+                platform::MediaAction::Next => (3, 0.0),
+                platform::MediaAction::Previous => (4, 0.0),
+                platform::MediaAction::Stop => (5, 0.0),
+                platform::MediaAction::Seek(seconds) => (6, seconds as f32),
+                platform::MediaAction::ShowMini => (7, 0.0),
             };
             let _ = weak.upgrade_in_event_loop(move |u| {
                 if u.get_media_controls_enabled() {
@@ -2143,10 +2149,10 @@ fn start_window_media(ui: &AppWindow) -> Result<tide_windows::MediaSession, Stri
             });
         })
     }
-    #[cfg(not(windows))]
+    #[cfg(not(native_shell))]
     {
         let _ = ui;
-        Err("Windows media controls are unavailable on this platform".into())
+        Err("System media controls are unavailable on this platform".into())
     }
 }
 
@@ -2481,7 +2487,7 @@ fn add(state: &mut State, ui: &AppWindow, source: String) -> bool {
         false,
     )
 }
-#[cfg(windows)]
+#[cfg(native_shell)]
 fn executable(name: &str) -> PathBuf {
     if let Some(dir) = std::env::var_os("TIDE_RUNTIME_DIR") {
         let p = PathBuf::from(dir).join(name);
@@ -2491,6 +2497,14 @@ fn executable(name: &str) -> PathBuf {
     }
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
+            // Tide.app/Contents/MacOS/tide-music → Tide.app/Contents/Resources/bin
+            #[cfg(target_os = "macos")]
+            {
+                let p = dir.join("../Resources/bin").join(name);
+                if p.is_file() {
+                    return p;
+                }
+            }
             let p = dir.join("tools").join(name);
             if p.is_file() {
                 return p;
@@ -2501,20 +2515,34 @@ fn executable(name: &str) -> PathBuf {
     if p.is_file() {
         return p;
     }
+    #[cfg(target_os = "macos")]
+    for dir in ["/opt/homebrew/bin", "/usr/local/bin"] {
+        let p = PathBuf::from(dir).join(name);
+        if p.is_file() {
+            return p;
+        }
+    }
     name.into()
 }
-#[cfg(not(windows))]
+/// Platform file name of the bundled yt-dlp helper.
+#[cfg(native_shell)]
+const YT_DLP: &str = if cfg!(windows) {
+    "yt-dlp.exe"
+} else {
+    "yt-dlp"
+};
+#[cfg(not(native_shell))]
 fn search(_query: String, _cancel: Arc<AtomicBool>) -> Result<Vec<Track>, String> {
     Err("Contained YouTube search is currently supported on Windows only.".into())
 }
 
-#[cfg(windows)]
+#[cfg(native_shell)]
 fn search(query: String, cancel: Arc<AtomicBool>) -> Result<Vec<Track>, String> {
     use std::{
         io::Read,
         process::{Command, Stdio},
     };
-    let exe = executable("yt-dlp.exe");
+    let exe = executable(YT_DLP);
     let mut cmd = Command::new(&exe);
     cmd.args([
         "--ignore-config",
@@ -2922,7 +2950,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .into(),
     );
     ui.set_light_mode(preferred_light_mode(&state.borrow().settings));
-    ui.set_windows_theme_supported(cfg!(windows) && !test_mode);
+    ui.set_windows_theme_supported(cfg!(native_shell) && !test_mode);
+    ui.set_mac_os(cfg!(target_os = "macos"));
+    ui.set_notify_song_change(state.borrow().settings.notify_song_change);
     ui.set_follow_windows_theme(state.borrow().settings.follow_windows_theme);
     ui.set_recent_searches(recent_model(&state.borrow().settings));
     {
@@ -2931,7 +2961,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ui.set_animations_enabled(state.borrow().settings.animations);
         ui.set_search_kind(search_results::ALL);
     }
-    ui.set_greeting(greeting(tide_windows::local_hour()).into());
+    ui.set_greeting(greeting(platform::local_hour()).into());
     ui.set_compact_mode(state.borrow().settings.compact_mode);
     ui.set_library_grid(state.borrow().settings.library_grid);
     ui.set_autoplay_enabled(state.borrow().settings.autoplay);
@@ -3768,7 +3798,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let weak = ui.as_weak();
         ui.on_open_account_help(move || {
-            if let Err(error) = tide_windows::open_web_page(
+            if let Err(error) = platform::open_web_page(
                 "https://github.com/yotam1001/tide-music/blob/main/docs/ACCOUNT_SETUP.md",
             ) {
                 if let Some(u) = weak.upgrade() {
@@ -4024,6 +4054,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     bind!(on_toggle_close_to_tray, |s, u| {
         s.settings.close_to_tray = !s.settings.close_to_tray;
         u.set_close_to_tray(s.settings.close_to_tray);
+        save(&s.settings);
+    });
+    bind!(on_toggle_notify_song_change, |s, u| {
+        s.settings.notify_song_change = !s.settings.notify_song_change;
+        u.set_notify_song_change(s.settings.notify_song_change);
         save(&s.settings);
     });
     bind!(on_toggle_media_controls, |s, u| {
@@ -4347,28 +4382,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         });
     }
-    let media = Rc::new(RefCell::new(None::<tide_windows::MediaSession>));
+    let media = Rc::new(RefCell::new(None::<platform::MediaSession>));
     let media_enabled =
-        cfg!(windows) && !test_mode && listening_seconds.is_none() && !smoke_autoplay;
-    #[cfg(windows)]
-    let shortcuts = Rc::new(RefCell::new(
-        None::<tide_windows::shortcuts::GlobalShortcuts>,
-    ));
-    #[cfg(windows)]
+        cfg!(native_shell) && !test_mode && listening_seconds.is_none() && !smoke_autoplay;
+    #[cfg(native_shell)]
+    let shortcuts = Rc::new(RefCell::new(None::<platform::shortcuts::GlobalShortcuts>));
+    #[cfg(native_shell)]
     if media_enabled {
         let weak = ui.as_weak();
-        match tide_windows::shortcuts::GlobalShortcuts::new(move |action| {
+        match platform::shortcuts::GlobalShortcuts::new(move |action| {
             let code = match action {
-                tide_windows::MediaAction::Toggle => 2,
-                tide_windows::MediaAction::Next => 3,
-                tide_windows::MediaAction::Previous => 4,
+                platform::MediaAction::Toggle => 2,
+                platform::MediaAction::Next => 3,
+                platform::MediaAction::Previous => 4,
                 _ => return,
             };
             let _ = weak.upgrade_in_event_loop(move |u| u.invoke_media_command(code, 0.0));
         }) {
             Ok(mut manager) => {
                 let result =
-                    tide_windows::shortcuts::parse_bindings(&state.borrow().settings.shortcuts)
+                    platform::shortcuts::parse_bindings(&state.borrow().settings.shortcuts)
                         .and_then(|bindings| manager.apply(bindings));
                 if let Err(error) = result {
                     ui.set_shortcut_status(error.into());
@@ -4381,12 +4414,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     library_browse::wire(&ui, state.clone(), library_tx.clone());
     search_results::wire(&ui, state.clone(), tx.clone(), library_tx.clone());
     let _native_login = native_login::wire(&ui, state.clone());
-    #[cfg(windows)]
+    #[cfg(native_shell)]
     shortcut_capture::wire(&ui, state.clone(), shortcuts.clone());
     let output_timer = slint::Timer::default();
-    #[cfg(windows)]
+    #[cfg(native_shell)]
     if media_enabled && state.borrow().engine.is_some() {
-        match tide_windows::OutputWatcher::new() {
+        match platform::OutputWatcher::new() {
             Ok(watcher) => {
                 let state = state.clone();
                 let weak = ui.as_weak();
@@ -4454,7 +4487,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Play/Pause action even when the user presses a media key twice quickly.
     // Metadata and timeline writes are cached inside MediaSession.
     let window_fit_timer = slint::Timer::default();
-    #[cfg(windows)]
+    #[cfg(native_shell)]
     if !test_mode && listening_seconds.is_none() && !smoke_autoplay_depletion {
         let weak = ui.as_weak();
         let mut fitted = None;
@@ -4462,19 +4495,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             slint::TimerMode::Repeated,
             Duration::from_millis(100),
             move || {
-                use raw_window_handle::{HasWindowHandle, RawWindowHandle};
                 let Some(u) = weak.upgrade() else {
                     return;
                 };
-                let window = u.window().window_handle();
-                let Ok(handle) = window.window_handle() else {
+                let Some(hwnd) = platform::native_view(u.window()) else {
                     return;
                 };
-                let RawWindowHandle::Win32(handle) = handle.as_raw() else {
-                    return;
-                };
-                let hwnd = handle.hwnd.get() as *mut std::ffi::c_void;
-                let Ok(work) = tide_windows::window_work_area(hwnd) else {
+                let Ok(work) = platform::window_work_area(hwnd) else {
                     fitted = None;
                     return;
                 };
@@ -4487,7 +4514,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if fitted == Some(mode) {
                     return;
                 }
-                if tide_windows::fit_window_to_work_area(hwnd, work).is_ok() {
+                if platform::fit_window_to_work_area(hwnd, work).is_ok() {
                     fitted = Some(mode);
                 }
             },
@@ -4529,16 +4556,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
     let mini_timer = slint::Timer::default();
-    #[cfg(windows)]
+    #[cfg(native_shell)]
     if !test_mode && listening_seconds.is_none() && !smoke_autoplay {
         let weak = ui.as_weak();
         let mut applied = None;
-        let mut native_mini = tide_windows::mini::MiniWindow::default();
+        let mut native_mini = platform::mini::MiniWindow::default();
         mini_timer.start(
             slint::TimerMode::Repeated,
             Duration::from_millis(100),
             move || {
-                use raw_window_handle::{HasWindowHandle, RawWindowHandle};
                 let Some(u) = weak.upgrade() else {
                     return;
                 };
@@ -4553,17 +4579,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if applied == Some(desired) {
                     return;
                 }
-                let window = u.window().window_handle();
-                let Ok(handle) = window.window_handle() else {
+                let Some(view) = platform::native_view(u.window()) else {
                     return;
                 };
-                let RawWindowHandle::Win32(handle) = handle.as_raw() else {
-                    return;
-                };
-                if native_mini
-                    .apply(handle.hwnd.get() as *mut std::ffi::c_void, pinned, opacity)
-                    .is_ok()
-                {
+                if native_mini.apply(view, pinned, opacity).is_ok() {
                     applied = Some(desired);
                 }
             },
@@ -4614,7 +4633,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     (false, u.get_position() as f64, u.get_duration() as f64)
                 };
                 if let Some(session) = media.borrow_mut().as_mut() {
-                    #[cfg(windows)]
+                    #[cfg(native_shell)]
                     session.set_close_to_tray(s.settings.close_to_tray);
                     let _ = session.update(
                         &u.get_track_title(),
@@ -6160,6 +6179,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if !test_mode && !state.borrow().settings.compact_mode {
         maximize_when_ready(&ui);
     }
+    #[cfg(target_os = "macos")]
+    let _mac_shell = (!test_mode && listening_seconds.is_none() && !smoke_autoplay_depletion)
+        .then(|| mac_shell::install(&ui, state.clone()));
     let result = if listening_seconds.is_some() || smoke_autoplay_depletion {
         ui.hide()?;
         slint::run_event_loop_until_quit()
@@ -6173,7 +6195,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     preparation_timer.stop();
     media_timer.stop();
     output_timer.stop();
-    #[cfg(windows)]
+    #[cfg(native_shell)]
     shortcuts.borrow_mut().take();
     media.borrow_mut().take();
     window_fit_timer.stop();

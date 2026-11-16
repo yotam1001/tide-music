@@ -113,12 +113,12 @@ impl Pending {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, windows))]
     pub(super) fn expire_for_test(&mut self) {
         self.deadline = Instant::now();
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, windows))]
     pub(super) fn wait_for_test_exit(&mut self) {
         let _ = self.child.wait();
     }

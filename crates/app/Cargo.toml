@@ -38,6 +38,9 @@ ring = "=0.17.14"
 tempfile = "3"
 
 
+[target.'cfg(target_os = "macos")'.dependencies]
+tide-macos = { path = "../macos" }
+
 [build-dependencies]
 slint-build = "=1.18.1"
 winresource = "0.1.31"

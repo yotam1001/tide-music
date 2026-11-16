@@ -1,15 +1,18 @@
 use serde::{Deserialize, Serialize};
+#[cfg(any(windows, unix))]
+use std::process::{Command, Stdio};
+#[cfg(any(windows, unix))]
+use std::time::Instant;
 use std::{
     collections::BTreeMap,
     fs,
     io::{Read, Write},
     path::{Path, PathBuf},
-    process::{Command, Stdio},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc,
     },
-    time::{Duration, Instant},
+    time::Duration,
 };
 use tide_core::Track;
 use zeroize::Zeroize;
@@ -23,6 +26,10 @@ pub use feedback::{
 const MAX_SESSION: usize = 65536;
 // Local encrypted metadata, removed before any headers reach a helper or HTTP.
 const CONNECTION_REVISION: &str = "tide-connection-revision";
+#[cfg(windows)]
+const SESSION_FILE_NAME: &str = "session.dpapi";
+#[cfg(not(windows))]
+const SESSION_FILE_NAME: &str = "session.sealed";
 
 /// Opaque login generation and selected identity; contains no credentials.
 /// A normal cookie refresh keeps this generation, while explicit imports
@@ -65,10 +72,10 @@ static LEASE_COUNTER: AtomicU64 = AtomicU64::new(1);
 struct SessionWriteLock(windows_sys::Win32::Foundation::HANDLE);
 #[cfg(windows)]
 impl SessionWriteLock {
-    fn acquire() -> Result<Self, &'static str> {
+    fn acquire(_directory: &Path) -> Result<Self, &'static str> {
         Self::acquire_with_timeout(1000)
     }
-    fn try_acquire() -> Result<Self, &'static str> {
+    fn try_acquire(_directory: &Path) -> Result<Self, &'static str> {
         Self::acquire_with_timeout(0)
     }
     fn acquire_with_timeout(timeout_ms: u32) -> Result<Self, &'static str> {
@@ -106,14 +113,142 @@ impl Drop for SessionWriteLock {
         }
     }
 }
-#[cfg(not(windows))]
-struct SessionWriteLock;
-#[cfg(not(windows))]
+
+#[cfg(unix)]
+std::thread_local! {
+    static HELD_SESSION_LOCKS: std::cell::RefCell<Vec<((u64, u64), usize)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+#[cfg(unix)]
+struct SessionWriteLock {
+    lock_id: (u64, u64),
+    _file: Option<fs::File>,
+    _not_send: std::marker::PhantomData<*const ()>,
+}
+
+#[cfg(unix)]
 impl SessionWriteLock {
-    fn acquire() -> Result<Self, &'static str> {
+    fn acquire(directory: &Path) -> Result<Self, &'static str> {
+        Self::acquire_with_timeout(directory, Duration::from_millis(1000))
+    }
+
+    fn try_acquire(directory: &Path) -> Result<Self, &'static str> {
+        Self::acquire_with_timeout(directory, Duration::ZERO)
+    }
+
+    fn acquire_with_timeout(directory: &Path, timeout: Duration) -> Result<Self, &'static str> {
+        use std::os::unix::{
+            fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
+            io::AsRawFd,
+        };
+        if directory_is_linked(directory) {
+            return Err("Account storage lock unavailable");
+        }
+        let dir_file = fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(directory)
+            .map_err(|_| "Account storage lock unavailable")?;
+        let dir_meta = dir_file
+            .metadata()
+            .map_err(|_| "Account storage lock unavailable")?;
+        // SAFETY: geteuid has no preconditions and always succeeds.
+        let euid = unsafe { libc::geteuid() };
+        if !dir_meta.is_dir() || dir_meta.uid() != euid {
+            return Err("Account storage lock unavailable");
+        }
+        let lock_id = (dir_meta.dev(), dir_meta.ino());
+        drop(dir_file);
+
+        let reentrant = HELD_SESSION_LOCKS.with(|locks| {
+            let mut locks = locks.borrow_mut();
+            if let Some((_, depth)) = locks.iter_mut().find(|(id, _)| *id == lock_id) {
+                *depth += 1;
+                true
+            } else {
+                false
+            }
+        });
+        if reentrant {
+            return Ok(Self {
+                lock_id,
+                _file: None,
+                _not_send: std::marker::PhantomData,
+            });
+        }
+
+        let lock_path = directory.join(".session.lock");
+        let file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(&lock_path)
+            .map_err(|_| "Account storage lock unavailable")?;
+        let meta = file
+            .metadata()
+            .map_err(|_| "Account storage lock unavailable")?;
+        if !meta.is_file() || meta.uid() != euid {
+            return Err("Account storage lock unavailable");
+        }
+        let _ = file.set_permissions(fs::Permissions::from_mode(0o600));
+
+        let started = Instant::now();
+        loop {
+            // SAFETY: file holds a valid open descriptor for the duration of this call.
+            let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+            if rc == 0 {
+                HELD_SESSION_LOCKS.with(|locks| locks.borrow_mut().push((lock_id, 1)));
+                return Ok(Self {
+                    lock_id,
+                    _file: Some(file),
+                    _not_send: std::marker::PhantomData,
+                });
+            }
+            let errno = std::io::Error::last_os_error().raw_os_error();
+            if errno == Some(libc::EINTR) {
+                continue;
+            }
+            if errno == Some(libc::EWOULDBLOCK) || errno == Some(libc::EAGAIN) {
+                let elapsed = started.elapsed();
+                if elapsed >= timeout {
+                    return Err("Account storage is busy; retry the request");
+                }
+                let remaining = timeout.saturating_sub(elapsed);
+                std::thread::sleep(remaining.min(Duration::from_millis(10)));
+                continue;
+            }
+            return Err("Account storage lock unavailable");
+        }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for SessionWriteLock {
+    fn drop(&mut self) {
+        HELD_SESSION_LOCKS.with(|locks| {
+            let mut locks = locks.borrow_mut();
+            if let Some(pos) = locks.iter().position(|(id, _)| *id == self.lock_id) {
+                if locks[pos].1 > 1 {
+                    locks[pos].1 -= 1;
+                } else {
+                    locks.swap_remove(pos);
+                }
+            }
+        });
+    }
+}
+
+#[cfg(not(any(windows, unix)))]
+struct SessionWriteLock;
+#[cfg(not(any(windows, unix)))]
+impl SessionWriteLock {
+    fn acquire(_directory: &Path) -> Result<Self, &'static str> {
         Ok(Self)
     }
-    fn try_acquire() -> Result<Self, &'static str> {
+    fn try_acquire(_directory: &Path) -> Result<Self, &'static str> {
         Ok(Self)
     }
 }
@@ -321,6 +456,7 @@ pub enum Response {
 }
 
 // Keep refreshed credentials inside the provider; callers receive metadata only.
+#[cfg(any(windows, unix, test))]
 struct HelperReply {
     response: Response,
     refreshed: RefreshedHeaders,
@@ -339,20 +475,24 @@ impl Drop for RefreshedHeaders {
 
 // Deserialize only the optional credentials a second time. Serde skips the
 // already-decoded track/card metadata without allocating another JSON tree.
+#[cfg(any(windows, unix, test))]
 #[derive(Default, Deserialize)]
 #[serde(transparent)]
 struct RefreshedJson(serde_json::Value);
+#[cfg(any(windows, unix, test))]
 impl Drop for RefreshedJson {
     fn drop(&mut self) {
         zeroize_json(&mut self.0);
     }
 }
+#[cfg(any(windows, unix, test))]
 #[derive(Deserialize)]
 struct RefreshEnvelope {
     #[serde(default)]
     refreshed_headers: RefreshedJson,
 }
 
+#[cfg(any(windows, unix, test))]
 fn decode_helper_reply(bytes: &[u8]) -> Result<HelperReply, &'static str> {
     // Parse data independently so an invalid optional update cannot hide valid
     // library results or turn a transient error into a rejected session.
@@ -389,6 +529,7 @@ fn decode_helper_reply(bytes: &[u8]) -> Result<HelperReply, &'static str> {
     })
 }
 
+#[cfg(any(windows, unix, test))]
 fn zeroize_json(value: &mut serde_json::Value) {
     match value {
         serde_json::Value::String(value) => value.zeroize(),
@@ -398,9 +539,104 @@ fn zeroize_json(value: &mut serde_json::Value) {
     }
 }
 
+#[cfg(unix)]
+trait SessionKeyStore: Send + Sync {
+    fn load_key(&self) -> Result<Option<zeroize::Zeroizing<[u8; 32]>>, &'static str>;
+    fn load_or_create_key(&self) -> Result<zeroize::Zeroizing<[u8; 32]>, &'static str>;
+    fn delete_key(&self) -> Result<(), &'static str>;
+}
+
+#[cfg(target_os = "macos")]
+const KEYCHAIN_SERVICE: &str = "com.tidemusic.Tide.session";
+#[cfg(target_os = "macos")]
+const KEYCHAIN_ACCOUNT: &str = "session-key";
+#[cfg(target_os = "macos")]
+const ERR_SEC_ITEM_NOT_FOUND: i32 = -25300;
+
+#[cfg(target_os = "macos")]
+struct KeychainKeyStore;
+
+#[cfg(target_os = "macos")]
+impl SessionKeyStore for KeychainKeyStore {
+    fn load_key(&self) -> Result<Option<zeroize::Zeroizing<[u8; 32]>>, &'static str> {
+        use security_framework::passwords::{generic_password, PasswordOptions};
+        match generic_password(PasswordOptions::new_generic_password(
+            KEYCHAIN_SERVICE,
+            KEYCHAIN_ACCOUNT,
+        )) {
+            Ok(mut bytes) => {
+                if bytes.len() != 32 {
+                    bytes.zeroize();
+                    return Err("Account session key in Keychain is invalid");
+                }
+                let mut key = zeroize::Zeroizing::new([0u8; 32]);
+                key.copy_from_slice(&bytes);
+                bytes.zeroize();
+                Ok(Some(key))
+            }
+            Err(err) if err.code() == ERR_SEC_ITEM_NOT_FOUND => Ok(None),
+            Err(_) => Err("Could not read account session key from Keychain"),
+        }
+    }
+
+    fn load_or_create_key(&self) -> Result<zeroize::Zeroizing<[u8; 32]>, &'static str> {
+        if let Some(key) = self.load_key()? {
+            return Ok(key);
+        }
+        use ring::rand::{SecureRandom, SystemRandom};
+        use security_framework::passwords::set_generic_password;
+        let mut key = zeroize::Zeroizing::new([0u8; 32]);
+        SystemRandom::new()
+            .fill(&mut *key)
+            .map_err(|_| "Could not generate account session key")?;
+        set_generic_password(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT, &*key)
+            .map_err(|_| "Could not store account session key in Keychain")?;
+        Ok(key)
+    }
+
+    fn delete_key(&self) -> Result<(), &'static str> {
+        use security_framework::passwords::delete_generic_password;
+        match delete_generic_password(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT) {
+            Ok(()) => Ok(()),
+            Err(err) if err.code() == ERR_SEC_ITEM_NOT_FOUND => Ok(()),
+            Err(_) => Err("Could not remove account session key from Keychain"),
+        }
+    }
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+struct UnsupportedKeyStore;
+
+#[cfg(all(unix, not(target_os = "macos")))]
+impl SessionKeyStore for UnsupportedKeyStore {
+    fn load_key(&self) -> Result<Option<zeroize::Zeroizing<[u8; 32]>>, &'static str> {
+        Err("Keychain session storage is only available on macOS")
+    }
+    fn load_or_create_key(&self) -> Result<zeroize::Zeroizing<[u8; 32]>, &'static str> {
+        Err("Keychain session storage is only available on macOS")
+    }
+    fn delete_key(&self) -> Result<(), &'static str> {
+        Ok(())
+    }
+}
+
+#[cfg(unix)]
+fn default_key_store() -> Arc<dyn SessionKeyStore> {
+    #[cfg(target_os = "macos")]
+    {
+        Arc::new(KeychainKeyStore)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Arc::new(UnsupportedKeyStore)
+    }
+}
+
 #[derive(Clone)]
 pub struct Provider {
     directory: PathBuf,
+    #[cfg(unix)]
+    key_store: Arc<dyn SessionKeyStore>,
 }
 pub struct CookieLease {
     path: PathBuf,
@@ -487,7 +723,26 @@ fn same_directory(left: &Path, right: &Path) -> bool {
         .zip(identity(right))
         .is_some_and(|(left, right)| left == right)
 }
-#[cfg(not(windows))]
+#[cfg(unix)]
+fn same_directory(left: &Path, right: &Path) -> bool {
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+    let identity = |path: &Path| -> Option<(u64, u64)> {
+        let file = fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(path)
+            .ok()?;
+        let meta = file.metadata().ok()?;
+        if !meta.is_dir() {
+            return None;
+        }
+        Some((meta.dev(), meta.ino()))
+    };
+    identity(left)
+        .zip(identity(right))
+        .is_some_and(|(left, right)| left == right)
+}
+#[cfg(not(any(windows, unix)))]
 fn same_directory(left: &Path, right: &Path) -> bool {
     left == right
 }
@@ -509,18 +764,68 @@ fn directory_is_linked(path: &Path) -> bool {
 
 impl Provider {
     pub fn new() -> Result<Self, String> {
+        #[cfg(windows)]
         let directory = std::env::var_os("APPDATA")
             .map(PathBuf::from)
             .ok_or("Windows application-data directory is unavailable")?
             .join("TideMusic/account");
+        #[cfg(target_os = "macos")]
+        let directory = {
+            let home = std::env::var_os("HOME")
+                .filter(|home| !home.is_empty())
+                .map(PathBuf::from)
+                .ok_or("macOS home directory is unavailable")?;
+            let app_root = home.join("Library/Application Support/TideMusic");
+            private_directory(&app_root)?;
+            app_root.join("account")
+        };
+        #[cfg(all(unix, not(target_os = "macos")))]
+        let directory = {
+            let base = std::env::var_os("XDG_DATA_HOME")
+                .filter(|dir| !dir.is_empty())
+                .map(PathBuf::from)
+                .or_else(|| {
+                    std::env::var_os("HOME")
+                        .filter(|home| !home.is_empty())
+                        .map(|home| PathBuf::from(home).join(".local/share"))
+                })
+                .ok_or("User data directory is unavailable")?;
+            let app_root = base.join("TideMusic");
+            private_directory(&app_root)?;
+            app_root.join("account")
+        };
+        #[cfg(not(any(windows, unix)))]
+        let directory = return Err("Account storage is unsupported on this platform".into());
         private_directory(&directory)?;
         remove_stale_leases(&directory);
-        Ok(Self { directory })
+        Ok(Self {
+            directory,
+            #[cfg(unix)]
+            key_store: default_key_store(),
+        })
     }
+
+    #[cfg(all(unix, test))]
+    fn with_key_store(directory: PathBuf, key_store: Arc<dyn SessionKeyStore>) -> Self {
+        Self {
+            directory,
+            key_store,
+        }
+    }
+
     pub fn is_connected(&self) -> bool {
-        self.directory.join("session.dpapi").is_file()
+        #[cfg(windows)]
+        {
+            self.directory.join(SESSION_FILE_NAME).is_file()
+        }
+        #[cfg(not(windows))]
+        {
+            !directory_is_linked(&self.directory)
+                && fs::symlink_metadata(self.directory.join(SESSION_FILE_NAME))
+                    .is_ok_and(|meta| meta.is_file())
+        }
     }
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     pub fn owns_login_directory(&self, path: &Path) -> bool {
         if directory_is_linked(path) || directory_is_linked(&self.directory) {
             return false;
@@ -540,9 +845,13 @@ impl Provider {
                     pid.parse::<u32>().is_ok_and(|pid| pid != 0) && counter.parse::<u64>().is_ok()
                 })
     }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    pub fn owns_login_directory(&self, _path: &Path) -> bool {
+        false
+    }
     /// Allocate a fresh profile underneath the existing private account store.
     /// The caller owns its lifetime, never a user-selected browser directory.
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     pub fn new_login_directory(&self) -> Result<LoginDirectory, String> {
         if directory_is_linked(&self.directory) {
             return Err("Login profile storage must be an ordinary private directory".into());
@@ -553,7 +862,14 @@ impl Provider {
                 std::process::id(),
                 LEASE_COUNTER.fetch_add(1, Ordering::Relaxed)
             ));
-            match fs::create_dir(&path) {
+            #[cfg(windows)]
+            let created = fs::create_dir(&path);
+            #[cfg(target_os = "macos")]
+            let created = {
+                use std::os::unix::fs::DirBuilderExt;
+                fs::DirBuilder::new().mode(0o700).create(&path)
+            };
+            match created {
                 Ok(()) => {
                     let directory = LoginDirectory {
                         path,
@@ -567,6 +883,13 @@ impl Provider {
             }
         }
         Err("Could not create an isolated login profile".into())
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    pub fn new_login_directory(&self) -> Result<LoginDirectory, String> {
+        Err(
+            "Native sign-in is only available on Windows; use the browser companion on macOS"
+                .into(),
+        )
     }
     pub fn account_index(&self) -> u32 {
         let Ok(mut headers) = self.headers() else {
@@ -582,6 +905,7 @@ impl Provider {
         }
         index
     }
+    #[cfg(any(windows, unix))]
     fn save_verified_session(
         &self,
         mut headers: BTreeMap<String, String>,
@@ -603,14 +927,14 @@ impl Provider {
         result?;
         Ok(Response::Connected)
     }
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     fn save_verified_session_for_connection(
         &self,
         mut headers: BTreeMap<String, String>,
         cancel: &AtomicBool,
         expected: &Option<SavedConnection>,
     ) -> Result<Response, String> {
-        let lock = SessionWriteLock::acquire().map_err(str::to_string);
+        let lock = SessionWriteLock::acquire(&self.directory).map_err(str::to_string);
         let current = lock
             .as_ref()
             .map_err(|error| error.clone())
@@ -632,7 +956,7 @@ impl Provider {
 
     /// Verify before replacing a saved session. A connection changed while the
     /// network request was in flight must not be overwritten by its result.
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     pub fn import_browser_session(
         &self,
         bytes: &[u8],
@@ -682,7 +1006,7 @@ impl Provider {
         }
     }
 
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, unix)))]
     pub fn import_browser_session(
         &self,
         _bytes: &[u8],
@@ -691,10 +1015,11 @@ impl Provider {
         Err(SessionImportError::StorageError)
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     fn import_baseline(&self) -> Result<Option<Vec<u8>>, SessionImportError> {
-        let _lock = SessionWriteLock::acquire().map_err(|_| SessionImportError::StorageError)?;
-        let path = self.directory.join("session.dpapi");
+        let _lock = SessionWriteLock::acquire(&self.directory)
+            .map_err(|_| SessionImportError::StorageError)?;
+        let path = self.directory.join(SESSION_FILE_NAME);
         match fs::metadata(&path) {
             Ok(_) => read_limited(&path, MAX_SESSION + 8192)
                 .map(Some)
@@ -704,7 +1029,7 @@ impl Provider {
         }
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     fn commit_browser_session(
         &self,
         mut headers: BTreeMap<String, String>,
@@ -717,8 +1042,8 @@ impl Provider {
         }
         let mut encoded = encoded.map_err(|_| SessionImportError::InvalidHeaders)?;
         let result = (|| {
-            let _lock =
-                SessionWriteLock::acquire().map_err(|_| SessionImportError::StorageError)?;
+            let _lock = SessionWriteLock::acquire(&self.directory)
+                .map_err(|_| SessionImportError::StorageError)?;
             if cancel.load(Ordering::Acquire) {
                 return Err(SessionImportError::Cancelled);
             }
@@ -734,9 +1059,43 @@ impl Provider {
     fn import_bytes(&self, bytes: &[u8]) -> Result<(), String> {
         self.write_session(bytes, true)
     }
+    fn protect_session(&self, clear: &[u8]) -> Result<Vec<u8>, &'static str> {
+        #[cfg(windows)]
+        {
+            protect(clear)
+        }
+        #[cfg(unix)]
+        {
+            seal_bytes(&*self.key_store, clear)
+        }
+        #[cfg(not(any(windows, unix)))]
+        {
+            let _ = clear;
+            Err("Account storage is unsupported on this platform")
+        }
+    }
+    fn unprotect_session(&self, encrypted: &[u8]) -> Result<Vec<u8>, &'static str> {
+        #[cfg(windows)]
+        {
+            unprotect(encrypted)
+        }
+        #[cfg(unix)]
+        {
+            unseal_bytes(&*self.key_store, encrypted)
+        }
+        #[cfg(not(any(windows, unix)))]
+        {
+            let _ = encrypted;
+            Err("Account storage is unsupported on this platform")
+        }
+    }
     fn write_session(&self, bytes: &[u8], new_connection: bool) -> Result<(), String> {
-        let _session_lock = SessionWriteLock::acquire().map_err(str::to_string)?;
+        let _session_lock = SessionWriteLock::acquire(&self.directory).map_err(str::to_string)?;
         (|| {
+            #[cfg(unix)]
+            if directory_is_linked(&self.directory) {
+                return Err("Account storage must be an ordinary private directory".to_string());
+            }
             let mut headers = parse_headers(bytes)?;
             let revision = if new_connection {
                 let timestamp = std::time::SystemTime::now()
@@ -760,27 +1119,100 @@ impl Provider {
             for value in headers.values_mut() {
                 value.zeroize();
             }
-            let encrypted = protect(&clear);
+            let encrypted = self.protect_session(&clear);
             clear.zeroize();
             let encrypted = encrypted?;
             let temporary = self.directory.join("session.pending");
-            fs::write(&temporary, encrypted).map_err(|_| "Could not save protected session")?;
-            // Rename in the same protected directory replaces the destination
-            // atomically; keep the previous session if replacement fails.
-            let destination = self.directory.join("session.dpapi");
-            fs::rename(temporary, destination).map_err(|_| "Could not finish session import")
+            let destination = self.directory.join(SESSION_FILE_NAME);
+            #[cfg(windows)]
+            {
+                fs::write(&temporary, encrypted).map_err(|_| "Could not save protected session")?;
+                // Rename in the same protected directory replaces the destination
+                // atomically; keep the previous session if replacement fails.
+                fs::rename(temporary, destination)
+                    .map_err(|_| "Could not finish session import".to_string())
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+                if fs::symlink_metadata(&temporary).is_ok() {
+                    let _ = fs::remove_file(&temporary);
+                }
+                let write_result = (|| -> Result<(), String> {
+                    let mut file = fs::OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .mode(0o600)
+                        .custom_flags(libc::O_NOFOLLOW)
+                        .open(&temporary)
+                        .map_err(|_| "Could not save protected session")?;
+                    file.write_all(&encrypted)
+                        .map_err(|_| "Could not save protected session")?;
+                    file.set_permissions(fs::Permissions::from_mode(0o600))
+                        .map_err(|_| "Could not save protected session")?;
+                    file.sync_all()
+                        .map_err(|_| "Could not save protected session")?;
+                    drop(file);
+                    if directory_is_linked(&self.directory) {
+                        return Err("Account storage must be an ordinary private directory".into());
+                    }
+                    // Rename in the same protected directory replaces the destination
+                    // atomically; keep the previous session if replacement fails.
+                    fs::rename(&temporary, &destination)
+                        .map_err(|_| "Could not finish session import".to_string())
+                })();
+                if write_result.is_err() {
+                    let _ = fs::remove_file(&temporary);
+                }
+                write_result
+            }
+            #[cfg(not(any(windows, unix)))]
+            {
+                let _ = (temporary, destination, encrypted);
+                Err("Account storage is unsupported on this platform".to_string())
+            }
         })()
-        .map_err(str::to_string)
     }
     pub fn disconnect(&self) -> Result<(), String> {
         remove_stale_leases(&self.directory);
+        #[cfg(unix)]
+        if let Err(error) = fs::symlink_metadata(&self.directory) {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                let _ = self.key_store.delete_key();
+                return Ok(());
+            }
+            return Err("Could not inspect account storage".into());
+        }
         // Use the same cross-process guard as imports and refreshed-cookie
         // commits. Otherwise an import can pass its baseline check, race a
         // disconnect, and recreate the session the user just removed.
-        let _session_lock = SessionWriteLock::acquire().map_err(str::to_string)?;
-        let path = self.directory.join("session.dpapi");
-        if path.exists() {
-            fs::remove_file(path).map_err(|_| "Could not remove the saved session")?;
+        let _session_lock = SessionWriteLock::acquire(&self.directory).map_err(str::to_string)?;
+        let path = self.directory.join(SESSION_FILE_NAME);
+        #[cfg(windows)]
+        {
+            if path.exists() {
+                fs::remove_file(path).map_err(|_| "Could not remove the saved session")?;
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            if directory_is_linked(&self.directory) {
+                return Err("Account storage must be an ordinary private directory".into());
+            }
+            match fs::symlink_metadata(&path) {
+                Ok(meta) => {
+                    if meta.is_dir() {
+                        return Err("Could not remove the saved session".into());
+                    }
+                    fs::remove_file(&path).map_err(|_| "Could not remove the saved session")?;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(_) => return Err("Could not remove the saved session".into()),
+            }
+        }
+        #[cfg(unix)]
+        {
+            let _ = self.key_store.delete_key();
         }
         Ok(())
     }
@@ -789,8 +1221,12 @@ impl Provider {
         Ok(headers)
     }
     fn read_session(&self) -> Result<(BTreeMap<String, String>, Option<String>), String> {
-        let encrypted = read_limited(&self.directory.join("session.dpapi"), MAX_SESSION + 8192)?;
-        let mut clear = unprotect(&encrypted).map_err(str::to_string)?;
+        let path = self.directory.join(SESSION_FILE_NAME);
+        #[cfg(unix)]
+        let encrypted = read_limited_private(&self.directory, &path, MAX_SESSION + 8192)?;
+        #[cfg(not(unix))]
+        let encrypted = read_limited(&path, MAX_SESSION + 8192)?;
+        let mut clear = self.unprotect_session(&encrypted).map_err(str::to_string)?;
         let headers: Result<BTreeMap<String, String>, String> = serde_json::from_slice(&clear)
             .map_err(|_| "Saved session is invalid. Reconnect your account".to_string());
         clear.zeroize();
@@ -828,7 +1264,7 @@ impl Provider {
     pub fn playback_connection(
         &self,
     ) -> Result<(Option<SavedConnection>, Option<CookieLease>), String> {
-        let _guard = SessionWriteLock::try_acquire()?;
+        let _guard = SessionWriteLock::try_acquire(&self.directory)?;
         Ok((self.saved_connection()?, self.cookie_lease()?))
     }
     pub fn cookie_lease(&self) -> Result<Option<CookieLease>, String> {
@@ -847,15 +1283,30 @@ impl Provider {
         );
         let path = self.directory.join(name);
         let mut created = false;
-        let result = (|| {
-            let mut file = fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
+        let result = (|| -> Result<Option<CookieLease>, &'static str> {
+            #[cfg(unix)]
+            if directory_is_linked(&self.directory) {
+                return Err("Account storage must be an ordinary private directory");
+            }
+            let mut options = fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+            }
+            let mut file = options
                 .open(&path)
                 .map_err(|_| "Could not prepare signed-in playback")?;
             created = true;
             file.write_all(jar.as_bytes())
                 .map_err(|_| "Could not prepare signed-in playback")?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                file.set_permissions(fs::Permissions::from_mode(0o600))
+                    .map_err(|_| "Could not prepare signed-in playback")?;
+            }
             Ok(Some(CookieLease { path: path.clone() }))
         })();
         jar.zeroize();
@@ -866,6 +1317,10 @@ impl Provider {
     }
 
     pub fn refresh_cookie_lease(&self, lease: &CookieLease) -> Result<(), String> {
+        #[cfg(unix)]
+        if directory_is_linked(&self.directory) {
+            return Err("Account storage must be an ordinary private directory".into());
+        }
         let root = self
             .directory
             .canonicalize()
@@ -903,14 +1358,25 @@ impl Provider {
             std::process::id(),
             LEASE_COUNTER.fetch_add(1, Ordering::Relaxed)
         ));
-        let result = (|| {
-            let mut file = fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
+        let result = (|| -> Result<(), &'static str> {
+            let mut options = fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+            }
+            let mut file = options
                 .open(&temporary)
                 .map_err(|_| "Could not update signed-in playback")?;
             file.write_all(jar.as_bytes())
                 .map_err(|_| "Could not update signed-in playback")?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                file.set_permissions(fs::Permissions::from_mode(0o600))
+                    .map_err(|_| "Could not update signed-in playback")?;
+            }
             file.sync_all()
                 .map_err(|_| "Could not update signed-in playback")?;
             drop(file);
@@ -930,7 +1396,8 @@ impl Provider {
         lease: &CookieLease,
         expected: &SavedConnection,
     ) -> Result<(), String> {
-        let _session_lock = SessionWriteLock::try_acquire().map_err(str::to_string)?;
+        let _session_lock =
+            SessionWriteLock::try_acquire(&self.directory).map_err(str::to_string)?;
         if self.saved_connection()?.as_ref() != Some(expected) {
             return Err("Saved connection changed; retry adoption".into());
         }
@@ -945,7 +1412,7 @@ impl Provider {
         baseline: &[u8],
         updated: &[u8],
     ) -> Result<bool, String> {
-        let _session_lock = SessionWriteLock::acquire().map_err(str::to_string)?;
+        let _session_lock = SessionWriteLock::acquire(&self.directory).map_err(str::to_string)?;
         let (Ok(before), Ok(after)) = (
             scoped_cookie_snapshot(baseline),
             scoped_cookie_snapshot(updated),
@@ -1022,6 +1489,7 @@ impl Provider {
         Ok(true)
     }
 
+    #[cfg(any(windows, unix))]
     fn persist_refreshed_headers(
         &self,
         refreshed: &RefreshedHeaders,
@@ -1033,7 +1501,7 @@ impl Provider {
         let Some(candidate) = &refreshed.0 else {
             return false;
         };
-        let Ok(_session_lock) = SessionWriteLock::acquire() else {
+        let Ok(_session_lock) = SessionWriteLock::acquire(&self.directory) else {
             return false;
         };
         if cancel.load(Ordering::Acquire)
@@ -1127,7 +1595,7 @@ impl Provider {
         accepted
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     pub fn execute(&self, request: Request, cancel: Arc<AtomicBool>) -> Result<Response, String> {
         if let Request::Connect {
             ref database,
@@ -1205,7 +1673,7 @@ impl Provider {
         let result = execute_helper(&input, cancel.clone(), timeout);
         input.zeroize();
         let mut reply = result?;
-        let _session_lock = SessionWriteLock::acquire().map_err(str::to_string)?;
+        let _session_lock = SessionWriteLock::acquire(&self.directory).map_err(str::to_string)?;
         if cancel.load(Ordering::Acquire)
             || self.saved_connection()?.as_ref() != Some(&expected_connection)
         {
@@ -1252,7 +1720,7 @@ impl Provider {
             response => Ok(response),
         }
     }
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, unix)))]
     pub fn execute(&self, _: Request, _: Arc<AtomicBool>) -> Result<Response, String> {
         Err("Account integration currently requires Windows".into())
     }
@@ -1312,8 +1780,97 @@ fn remove_stale_leases(directory: &Path) {
         }
     }
 }
-#[cfg(not(windows))]
+#[cfg(unix)]
+fn remove_stale_leases(directory: &Path) {
+    if directory_is_linked(directory) {
+        return;
+    }
+    let Ok(entries) = fs::read_dir(directory) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_symlink() {
+            continue;
+        }
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        let login = name.starts_with("login-");
+        let Some(body) = (if login {
+            name.strip_prefix("login-")
+        } else {
+            name.strip_prefix("playback-")
+                .and_then(|s| s.strip_suffix(".txt"))
+        }) else {
+            continue;
+        };
+        let Some((pid, counter)) = body.split_once('-') else {
+            continue;
+        };
+        let (Ok(pid), Ok(_counter)) = (pid.parse::<u32>(), counter.parse::<u64>()) else {
+            continue;
+        };
+        if pid == 0 {
+            continue;
+        }
+        let gone = if let Ok(pid) = libc::pid_t::try_from(pid) {
+            // SAFETY: pid > 0 (validated above); signal 0 checks process existence only.
+            let rc = unsafe { libc::kill(pid, 0) };
+            if rc == 0 {
+                false
+            } else {
+                match std::io::Error::last_os_error().raw_os_error() {
+                    Some(libc::ESRCH) => true,
+                    Some(libc::EPERM) => false,
+                    _ => false,
+                }
+            }
+        } else {
+            true
+        };
+        if gone {
+            if login && file_type.is_dir() {
+                remove_private_login_directory(&entry.path(), directory);
+            } else if !login && file_type.is_file() {
+                let _ = fs::remove_file(entry.path());
+            }
+        }
+    }
+}
+#[cfg(not(any(windows, unix)))]
 fn remove_stale_leases(_: &Path) {}
+
+#[cfg(unix)]
+fn read_limited_private(directory: &Path, path: &Path, limit: usize) -> Result<Vec<u8>, String> {
+    use std::os::unix::fs::OpenOptionsExt;
+    if directory_is_linked(directory) {
+        return Err("Account storage must be an ordinary private directory".into());
+    }
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
+        .map_err(|_| "Could not read the local session file")?;
+    let meta = file
+        .metadata()
+        .map_err(|_| "Could not read the local session file")?;
+    if !meta.is_file() {
+        return Err("Could not read the local session file".into());
+    }
+    let mut bytes = Vec::new();
+    file.take((limit + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "Could not read the local session file")?;
+    if bytes.len() > limit {
+        bytes.zeroize();
+        return Err("Session file is too large".into());
+    }
+    Ok(bytes)
+}
 
 fn read_limited(path: &Path, limit: usize) -> Result<Vec<u8>, String> {
     let file = fs::File::open(path).map_err(|_| "Could not read the local session file")?;
@@ -1429,6 +1986,7 @@ fn cookie_jar(cookie: &str) -> Result<String, &'static str> {
     Ok(std::mem::take(&mut *jar))
 }
 
+#[cfg(any(windows, unix, test))]
 fn scoped_header_cookies(cookie: &str) -> Result<ScopedCookies, &'static str> {
     if cookie.len() > 32768 {
         return Err("Session cookie exceeds the size limit");
@@ -1445,7 +2003,7 @@ impl Drop for ScopedCookies {
         }
     }
 }
-#[cfg(any(windows, test))]
+#[cfg(any(windows, unix, test))]
 fn same_authentication_cookies(before: &str, current: &str) -> bool {
     let (Ok(before), Ok(current)) = (
         scoped_header_cookies(before),
@@ -1543,20 +2101,36 @@ fn scoped_cookie_snapshot(bytes: &[u8]) -> Result<ScopedCookies, &'static str> {
     Ok(cookies)
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 fn execute_helper(
     input: &[u8],
     cancel: Arc<AtomicBool>,
     timeout: Duration,
 ) -> Result<HelperReply, String> {
+    // Windows: managed embeddable Python beside the player. macOS: a bundled
+    // standalone CPython in Tide.app/Contents/Resources (found from
+    // Contents/MacOS through the ancestor walk), or a developer venv.
+    #[cfg(windows)]
     let python = runtime_path(
         "TIDE_PROVIDER_PYTHON",
-        ".tools/provider-venv/Scripts/python.exe",
+        &[".tools/provider-venv/Scripts/python.exe"],
         "python",
+    );
+    #[cfg(unix)]
+    let python = runtime_path(
+        "TIDE_PROVIDER_PYTHON",
+        &[
+            "Resources/python/bin/python3",
+            ".tools/provider-venv/bin/python3",
+        ],
+        "python3",
     );
     let helper = runtime_path(
         "TIDE_PROVIDER_HELPER",
-        "helpers/youtube_music.py",
+        &[
+            "Resources/helpers/youtube_music.py",
+            "helpers/youtube_music.py",
+        ],
         "tools/youtube_music.py",
     );
     let mut command = Command::new(python);
@@ -1567,7 +2141,13 @@ fn execute_helper(
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
     let mut child = tide_playback::OwnedProcess::spawn(&mut command)
-        .map_err(|_| "Account helper unavailable. Run scripts/setup-provider.ps1")?;
+        .map_err(|_| {
+            if cfg!(windows) {
+                "Account helper unavailable. Run scripts/setup-provider.ps1"
+            } else {
+                "Account helper unavailable. Reinstall Tide, or run scripts/setup-provider-macos.sh in a checkout"
+            }
+        })?;
     let mut stdin = child
         .take_stdin()
         .ok_or("Account helper input unavailable")?;
@@ -1625,7 +2205,12 @@ fn execute_helper(
     let response: Result<Response, String> = match reply.response {
         Response::Error { code } if code == "lyrics_unavailable" => Ok(Response::Error { code }),
         Response::Error { code } if code == "runtime" => {
-            Err("Install the optional account helper with scripts/setup-provider.ps1".into())
+            Err(if cfg!(windows) {
+                "Install the optional account helper with scripts/setup-provider.ps1"
+            } else {
+                "The account helper is incomplete. Reinstall Tide, or run scripts/setup-provider-macos.sh in a checkout"
+            }
+            .into())
         }
         Response::Error { code } if code == "profile" => {
             Err("Select cookies.sqlite inside your Zen profile, or use Import session for a custom profile".into())
@@ -1670,7 +2255,8 @@ fn execute_helper(
     })
 }
 
-fn runtime_path(variable: &str, relative: &str, fallback: &str) -> PathBuf {
+#[cfg(any(windows, unix))]
+fn runtime_path(variable: &str, relatives: &[&str], fallback: &str) -> PathBuf {
     if let Some(path) = std::env::var_os(variable) {
         return path.into();
     }
@@ -1680,9 +2266,11 @@ fn runtime_path(variable: &str, relative: &str, fallback: &str) -> PathBuf {
                 return parent.join(fallback);
             }
             for directory in parent.ancestors().take(5) {
-                let path = directory.join(relative);
-                if path.is_file() {
-                    return path;
+                for relative in relatives {
+                    let path = directory.join(relative);
+                    if path.is_file() {
+                        return path;
+                    }
                 }
             }
         }
@@ -1731,9 +2319,46 @@ fn private_directory(path: &Path) -> Result<(), String> {
     }
     Ok(())
 }
-#[cfg(not(windows))]
+#[cfg(unix)]
+fn private_directory(path: &Path) -> Result<(), String> {
+    use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
+    match fs::symlink_metadata(path) {
+        Ok(meta) => {
+            if meta.file_type().is_symlink() || !meta.is_dir() {
+                return Err("Account storage must be an ordinary private directory".into());
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            fs::DirBuilder::new()
+                .recursive(true)
+                .mode(0o700)
+                .create(path)
+                .map_err(|_| "Could not create account storage")?;
+        }
+        Err(_) => return Err("Could not inspect account storage".into()),
+    }
+    let dir = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
+        .map_err(|_| "Account storage must be an ordinary private directory")?;
+    let meta = dir
+        .metadata()
+        .map_err(|_| "Could not inspect account storage")?;
+    if !meta.is_dir() {
+        return Err("Account storage must be an ordinary private directory".into());
+    }
+    // SAFETY: geteuid has no preconditions and always succeeds.
+    if meta.uid() != unsafe { libc::geteuid() } {
+        return Err("Account storage owner does not match the current user".into());
+    }
+    dir.set_permissions(fs::Permissions::from_mode(0o700))
+        .map_err(|_| "Could not protect account storage permissions")?;
+    Ok(())
+}
+#[cfg(not(any(windows, unix)))]
 fn private_directory(_: &Path) -> Result<(), String> {
-    Err("Account integration currently requires Windows".into())
+    Err("Account storage is unsupported on this platform".into())
 }
 
 #[cfg(windows)]
@@ -1793,13 +2418,76 @@ fn protect(bytes: &[u8]) -> Result<Vec<u8>, &'static str> {
 fn unprotect(bytes: &[u8]) -> Result<Vec<u8>, &'static str> {
     crypt(bytes, false)
 }
-#[cfg(not(windows))]
-fn protect(_: &[u8]) -> Result<Vec<u8>, &'static str> {
-    Err("Account integration currently requires Windows")
+
+#[cfg(unix)]
+const SEALED_MAGIC: [u8; 4] = *b"TIDE";
+#[cfg(unix)]
+const SEALED_VERSION: u8 = 1;
+#[cfg(unix)]
+const SEALED_HEADER_LEN: usize = 5;
+
+#[cfg(unix)]
+fn seal_bytes(key_store: &dyn SessionKeyStore, plaintext: &[u8]) -> Result<Vec<u8>, &'static str> {
+    use ring::{
+        aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM, NONCE_LEN},
+        rand::{SecureRandom, SystemRandom},
+    };
+    let key_bytes = key_store.load_or_create_key()?;
+    let unbound = UnboundKey::new(&AES_256_GCM, &*key_bytes)
+        .map_err(|_| "Could not initialize session cipher")?;
+    let key = LessSafeKey::new(unbound);
+
+    let mut nonce_bytes = [0u8; NONCE_LEN];
+    SystemRandom::new()
+        .fill(&mut nonce_bytes)
+        .map_err(|_| "Could not generate session nonce")?;
+    let nonce = Nonce::assume_unique_for_key(nonce_bytes);
+
+    let header = [
+        SEALED_MAGIC[0],
+        SEALED_MAGIC[1],
+        SEALED_MAGIC[2],
+        SEALED_MAGIC[3],
+        SEALED_VERSION,
+    ];
+    let mut in_out = zeroize::Zeroizing::new(plaintext.to_vec());
+    key.seal_in_place_append_tag(nonce, Aad::from(&header), &mut *in_out)
+        .map_err(|_| "Could not seal account session")?;
+
+    let mut out = Vec::with_capacity(SEALED_HEADER_LEN + NONCE_LEN + in_out.len());
+    out.extend_from_slice(&header);
+    out.extend_from_slice(&nonce_bytes);
+    out.extend_from_slice(&in_out);
+    Ok(out)
 }
-#[cfg(not(windows))]
-fn unprotect(_: &[u8]) -> Result<Vec<u8>, &'static str> {
-    Err("Account integration currently requires Windows")
+
+#[cfg(unix)]
+fn unseal_bytes(key_store: &dyn SessionKeyStore, sealed: &[u8]) -> Result<Vec<u8>, &'static str> {
+    use ring::aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM, NONCE_LEN};
+    let min_len = SEALED_HEADER_LEN + NONCE_LEN + AES_256_GCM.tag_len();
+    if sealed.len() < min_len {
+        return Err("Saved session is invalid or truncated. Reconnect your account");
+    }
+    let (header, rest) = sealed.split_at(SEALED_HEADER_LEN);
+    if header[..4] != SEALED_MAGIC || header[4] != SEALED_VERSION {
+        return Err("Saved session format is unsupported. Reconnect your account");
+    }
+    let (nonce_bytes, ciphertext) = rest.split_at(NONCE_LEN);
+    let nonce = Nonce::try_assume_unique_for_key(nonce_bytes)
+        .map_err(|_| "Saved session nonce is invalid")?;
+
+    let key_bytes = key_store
+        .load_key()?
+        .ok_or("Account session key is missing from Keychain. Reconnect your account")?;
+    let unbound = UnboundKey::new(&AES_256_GCM, &*key_bytes)
+        .map_err(|_| "Could not initialize session cipher")?;
+    let key = LessSafeKey::new(unbound);
+
+    let mut buffer = zeroize::Zeroizing::new(ciphertext.to_vec());
+    let plaintext = key
+        .open_in_place(nonce, Aad::from(header), &mut buffer)
+        .map_err(|_| "macOS could not unlock the saved session. Reconnect your account")?;
+    Ok(plaintext.to_vec())
 }
 
 #[cfg(test)]
@@ -2398,7 +3086,7 @@ mod tests {
         provider
             .import_bytes(br#"{"cookie":"__Secure-3PAPISID=old", "x-goog-authuser":"1"}"#)
             .unwrap();
-        let guard = SessionWriteLock::acquire().unwrap();
+        let guard = SessionWriteLock::acquire(&directory).unwrap();
         let (ready_tx, ready_rx) = std::sync::mpsc::channel();
         let (done_tx, done_rx) = std::sync::mpsc::channel();
         let worker = std::thread::spawn(move || {
@@ -2482,13 +3170,13 @@ mod tests {
     fn reconnect_rejects_stale_playback_lease_and_verified_candidate() {
         let _fixture = SESSION_FIXTURES.lock().unwrap_or_else(|e| e.into_inner());
         // Isolate this multi-step race scenario from other storage fixtures.
-        let _guard = SessionWriteLock::acquire().unwrap();
         let directory = std::env::temp_dir().join(format!(
             "tide-adoption-race-test-{}-{}",
             std::process::id(),
             LEASE_COUNTER.fetch_add(1, Ordering::Relaxed)
         ));
         private_directory(&directory).unwrap();
+        let _guard = SessionWriteLock::acquire(&directory).unwrap();
         let provider = Provider {
             directory: directory.clone(),
         };
@@ -2776,5 +3464,360 @@ mod tests {
         assert!(!provider.is_connected());
         assert!(input.exists());
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(unix)]
+    struct InMemoryKeyStore {
+        key: std::sync::Mutex<Option<[u8; 32]>>,
+    }
+
+    #[cfg(unix)]
+    impl InMemoryKeyStore {
+        fn new() -> Self {
+            Self {
+                key: std::sync::Mutex::new(None),
+            }
+        }
+
+        fn has_key(&self) -> bool {
+            self.key.lock().unwrap().is_some()
+        }
+    }
+
+    #[cfg(unix)]
+    impl SessionKeyStore for InMemoryKeyStore {
+        fn load_key(&self) -> Result<Option<zeroize::Zeroizing<[u8; 32]>>, &'static str> {
+            Ok(self
+                .key
+                .lock()
+                .map_err(|_| "Key store lock poisoned")?
+                .map(zeroize::Zeroizing::new))
+        }
+
+        fn load_or_create_key(&self) -> Result<zeroize::Zeroizing<[u8; 32]>, &'static str> {
+            use ring::rand::SecureRandom;
+            let mut guard = self.key.lock().map_err(|_| "Key store lock poisoned")?;
+            if let Some(existing) = *guard {
+                return Ok(zeroize::Zeroizing::new(existing));
+            }
+            let mut fresh = [0u8; 32];
+            ring::rand::SystemRandom::new()
+                .fill(&mut fresh)
+                .map_err(|_| "Could not generate session key")?;
+            *guard = Some(fresh);
+            Ok(zeroize::Zeroizing::new(fresh))
+        }
+
+        fn delete_key(&self) -> Result<(), &'static str> {
+            let mut guard = self.key.lock().map_err(|_| "Key store lock poisoned")?;
+            if let Some(mut existing) = guard.take() {
+                existing.zeroize();
+            }
+            Ok(())
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_seal_unseal_roundtrip_tamper_truncation_and_missing_key() {
+        let store = InMemoryKeyStore::new();
+        let plaintext = b"{\"cookie\":\"__Secure-3PAPISID=testval; PREF=1\"}";
+        let sealed = seal_bytes(&store, plaintext).unwrap();
+        assert!(store.has_key());
+        assert_eq!(&sealed[..4], &SEALED_MAGIC);
+        assert_eq!(sealed[4], SEALED_VERSION);
+        assert_eq!(sealed.len(), SEALED_HEADER_LEN + 12 + plaintext.len() + 16);
+        assert!(!sealed.windows(7).any(|w| w == b"testval"));
+        assert_eq!(unseal_bytes(&store, &sealed).unwrap(), plaintext);
+
+        let sealed_again = seal_bytes(&store, plaintext).unwrap();
+        assert_ne!(sealed_again, sealed);
+        assert_eq!(unseal_bytes(&store, &sealed_again).unwrap(), plaintext);
+
+        // Tamper header magic, version, nonce, ciphertext, and authentication tag.
+        for idx in [0, 4, 5, SEALED_HEADER_LEN + 12, sealed.len() - 1] {
+            let mut tampered = sealed.clone();
+            tampered[idx] ^= 0x01;
+            assert!(
+                unseal_bytes(&store, &tampered).is_err(),
+                "tampered byte at index {idx} was accepted"
+            );
+        }
+
+        // Reject empty and truncated inputs.
+        for truncated_len in [0, 4, 16, SEALED_HEADER_LEN + 12 + 15] {
+            assert!(unseal_bytes(&store, &sealed[..truncated_len]).is_err());
+        }
+
+        // Reject unsupported version / wrong magic even with minimum length.
+        let mut bad_magic = sealed.clone();
+        bad_magic[0] = b'X';
+        assert!(unseal_bytes(&store, &bad_magic).is_err());
+        let mut bad_version = sealed.clone();
+        bad_version[4] = 2;
+        assert!(unseal_bytes(&store, &bad_version).is_err());
+
+        // Missing key fails without recreating a key.
+        store.delete_key().unwrap();
+        assert!(!store.has_key());
+        assert!(unseal_bytes(&store, &sealed).is_err());
+        assert!(!store.has_key());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_provider_permissions_leases_and_cleanup() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = std::env::temp_dir().join(format!(
+            "tide-unix-provider-test-{}-{}",
+            std::process::id(),
+            LEASE_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        private_directory(&directory).unwrap();
+        assert_eq!(
+            fs::symlink_metadata(&directory)
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+
+        let store = Arc::new(InMemoryKeyStore::new());
+        let provider = Provider::with_key_store(directory.clone(), store.clone());
+        assert!(!provider.is_connected());
+
+        provider
+            .import_bytes(br#"{"cookie":"__Secure-3PAPISID=unix1; PREF=1","x-goog-authuser":"1"}"#)
+            .unwrap();
+        assert!(provider.is_connected());
+        assert!(store.has_key());
+
+        let session_path = directory.join(SESSION_FILE_NAME);
+        assert_eq!(
+            fs::symlink_metadata(&session_path)
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+        assert_eq!(
+            fs::symlink_metadata(directory.join(".session.lock"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+        let sealed = fs::read(&session_path).unwrap();
+        assert!(!sealed.windows(5).any(|w| w == b"unix1"));
+
+        let saved = provider.saved_connection().unwrap().unwrap();
+        assert_eq!(saved.account_index, 1);
+        assert!(provider.headers().unwrap()["cookie"].contains("unix1"));
+
+        let lease = provider.cookie_lease().unwrap().unwrap();
+        let lease_path = lease.path().to_owned();
+        assert_eq!(
+            fs::symlink_metadata(&lease_path)
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+        provider
+            .write_session(
+                br#"{"cookie":"__Secure-3PAPISID=unix2; PREF=1","x-goog-authuser":"1"}"#,
+                false,
+            )
+            .unwrap();
+        provider.refresh_cookie_lease(&lease).unwrap();
+        assert_eq!(
+            fs::symlink_metadata(&lease_path)
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+        assert!(fs::read_to_string(&lease_path).unwrap().contains("unix2"));
+        drop(lease);
+        assert!(!lease_path.exists());
+
+        // Stale PID (including u32::MAX which must not signal -1) is reaped; current PID is kept.
+        let stale = directory.join("playback-4294967295-1.txt");
+        fs::write(&stale, b"stale").unwrap();
+        let active = directory.join(format!("playback-{}-999.txt", std::process::id()));
+        fs::write(&active, b"active").unwrap();
+        remove_stale_leases(&directory);
+        assert!(!stale.exists());
+        assert!(active.exists());
+
+        provider.disconnect().unwrap();
+        assert!(!provider.is_connected());
+        assert!(!session_path.exists());
+        assert!(!store.has_key());
+        fs::remove_dir_all(&directory).unwrap();
+
+        // Disconnecting when storage directory is absent succeeds cleanly.
+        assert!(provider.disconnect().is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_symlinks_are_refused() {
+        let base = std::env::temp_dir().join(format!(
+            "tide-unix-symlink-test-{}-{}",
+            std::process::id(),
+            LEASE_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        let real_dir = base.join("real");
+        private_directory(&real_dir).unwrap();
+        let link_dir = base.join("link");
+        std::os::unix::fs::symlink(&real_dir, &link_dir).unwrap();
+
+        assert!(!directory_is_linked(&real_dir));
+        assert!(directory_is_linked(&link_dir));
+        assert!(same_directory(&real_dir, &real_dir));
+        assert!(!same_directory(&real_dir, &link_dir));
+        assert!(private_directory(&link_dir).is_err());
+
+        // Provider pointing at a symlinked directory refuses operations.
+        let store = Arc::new(InMemoryKeyStore::new());
+        let linked_provider = Provider::with_key_store(link_dir.clone(), store.clone());
+        assert!(!linked_provider.is_connected());
+        assert!(linked_provider
+            .import_bytes(br#"{"cookie":"__Secure-3PAPISID=fixture; PREF=1"}"#)
+            .is_err());
+
+        // Symlinked session file inside a real directory is refused.
+        let real_provider = Provider::with_key_store(real_dir.clone(), store);
+        let decoy = base.join("decoy.sealed");
+        fs::write(&decoy, b"decoy").unwrap();
+        std::os::unix::fs::symlink(&decoy, real_dir.join(SESSION_FILE_NAME)).unwrap();
+        assert!(!real_provider.is_connected());
+        assert!(real_provider.read_session().is_err());
+        assert!(
+            read_limited_private(&real_dir, &real_dir.join(SESSION_FILE_NAME), MAX_SESSION)
+                .is_err()
+        );
+        assert!(real_provider.cookie_lease().unwrap().is_none());
+
+        fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_session_write_lock_exclusivity_reentrancy_and_timeout() {
+        let directory = std::env::temp_dir().join(format!(
+            "tide-unix-lock-test-{}-{}",
+            std::process::id(),
+            LEASE_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        private_directory(&directory).unwrap();
+        let store = Arc::new(InMemoryKeyStore::new());
+        let provider = Provider::with_key_store(directory.clone(), store);
+        provider
+            .import_bytes(br#"{"cookie":"__Secure-3PAPISID=old; PREF=1","x-goog-authuser":"1"}"#)
+            .unwrap();
+
+        // Same-thread reentrancy succeeds without self-deadlock.
+        let guard = SessionWriteLock::acquire(&directory).unwrap();
+        let nested = SessionWriteLock::acquire(&directory).unwrap();
+        drop(nested);
+
+        // Another thread cannot try_acquire while held.
+        let dir_for_try = directory.clone();
+        let try_failed =
+            std::thread::spawn(move || SessionWriteLock::try_acquire(&dir_for_try).is_err())
+                .join()
+                .unwrap();
+        assert!(try_failed);
+
+        // disconnect() on another thread blocks until guard is dropped.
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            ready_tx.send(()).unwrap();
+            done_tx.send(provider.disconnect()).unwrap();
+        });
+        ready_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        let blocked = done_rx.recv_timeout(Duration::from_millis(150));
+        let session_retained = directory.join(SESSION_FILE_NAME).exists();
+        drop(guard);
+        let result = match blocked {
+            Ok(result) => result,
+            Err(_) => done_rx.recv_timeout(Duration::from_secs(2)).unwrap(),
+        };
+        worker.join().unwrap();
+        result.unwrap();
+        assert!(session_retained);
+        assert!(!directory.join(SESSION_FILE_NAME).exists());
+
+        // Timeout when another thread holds the lock past the ~1s acquire limit.
+        let (held_tx, held_rx) = std::sync::mpsc::channel();
+        let dir_holder = directory.clone();
+        let holder = std::thread::spawn(move || {
+            let _lock = SessionWriteLock::acquire(&dir_holder).unwrap();
+            held_tx.send(()).unwrap();
+            std::thread::sleep(Duration::from_millis(1300));
+        });
+        held_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(SessionWriteLock::acquire(&directory).is_err());
+        holder.join().unwrap();
+
+        // Once released, acquire succeeds again.
+        let _reacquired = SessionWriteLock::acquire(&directory).unwrap();
+        drop(_reacquired);
+        fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    #[test]
+    fn unix_native_login_points_to_browser_companion() {
+        let directory = std::env::temp_dir().join(format!(
+            "tide-unix-native-login-test-{}-{}",
+            std::process::id(),
+            LEASE_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        private_directory(&directory).unwrap();
+        let provider =
+            Provider::with_key_store(directory.clone(), Arc::new(InMemoryKeyStore::new()));
+        assert!(!provider.owns_login_directory(&directory.join("login-1-1")));
+        let error = match provider.new_login_directory() {
+            Ok(_) => panic!("expected non-Windows new_login_directory to fail"),
+            Err(error) => error,
+        };
+        assert!(error.contains("browser companion on macOS"));
+        fs::remove_dir_all(&directory).unwrap();
+    }
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn mac_login_directory_is_private_owned_and_rejects_links() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let directory = std::env::temp_dir().join(format!(
+            "tide-mac-login-{}-{}",
+            std::process::id(),
+            LEASE_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        private_directory(&directory).unwrap();
+        let provider =
+            Provider::with_key_store(directory.clone(), Arc::new(InMemoryKeyStore::new()));
+        let login = provider.new_login_directory().unwrap();
+        assert!(provider.owns_login_directory(login.path()));
+        assert_eq!(
+            fs::metadata(login.path()).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        let link = directory.join("login-1-1");
+        symlink(login.path(), &link).unwrap();
+        assert!(!provider.owns_login_directory(&link));
+        fs::remove_file(link).unwrap();
+        let path = login.path().to_owned();
+        drop(login);
+        assert!(!path.exists());
+        fs::remove_dir(directory).unwrap();
     }
 }

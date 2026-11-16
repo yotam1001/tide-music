@@ -1,15 +1,15 @@
 //! Explicit opt-in native login prototype. Never part of normal player startup.
 //! --probe is offline; no credentials or request headers are printed.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 pub fn main() {
     std::process::exit(run().unwrap_or(1));
 }
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn main() {
     eprintln!("Native login currently requires Windows.");
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 fn run() -> Result<i32, ()> {
     use std::{
         path::Path,
@@ -17,6 +17,9 @@ fn run() -> Result<i32, ()> {
         sync::{atomic::AtomicBool, Arc},
         time::{Duration, Instant},
     };
+    #[cfg(target_os = "macos")]
+    use tide_macos::login::{self, Outcome};
+    #[cfg(windows)]
     use tide_windows::login::{self, Outcome};
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     if args

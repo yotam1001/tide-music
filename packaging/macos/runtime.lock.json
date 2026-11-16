@@ -1,0 +1,92 @@
+{
+  "schema_version": 1,
+  "minimum_macos": "14.0",
+  "mpv": {
+    "arm64": {
+      "url": "https://github.com/mpv-player/mpv/releases/download/v0.41.0/mpv-v0.41.0-macos-14-arm.zip",
+      "sha256": "5c96f9b21355fc0a11d2e2161ad65f33031070e9fb3f6bd9865fb459b94587e6",
+      "version": "0.41.0",
+      "source": "official mpv release",
+      "format": "zip-tar",
+      "license": "GPL-2.0-or-later (mpv); GPL-3.0-or-later (bundled FFmpeg)",
+      "ffmpeg_version": "8.0.1",
+      "ffmpeg_license": "GPL-3.0-or-later",
+      "license_evidence": "Bundled libavutil identifies GPL version 3 or later; --enable-gpl --enable-version3 are embedded in the FFmpeg build configuration."
+    },
+    "x86_64": {
+      "url": "https://laboratory.stolendata.net/~djinn/mpv_osx/mpv-0.39.0.tar.gz",
+      "sha256": "35ec81ad86a97b24956a8d0f4fa1ba2690b44ae7741c920e923620bcd7bd402a",
+      "version": "0.39.0",
+      "source": "stolendata (official Intel releases require macOS 15)",
+      "format": "tar",
+      "license": "GPL-2.0-or-later (mpv); GPL-3.0-or-later (bundled FFmpeg)",
+      "ffmpeg_version": "6.1.2",
+      "ffmpeg_license": "GPL-3.0-or-later",
+      "license_evidence": "Bundled libavutil identifies GPL version 3 or later; --enable-gpl --enable-version3 are embedded in the FFmpeg build configuration."
+    }
+  },
+  "yt-dlp": {
+    "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.10.26/yt-dlp_macos",
+    "sha256": "0f922c15ccc0b83eefa1c8bc9104e434318c4bf16e408e1ee93b7745a6efe0aa",
+    "version": "2026.10.26",
+    "license": "Unlicense (source); GPL-3.0-or-later (PyInstaller executable and dependencies)",
+    "checksums": {
+      "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.10.26/SHA2-256SUMS",
+      "sha256": "0d7ec4303a02bcbe66154d478852cdf2e07688d39dc4597316e4424ac4e74356",
+      "license": "Unlicense"
+    }
+  },
+  "python": {
+    "arm64": {
+      "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261026/cpython-3.14.10%2B20261026-aarch64-apple-darwin-install_only_stripped.tar.gz",
+      "sha256": "95eb8c87d16af37c54e9765e31d8c56c0d8ffa9968ea0f704f73a9b83f84e9f9",
+      "version": "3.14.10",
+      "source": "python-build-standalone 20261026",
+      "license": "PSF-2.0 (CPython); bundled third-party notices in python/lib/python3.14 and python-build-standalone licenses"
+    },
+    "x86_64": {
+      "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261026/cpython-3.14.10%2B20261026-x86_64-apple-darwin-install_only_stripped.tar.gz",
+      "sha256": "2fd8becd48cf0ff5f0a15df3c0db7cae7aa708dcaacf901bd30d6cdd6229370b",
+      "version": "3.14.10",
+      "source": "python-build-standalone 20261026",
+      "license": "PSF-2.0 (CPython); bundled third-party notices in python/lib/python3.14 and python-build-standalone licenses"
+    }
+  },
+  "helper_wheels": [
+    {
+      "url": "https://files.pythonhosted.org/packages/29/ad/6d471ea9d81e1f59a4d01badda21e7f3f508b94ed171c677b6547b292f73/ytmusicapi-1.12.3-py3-none-any.whl",
+      "sha256": "f65db840907a43ca23b29bd563951a1e390fbe2089d7aa4ddbe2043824b2acd9",
+      "license": "see wheel METADATA"
+    },
+    {
+      "url": "https://files.pythonhosted.org/packages/a0/f4/c67b0b3f1b9245e8d266f0f112c500d50e5b4e83cb6f3b71b6528104182a/requests-2.34.2-py3-none-any.whl",
+      "sha256": "2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0",
+      "license": "see wheel METADATA"
+    },
+    {
+      "url": "https://files.pythonhosted.org/packages/fc/ad/d07d7862a62ffa6d79d68074d14823243dd235a77c45262acbf6adeb28bf/charset_normalizer-3.5.2-py3-none-any.whl",
+      "sha256": "b6b751274acb69d77b3323d6b7dbaa3c7fdfc1eb829b7eb61d262f32e1af9685",
+      "license": "see wheel METADATA"
+    },
+    {
+      "url": "https://files.pythonhosted.org/packages/58/a2/bb081bab032533a855d44de1d56f8e8426114ff1ba5d1f07a438a0a654f8/idna-3.20-py3-none-any.whl",
+      "sha256": "ab7ae7122974553370f0bdb919e1a960b2cd1bc1ef0276416d896db81c14582c",
+      "license": "see wheel METADATA"
+    },
+    {
+      "url": "https://files.pythonhosted.org/packages/92/9d/c4e665119135114480843e7ab388fa94d8480650450e6f8e26b70d323a4c/urllib3-2.8.0-py3-none-any.whl",
+      "sha256": "0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3",
+      "license": "see wheel METADATA"
+    },
+    {
+      "url": "https://files.pythonhosted.org/packages/0b/a7/71ac2cff56fec219ed242bb11b8efb69fcc4bec75db06fb7bfe35de520e6/certifi-2026.7.22-py3-none-any.whl",
+      "sha256": "62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775",
+      "license": "see wheel METADATA"
+    },
+    {
+      "url": "https://files.pythonhosted.org/packages/b8/0c/51f6841f1d84f404f92463fc2b1ba0da357ca1e3db6b7fbda26956c3b82a/ruamel_yaml-0.19.1-py3-none-any.whl",
+      "sha256": "27592957fedf6e0b62f281e96effd28043345e0e66001f97683aa9a40c667c93",
+      "license": "see wheel METADATA"
+    }
+  ]
+}

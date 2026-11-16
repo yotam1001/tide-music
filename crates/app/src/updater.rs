@@ -5,7 +5,7 @@ mod publisher;
 use semver::Version;
 use sha2::{Digest, Sha256};
 use slint::ComponentHandle;
-#[cfg(test)]
+#[cfg(all(test, windows))]
 use std::time::Instant;
 use std::{
     cell::RefCell,
@@ -70,6 +70,11 @@ fn release_for(version: Version, digest: &str, size: u64) -> Result<Release, Str
         authorization: None,
     })
 }
+
+/// The stable macOS disk image, published beside TideSetup.exe.
+#[cfg(target_os = "macos")]
+const MAC_DOWNLOAD: &str =
+    "https://github.com/yotam1001/tide-music/releases/latest/download/Tide.dmg";
 
 fn agent(timeout: u64) -> ureq::Agent {
     ureq::Agent::config_builder()
@@ -390,7 +395,7 @@ fn download(release: &Release, base: &Path, transfer: &Transfer) -> Result<PathB
     )
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 fn stage_installer(
     release: &Release,
     base: &Path,
@@ -753,8 +758,22 @@ pub(super) fn wire(ui: &super::AppWindow, enabled: bool) -> Rc<RefCell<Updater>>
             let mut updater = state.borrow_mut();
             updater.refresh_installability(&ui);
             if !ui.get_update_installable() {
-                ui.set_update_status("Automatic update is unavailable for this copy. Install TideSetup.exe from the latest release.".into());
-                return;
+                // macOS: no in-place installer yet. Hand the signed release DMG to
+                // the browser; dragging Tide into Applications replaces this copy.
+                #[cfg(target_os = "macos")]
+                {
+                    let status = match crate::platform::open_web_page(MAC_DOWNLOAD) {
+                        Ok(()) => "Downloading Tide.dmg in your browser. Open it and drag Tide to Applications.",
+                        Err(_) => "Download Tide.dmg from the latest release, then drag Tide to Applications.",
+                    };
+                    ui.set_update_status(status.into());
+                    return;
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    ui.set_update_status("Automatic update is unavailable for this copy. Install TideSetup.exe from the latest release.".into());
+                    return;
+                }
             }
             if updater.task.busy() {
                 return;
@@ -821,7 +840,7 @@ pub(super) fn wire(ui: &super::AppWindow, enabled: bool) -> Rc<RefCell<Updater>>
             }
         }
     });
-    if enabled && cfg!(windows) && ui.get_auto_update_checks() {
+    if enabled && (cfg!(windows) || cfg!(target_os = "macos")) && ui.get_auto_update_checks() {
         let state = Rc::downgrade(&owner);
         let weak = ui.as_weak();
         slint::Timer::single_shot(Duration::from_secs(15), move || {
@@ -875,6 +894,7 @@ pub(super) fn verify_installed_updates() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(windows)]
     use serde_json::json;
 
     fn parse(version: &str) -> Release {
@@ -898,6 +918,8 @@ mod tests {
             .contains("publisher signature"));
         assert_eq!(std::fs::read_dir(base.path()).unwrap().count(), 0);
     }
+    // The in-place installer updater runs only on Windows; macOS opens the DMG.
+    #[cfg(windows)]
     #[test]
     fn resume_cached_download_only_after_fresh_authorization_and_hash_check() {
         let directory = tempfile::tempdir().unwrap();
@@ -1027,6 +1049,8 @@ mod tests {
             assert!(copy_verified(&mut input, &mut Vec::new(), &release).is_err());
         }
     }
+    // The in-place installer updater runs only on Windows; macOS opens the DMG.
+    #[cfg(windows)]
     #[test]
     fn cache_requires_ownership_and_uses_fixed_names() {
         let root = tempfile::tempdir().unwrap();
@@ -1041,6 +1065,8 @@ mod tests {
         assert!(cache_directory(foreign.path()).is_err());
         assert_eq!(fs::read_to_string(sentinel).unwrap(), "keep");
     }
+    // The in-place installer updater runs only on Windows; macOS opens the DMG.
+    #[cfg(windows)]
     #[test]
     fn failed_download_preserves_ready_installer_and_removes_its_partial_file() {
         let base = tempfile::tempdir().unwrap();
@@ -1052,6 +1078,8 @@ mod tests {
         stage_installer(&release, base.path(), &mut &b"Tide"[..]).unwrap();
         assert_eq!(fs::read_dir(setup.parent().unwrap()).unwrap().count(), 3);
     }
+    // The in-place installer updater runs only on Windows; macOS opens the DMG.
+    #[cfg(windows)]
     #[test]
     fn cancel_during_read_preserves_previous_installer_and_never_reports_ready() {
         struct CancelReader<'a> {
@@ -1088,6 +1116,8 @@ mod tests {
         assert!(transfer.percent.load(Ordering::Relaxed) < 100);
         assert_eq!(fs::read(previous).unwrap(), b"Tide");
     }
+    // The in-place installer updater runs only on Windows; macOS opens the DMG.
+    #[cfg(windows)]
     #[test]
     fn completed_download_waits_for_explicit_restart_and_late_cancel_wins() {
         use slint::platform::software_renderer::{MinimalSoftwareWindow, RepaintBufferType};
@@ -1194,6 +1224,8 @@ mod tests {
         );
     }
 
+    // The in-place installer updater runs only on Windows; macOS opens the DMG.
+    #[cfg(windows)]
     #[test]
     fn automatic_installation_is_confined_to_the_active_owned_install() {
         let base = tempfile::tempdir().unwrap();

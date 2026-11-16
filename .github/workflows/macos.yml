@@ -1,0 +1,99 @@
+name: macOS checks
+on:
+  push:
+    branches: ['mac/**']
+  pull_request:
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  bundle:
+    name: bundle (${{ matrix.arch }})
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [arm64, x86_64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: macos-bundle-${{ matrix.arch }}
+          cache-on-failure: true
+      - name: Enable Intel runtime verification
+        if: matrix.arch == 'x86_64'
+        run: sudo softwareupdate --install-rosetta --agree-to-license
+      - run: python3 scripts/test_package_macos.py
+      - name: Build, sign, verify and package stable Tide
+        run: scripts/package-macos.sh --arch '${{ matrix.arch }}'
+      - name: Print DMG sizes
+        run: stat -f '%N %z bytes' dist/*.dmg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Tide-macos-${{ matrix.arch }}
+          path: dist/*.dmg
+          if-no-files-found: error
+
+  rust:
+    name: macOS Rust checks
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: macos-validation
+          cache-on-failure: true
+      - run: cargo fmt --all -- --check
+      - run: cargo check --workspace --all-targets --locked
+      - run: cargo clippy --workspace --lib --bins --locked -- -D warnings
+      - run: cargo check -p tide-provider --features native-login --bins
+      - run: cargo clippy -p tide-provider -p tide-macos --features tide-provider/native-login,tide-macos/native-login --lib --bins -- -D warnings
+      - run: cargo run -p tide-provider --features native-login --bin tide-login -- --probe
+      - run: cargo test --workspace --locked --no-fail-fast
+
+  playback-smoke:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: brew install yt-dlp
+      # Probe the exact mpv that Tide.app ships (runtime.lock.json), not
+      # whatever Homebrew carries that day: Homebrew's mpv 0.42 rejects a
+      # filter configuration that the bundled 0.41 accepts.
+      - name: Install the pinned bundled mpv
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, tarfile, urllib.request, zipfile
+          entry = json.load(open('packaging/macos/runtime.lock.json'))['mpv']['arm64']
+          work = pathlib.Path(os.environ['RUNNER_TEMP']) / 'pinned-mpv'
+          work.mkdir(parents=True, exist_ok=True)
+          archive = work / 'mpv.archive'
+          urllib.request.urlretrieve(entry['url'], archive)
+          assert hashlib.sha256(archive.read_bytes()).hexdigest() == entry['sha256'], 'mpv checksum mismatch'
+          if entry['format'] == 'zip-tar':
+              archive.write_bytes(zipfile.ZipFile(archive).read('mpv.tar.gz'))
+          tarfile.open(archive).extractall(work, filter='data')
+          PY
+          mkdir -p "$RUNNER_TEMP/runtime"
+          ln -sf "$RUNNER_TEMP/pinned-mpv/mpv.app/Contents/MacOS/mpv" "$RUNNER_TEMP/runtime/mpv"
+          ln -sf "$(command -v yt-dlp)" "$RUNNER_TEMP/runtime/yt-dlp"
+          echo "TIDE_RUNTIME_DIR=$RUNNER_TEMP/runtime" >> "$GITHUB_ENV"
+          "$RUNNER_TEMP/runtime/mpv" --version | head -1
+      - run: cargo test -p tide-playback --locked
+      - run: cargo clippy -p tide-playback --locked -- -D warnings
+      - run: cargo test -p tide-playback real_mpv_exits_when_lifetime_connection_closes -- --ignored
+      - run: cargo test -p tide-playback native_audio_preferences_probe -- --ignored
+      - run: cargo test -p tide-playback native_recovery_fault_probe -- --ignored

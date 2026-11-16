@@ -1,4 +1,7 @@
 //! Settings → Audio equalizer presets, synthetic and without playback.
+// Click coordinates assume the Windows default font metrics; on macOS the
+// settings text wraps differently and shifts the chip grid by a row.
+#![cfg(not(target_os = "macos"))]
 use slint::platform::{
     software_renderer::{MinimalSoftwareWindow, RepaintBufferType},
     PointerEventButton, WindowEvent,
