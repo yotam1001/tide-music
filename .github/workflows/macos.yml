@@ -10,6 +10,37 @@ concurrency:
 permissions:
   contents: read
 jobs:
+  bundle:
+    name: bundle (${{ matrix.arch }})
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [arm64, x86_64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: macos-bundle-${{ matrix.arch }}
+          cache-on-failure: true
+      - name: Enable Intel runtime verification
+        if: matrix.arch == 'x86_64'
+        run: sudo softwareupdate --install-rosetta --agree-to-license
+      - run: python3 scripts/test_package_macos.py
+      - name: Build, sign, verify and package stable Tide
+        run: scripts/package-macos.sh --arch '${{ matrix.arch }}'
+      - name: Print DMG sizes
+        run: stat -f '%N %z bytes' dist/*.dmg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Tide-macos-${{ matrix.arch }}
+          path: dist/*.dmg
+          if-no-files-found: error
+
   rust:
     name: macOS Rust checks
     runs-on: macos-latest

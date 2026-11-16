@@ -1,11 +1,42 @@
-﻿import plistlib
+import plistlib
 import unittest
+import json
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
 
 class MacOSPlistTests(unittest.TestCase):
+    def test_runtime_lock(self):
+        lock = json.loads((ROOT / 'packaging/macos/runtime.lock.json').read_text())
+        self.assertEqual(lock['schema_version'], 1)
+        self.assertEqual(lock['minimum_macos'], '14.0')
+        self.assertEqual(set(lock['mpv']), {'arm64', 'x86_64'})
+        entries = [*lock['mpv'].values(), lock['yt-dlp'], lock['yt-dlp']['checksums']]
+        for entry in entries:
+            with self.subTest(url=entry['url']):
+                self.assertTrue(entry['url'].startswith('https://'))
+                self.assertRegex(entry['sha256'], r'^[0-9a-f]{64}$')
+                self.assertTrue(entry['license'].strip())
+        for entry in lock['mpv'].values():
+            self.assertIn(entry['format'], ['tar', 'zip-tar'])
+            self.assertTrue(entry['version'])
+            self.assertEqual(entry['ffmpeg_license'], 'GPL-3.0-or-later')
+        for name in ['GPL-2.0.txt', 'GPL-3.0.txt', 'LGPL-2.1.txt', 'LGPL-3.0.txt',
+                     'yt-dlp-LICENSE.txt', 'mpv-Copyright.txt', 'FFmpeg-LICENSE.md']:
+            self.assertTrue((ROOT / 'packaging/macos/licenses' / name).is_file())
+
+    def test_packaging_scripts(self):
+        self.assertTrue((ROOT / 'scripts/package-macos.sh').is_file())
+        mode = subprocess.check_output(['git', 'ls-files', '-s', 'scripts/package-macos.sh'],
+                                       cwd=ROOT, text=True).split()[0]
+        self.assertEqual(mode, '100755')
+        source = (ROOT / 'scripts/package_macos.py').read_text()
+        self.assertIn("'--no-default-features'", source)
+        self.assertIn("'--locked'", source)
+        self.assertNotIn("'--deep'", source)
+
     def test_bundle_metadata(self):
         with (ROOT / 'packaging/macos/Info.plist').open('rb') as source:
             info = plistlib.load(source)
