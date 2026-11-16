@@ -22,10 +22,10 @@ Only do this for a disk image downloaded from this repository's releases.
 
 ## Sign in
 
-Open the profile icon → **Connect**. The WebView2 sign-in window is Windows-only.
-On a Mac, connect with the browser companion or a Zen profile's
-`cookies.sqlite` (Tide opens `~/Library/Application Support/zen/Profiles`). A
-native Mac sign-in window is planned.
+Open the profile icon → **Sign in with Google**. A separate sign-in window
+opens. Sign in, choose the profile you use for YouTube Music, open Library,
+then select **Connect this profile**. The window closes and its browsing data
+is discarded. A Zen profile's `cookies.sqlite` also works.
 
 Your session is encrypted in
 `~/Library/Application Support/TideMusic/account`, and its key is kept in your
