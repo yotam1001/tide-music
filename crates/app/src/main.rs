@@ -12,6 +12,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tide_core::{PlaybackCommand, Queue, Track};
+mod app_prompts;
 mod artists;
 mod artwork;
 mod artwork_view;
@@ -106,6 +107,11 @@ struct Settings {
     recent_searches: Vec<String>,
     /// Interface animations. On by default; off for reduced motion.
     animations: bool,
+    /// How many times Tide has been opened, for the one-time star request.
+    launches: u32,
+    star_prompt_done: bool,
+    /// Time of the last crash log the listener was told about.
+    crash_seen: u64,
     #[serde(skip)]
     transient: bool,
 }
@@ -141,6 +147,9 @@ impl Default for Settings {
             repeat: false,
             recent_searches: Vec::new(),
             animations: true,
+            launches: 0,
+            star_prompt_done: false,
+            crash_seen: 0,
             transient: false,
         }
     }
@@ -1586,6 +1595,9 @@ fn restore_settings(value: serde_json::Value) -> Settings {
         repeat,
         recent_searches,
         animations,
+        launches,
+        star_prompt_done,
+        crash_seen,
     );
     if !crossfade::LENGTHS.contains(&settings.crossfade_seconds) {
         settings.crossfade_seconds = 0;
@@ -2748,7 +2760,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         settings.playback_bookmark = None;
         settings.autoplay = false;
     }
-    settings.queue.tracks.truncate(2000);
+    settings.queue.tracks.truncate(tide_core::MAX_QUEUE_TRACKS);
     if settings
         .queue
         .current
@@ -2973,6 +2985,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (tx, rx) = mpsc::sync_channel(2);
     let (library_tx, library_rx) = mpsc::sync_channel::<LibraryResult>(2);
     music_feedback::install(&state, &ui, &library_tx);
+    app_prompts::install(
+        &state,
+        &ui,
+        !test_mode
+            && !std::env::args().any(|a| {
+                a.starts_with("--smoke") || a.starts_with("--drive") || a.starts_with("--benchmark")
+            }),
+    );
     let _lyrics = lyrics::install(&state, &ui);
     {
         let state = state.clone();
@@ -4744,7 +4764,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             s.account_error = false;
                             u.set_error_is_account(false);
                             u.set_error_message("".into());
-                            s.library_playlists = order_library(playlists.into_iter().take(200).collect());
+                            s.library_playlists = order_library(playlists.into_iter().take(tide_core::MAX_LIBRARY_ITEMS).collect());
                             u.set_library_loaded(true);
                             u.set_library_artwork_y(0.0);
                             u.set_library_artwork_y(0.0);
@@ -4752,7 +4772,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             refresh_library_models(&s, &u);
                             u.set_account_status(
                                 if truncated {
-                                    "Signed-in account verified · showing the first 200 playlists"
+                                    "Signed-in account verified · showing the first 1,000 playlists"
                                 } else {
                                     "Signed-in account verified · playlists refreshed"
                                 }
@@ -4809,7 +4829,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         Ok(tide_provider::Response::Tracks { tracks, truncated, playlist }) => {
                             let tracks: Vec<Track> = tracks
                                 .into_iter()
-                                .take(2000)
+                                .take(tide_core::MAX_QUEUE_TRACKS)
                                 .filter(|t| {
                                     t.source
                                         .strip_prefix("https://www.youtube.com/watch?v=")

@@ -24,6 +24,17 @@ body:
       description: For playback failures, say whether music stopped during a song or between songs, and roughly how long playback had been running. Use generic examples rather than private library contents.
     validations:
       required: true
+  - type: input
+    id: error-code
+    attributes:
+      label: Error code (if any)
+      description: Playback errors end with a short code in brackets, such as [sign-in], [unavailable], [no-stream] or [extractor].
+  - type: textarea
+    id: crash-log
+    attributes:
+      label: Crash log (if Tide closed unexpectedly)
+      description: Open Settings → Advanced → Open crash log, or use the notice Tide shows after a crash. Review the file before pasting it; it holds only the error message, its location and a backtrace.
+      render: text
   - type: textarea
     id: expected
     attributes:

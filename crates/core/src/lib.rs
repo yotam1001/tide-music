@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
 pub const MAX_QUEUE_TRACKS: usize = 2000;
+/// Saved playlists, albums, artists and history items kept per Library list.
+pub const MAX_LIBRARY_ITEMS: usize = 1000;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Artist {

@@ -68,14 +68,14 @@ class BrowsingTests(unittest.TestCase):
         ]))
         result = run(client, {"action": "libraryalbums"})
         self.assertEqual((result["type"], result["section"]), ("browse", "albums"))
-        client.get_library_albums.assert_called_once_with(limit=201)
+        client.get_library_albums.assert_called_once_with(limit=MAX_LIBRARY_CARDS + 1)
         self.assertEqual(len(result["cards"]), 1)
         self.assertEqual(result["cards"][0]["title"], "Album")
         self.assertEqual(result["cards"][0]["kind"], "album")
         self.assertEqual(result["cards"][0]["artwork_url"], self.art)
         self.assertNotIn("private-fixture-token", json.dumps(result))
         client.get_library_albums.return_value = [
-            dict(item, browseId=f"MPREb_album_{i}") for i in range(250)]
+            dict(item, browseId=f"MPREb_album_{i}") for i in range(MAX_LIBRARY_CARDS + 50)]
         result = run(client, {"action": "libraryalbums"})
         self.assertEqual(len(result["cards"]), MAX_LIBRARY_CARDS)
         self.assertTrue(result["truncated"])
@@ -88,7 +88,7 @@ class BrowsingTests(unittest.TestCase):
         ]))
         result = run(client, {"action": "libraryartists"})
         self.assertEqual((result["type"], result["section"]), ("browse", "artists"))
-        client.get_library_artists.assert_called_once_with(limit=201)
+        client.get_library_artists.assert_called_once_with(limit=MAX_LIBRARY_CARDS + 1)
         self.assertEqual([(c["id"], c["title"], c["kind"]) for c in result["cards"]],
                          [(self.artist, "A band", "artist")])
 

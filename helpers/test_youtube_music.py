@@ -9,7 +9,7 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import MagicMock, patch
-from youtube_music import (LOGIN_SECONDS, MAX_RADIO_TRACKS, MAX_SEARCH_CARDS, MAX_SUPERMIX_SHELVES, MAX_HOME_CARDS, MAX_HOME_ITEMS_PER_SHELF,
+from youtube_music import (LOGIN_SECONDS, MAX_RADIO_TRACKS, MAX_TRACKS, MAX_LIBRARY_CARDS, MAX_SEARCH_CARDS, MAX_SUPERMIX_SHELVES, MAX_HOME_CARDS, MAX_HOME_ITEMS_PER_SHELF,
                           MAX_HOME_SHELVES, MUSIC_URL, artwork_url, featured_artwork_url, connect, connect_existing, create_client, main,
                           music_cookies, cookie_matches_music, read_cookie_database, CookieReadError, CookieSelectionError,
                           read_music_cookies, remove_login_profile, radio_tracks, run,
@@ -392,7 +392,7 @@ class ProviderTests(unittest.TestCase):
     def test_library_limit_and_identity(self):
         result = run(FakeClient(), {"action": "library"})
         self.assertEqual(result["account"], "Fixture listener")
-        self.assertEqual(len(result["playlists"]), 200)
+        self.assertEqual(len(result["playlists"]), MAX_LIBRARY_CARDS)
         self.assertTrue(result["truncated"])
 
     def test_supermix_resolves_fresh_account_mix_outside_the_home_display_rows(self):
@@ -446,9 +446,9 @@ class ProviderTests(unittest.TestCase):
             {"videoId": "00000000002", "title": "Duplicate"}]}
         self.assertEqual([track["title"] for track in run(client, {"action": "supermix"})["tracks"]], ["Personal song"])
         client.get_watch_playlist.return_value = {"tracks": [
-            {"videoId": f"{index:011d}", "title": f"Song {index}"} for index in range(2001)]}
+            {"videoId": f"{index:011d}", "title": f"Song {index}"} for index in range(MAX_TRACKS + 1)]}
         result = run(client, {"action": "supermix"})
-        self.assertEqual(len(result["tracks"]), 2000)
+        self.assertEqual(len(result["tracks"]), MAX_TRACKS)
         self.assertTrue(result["truncated"])
 
     def test_supermix_transport_and_content_failures_do_not_disclose_or_invalidate_session(self):
@@ -462,7 +462,7 @@ class ProviderTests(unittest.TestCase):
 
     def test_tracks_limit_and_safe_source(self):
         result = run(FakeClient(), {"action": "liked"})
-        self.assertEqual(len(result["tracks"]), 2000)
+        self.assertEqual(len(result["tracks"]), MAX_TRACKS)
         self.assertTrue(result["truncated"])
         self.assertEqual(result["tracks"][0]["source"], "https://www.youtube.com/watch?v=K4DyBUG242c")
         self.assertEqual(tracks([{"videoId": "https://other.example"}]), [])
