@@ -42,6 +42,11 @@ def runtime(arch, resources, work):
         t.extractall(unpack, filter='data')
     # Preserve @executable_path/../Frameworks, adjacent lib/, resources, etc.
     shutil.copytree(unpack / 'mpv.app', resources / 'mpv.app', symlinks=True)
+    # Upstream's empty .gitkeep/AppleDouble files in MacOS are not code and
+    # codesign treats them as unsigned subcomponents. Discard build scaffolding.
+    for path in (resources / 'mpv.app').rglob('*'):
+        if path.is_file() and (path.name == '.gitkeep' or path.name.startswith('._')):
+            path.unlink()
     relocate(resources / 'mpv.app')
     (resources / 'bin/mpv').symlink_to('../mpv.app/Contents/MacOS/mpv')
     ytdlp = lock['yt-dlp']

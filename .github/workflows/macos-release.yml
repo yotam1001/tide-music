@@ -29,6 +29,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: macos-bundle-${{ matrix.arch }}
+          cache-on-failure: true
       - name: Enable Intel runtime verification
         if: matrix.arch == 'x86_64'
         run: sudo softwareupdate --install-rosetta --agree-to-license
