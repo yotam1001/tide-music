@@ -82,12 +82,11 @@ $taskSentinelDirectory = Join-Path $taskIsolatedProfile 'TideMusic'
 $taskSettings = Join-Path $taskSentinelDirectory 'settings.json'
 $taskSentinel = '{"queue":{"tracks":[],"current":null},"light_mode":false,"compact_mode":false,"autoplay":false,"check_updates":false,"history_feedback":true,"discord_presence":true,"volume":0,"repeat":false}'
 [IO.File]::WriteAllText($taskSettings, $taskSentinel, [Text.UTF8Encoding]::new($false))
-$taskExpectedSettingsHash = (Get-FileHash -LiteralPath $taskSettings -Algorithm SHA256).Hash
 $taskExtensionId = 'abcdefghijklmnopabcdefghijklmnop' # Deliberately synthetic: not a browser installation.
 $taskExpectedOrigin = 'chrome-extension://' + $taskExtensionId + '/'
 $taskPowerShell = Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe'
 
-function Invoke-CleanChild([string]$Executable, [string[]]$Arguments, [string]$Label, [int]$TimeoutSeconds = 1800, [string]$RawArguments = '', [string]$WorkingDirectory = $taskPackage) {
+function Invoke-CleanChild([string]$Executable, [string[]]$Arguments, [string]$Label, [int]$TimeoutSeconds = 1800, [string]$RawArguments = '', [string]$WorkingDirectory = $taskPackage, [int]$ExpectedExitCode = 0) {
     if ($Label -notmatch '^[a-z0-9-]+$') { throw 'Invalid diagnostic label.' }
     $info = [Diagnostics.ProcessStartInfo]::new()
     $info.FileName = $Executable
@@ -127,15 +126,30 @@ function Invoke-CleanChild([string]$Executable, [string[]]$Arguments, [string]$L
         [IO.File]::WriteAllText((Join-Path $taskEvidence ($Label + '.stdout.log')), $stdout)
         [IO.File]::WriteAllText((Join-Path $taskEvidence ($Label + '.stderr.log')), $stderr)
         if (!$finished) { throw 'Probe child exceeded its time limit; evidence preserved.' }
-        if ($process.ExitCode -ne 0) { throw 'Probe child failed; evidence preserved.' }
+        if ($process.ExitCode -ne $ExpectedExitCode) { throw 'Probe child returned an unexpected exit code; evidence preserved.' }
         Write-Host ('PASS ' + $Label)
         return $stdout
     } finally { $process.Dispose() }
 }
 function Assert-CleanSentinel {
-    if (!(Test-Path -LiteralPath $taskSettings -PathType Leaf) -or
-        (Get-FileHash -LiteralPath $taskSettings -Algorithm SHA256).Hash -ne $taskExpectedSettingsHash) {
-        throw 'Installation, update or removal changed the synthetic saved settings.'
+    if (!(Test-Path -LiteralPath $taskSettings -PathType Leaf)) {
+        throw 'Installation, update or removal deleted the synthetic saved settings.'
+    }
+    # A normal startup records launch/prompt state and serializes default fields.
+    # Compare every original preference, allowing those additive application fields.
+    $expected = $taskSentinel | ConvertFrom-Json
+    $actual = Get-Content -LiteralPath $taskSettings -Raw | ConvertFrom-Json
+    foreach ($property in $expected.PSObject.Properties) {
+        $value = $actual.PSObject.Properties[$property.Name]
+        if (!$value) { throw ('Saved preference disappeared: ' + $property.Name) }
+        if ($property.Name -eq 'queue') {
+            if (($value.Value | ConvertTo-Json -Depth 20 -Compress) -cne
+                ($property.Value | ConvertTo-Json -Depth 20 -Compress)) {
+                throw 'Synthetic saved queue changed.'
+            }
+        } elseif ($value.Value -ne $property.Value) {
+            throw ('Synthetic saved preference changed: ' + $property.Name)
+        }
     }
 }
 function Assert-CleanInstallation([string]$Version) {
@@ -336,9 +350,10 @@ try {
     # Exercise the exact installed production binary, not a separate feature
     # build, before claiming that the stable installer actually includes Jams.
     Invoke-CleanChild (Join-Path $taskUpdatedRelease 'tide-music.exe') @('--verify-installed-updater') 'installed-update-eligibility' 60 | Out-Null
-    $taskJamOutput = Invoke-CleanChild (Join-Path $taskUpdatedRelease 'tide-music.exe') @('--smoke-jam-ownership') 'installed-jam-ownership' 60
-    if ($taskJamOutput -notmatch 'PASS offline Jam ownership:') {
-        throw 'Installed player did not include the verified Jam controls.'
+    Invoke-CleanChild (Join-Path $taskUpdatedRelease 'tide-music.exe') @('--smoke-jam-ownership') 'installed-jam-exclusion' 60 -ExpectedExitCode 1 | Out-Null
+    $taskJamError = Get-Content -LiteralPath (Join-Path $taskEvidence 'installed-jam-exclusion.stderr.log') -Raw
+    if ($taskJamError -notmatch 'Jam ownership verification requires an experimental-jams build') {
+        throw 'Stable installed player did not reject the experimental Jam probe.'
     }
     Assert-CleanSentinel
 
