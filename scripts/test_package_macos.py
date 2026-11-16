@@ -13,7 +13,9 @@ class MacOSPlistTests(unittest.TestCase):
         self.assertEqual(lock['schema_version'], 1)
         self.assertEqual(lock['minimum_macos'], '14.0')
         self.assertEqual(set(lock['mpv']), {'arm64', 'x86_64'})
-        entries = [*lock['mpv'].values(), lock['yt-dlp'], lock['yt-dlp']['checksums']]
+        self.assertEqual(set(lock['python']), {'arm64', 'x86_64'})
+        entries = [*lock['mpv'].values(), lock['yt-dlp'], lock['yt-dlp']['checksums'],
+                   *lock['python'].values(), *lock['helper_wheels']]
         for entry in entries:
             with self.subTest(url=entry['url']):
                 self.assertTrue(entry['url'].startswith('https://'))
@@ -26,6 +28,16 @@ class MacOSPlistTests(unittest.TestCase):
         for name in ['GPL-2.0.txt', 'GPL-3.0.txt', 'LGPL-2.1.txt', 'LGPL-3.0.txt',
                      'yt-dlp-LICENSE.txt', 'mpv-Copyright.txt', 'FFmpeg-LICENSE.md']:
             self.assertTrue((ROOT / 'packaging/macos/licenses' / name).is_file())
+
+    def test_helper_wheels_match_windows_pins(self):
+        # The Mac bundle must ship exactly the account-helper wheels Windows trusts.
+        import re
+        lock = json.loads((ROOT / 'packaging/macos/runtime.lock.json').read_text())
+        windows = dict(re.findall(r"'([A-Za-z0-9_.-]+\.whl)'='([0-9a-f]{64})'",
+                                  (ROOT / 'scripts/setup-provider.ps1').read_text()))
+        mac = {w['url'].rsplit('/', 1)[1]: w['sha256'] for w in lock['helper_wheels']}
+        self.assertTrue(windows)
+        self.assertEqual(mac, windows)
 
     def test_packaging_scripts(self):
         self.assertTrue((ROOT / 'scripts/package-macos.sh').is_file())

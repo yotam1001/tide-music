@@ -57,7 +57,30 @@ def runtime(arch, resources, work):
     if expected not in sums.read_text().splitlines():
         raise RuntimeError('yt-dlp digest not found in official SHA2-256SUMS')
     (resources / 'bin/yt-dlp').chmod(0o755)
+    account_helper(arch, lock, resources, work)
     shutil.copy(PACK / 'runtime.lock.json', resources)
+
+
+def account_helper(arch, lock, resources, work):
+    """Standalone CPython plus the same pinned pure-Python wheels Windows uses."""
+    python = lock['python'][arch]
+    archive = work / 'python.tar.gz'
+    download(python, archive)
+    with tarfile.open(archive) as t:
+        t.extractall(resources, filter='data')  # creates Resources/python
+    wheels = work / 'wheels'
+    wheels.mkdir()
+    for wheel in lock['helper_wheels']:
+        name = wheel['url'].rsplit('/', 1)[1]
+        if not re.fullmatch(r'[A-Za-z0-9_.-]+-py3-none-any\.whl', name):
+            raise RuntimeError(f'Helper wheels must be pure Python: {name}')
+        download(wheel, wheels / name)
+    interpreter = resources / 'python/bin/python3'
+    run(interpreter, '-I', '-m', 'pip', 'install', '--no-index', '--no-deps',
+        '--disable-pip-version-check', '--no-warn-script-location',
+        *sorted(wheels.glob('*.whl')))
+    (resources / 'helpers').mkdir()
+    shutil.copy2(ROOT / 'helpers/youtube_music.py', resources / 'helpers')
 
 
 def icon(resources, work):

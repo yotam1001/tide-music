@@ -28,6 +28,11 @@ def main():
     if not args.no_runtime:
         run(app / 'Contents/Resources/bin/mpv', '--version')
         run(app / 'Contents/Resources/bin/yt-dlp', '--version')
+        # The account helper's isolated interpreter imports its pinned packages.
+        run(app / 'Contents/Resources/python/bin/python3', '-I', '-c',
+            'import ytmusicapi, requests, certifi, ruamel.yaml; print("helper imports ok")')
+        if not (app / 'Contents/Resources/helpers/youtube_music.py').is_file():
+            raise RuntimeError('Account helper script is missing')
     # This argument validation returns before any Slint/window/account setup.
     probe = subprocess.run([str(app / 'Contents/MacOS/tide-music'), '--verify-update-files'],
                            capture_output=True, text=True, timeout=30)
