@@ -1482,7 +1482,7 @@ impl Provider {
         Ok(true)
     }
 
-    #[cfg(any(windows, test))]
+    #[cfg(windows)]
     fn persist_refreshed_headers(
         &self,
         refreshed: &RefreshedHeaders,
