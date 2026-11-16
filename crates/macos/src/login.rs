@@ -111,7 +111,7 @@ mod native {
         sel, MainThreadMarker, MainThreadOnly,
     };
     use objc2_foundation::{NSObject, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString};
-    use objc2_web_kit as _;
+    use objc2_web_kit::{WKNavigationDelegate, WKUIDelegate};
     use std::{
         cell::RefCell,
         time::{Duration, Instant},
@@ -132,6 +132,8 @@ mod native {
         #[thread_kind = MainThreadOnly]
         struct Delegate;
         unsafe impl NSObjectProtocol for Delegate {}
+        unsafe impl WKNavigationDelegate for Delegate {}
+        unsafe impl WKUIDelegate for Delegate {}
         impl Delegate {
             #[unsafe(method(connect:))]
             fn connect(&self, _: Option<&AnyObject>) { connect(); }
@@ -230,7 +232,7 @@ mod native {
       XMLHttpRequest.prototype.open = function(method,url) { requests.set(this,{method,url,headers:{}}); return open.apply(this,arguments); };
       XMLHttpRequest.prototype.setRequestHeader = function(n,v) { const r=requests.get(this); if(r) r.headers[n]=v; return set.apply(this,arguments); };
       XMLHttpRequest.prototype.send = function() { const r=requests.get(this); if(r) record(r.url,r.method,r.headers); return send.apply(this,arguments); };
-      Object.defineProperty(window,'__tideLoginHeaders',{get:()=>latest ? JSON.stringify({...latest,'user-agent':navigator.userAgent,'accept-language':navigator.language}) : '',configurable:false});
+      Object.defineProperty(window,'__tideLoginHeaders',{get:()=>latest ? JSON.stringify({...latest,'user-agent':latest['user-agent'] || navigator.userAgent}) : '',configurable:false});
     })()"#;
     fn connect() {
         let snapshot = STATE.with(|s| {
