@@ -139,7 +139,12 @@ impl OwnedProcess {
             return Ok(());
         }
         self._lifetime.take();
-        self.signal(15)?;
+        if let Err(error) = self.signal(15) {
+            if error.kind() != io::ErrorKind::PermissionDenied || self.process.try_wait()?.is_none()
+            {
+                return Err(error);
+            }
+        }
         let deadline = Instant::now() + super::SHUTDOWN_GRACE;
         // Do not reap the group leader until signaling is finished: its PID
         // cannot be reused for an unrelated group in this interval.
@@ -150,7 +155,15 @@ impl OwnedProcess {
             }
             std::thread::sleep(Duration::from_millis(10));
         }
-        self.signal(9)?;
+        let killed = self.signal(9);
+        let status = self.process.try_wait()?;
+        // Darwin can report EPERM rather than ESRCH for an all-zombie group.
+        // Accept that only after confirming our direct child has exited.
+        if let Err(error) = killed {
+            if error.kind() != io::ErrorKind::PermissionDenied || status.is_none() {
+                return Err(error);
+            }
+        }
         self.process.wait()?;
         self.terminated = true;
         Ok(())
