@@ -19,6 +19,9 @@ Sign in from Tide's top-right profile icon after installation. The
 [Chrome companion](https://github.com/yotam1001/tide-music/releases/latest/download/tide-browser-chromium.zip)
 remains available as a fallback. The Windows installer is currently unsigned.
 
+**macOS:** a native Mac build is in development, with Control Center, the menu bar,
+the Dock menu and ⌘ shortcuts. See [Tide on macOS](docs/INSTALLATION_MACOS.md).
+
 ![Tide's dark interface](docs/screenshots/full.png)
 
 [Light theme](docs/screenshots/light.png)
