@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "minimum_macos": "14.0",
+  "mpv": {
+    "arm64": {
+      "url": "https://github.com/mpv-player/mpv/releases/download/v0.41.0/mpv-v0.41.0-macos-14-arm.zip",
+      "sha256": "5c96f9b21355fc0a11d2e2161ad65f33031070e9fb3f6bd9865fb459b94587e6",
+      "version": "0.41.0",
+      "source": "official mpv release",
+      "format": "zip-tar",
+      "license": "GPL-2.0-or-later (mpv); GPL-3.0-or-later (bundled FFmpeg)",
+      "ffmpeg_version": "8.0.1",
+      "ffmpeg_license": "GPL-3.0-or-later",
+      "license_evidence": "Bundled libavutil identifies GPL version 3 or later; --enable-gpl --enable-version3 are embedded in the FFmpeg build configuration."
+    },
+    "x86_64": {
+      "url": "https://laboratory.stolendata.net/~djinn/mpv_osx/mpv-0.39.0.tar.gz",
+      "sha256": "35ec81ad86a97b24956a8d0f4fa1ba2690b44ae7741c920e923620bcd7bd402a",
+      "version": "0.39.0",
+      "source": "stolendata (official Intel releases require macOS 15)",
+      "format": "tar",
+      "license": "GPL-2.0-or-later (mpv); GPL-3.0-or-later (bundled FFmpeg)",
+      "ffmpeg_version": "6.1.2",
+      "ffmpeg_license": "GPL-3.0-or-later",
+      "license_evidence": "Bundled libavutil identifies GPL version 3 or later; --enable-gpl --enable-version3 are embedded in the FFmpeg build configuration."
+    }
+  },
+  "yt-dlp": {
+    "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.10.26/yt-dlp_macos",
+    "sha256": "0f922c15ccc0b83eefa1c8bc9104e434318c4bf16e408e1ee93b7745a6efe0aa",
+    "version": "2026.10.26",
+    "license": "Unlicense (source); GPL-3.0-or-later (PyInstaller executable and dependencies)",
+    "checksums": {
+      "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.10.26/SHA2-256SUMS",
+      "sha256": "0d7ec4303a02bcbe66154d478852cdf2e07688d39dc4597316e4424ac4e74356",
+      "license": "Unlicense"
+    }
+  }
+}

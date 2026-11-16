@@ -1,0 +1,71 @@
+name: macOS release
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing v-prefixed tag to build and attach assets to
+        required: true
+        type: string
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+jobs:
+  build:
+    name: bundle (${{ matrix.arch }})
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [arm64, x86_64]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: macos-bundle-${{ matrix.arch }}
+      - name: Enable Intel runtime verification
+        if: matrix.arch == 'x86_64'
+        run: sudo softwareupdate --install-rosetta --agree-to-license
+      - run: python3 scripts/test_package_macos.py
+      - name: Build, sign, verify and package stable Tide
+        run: scripts/package-macos.sh --arch '${{ matrix.arch }}'
+      - name: Hash release assets
+        working-directory: dist
+        run: |
+          for dmg in *.dmg; do shasum -a 256 "$dmg" > "$dmg.sha256"; done
+          stat -f '%N %z bytes' *.dmg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-release-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: macos-release-*
+          merge-multiple: true
+          path: dist
+      - name: Attach DMGs and checksums
+        run: |
+          [[ "$RELEASE_TAG" == v* ]] || { echo 'Expected v-prefixed release tag'; exit 1; }
+          gh release view "$RELEASE_TAG" || gh release create "$RELEASE_TAG" --verify-tag --draft --title "$RELEASE_TAG"
+          gh release upload "$RELEASE_TAG" dist/*.dmg dist/*.sha256 --clobber
+      # Never import the update signing key into CI. The maintainer downloads
+      # these artifacts and signs update manifests locally per docs/RELEASE_SIGNING.md,
+      # then uploads the signed manifests manually.
