@@ -117,6 +117,10 @@ struct Settings {
     crash_seen: u64,
     /// macOS: show a banner when the song changes. Off by default.
     notify_song_change: bool,
+    /// Two-finger horizontal swipe over the player changes songs.
+    #[serde(default = "enabled_by_default")]
+    trackpad_swipe: bool,
+    swipe_reversed: bool,
     #[serde(skip)]
     transient: bool,
 }
@@ -156,6 +160,8 @@ impl Default for Settings {
             star_prompt_done: false,
             crash_seen: 0,
             notify_song_change: false,
+            trackpad_swipe: true,
+            swipe_reversed: false,
             transient: false,
         }
     }
@@ -1611,6 +1617,8 @@ fn restore_settings(value: serde_json::Value) -> Settings {
         star_prompt_done,
         crash_seen,
         notify_song_change,
+        trackpad_swipe,
+        swipe_reversed,
     );
     if !crossfade::LENGTHS.contains(&settings.crossfade_seconds) {
         settings.crossfade_seconds = 0;
@@ -2961,6 +2969,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ui.set_auto_update_checks(state.borrow().settings.check_updates);
     ui.set_media_controls_enabled(state.borrow().settings.media_controls);
     ui.set_close_to_tray(state.borrow().settings.close_to_tray);
+    ui.set_trackpad_swipe(state.borrow().settings.trackpad_swipe);
+    ui.set_swipe_reversed(state.borrow().settings.swipe_reversed);
     ui.set_discord_presence_enabled(state.borrow().settings.discord_presence);
     ui.set_discord_application_id(
         state
@@ -4022,6 +4032,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         save(&s.settings);
     });
+    bind!(on_toggle_trackpad_swipe, |s, u| {
+        s.settings.trackpad_swipe = !s.settings.trackpad_swipe;
+        u.set_trackpad_swipe(s.settings.trackpad_swipe);
+        save(&s.settings);
+    });
+    bind!(on_toggle_swipe_reversed, |s, u| {
+        s.settings.swipe_reversed = !s.settings.swipe_reversed;
+        u.set_swipe_reversed(s.settings.swipe_reversed);
+        save(&s.settings);
+    });
+    {
+        let weak = ui.as_weak();
+        ui.on_open_touchpad_settings(move || {
+            if let (Err(error), Some(u)) = (tide_windows::open_touchpad_settings(), weak.upgrade())
+            {
+                u.set_status_text(error.into());
+            }
+        });
+    }
     bind!(on_toggle_close_to_tray, |s, u| {
         s.settings.close_to_tray = !s.settings.close_to_tray;
         u.set_close_to_tray(s.settings.close_to_tray);
@@ -6288,6 +6317,8 @@ mod tests {
                 close_to_tray: enabled,
                 follow_windows_theme: enabled,
                 library_grid: enabled,
+                trackpad_swipe: enabled,
+                swipe_reversed: enabled,
                 audio_device: "wasapi/fixture".into(),
                 light_mode: true,
                 ..Settings::default()
@@ -6300,6 +6331,8 @@ mod tests {
             assert_eq!(restored.close_to_tray, enabled);
             assert_eq!(restored.follow_windows_theme, enabled);
             assert_eq!(restored.library_grid, enabled);
+            assert_eq!(restored.trackpad_swipe, enabled);
+            assert_eq!(restored.swipe_reversed, enabled);
             assert_eq!(restored.audio_device, "wasapi/fixture");
             assert!(restored.light_mode);
         }
@@ -6309,6 +6342,9 @@ mod tests {
         assert!(!old.close_to_tray);
         assert!(old.light_mode);
         assert!(old.library_grid);
+        // Upgrades get player swipes on, in the natural direction.
+        assert!(old.trackpad_swipe);
+        assert!(!old.swipe_reversed);
     }
 
     #[test]
