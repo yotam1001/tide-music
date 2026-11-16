@@ -100,6 +100,44 @@ export component PlayerBar inherits Rectangle {
         else { root.change-volume(root.unmute-volume > 0 ? root.unmute-volume : 70); }
     }
 
+    // Two-finger horizontal trackpad swipe over the player changes songs:
+    // right → next, left → previous (Reverse flips it). One skip per gesture;
+    // vertical scrolling and controls that use the wheel (volume) are untouched.
+    in property <bool> swipe-enabled: true;
+    in property <bool> swipe-reversed: false;
+    private property <length> swipe-distance: 0px;
+    private property <bool> swipe-fired: false;
+    private property <int> swipe-idle: 0;
+    swipe-area := TouchArea {
+        x: 0px; y: 0px; width: root.width; height: root.height;
+        scroll-event(event) => {
+            if !root.swipe-enabled || !root.transport-enabled { return reject; }
+            if root.swipe-distance == 0px && !root.swipe-fired && abs(event.delta-x) <= abs(event.delta-y) { return reject; }
+            root.swipe-idle = 0;
+            if root.swipe-fired { return accept; }
+            root.swipe-distance += event.delta-x;
+            if abs(root.swipe-distance) >= 90px {
+                root.swipe-fired = true;
+                if (root.swipe-distance > 0px) != root.swipe-reversed {
+                    if root.skip-enabled { root.next-track(); }
+                } else {
+                    root.previous-track();
+                }
+            }
+            return accept;
+        }
+    }
+    // A gesture ends after ~0.3 s without scroll input, which also swallows
+    // the trackpad's momentum tail so one swipe never skips twice.
+    Timer {
+        interval: 100ms;
+        running: root.swipe-distance != 0px || root.swipe-fired;
+        triggered => {
+            root.swipe-idle += 1;
+            if root.swipe-idle >= 3 { root.swipe-distance = 0px; root.swipe-fired = false; root.swipe-idle = 0; }
+        }
+    }
+
     // Full window: song | transport and timeline | actions and volume.
     if !root.collapsed : HorizontalLayout {
         padding-left: 16px;

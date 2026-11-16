@@ -39,6 +39,20 @@ Windows media controls also reuse the current cover from Tide's thumbnail cache.
 This is a small memory-only image; it does not add another artwork download or
 save a cover file to disk.
 
+## Trackpad swipes
+
+Swipe two fingers right on the player bar or Mini player to skip to the next
+song, or left to go back. Each swipe skips once. Vertical scrolling and the
+volume slider work as usual. **Settings → Advanced** can turn swipes off or
+reverse their direction.
+
+To skip from anywhere, including other apps and games, use four-finger swipes on
+Windows 11. Choose **Settings → Advanced → Set up four-finger swipes…**, open
+**Advanced gestures**, then set **Four-finger gestures** to **Change audio and
+volume**. Swiping left or right then sends Previous and Next track, and Tide
+follows while **Windows media keys** is on. These swipes then no longer switch
+desktops.
+
 ## Gaming controls (0.1.1 and later)
 
 In **Settings → Advanced**, Windows media keys can be switched off if
