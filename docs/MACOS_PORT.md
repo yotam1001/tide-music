@@ -69,7 +69,7 @@ So `tide-macos` exports, with identical signatures:
   fn new(impl Fn(MediaAction) + Send + 'static) -> Result<Self, String>; fn apply(&mut self, [Option<Chord>; 3]) -> Result<(), String> } }`.
   On macOS, `Cmd`/`Command`/`⌘`, `Option`/`Alt`, `Ctrl`, `Shift` are accepted.
 - `mod discord_pipe { struct DiscordPipe` with `connect`, `send`, `receive`, `poll`, `deadline` as on Windows `}`.
-- macOS-only: `enum MenuAction { PlayPause, Next, Previous, VolumeUp, VolumeDown, Like, Search, Settings, ToggleMini, ShowWindow, HideWindow }`,
+- macOS-only: `enum MenuAction { PlayPause, Next, Previous, VolumeUp, VolumeDown, Like, Search, Settings, ToggleMini, ShowWindow, HideWindow, Quit }` (Quit lets the app exit its event loop so shutdown saves state),
   `fn install_app_menu(callback: impl Fn(MenuAction) + 'static) -> Result<(), String>` (main thread, after the
   winit window exists; also installs the Dock menu), and
   `fn notify_song(title: &str, artist: &str) -> Result<(), String>`, and
