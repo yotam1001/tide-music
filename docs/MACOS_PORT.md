@@ -72,7 +72,9 @@ So `tide-macos` exports, with identical signatures:
 - macOS-only: `enum MenuAction { PlayPause, Next, Previous, VolumeUp, VolumeDown, Like, Search, Settings, ToggleMini, ShowWindow, HideWindow }`,
   `fn install_app_menu(callback: impl Fn(MenuAction) + 'static) -> Result<(), String>` (main thread, after the
   winit window exists; also installs the Dock menu), and
-  `fn notify_song(title: &str, artist: &str) -> Result<(), String>`.
+  `fn notify_song(title: &str, artist: &str) -> Result<(), String>`, and
+  `fn hide_app() / fn show_app() -> Result<(), String>` (NSApp hide / unhide + activate;
+  the window close button hides Tide instead of quitting, as in Apple Music).
 
 On non-macOS targets the crate builds as stubs returning `Err("... macOS only")`, so
 `cargo check --workspace` keeps working on Windows.

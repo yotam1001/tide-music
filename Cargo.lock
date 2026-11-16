@@ -4283,6 +4283,7 @@ dependencies = [
  "tempfile",
  "tide-core",
  "tide-jam-lab",
+ "tide-macos",
  "tide-playback",
  "tide-provider",
  "tide-windows",

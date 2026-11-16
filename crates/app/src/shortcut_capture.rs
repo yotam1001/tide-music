@@ -1,5 +1,5 @@
 //! Focused shortcut recording only: no keyboard hook, typing log or background capture.
-#[cfg(any(windows, test))]
+#[cfg(any(native_shell, test))]
 fn encode(
     text: &str,
     control: bool,
@@ -26,8 +26,14 @@ fn encode(
     {
         return Ok(None);
     }
-    if meta || !(control || alt) {
-        return Err("Hold Ctrl or Alt, then press a letter, number, Space or function key.");
+    // Slint reports ⌘ as `control` on macOS and the physical Control key as `meta`.
+    let mac = cfg!(target_os = "macos");
+    if (meta && !mac) || !(control || alt || meta) {
+        return Err(if mac {
+            "Hold ⌘, ⌥ or ⌃, then press a letter, number, Space or function key."
+        } else {
+            "Hold Ctrl or Alt, then press a letter, number, Space or function key."
+        });
     }
     let name = if key.is_ascii_alphanumeric() {
         key.to_ascii_uppercase().to_string()
@@ -35,33 +41,40 @@ fn encode(
         "Space".into()
     } else if ('\u{f704}'..='\u{f71b}').contains(&key) {
         format!("F{}", key as u32 - 0xf704 + 1)
-    } else if let Some(name) = tide_windows::shortcuts::layout_key_name(key) {
+    } else if let Some(name) = crate::platform::shortcuts::layout_key_name(key) {
         name
     } else {
-        return Err("Choose a letter, number, Space or function key with Ctrl or Alt.");
+        return Err(if mac {
+            "Choose a letter, number, Space or function key with ⌘, ⌥ or ⌃."
+        } else {
+            "Choose a letter, number, Space or function key with Ctrl or Alt."
+        });
     };
     let mut value = String::new();
     if control {
+        value.push_str(if mac { "Cmd+" } else { "Ctrl+" });
+    }
+    if meta {
         value.push_str("Ctrl+");
     }
     if alt {
-        value.push_str("Alt+");
+        value.push_str(if mac { "Option+" } else { "Alt+" });
     }
     if shift {
         value.push_str("Shift+");
     }
     value.push_str(&name);
-    tide_windows::shortcuts::parse_bindings(&[value.clone(), String::new(), String::new()])
+    crate::platform::shortcuts::parse_bindings(&[value.clone(), String::new(), String::new()])
         .map_err(|_| "That combination is reserved. Choose another shortcut.")?;
     Ok(Some(value))
 }
 
-#[cfg(windows)]
+#[cfg(native_shell)]
 mod recording {
     use super::super::{save, AppWindow, State};
+    use crate::platform::shortcuts::{parse_bindings, GlobalShortcuts};
     use slint::ComponentHandle;
     use std::{cell::RefCell, rc::Rc};
-    use tide_windows::shortcuts::{parse_bindings, GlobalShortcuts};
     type Manager = Rc<RefCell<Option<GlobalShortcuts>>>;
     fn apply(manager: &Manager, values: &[String; 3]) -> Result<(), String> {
         let bindings = parse_bindings(values)?;
@@ -156,7 +169,7 @@ mod recording {
         });
     }
 }
-#[cfg(windows)]
+#[cfg(native_shell)]
 pub(super) use recording::wire;
 
 #[cfg(test)]

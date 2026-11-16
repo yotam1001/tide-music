@@ -57,6 +57,8 @@ pub(super) fn wire(ui: &AppWindow, state: Rc<RefCell<State>>) -> Rc<Login> {
     ui.on_native_sign_in(move || {
         let (Some(ui), Some(login)) = (weak.upgrade(), owner.upgrade()) else { return; };
         if ui.get_account_busy() || ui.get_native_login_busy() || !local_controls_allowed(&state.borrow()) { return; }
+        #[cfg(not(windows))]
+        let _ = (&login, &path, &ui);
         #[cfg(windows)]
         if let Some(path) = &path {
             let mut command = Command::new(path);

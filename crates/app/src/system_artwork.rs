@@ -11,7 +11,7 @@ impl Publisher {
     }
     pub fn update(
         &mut self,
-        session: &mut tide_windows::MediaSession,
+        session: &mut crate::platform::MediaSession,
         source: &str,
         artwork_url: &str,
         image: &Image,

@@ -49,10 +49,15 @@ fn reveal_crash_log() -> Result<(), String> {
             .map(|_| ())
             .map_err(|_| "Could not open the folder with the crash log".into())
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        crate::platform::reveal_in_file_manager(&path)
+            .map_err(|_| "Could not show the crash log in Finder".into())
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = path;
-        Err("Opening the crash log is available on Windows".into())
+        Err("Opening the crash log is available on Windows and macOS".into())
     }
 }
 
@@ -76,7 +81,7 @@ pub fn install(state: &Rc<RefCell<State>>, ui: &AppWindow, enabled: bool) {
                 return;
             }
             let result = match prompt {
-                STAR => tide_windows::open_web_page(STAR_URL),
+                STAR => crate::platform::open_web_page(STAR_URL),
                 CRASH => reveal_crash_log(),
                 _ => Ok(()),
             };

@@ -67,6 +67,16 @@ pub fn install_app_menu(_callback: impl Fn(MenuAction) + 'static) -> Result<(), 
     Err(UNSUPPORTED.into())
 }
 
+/// Hide Tide (like ⌘H); the Dock icon restores it. Playback continues.
+pub fn hide_app() -> Result<(), String> {
+    Err(UNSUPPORTED.into())
+}
+
+/// Unhide Tide and bring its window to the front.
+pub fn show_app() -> Result<(), String> {
+    Err(UNSUPPORTED.into())
+}
+
 pub fn notify_song(_title: &str, _artist: &str) -> Result<(), String> {
     Err(UNSUPPORTED.into())
 }
