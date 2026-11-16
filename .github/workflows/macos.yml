@@ -69,7 +69,29 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - run: brew install mpv yt-dlp
+      - run: brew install yt-dlp
+      # Probe the exact mpv that Tide.app ships (runtime.lock.json), not
+      # whatever Homebrew carries that day: Homebrew's mpv 0.42 rejects a
+      # filter configuration that the bundled 0.41 accepts.
+      - name: Install the pinned bundled mpv
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, tarfile, urllib.request, zipfile
+          entry = json.load(open('packaging/macos/runtime.lock.json'))['mpv']['arm64']
+          work = pathlib.Path(os.environ['RUNNER_TEMP']) / 'pinned-mpv'
+          work.mkdir(parents=True, exist_ok=True)
+          archive = work / 'mpv.archive'
+          urllib.request.urlretrieve(entry['url'], archive)
+          assert hashlib.sha256(archive.read_bytes()).hexdigest() == entry['sha256'], 'mpv checksum mismatch'
+          if entry['format'] == 'zip-tar':
+              archive.write_bytes(zipfile.ZipFile(archive).read('mpv.tar.gz'))
+          tarfile.open(archive).extractall(work, filter='data')
+          PY
+          mkdir -p "$RUNNER_TEMP/runtime"
+          ln -sf "$RUNNER_TEMP/pinned-mpv/mpv.app/Contents/MacOS/mpv" "$RUNNER_TEMP/runtime/mpv"
+          ln -sf "$(command -v yt-dlp)" "$RUNNER_TEMP/runtime/yt-dlp"
+          echo "TIDE_RUNTIME_DIR=$RUNNER_TEMP/runtime" >> "$GITHUB_ENV"
+          "$RUNNER_TEMP/runtime/mpv" --version | head -1
       - run: cargo test -p tide-playback --locked
       - run: cargo clippy -p tide-playback --locked -- -D warnings
       - run: cargo test -p tide-playback real_mpv_exits_when_lifetime_connection_closes -- --ignored
