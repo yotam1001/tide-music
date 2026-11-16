@@ -6,8 +6,7 @@ pub struct Chord {
     key: u32,
 }
 
-/// Resolve shifted symbols and non-Latin letters using the focused thread's layout.
-/// Only alphanumeric virtual keys accepted by the existing global parser are returned.
+/// Return the portable label for supported alphanumeric keys.
 pub fn layout_key_name(character: char) -> Option<String> {
     character
         .is_ascii_alphanumeric()
@@ -30,7 +29,7 @@ fn parse(text: &str) -> Result<Option<Chord>, String> {
         return Ok(None);
     }
     let invalid = || {
-        "Use Ctrl or Alt plus a letter, digit, Space or F1–F24 (except reserved F12), for example Ctrl+Alt+P.".to_string()
+        "Use \u{2318}/Command, \u{2325}/Option or Ctrl plus a letter, digit, Space or F1-F20, for example Cmd+Option+P.".to_string()
     };
     if text.len() > 64 {
         return Err(invalid());

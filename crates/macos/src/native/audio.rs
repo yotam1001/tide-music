@@ -11,6 +11,21 @@ struct Address {
     scope: u32,
     element: u32,
 }
+// The CoreAudio callback ABI passes a pointer to this three-UInt32 C struct.
+unsafe impl objc2::encode::Encode for Address {
+    const ENCODING: objc2::encode::Encoding = objc2::encode::Encoding::Struct(
+        "AudioObjectPropertyAddress",
+        &[
+            objc2::encode::Encoding::UInt,
+            objc2::encode::Encoding::UInt,
+            objc2::encode::Encoding::UInt,
+        ],
+    );
+}
+unsafe impl objc2::encode::RefEncode for Address {
+    const ENCODING_REF: objc2::encode::Encoding =
+        objc2::encode::Encoding::Pointer(&<Self as objc2::encode::Encode>::ENCODING);
+}
 const DEFAULT: Address = Address {
     selector: u32::from_be_bytes(*b"dOut"),
     scope: u32::from_be_bytes(*b"glob"),

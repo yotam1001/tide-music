@@ -47,8 +47,10 @@ unsafe extern "C" {
         data: *mut c_void,
     ) -> i32;
 }
-const SIGNATURE: u32 = u32::from_be_bytes(*b"Tide");
+static NEXT_SIGNATURE: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(u32::from_be_bytes(*b"Tide"));
 struct State {
+    signature: u32,
     bindings: Mutex<Vec<(u32, Chord, *mut c_void, MediaAction)>>,
     sender: mpsc::Sender<MediaAction>,
 }
@@ -66,11 +68,13 @@ unsafe extern "C" fn handler(_next: *mut c_void, event: *mut c_void, data: *mut 
         std::ptr::null_mut(),
         (&mut id as *mut HotKeyId).cast(),
     ) != 0
-        || id.signature != SIGNATURE
     {
         return -9874;
     }
     let state = &*(data as *const State);
+    if id.signature != state.signature {
+        return -9874;
+    }
     if let Ok(bindings) = state.bindings.lock() {
         if let Some((_, _, _, action)) = bindings.iter().find(|b| b.0 == id.id) {
             let _ = state.sender.send(*action);
@@ -99,6 +103,7 @@ impl GlobalShortcuts {
             })
             .map_err(|e| e.to_string())?;
         let mut state = Box::new(State {
+            signature: NEXT_SIGNATURE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             bindings: Mutex::new(Vec::new()),
             sender: tx,
         });
@@ -159,7 +164,7 @@ impl GlobalShortcuts {
                         chord.key,
                         chord.modifiers,
                         HotKeyId {
-                            signature: SIGNATURE,
+                            signature: self.state.signature,
                             id,
                         },
                         GetApplicationEventTarget(),

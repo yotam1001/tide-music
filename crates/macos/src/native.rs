@@ -1,12 +1,18 @@
+//! AppKit resources are owned by the creating UI thread.
+// Public raw-view signatures mirror the platform contract.
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
 use super::{MediaAction, MenuAction};
 use block2::RcBlock;
 use objc2::{
     class, msg_send,
-    rc::Retained,
+    rc::{Allocated, Retained},
     runtime::{AnyClass, AnyObject, Bool, Sel},
     sel, MainThreadMarker,
 };
+use objc2_app_kit as _;
 use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
+use objc2_media_player as _;
+use objc2_user_notifications as _;
 use std::{cell::RefCell, ffi::c_void, path::Path, sync::mpsc};
 type Obj = Retained<AnyObject>;
 #[link(name = "AppKit", kind = "framework")]
@@ -286,21 +292,22 @@ impl MediaSession {
                     return Err("Artwork must be a PNG of at most 128 KiB and 160 pixels".into());
                 }
                 let data: Obj = msg_send![class!(NSData),dataWithBytes:png.as_ptr().cast::<c_void>(),length:png.len()];
-                let image: Option<Obj> = msg_send![class!(NSImage), alloc];
-                let image: Option<Obj> = msg_send![&*image.unwrap(),initWithData:&*data];
+                let image: Allocated<AnyObject> = msg_send![class!(NSImage), alloc];
+                let image: Option<Obj> = msg_send![image,initWithData:&*data];
                 let image = image.ok_or("Invalid PNG artwork")?;
                 let size: NSSize = msg_send![&*image, size];
                 let block = RcBlock::new(move |_: NSSize| -> *mut AnyObject {
                     Retained::as_ptr(&image).cast_mut()
                 });
-                let art: Obj = msg_send![class!(MPMediaItemArtwork), alloc];
-                let art: Obj = msg_send![&*art,initWithBoundsSize:size,requestHandler:&*block];
+                let art: Allocated<AnyObject> = msg_send![class!(MPMediaItemArtwork), alloc];
+                let art: Obj = msg_send![art,initWithBoundsSize:size,requestHandler:&*block];
                 let _: () = msg_send![&*self.info,setObject:&*art,forKey:&*key];
             }
             self.publish();
             Ok(())
         }
     }
+    #[allow(clippy::too_many_arguments)]
     pub fn update(
         &mut self,
         title: &str,
@@ -358,7 +365,7 @@ thread_local! {
     static STATUS_CALLBACK:RefCell<Option<mpsc::Sender<MediaAction>>> = const { RefCell::new(None) };
     static DOCK_MENU:RefCell<Option<Obj>> = const { RefCell::new(None) };
 }
-unsafe extern "C" fn menu_action(_: &AnyObject, _: Sel, sender: &AnyObject) {
+unsafe extern "C" fn menu_action(_: *mut AnyObject, _: Sel, sender: *mut AnyObject) {
     let tag: isize = msg_send![sender, tag];
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         if tag >= 100 {
@@ -420,7 +427,7 @@ unsafe fn target() -> Obj {
                     .expect("unique Tide menu class");
             builder.add_method(
                 sel!(tideAction:),
-                menu_action as unsafe extern "C" fn(&AnyObject, Sel, &AnyObject),
+                menu_action as unsafe extern "C" fn(*mut AnyObject, Sel, *mut AnyObject),
             );
             let class = builder.register();
             msg_send![class, new]
@@ -441,8 +448,8 @@ unsafe fn item(
     tag: isize,
     selector: Option<Sel>,
 ) {
-    let item: Obj = msg_send![class!(NSMenuItem), alloc];
-    let item: Obj = msg_send![&*item,initWithTitle:&*string(title),action:selector.unwrap_or(sel!(tideAction:)),keyEquivalent:&*string(key)];
+    let item: Allocated<AnyObject> = msg_send![class!(NSMenuItem), alloc];
+    let item: Obj = msg_send![item,initWithTitle:&*string(title),action:selector.unwrap_or(sel!(tideAction:)),keyEquivalent:&*string(key)];
     let _: () = msg_send![&*item,setKeyEquivalentModifierMask:mask];
     let _: () = msg_send![&*item,setTag:tag];
     if selector.is_none() {
