@@ -1,7 +1,7 @@
 # tide-playback
 
-`tide-playback` implements the `tide-core` playback contract with a Windows
-mpv sidecar controlled through JSON IPC over a named pipe. The worker is
+`tide-playback` implements the `tide-core` playback contract with an owned
+mpv sidecar: Windows named-pipe IPC or Unix domain-socket IPC (see below). The worker is
 created by `start()`, while `mpv.exe` is launched only when the first track is
 loaded. Dropping `PlaybackHandle` requests a clean mpv exit, forces termination
 if the helper does not exit promptly, reaps the process, and joins the worker.
@@ -190,3 +190,7 @@ kernel parent-death guarantee on macOS after a Tide crash.
 The macOS playback-smoke CI job installs real mpv/yt-dlp, exercises generated
 local silence through the engine/null output (effects and fault recovery), and
 checks that lifetime EOF alone exits mpv, without sending quit or a signal.
+
+The malformed/truncated HTTP fixture in the recovery probe remains Windows-only:
+Homebrew mpv rejects it before initial playback. macOS CI verifies the entire
+local fault/reconnect sequence; HTTP interruption recovery on macOS is unverified.
