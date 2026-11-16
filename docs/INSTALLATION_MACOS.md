@@ -44,6 +44,10 @@ login Keychain. macOS may ask once whether Tide can use that Keychain item.
   Tide back, and press ⌘Q to quit.
 - **Keyboard:** ⌘, Settings · ⌘F Search · Space Play/Pause · ⌘→ / ⌘← Next/Previous ·
   ⌘↑ / ⌘↓ Volume · ⌘L Like · ⌘⇧M Mini player · ⌘K Search · ⌘W Hide
+- **Trackpad swipes.** Swipe two fingers right on the player bar or Mini player
+  to skip to the next song, or left to go back. macOS keeps four-finger swipes
+  for switching Spaces, so the swipe works inside Tide's window. Control Center,
+  media keys and AirPods work from anywhere.
 - **Global shortcuts** use ⌘, ⌥ or ⌃ combinations and need no Accessibility
   permission.
 - **Song-change banners.** Turn on **Settings → Advanced → Notify when the song
