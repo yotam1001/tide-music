@@ -28,6 +28,7 @@ fn allowed(raw: &str) -> bool {
                         | "youtube.com"
                         | "www.youtube.com"
                         | "consent.youtube.com"
+                        | "accounts.youtube.com"
                 )
             )
     })
@@ -259,6 +260,11 @@ mod native {
                     ));
                     return;
                 }
+                let is_string: Bool = msg_send![value, isKindOfClass: class!(NSString)];
+                if !is_string.as_bool() {
+                    finish(Err("Music profile headers were invalid".into()));
+                    return;
+                }
                 let value = &*(value as *const NSString);
                 let raw = Zeroizing::new(value.to_string());
                 if raw.len() > MAX_HEADERS {
@@ -454,6 +460,7 @@ mod tests {
     #[test]
     fn origins_and_candidate_contract() {
         assert!(is_music_url("https://music.youtube.com/library"));
+        assert!(allowed("https://accounts.youtube.com/accounts/SetSID"));
         for u in [
             "http://music.youtube.com/",
             "https://user@music.youtube.com/",
