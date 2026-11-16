@@ -26,3 +26,18 @@ jobs:
       - run: cargo check --workspace --all-targets --locked
       - run: cargo clippy --workspace --lib --bins --locked -- -D warnings
       - run: cargo test --workspace --locked
+
+  playback-smoke:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: brew install mpv yt-dlp
+      - run: cargo test -p tide-playback --locked
+      - run: cargo clippy -p tide-playback --locked -- -D warnings
+      - run: cargo test -p tide-playback real_mpv_exits_when_lifetime_connection_closes -- --ignored
+      - run: cargo test -p tide-playback native_audio_preferences_probe -- --ignored
+      - run: cargo test -p tide-playback native_recovery_fault_probe -- --ignored
