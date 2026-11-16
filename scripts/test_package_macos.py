@@ -12,7 +12,7 @@ class MacOSPlistTests(unittest.TestCase):
         self.assertEqual(info['CFBundleIdentifier'], 'com.tidemusic.Tide')
         self.assertEqual(info['CFBundleExecutable'], 'tide-music')
         self.assertEqual(info['CFBundleShortVersionString'], '@VERSION@')
-        self.assertEqual(info['LSMinimumSystemVersion'], '12.0')
+        self.assertEqual(info['LSMinimumSystemVersion'], '14.0')
         self.assertEqual(info['LSApplicationCategoryType'], 'public.app-category.music')
         self.assertTrue(info['NSHighResolutionCapable'])
         self.assertEqual(info['NSAppTransportSecurity'], {})

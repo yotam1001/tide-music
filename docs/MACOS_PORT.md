@@ -1,7 +1,7 @@
 # Tide for macOS — port plan and platform contract
 
 Goal: the same Tide (same Slint UI, playback engine, provider, Library, lyrics,
-Mini player, Discord, updates) running natively on macOS 12+ (Apple Silicon and
+Mini player, Discord, updates) running natively on macOS 14+ (Apple Silicon and
 Intel), plus a small set of macOS-only integrations. Jams keep the same rules as
 on Windows: opt-in, never in the stable bundle until explicitly approved.
 

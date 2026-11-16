@@ -4,7 +4,7 @@ The macOS build is being ported and has not been released yet. This page
 describes how it will install and what it adds on a Mac. Platform details and
 progress live in [MACOS_PORT.md](MACOS_PORT.md).
 
-You need macOS 12 Monterey or later on Apple Silicon or Intel. The disk image
+You need macOS 14 Sonoma or later on Apple Silicon or Intel. The disk image
 bundles its playback tools (mpv and yt-dlp), so Homebrew, Rust and Python are
 not needed.
 
