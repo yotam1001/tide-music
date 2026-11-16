@@ -59,7 +59,7 @@ jobs:
       - run: cargo check -p tide-provider --features native-login --bins
       - run: cargo clippy -p tide-provider -p tide-macos --features tide-provider/native-login,tide-macos/native-login --lib --bins -- -D warnings
       - run: cargo run -p tide-provider --features native-login --bin tide-login -- --probe
-      - run: cargo test --workspace --locked
+      - run: cargo test --workspace --locked --no-fail-fast
 
   playback-smoke:
     runs-on: macos-latest
