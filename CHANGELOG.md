@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.4.29 - 2026-11-17
+
 - Earbud buttons, keyboard media keys and four-finger touchpad swipes now skip
   songs while Tide is minimized or in the background on Windows. Tide's audio
   helper had been registering a second Windows media session that took those
