@@ -22,9 +22,14 @@ def assess(app):
     policy = report('spctl', '-a', '-vvv', '-t', 'exec', app)
     if shutil.which('syspolicy_check'):
         report('syspolicy_check', 'distribution', app)
-    # Ad-hoc signatures can be intact without providing a Developer ID to spctl.
+    # An intact ad-hoc signature is still "rejected" by spctl because it has no
+    # Developer ID; Finder then offers Open Anyway. Depending on the macOS
+    # version spctl may or may not add "source=no usable signature". What must
+    # never appear is a broken seal, which Finder reports as "damaged".
+    broken = ('invalid', 'sealed resource', 'modified', 'damaged', 'not signed at all')
     adhoc_rejection = ('Signature=adhoc' in signature.stdout
-                       and 'source=no usable signature' in policy.stdout)
+                       and not seal.returncode
+                       and not any(marker in policy.stdout.lower() for marker in broken))
     failures = []
     if signature.returncode or seal.returncode:
         failures.append('The app signature or resource seal is invalid')
