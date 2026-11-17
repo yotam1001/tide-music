@@ -13,11 +13,15 @@ permissions:
 jobs:
   build:
     name: bundle (${{ matrix.arch }})
-    runs-on: macos-latest
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
-        arch: [arm64, x86_64]
+        include:
+          - arch: arm64
+            runner: macos-latest
+          - arch: x86_64
+            runner: macos-15-intel
     steps:
       - uses: actions/checkout@v4
         with:
@@ -30,9 +34,6 @@ jobs:
         with:
           shared-key: macos-bundle-${{ matrix.arch }}
           cache-on-failure: true
-      - name: Enable Intel runtime verification
-        if: matrix.arch == 'x86_64'
-        run: sudo softwareupdate --install-rosetta --agree-to-license
       - run: python3 scripts/test_package_macos.py
       - name: Build, sign, verify and package stable Tide
         run: scripts/package-macos.sh --arch '${{ matrix.arch }}'

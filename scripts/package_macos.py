@@ -177,7 +177,7 @@ def main():
         target = ('aarch64' if arch == 'arm64' else arch) + '-apple-darwin'
         run('rustup', 'target', 'add', target)
         run('cargo', 'build', '--release', '--locked', '-p', 'tide-music',
-            '--no-default-features', '--features', 'jams', '--target', target)
+            '--no-default-features', '--target', target)
         # Native sign-in runs in its own owned helper process beside the player.
         run('cargo', 'build', '--release', '--locked', '-p', 'tide-provider',
             '--features', 'native-login', '--bin', 'tide-login', '--target', target)
@@ -217,6 +217,7 @@ def main():
             run('hdiutil', 'create', '-ov', '-volname', 'Tide', '-srcfolder', stage,
                 '-format', 'UDZO', dmg)
             notarize(dmg)
+            run('python3', ROOT / 'scripts/check_macos_dmg.py', dmg)
             # Stable names for releases/latest/download links on the website.
             if arch == 'arm64':
                 shutil.copy2(dmg, out / 'Tide.dmg')

@@ -12,11 +12,15 @@ permissions:
 jobs:
   bundle:
     name: bundle (${{ matrix.arch }})
-    runs-on: macos-latest
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
-        arch: [arm64, x86_64]
+        include:
+          - arch: arm64
+            runner: macos-latest
+          - arch: x86_64
+            runner: macos-15-intel
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -27,9 +31,6 @@ jobs:
         with:
           shared-key: macos-bundle-${{ matrix.arch }}
           cache-on-failure: true
-      - name: Enable Intel runtime verification
-        if: matrix.arch == 'x86_64'
-        run: sudo softwareupdate --install-rosetta --agree-to-license
       - run: python3 scripts/test_package_macos.py
       - name: Build, sign, verify and package stable Tide
         run: scripts/package-macos.sh --arch '${{ matrix.arch }}'
@@ -40,6 +41,41 @@ jobs:
           name: Tide-macos-${{ matrix.arch }}
           path: dist/*.dmg
           if-no-files-found: error
+
+  published-dmg:
+    name: Audit currently published Mac downloads
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Assess the website's GitHub downloads
+        run: |
+          for asset in Tide.dmg Tide-Intel.dmg; do
+            url="https://github.com/yotam1001/tide-music/releases/latest/download/$asset"
+            curl --fail --location --retry 3 --proto '=https' --proto-redir '=https' \
+              --write-out 'Published asset: %{url_effective}\n' --output "$RUNNER_TEMP/$asset" "$url"
+            shasum -a 256 "$RUNNER_TEMP/$asset"
+            # Collect evidence even when a previously shipped image fails.
+            python3 scripts/check_macos_dmg.py "$RUNNER_TEMP/$asset" || \
+              echo "::warning::Published $asset failed the signature audit"
+          done
+
+  developer-build:
+    name: macOS developer build with Homebrew runtimes
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: macos-developer-build
+      - run: brew install mpv yt-dlp
+      - run: cargo build --release --locked -p tide-music
+      - run: cargo build --release --locked -p tide-provider --bin tide-login --features tide-provider/native-login
+      - run: target/release/tide-login --probe
+      - run: cargo test -p tide-playback --locked real_mpv_exits_when_lifetime_connection_closes -- --ignored
 
   rust:
     name: macOS Rust checks
