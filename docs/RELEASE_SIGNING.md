@@ -23,6 +23,31 @@ outside the protection offered against a release-account-only compromise.
 
 ## Publish
 
+After the owner approves a stable release, use the release script from a clean
+Tide checkout on the signing PC. Prepare a public Markdown notes file outside
+tracked source. Include the Mac first-launch instructions when relevant.
+
+```powershell
+$tideVersion = 'x.y.z' # Replace with the approved numeric version.
+python scripts/release_tide.py $tideVersion --notes notes.md --dry-run
+python scripts/release_tide.py $tideVersion --notes notes.md --through-stage prepare
+python scripts/release_tide.py $tideVersion --notes notes.md --from-stage merge
+```
+
+The last command merges after the checks pass and publishes the verified
+release as Latest. Link the PR in your harness if it supports PR tracking.
+Use `--wait` where the harness can wait in-process, or resume using the stage
+printed when CI is pending. Use `--date YYYY-MM-DD` to set the changelog date
+explicitly and `--pin <tracked-file>` for additional active version pins.
+
+The signing subprocess uses the existing DPAPI key under `LOCALAPPDATA`.
+Override that environment variable for the invocation if the key store lives
+in a different local app data directory. The script keeps CI artifacts and
+verification results in the ignored `.local/tide-release/` directory. It
+never initializes a key or builds an installer locally.
+
+For manual publication or recovery, use these steps.
+
 1. Review the exact source revision, successful hosted tests, installer checks,
    browser packages and fresh-clone privacy scan. Download the tested artifacts.
 2. Independently inspect the installer payload, version and source correspondence.
