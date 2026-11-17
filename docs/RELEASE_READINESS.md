@@ -1,5 +1,25 @@
 # Release readiness
 
+## Stable release automation
+
+Use [the release script](../scripts/release_tide.py) on the signing PC after
+the owner approves the version and the shipping changes are on `main`. See
+the [release signing guide](RELEASE_SIGNING.md) for invocation and resume steps.
+
+The release PR checks must cover Windows, the Jam lab and both macOS bundle
+architectures. The Homebrew developer job can be cancelled for runner
+unavailability if it never received a runner. Pass
+`--allow-queued-developer-cancel` only after confirming that cancellation.
+Keep the bundled mpv pin in `packaging/macos/runtime.lock.json` aligned with
+the playback smoke job. Stable Windows and Mac packages exclude Jams.
+
+After merge, the script requires the Windows Release validation job and the
+tag's macOS release workflow. It checks the DMG signature gate on both
+architectures, compares the uploaded assets to the CI artifacts and verifies
+the signed Windows installer. It then checks the public Latest downloads
+anonymously. Check the website's Mac buttons separately. They should use
+`releases/latest/download/Tide.dmg` and `Tide-Intel.dmg`.
+
 ## Stable 0.1.3 update (2026-10-19)
 
 Version 0.1.3 packages PR #23's reductions in temporary account-response,
