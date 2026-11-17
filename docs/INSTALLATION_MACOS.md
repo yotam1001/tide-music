@@ -10,8 +10,8 @@ not needed.
 ## Install and open
 
 1. Open **Apple menu → About This Mac**. If you see **Chip** with an Apple M
-   series chip, download [Tide.dmg](https://github.com/yotam1001/tide-music/releases/download/v0.4.28-mac-preview/Tide.dmg).
-   If **Processor** shows Intel, download [Tide-Intel.dmg](https://github.com/yotam1001/tide-music/releases/download/v0.4.28-mac-preview/Tide-Intel.dmg).
+   series chip, download [Tide.dmg](https://github.com/yotam1001/tide-music/releases/latest/download/Tide.dmg).
+   If **Processor** shows Intel, download [Tide-Intel.dmg](https://github.com/yotam1001/tide-music/releases/latest/download/Tide-Intel.dmg).
 2. Open it and drag **Tide** onto **Applications**.
 3. Open Tide from Applications or Spotlight.
 
@@ -26,21 +26,8 @@ check that the download came from Tide’s official GitHub release.
    Tide once. Then go to **System Settings → Privacy & Security**, scroll down
    to the Tide notice, and select **Open Anyway**. Confirm when prompted.
 
-Some published Mac images had a broken signature seal. If macOS says Tide is
-damaged, replace that copy with a corrected DMG when available. To distinguish
-a broken seal from a warning about an unidentified developer, run:
-
-```sh
-codesign --verify --deep --strict --verbose=4 /Applications/Tide.app
-```
-
-If the seal verifies, you trust the download, and the Finder and System
-Settings options are both unavailable, the last resort is to clear the
-quarantine attribute for this copy of Tide:
-
-```sh
-xattr -dr com.apple.quarantine /Applications/Tide.app
-```
+If macOS previously said Tide was damaged, download a fresh disk image from
+the links above and replace Tide in Applications.
 
 [Apple’s first-launch instructions](https://support.apple.com/en-us/102445)
 
@@ -57,10 +44,8 @@ login Keychain. macOS may ask once whether Tide can use that Keychain item.
 
 ## Listen together
 
-On the Mac 0.4.28 preview and Tide for Windows, start a song and choose
-**Jams → Start Jam**. Share the invite with a friend and have them choose
-**Jams → Join Jam**. Each listener connects their own YouTube Music account.
-Use the default shared relay or enter your own relay in Advanced settings.
+Synchronized listening is available in opt-in developer builds. See the
+[Jam guide](../experiments/jam/README.md) for setup and relay self-hosting.
 
 ## What's different on a Mac
 
