@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Earbud buttons, keyboard media keys and four-finger touchpad swipes now skip
+  songs while Tide is minimized or in the background on Windows. Tide's audio
+  helper had been registering a second Windows media session that took those
+  presses and could not skip.
+- A smaller mini player: click the size button in the mini player once for a
+  one-row player about half as wide, and again to return to the full window.
+
 ## 0.4.28 - macOS preview
 
 - Open the Intel disk image when checking for a stable update in the Intel build.

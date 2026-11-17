@@ -1317,7 +1317,14 @@ async fn launch_player(
         .arg("--input-terminal=no")
         // Tide owns the Windows media session; its helper must not process the
         // same hardware key independently and cause double pause/skip actions.
-        .arg("--input-media-keys=no")
+        .arg("--input-media-keys=no");
+    // mpv 0.39+ also registers its own Windows media session (SMTC), separate
+    // from --input-media-keys. Windows then routes earbud buttons, media keys
+    // and touchpad swipes to mpv, which cannot skip, whenever Tide is not in
+    // front. Tide's own session must be the only one.
+    #[cfg(windows)]
+    command.arg("--media-controls=no");
+    command
         .arg("--force-window=no")
         .arg("--vid=no")
         .arg("--vo=null")

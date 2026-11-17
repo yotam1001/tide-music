@@ -65,6 +65,8 @@ export component PlayerBar inherits Rectangle {
     callback mini();
     in property <bool> mini-pinned;
     callback toggle-mini-pin();
+    in property <bool> mini-small: false;
+    callback shrink-mini();
     private property <color> foreground: Theme.text;
     private property <color> secondary: Theme.muted;
     background: Theme.chrome;
@@ -230,8 +232,34 @@ export component PlayerBar inherits Rectangle {
         }
     }
 
+    // Small mini player: one row of controls over the seek bar.
+    if root.collapsed && root.mini-small : VerticalLayout {
+        padding-left: 10px;
+        padding-right: 8px;
+        padding-top: 8px;
+        padding-bottom: 6px;
+        spacing: 2px;
+        HorizontalLayout {
+            height: 44px;
+            spacing: 6px;
+            cross-axis-alignment: center;
+            Cover { width: 40px; height: 40px; artwork: root.artwork; light-mode: root.light-mode; seed: root.track-title; }
+            VerticalLayout {
+                horizontal-stretch: 1;
+                min-width: 0px;
+                alignment: center;
+                spacing: 0px;
+                Rectangle { height: 18px; min-width: 0px; clip: true; Text { width: parent.width; height: parent.height; vertical-alignment: center; text: root.track-title == "" ? "Nothing playing" : root.track-title; color: root.foreground; font-size: 13px; font-weight: 600; overflow: elide; } }
+                ArtistLink { artist: root.track-artist; enabled: root.artist-enabled; light-mode: root.light-mode; activated => { root.artist(); } }
+            }
+            TransportButtons { enabled: root.transport-enabled; next-enabled: root.skip-enabled; width: 150px; height: 44px; paused: root.paused; light-mode: root.light-mode; repeat-enabled: root.repeat-enabled; show-repeat: false; show-shuffle: false; toggle-pause => { root.toggle-pause(); } previous-track => { root.previous-track(); } next-track => { root.next-track(); } }
+            LibraryButton { width: 32px; light-mode: root.light-mode; show-tooltip: true; icon-path: "M 14 4 L 20 4 L 20 10 M 20 4 L 13 11 M 10 20 L 4 20 L 4 14 M 4 20 L 11 13"; label: "Expand to full Tide window"; clicked => { root.restore(); } }
+        }
+        TideSlider { reset-revision: root.input-revision; light-mode: root.light-mode; height: 20px; minimum: 0; maximum: max(1, root.duration); value: root.position; enabled: root.transport-enabled && root.duration > 0; label: "Playback position"; value-text: root.format-time(root.position) + " of " + root.format-time(root.duration); released(value) => { root.seek(value); } }
+    }
+
     // Mini player: the original two-row layout.
-    if root.collapsed : VerticalLayout {
+    if root.collapsed && !root.mini-small : VerticalLayout {
         padding-left: 18px;
         padding-right: 18px;
         padding-top: 10px;
@@ -264,7 +292,7 @@ export component PlayerBar inherits Rectangle {
                 RatingButton { width: 32px; height: 36px; enabled: root.rating-enabled && !root.rating-busy; light-mode: root.light-mode; active: root.rating == 1; label: root.rating == 1 ? "Remove like" : "Like this song on YouTube Music"; clicked => { root.rate(root.rating == 1 ? 0 : 1); } }
                 RatingButton { width: 32px; height: 36px; negative: true; enabled: root.rating-enabled && !root.rating-busy; light-mode: root.light-mode; active: root.rating == -1; label: root.rating == -1 ? "Remove dislike" : "Dislike this song on YouTube Music"; clicked => { root.rate(root.rating == -1 ? 0 : -1); } }
                 LibraryButton { width: 36px; light-mode: root.light-mode; show-tooltip: true; icon-path: "M 9 3 L 15 3 L 14 9 L 18 13 L 6 13 L 10 9 Z M 12 13 L 12 21"; label: root.mini-pinned ? "Unpin mini player" : "Pin mini player above other windows"; active: root.mini-pinned; clicked => { root.toggle-mini-pin(); } }
-                LibraryButton { width: 38px; light-mode: root.light-mode; show-tooltip: true; icon-path: "M 14 4 L 20 4 L 20 10 M 20 4 L 13 11 M 10 20 L 4 20 L 4 14 M 4 20 L 11 13"; label: "Expand to full Tide window"; clicked => { root.restore(); } }
+                LibraryButton { width: 38px; light-mode: root.light-mode; show-tooltip: true; icon-path: "M 12 3 L 12 10 M 8 6 L 12 10 L 16 6 M 12 21 L 12 14 M 8 18 L 12 14 L 16 18"; label: "Make the mini player smaller. Click again for the full window."; clicked => { root.shrink-mini(); } }
             }
         }
         HorizontalLayout {

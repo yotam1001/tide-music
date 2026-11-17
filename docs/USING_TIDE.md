@@ -176,7 +176,8 @@ quality depends on the song, account and extractor.
 
 - **Sun/moon:** change light/dark theme without changing window size.
 - **Window size:** drag the window edges; the layout adapts automatically.
-- **Mini:** reduce the player; its expand control returns to the full window.
+- **Mini:** reduce the player. Its size button first shrinks it to a one-row
+  player; clicking it again returns to the full window.
 - **Account:** check the connected identity, get connection help or disconnect.
   Manual imports are under Advanced connection options.
 - **Settings:** check for a stable release. Startup checks are under Advanced.
