@@ -2303,7 +2303,7 @@ export component AppWindow inherits Window {
                     HorizontalLayout {
                         height: 44px; spacing: 8px; cross-axis-alignment: center;
                         if root.update-installable && (root.update-available || root.update-phase > 0) : UpdateAction { horizontal-stretch: 1; height: 44px; light-mode: root.light-mode; busy: root.update-busy; phase: root.update-phase; progress: root.update-progress; activate => { root.install-update(); } cancel => { root.cancel-update(); } }
-                        if root.mac-os && root.update-available && !root.update-installable : LibraryButton { horizontal-stretch: 1; height: 44px; quiet: false; active: true; caption: "Download Tide.dmg"; label: "Download the latest Tide disk image in your browser"; light-mode: root.light-mode; clicked => { root.install-update(); } }
+                        if root.mac-os && root.update-available && !root.update-installable : LibraryButton { horizontal-stretch: 1; height: 44px; quiet: false; active: true; caption: "Download Mac update"; label: "Download the Tide disk image for your Mac in your browser"; light-mode: root.light-mode; clicked => { root.install-update(); } }
                         if !root.update-installable || (!root.update-available && root.update-phase == 0) : LibraryButton { horizontal-stretch: 1; height: 44px; quiet: false; active: true; caption: root.update-busy ? "Checking…" : "Check for updates"; label: "Check GitHub for a newer stable Tide release"; light-mode: root.light-mode; enabled: !root.update-busy; clicked => { root.check-updates(); } }
                     }
                     HorizontalLayout {

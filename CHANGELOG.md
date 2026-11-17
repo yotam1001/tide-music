@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.4.28 - macOS preview
+
+- Open the Intel disk image when checking for a stable update in the Intel build.
+- Clarify which Mac installer to use and how to open the preview for the first time.
+
 ## 0.4.27 - 2026-11-17
 
 - **Tide for Mac (preview).** A native Mac build for macOS 14 Sonoma and
