@@ -20,8 +20,8 @@ Sign in from Tide's top-right profile icon after installation. The
 [Chrome companion](https://github.com/yotam1001/tide-music/releases/latest/download/tide-browser-chromium.zip)
 remains available as a fallback. The Windows installer is currently unsigned.
 
-**macOS preview (Sonoma 14 or later):** [Apple Silicon](https://github.com/yotam1001/tide-music/releases/download/v0.4.28-mac-preview/Tide.dmg) ·
-[Intel](https://github.com/yotam1001/tide-music/releases/download/v0.4.28-mac-preview/Tide-Intel.dmg) ·
+**macOS preview (Sonoma 14 or later):** [Apple Silicon](https://github.com/yotam1001/tide-music/releases/latest/download/Tide.dmg) ·
+[Intel](https://github.com/yotam1001/tide-music/releases/latest/download/Tide-Intel.dmg) ·
 [Install and first launch](docs/INSTALLATION_MACOS.md)
 
 ![Tide's dark interface](docs/screenshots/full.png)
@@ -134,6 +134,5 @@ with Google or YouTube.
 
 ## Jams development
 
-The Windows installer and the Mac 0.4.28 preview include opt-in synchronized
-listening. See the [Jam guide](experiments/jam/README.md) for relay self-hosting
-and development.
+Synchronized listening is available in opt-in developer builds. See the
+[Jam guide](experiments/jam/README.md) for relay self-hosting and development.
