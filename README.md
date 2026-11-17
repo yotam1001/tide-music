@@ -132,8 +132,8 @@ Tide's original source is [MIT licensed](LICENSE). Dependencies keep their own
 licenses; see [third-party notices](THIRD_PARTY_NOTICES.md). Tide is not affiliated
 with Google or YouTube.
 
-## Experimental Jams development
+## Jams on Windows
 
-Synchronized listening is developed behind the `experimental-jams` feature and
-is excluded from the stable installer. See the [Jam guide](experiments/jam/README.md)
-for the current developer setup and validation status.
+The Windows installer includes opt-in synchronized listening. The Mac preview
+is built without Jams. See the [Jam guide](experiments/jam/README.md) for relay
+self-hosting and development.
