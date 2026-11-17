@@ -1317,7 +1317,15 @@ async fn launch_player(
         .arg("--input-terminal=no")
         // Tide owns the Windows media session; its helper must not process the
         // same hardware key independently and cause double pause/skip actions.
-        .arg("--input-media-keys=no")
+        .arg("--input-media-keys=no");
+    // mpv 0.39+ also registers its own system media session, separate
+    // from --input-media-keys. The OS then routes earbud buttons, media keys
+    // and touchpad swipes to mpv, which cannot skip, whenever Tide is not in
+    // front. Tide's own session must be the only one. On macOS the same
+    // applies to Now Playing; CI checks every bundled mpv accepts the option.
+    #[cfg(any(windows, target_os = "macos"))]
+    command.arg("--media-controls=no");
+    command
         .arg("--force-window=no")
         .arg("--vid=no")
         .arg("--vo=null")
@@ -1345,9 +1353,6 @@ async fn launch_player(
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    // Tide publishes its own Now Playing session on macOS.
-    #[cfg(target_os = "macos")]
-    command.arg("--media-controls=no");
     #[cfg(windows)]
     command.creation_flags(0x08000000);
     #[cfg(feature = "jam-lab-null-audio")]

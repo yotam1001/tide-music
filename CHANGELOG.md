@@ -2,8 +2,15 @@
 
 ## Unreleased
 
-- Keep the Mac app’s signature valid by preventing Python bytecode writes
-  after signing. Check both DMGs after quarantine, mounting and copying.
+- Earbud buttons, keyboard media keys and four-finger touchpad swipes now skip
+  songs while Tide is minimized or in the background on Windows. Tide's audio
+  helper had been registering a second Windows media session that took those
+  presses and could not skip.
+- A smaller mini player: click the size button in the mini player once for a
+  one-row player about half as wide, and again to return to the full window.
+- Fix "Tide is damaged and can't be opened" on Mac. Packaging wrote files
+  into the app after signing it, which broke its signature. CI now checks both DMGs the way a
+  browser download opens them.
 - Restore automatic Mac update checks and open the matching disk image for
   the offered version. Updates still replace Tide in Applications.
 - Let Tide own the Mac Now Playing session and keep the menu bar item
