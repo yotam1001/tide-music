@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Keep the Mac app’s signature valid by preventing Python bytecode writes
+  after signing. Check both DMGs after quarantine, mounting and copying.
+- Restore automatic Mac update checks and open the matching disk image for
+  the offered version. Updates still replace Tide in Applications.
+- Let Tide own the Mac Now Playing session and keep the menu bar item
+  available between track and playback changes. AirPods, physical media
+  keys and the Finder first-launch flow still need hardware validation.
+- Verify the standalone Mac developer build and both stable bundles in CI.
+  Stable Mac bundles exclude the experimental Jam client.
+
 ## 0.4.28 - macOS preview
 
 - Open the Intel disk image when checking for a stable update in the Intel build.

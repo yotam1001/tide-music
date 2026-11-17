@@ -259,7 +259,7 @@ impl MediaSession {
         }
     }
     pub fn set_close_to_tray(&self, enabled: bool) {
-        if main_thread().is_err() {
+        if main_thread().is_err() || self.status.borrow().is_some() == enabled {
             return;
         }
         if !enabled {
@@ -339,16 +339,19 @@ impl MediaSession {
                 let number: Obj = msg_send![class!(NSNumber),numberWithDouble:value];
                 let _: () = msg_send![&*self.info,setObject:&*number,forKey:&*string(key)];
             }
-            self.song = format!("{title} — {artist}").chars().take(72).collect();
+            let song: String = format!("{title} — {artist}").chars().take(72).collect();
+            if self.song != song || self.playing != playing {
+                if let Some(item) = self.status.borrow().as_ref() {
+                    let menu = status_menu(&song, playing, self.sender.clone());
+                    let _: () = msg_send![&**item, setMenu: &*menu];
+                }
+            }
+            self.song = song;
             self.playing = playing;
             let center: Obj = msg_send![class!(MPNowPlayingInfoCenter), defaultCenter];
             let _: () =
                 msg_send![&*center, setPlaybackState: if playing { 1usize } else { 2usize }];
             self.publish();
-            if let Some(item) = self.status.borrow().as_ref() {
-                let menu = status_menu(&self.song, self.playing, self.sender.clone());
-                let _: () = msg_send![&**item, setMenu: &*menu];
-            }
             Ok(())
         }
     }

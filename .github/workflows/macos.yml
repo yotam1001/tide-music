@@ -54,8 +54,9 @@ jobs:
         run: |
           for asset in Tide.dmg Tide-Intel.dmg; do
             url="https://github.com/yotam1001/tide-music/releases/latest/download/$asset"
+            echo "Published asset: $url"
             curl --fail --location --retry 3 --proto '=https' --proto-redir '=https' \
-              --write-out 'Published asset: %{url_effective}\n' --output "$RUNNER_TEMP/$asset" "$url"
+              --output "$RUNNER_TEMP/$asset" "$url"
             shasum -a 256 "$RUNNER_TEMP/$asset"
             # Collect evidence even when a previously shipped image fails.
             python3 scripts/check_macos_dmg.py "$RUNNER_TEMP/$asset" || \
@@ -76,6 +77,7 @@ jobs:
       - run: cargo build --release --locked -p tide-provider --bin tide-login --features tide-provider/native-login
       - run: target/release/tide-login --probe
       - run: cargo test -p tide-playback --locked real_mpv_exits_when_lifetime_connection_closes -- --ignored
+      - run: cargo test -p tide-playback --locked native_recovery_fault_probe -- --ignored
 
   rust:
     name: macOS Rust checks

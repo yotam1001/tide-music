@@ -138,7 +138,7 @@ def sign(app):
 
 
 def notarize(dmg):
-    if not os.environ.get('MACOS_SIGNING_IDENTITY'):
+    if os.environ.get('MACOS_SIGNING_IDENTITY', '-') == '-':
         print('Ad-hoc signed; notarization skipped.')
         return
     profile = os.environ.get('MACOS_NOTARY_PROFILE')
@@ -216,6 +216,8 @@ def main():
             dmg = out / f'Tide-{version}-{arch}.dmg'
             run('hdiutil', 'create', '-ov', '-volname', 'Tide', '-srcfolder', stage,
                 '-format', 'UDZO', dmg)
+            if (identity := os.environ.get('MACOS_SIGNING_IDENTITY', '-')) != '-':
+                run('codesign', '--force', '--sign', identity, '--timestamp', dmg)
             notarize(dmg)
             run('python3', ROOT / 'scripts/check_macos_dmg.py', dmg)
             # Stable names for releases/latest/download links on the website.

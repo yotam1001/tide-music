@@ -1345,6 +1345,9 @@ async fn launch_player(
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+    // Tide publishes its own Now Playing session on macOS.
+    #[cfg(target_os = "macos")]
+    command.arg("--media-controls=no");
     #[cfg(windows)]
     command.creation_flags(0x08000000);
     #[cfg(feature = "jam-lab-null-audio")]

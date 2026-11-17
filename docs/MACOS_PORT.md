@@ -22,7 +22,8 @@ on Windows: opt-in, never in the stable bundle until explicitly approved.
 | Mini pin/opacity | `HWND_TOPMOST` + layered alpha | `NSWindow` floating level + `alphaValue`, joins all Spaces |
 | Discord | `\\.\pipe\discord-ipc-N` | `$TMPDIR/discord-ipc-N` Unix socket |
 | Sign-in | WebView2 helper `tide-login.exe` | ephemeral WKWebView helper `tide-login` |
-| Installer | `TideSetup.exe` | `Tide.dmg` with `Tide.app` (ad-hoc signed until a Developer ID exists) |
+| Updates | Verified installer download and restart | Version and architecture check, browser DMG download and manual replacement |
+| Installer | `TideSetup.exe` | `Tide.dmg` or `Tide-Intel.dmg` with `Tide.app` (ad-hoc signed until a Developer ID exists) |
 
 ## macOS-only features
 
@@ -91,10 +92,32 @@ On non-macOS targets the crate builds as stubs returning `Err("... macOS only")`
 
 ## Validation
 
-There is no Mac in the loop yet, so `.github/workflows/macos.yml` runs on
-`macos-latest` (arm64) for every `mac/**` push and pull request: fmt, check,
-clippy, unit tests and a bundle build. Real-hardware checks still needed before a
-release: sign-in, audio output switching, media keys, Gatekeeper first launch.
+The macOS workflow runs on pull requests, `mac/**` pushes, and manual dispatch.
+It runs formatting, workspace checks, Clippy, unit tests, and playback smoke on
+Apple Silicon. The developer job builds Tide and `tide-login` directly with Cargo
+and checks Homebrew playback tooling. The bundle jobs package for Apple Silicon
+and native Intel (`macos-15-intel`), check that Jams are absent from both stable
+images, and confirm the pinned mpv accepts `--media-controls=no`. Tide registers
+its own Now Playing session.
+
+The published-download audit reproduced an invalid resource seal on both DMGs.
+The post-signing Python import probe added `argparse.cpython-314.pyc` and
+`webbrowser.cpython-314.pyc` inside the signed bundle. The packaging probe and
+the runtime helper now launch Python with `-B`. The packaging gate mounts the
+finished quarantined DMG, copies Tide.app, checks the outer and nested signatures,
+and records Gatekeeper’s policy assessment. Ad-hoc builds still require
+first-launch approval. [Published DMG audit](https://github.com/yotam1001/tide-music/actions/runs/44170335841/job/134347416698)
+
+The Mac implementations for HTTPS links, Finder crash-log reveal, appearance,
+Discord IPC, Mini pinning and opacity, Carbon shortcuts, and CoreAudio device
+watching are present. Global four-finger shortcuts remain specific to Windows.
+The Mac updater opens the disk image for the offered release and leaves
+replacement in Applications to the listener.
+
+Physical Apple Silicon and Intel checks are still needed for the first-launch
+dialog, live Google sign-in and Keychain access, AirPods and hardware media keys,
+output changes, global shortcuts, Discord, and Mini across Spaces and full-screen
+apps. The hosted playback probe uses muted local audio.
 
 ## Native sign-in packaging
 
