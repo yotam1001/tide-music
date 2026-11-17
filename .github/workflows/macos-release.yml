@@ -1,72 +1,47 @@
-name: macOS release
+name: Intel Mac preview validation
 on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing v-prefixed tag to build and attach assets to
+        description: Existing release tag to build and verify
         required: true
         type: string
-  push:
-    tags: ['v*']
 permissions:
   contents: read
 jobs:
-  build:
-    name: bundle (${{ matrix.arch }})
-    runs-on: macos-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: [arm64, x86_64]
+  intel:
+    runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ inputs.tag }}
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: macos-bundle-${{ matrix.arch }}
-          cache-on-failure: true
-      - name: Enable Intel runtime verification
-        if: matrix.arch == 'x86_64'
-        run: sudo softwareupdate --install-rosetta --agree-to-license
+          shared-key: macos-native-intel-preview
+      - run: test "$(uname -m)" = x86_64
       - run: python3 scripts/test_package_macos.py
-      - name: Build, sign, verify and package stable Tide
-        run: scripts/package-macos.sh --arch '${{ matrix.arch }}'
-      - name: Hash release assets
-        working-directory: dist
+      - run: scripts/package-macos.sh --arch x86_64
+      - name: Test Jams with the mounted Intel bundle's mpv
         run: |
-          for dmg in *.dmg; do shasum -a 256 "$dmg" > "$dmg.sha256"; done
-          stat -f '%N %z bytes' *.dmg
+          mount_dir="$(mktemp -d)"
+          hdiutil attach -nobrowse -readonly -mountpoint "$mount_dir" dist/Tide-Intel.dmg
+          trap 'hdiutil detach "$mount_dir"' EXIT
+          export TIDE_RUNTIME_DIR="$mount_dir/Tide.app/Contents/Resources/bin"
+          export JAM_NATIVE_FIXTURE="$RUNNER_TEMP/jam-silence.wav"
+          python3 - <<'PY'
+          import os, wave
+          with wave.open(os.environ['JAM_NATIVE_FIXTURE'], 'wb') as audio:
+              audio.setparams((1, 2, 48000, 0, 'NONE', 'not compressed'))
+              for _ in range(90):
+                  audio.writeframes(b'\0' * 96000)
+          PY
+          cargo test --manifest-path experiments/jam/Cargo.toml --locked --features headless-native --test native -- --ignored --nocapture --test-threads=1
       - uses: actions/upload-artifact@v4
         with:
-          name: macos-release-${{ matrix.arch }}
-          path: dist/*
+          name: Tide-macos-native-intel
+          path: dist/*.dmg
           if-no-files-found: error
-
-  publish:
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    env:
-      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
-      GH_TOKEN: ${{ github.token }}
-      GH_REPO: ${{ github.repository }}
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: macos-release-*
-          merge-multiple: true
-          path: dist
-      - name: Attach DMGs and checksums
-        run: |
-          [[ "$RELEASE_TAG" == v* ]] || { echo 'Expected v-prefixed release tag'; exit 1; }
-          gh release view "$RELEASE_TAG" || gh release create "$RELEASE_TAG" --verify-tag --draft --title "$RELEASE_TAG"
-          gh release upload "$RELEASE_TAG" dist/*.dmg dist/*.sha256 --clobber
-      # Never import the update signing key into CI. The maintainer downloads
-      # these artifacts and signs update manifests locally per docs/RELEASE_SIGNING.md,
-      # then uploads the signed manifests manually.
