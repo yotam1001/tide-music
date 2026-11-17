@@ -5,7 +5,8 @@ Run `scripts/package-macos.sh --arch arm64` (or `x86_64`). `--out` selects
 the output directory; `--no-runtime` is a development-only bundle without
 playback helpers. `--arch universal` builds a universal Tide executable, then
 produces separate arm64 and Intel DMGs with the matching runtime. `Tide.dmg`
-is always an alias of the arm64 DMG. Jams are disabled in all package builds.
+is always an alias of the arm64 DMG. Both architectures ship the same opt-in
+Jam client as Tide for Windows. The relay server stays separate.
 
 The package script verifies runtime downloads, generates the icon from the
 largest existing PNG, signs inner Mach-O files and nested apps before Tide,

@@ -46,6 +46,7 @@ class MacOSPlistTests(unittest.TestCase):
         self.assertEqual(mode, '100755')
         source = (ROOT / 'scripts/package_macos.py').read_text()
         self.assertIn("'--no-default-features'", source)
+        self.assertIn("'--features', 'jams'", source)
         self.assertIn("'--locked'", source)
         self.assertNotIn("'--deep'", source)
 

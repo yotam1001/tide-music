@@ -32,6 +32,13 @@ Your session is encrypted in
 `~/Library/Application Support/TideMusic/account`, and its key is kept in your
 login Keychain. macOS may ask once whether Tide can use that Keychain item.
 
+## Listen together
+
+On the Mac 0.4.28 preview and Tide for Windows, start a song and choose
+**Jams → Start Jam**. Share the invite with a friend and have them choose
+**Jams → Join Jam**. Each listener connects their own YouTube Music account.
+Use the default shared relay or enter your own relay in Advanced settings.
+
 ## What's different on a Mac
 
 - **Control Center and media keys.** The playing song, artwork and progress

@@ -5,6 +5,8 @@
 ## 0.4.28 - macOS preview
 
 - Open the Intel disk image when checking for a stable update in the Intel build.
+- Host or join Jams from both Mac builds using the same invite and shared queue
+  as Windows. Jams only connect when you host or join.
 - Clarify which Mac installer to use and how to open the preview for the first time.
 
 ## 0.4.27 - 2026-11-17

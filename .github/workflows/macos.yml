@@ -97,3 +97,16 @@ jobs:
       - run: cargo test -p tide-playback real_mpv_exits_when_lifetime_connection_closes -- --ignored
       - run: cargo test -p tide-playback native_audio_preferences_probe -- --ignored
       - run: cargo test -p tide-playback native_recovery_fault_probe -- --ignored
+      - name: Validate Jam protocol on macOS
+        run: cargo test --manifest-path experiments/jam/Cargo.toml --locked --test protocol_sync --test network --test invite_codes
+      - name: Synchronize two native mpv workers with a muted fixture
+        run: |
+          export JAM_NATIVE_FIXTURE="$RUNNER_TEMP/jam-silence.wav"
+          python3 - <<'PY'
+          import os, wave
+          with wave.open(os.environ['JAM_NATIVE_FIXTURE'], 'wb') as audio:
+              audio.setparams((1, 2, 48000, 0, 'NONE', 'not compressed'))
+              for _ in range(90):
+                  audio.writeframes(b'\0' * 96000)
+          PY
+          cargo test --manifest-path experiments/jam/Cargo.toml --locked --features headless-native --test native -- --ignored --nocapture --test-threads=1

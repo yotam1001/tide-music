@@ -1,5 +1,5 @@
 //! Explicit opt-in, two real muted mpv workers; no account/session/SMTC access.
-#![cfg(windows)]
+#![cfg(any(windows, target_os = "macos"))]
 mod common;
 #[path = "common/link.rs"]
 mod link;

@@ -35,6 +35,8 @@ def main():
             'import ytmusicapi, requests, certifi, ruamel.yaml; print("helper imports ok")')
         if not (app / 'Contents/Resources/helpers/youtube_music.py').is_file():
             raise RuntimeError('Account helper script is missing')
+        # Exercise the packaged client without signing in or opening a room.
+        run(app / 'Contents/MacOS/tide-music', '--smoke-jam-ownership')
     # This argument validation returns before any Slint/window/account setup.
     probe = subprocess.run([str(app / 'Contents/MacOS/tide-music'), '--verify-update-files'],
                            capture_output=True, text=True, timeout=30)
