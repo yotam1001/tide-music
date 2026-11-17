@@ -15,11 +15,34 @@ not needed.
 2. Open it and drag **Tide** onto **Applications**.
 3. Open Tide from Applications or Spotlight.
 
-The preview is ad-hoc signed and has no Apple notarization. If Gatekeeper
-warns that Apple cannot verify the developer, check that you downloaded Tide
-from the official GitHub release. After the first launch attempt, go to
-**System Settings → Privacy & Security → Open Anyway** and follow the prompt.
-See [Apple’s first-launch instructions](https://support.apple.com/en-us/102445).
+### First launch
+
+The preview is ad-hoc signed. If Gatekeeper asks you to approve the developer,
+check that the download came from Tide’s official GitHub release.
+
+1. On macOS 14, try **Control-click Tide → Open** in Finder and confirm **Open**
+   if offered.
+2. On macOS 15 or later, or if Finder gives you no **Open** button, try opening
+   Tide once. Then go to **System Settings → Privacy & Security**, scroll down
+   to the Tide notice, and select **Open Anyway**. Confirm when prompted.
+
+Some published Mac images had a broken signature seal. If macOS says Tide is
+damaged, replace that copy with a corrected DMG when available. To distinguish
+a broken seal from a warning about an unidentified developer, run:
+
+```sh
+codesign --verify --deep --strict --verbose=4 /Applications/Tide.app
+```
+
+If the seal verifies, you trust the download, and the Finder and System
+Settings options are both unavailable, the last resort is to clear the
+quarantine attribute for this copy of Tide:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/Tide.app
+```
+
+[Apple’s first-launch instructions](https://support.apple.com/en-us/102445)
 
 ## Sign in
 
@@ -66,10 +89,10 @@ Use the default shared relay or enter your own relay in Advanced settings.
 
 ## Updates
 
-Tide checks for new stable releases on launch. You can download them from the
-app or use the Mac download links above. Quit Tide, open the new disk image,
-and drag Tide into Applications to replace the old copy. Your settings and
-session are kept.
+With automatic checks enabled, Tide looks for a newer stable release with a
+disk image for your processor. Choose **Download Mac update** to open the
+download in your browser. Quit Tide, open the disk image, and drag Tide into
+Applications to replace the old copy. Your settings and session are kept.
 
 ## Uninstall
 

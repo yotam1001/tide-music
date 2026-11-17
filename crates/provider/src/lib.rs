@@ -2136,6 +2136,8 @@ fn execute_helper(
     let mut command = Command::new(python);
     command
         .arg("-I")
+        // The macOS bundled interpreter and its libraries are sealed resources.
+        .arg("-B")
         .arg(helper)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

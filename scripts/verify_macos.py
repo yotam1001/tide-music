@@ -28,17 +28,27 @@ def main():
                         prefix in block for prefix in ['/opt/homebrew/', '/usr/local/']):
                     raise RuntimeError(f'Nonportable runtime search path in {path}')
     if not args.no_runtime:
-        run(app / 'Contents/Resources/bin/mpv', '--version')
+        mpv = app / 'Contents/Resources/bin/mpv'
+        run(mpv, '--version')
+        options = run(mpv, '--no-config', '--media-controls=no', '--list-options',
+                      capture_output=True, text=True).stdout
+        media_options = [line for line in options.splitlines() if 'media' in line.lower()]
+        print('\n'.join(media_options), flush=True)
+        if not any(line.split()[0] == '--media-controls' for line in media_options):
+            raise RuntimeError('Bundled mpv must accept --media-controls=no')
         run(app / 'Contents/Resources/bin/yt-dlp', '--version')
-        # The account helper's isolated interpreter imports its pinned packages.
-        run(app / 'Contents/Resources/python/bin/python3', '-I', '-c',
+        # -B prevents imports from adding files after the resource seal is signed.
+        run(app / 'Contents/Resources/python/bin/python3', '-I', '-B', '-c',
             'import ytmusicapi, requests, certifi, ruamel.yaml; print("helper imports ok")')
         if not (app / 'Contents/Resources/helpers/youtube_music.py').is_file():
             raise RuntimeError('Account helper script is missing')
-        # Exercise the packaged client without signing in or opening a room.
-        run(app / 'Contents/MacOS/tide-music', '--smoke-jam-ownership')
+    player = str(app / 'Contents/MacOS/tide-music')
+    jam = subprocess.run([player, '--smoke-jam-ownership'],
+                         capture_output=True, text=True, timeout=30)
+    if jam.returncode != 1 or 'requires an experimental-jams build' not in jam.stderr:
+        raise RuntimeError('Stable macOS bundle must exclude Jams')
     # This argument validation returns before any Slint/window/account setup.
-    probe = subprocess.run([str(app / 'Contents/MacOS/tide-music'), '--verify-update-files'],
+    probe = subprocess.run([player, '--verify-update-files'],
                            capture_output=True, text=True, timeout=30)
     if probe.returncode != 1 or 'Expected signed manifest and installer paths' not in probe.stderr:
         raise RuntimeError(f'Headless CLI check failed: {probe.returncode}: {probe.stderr}')

@@ -8,6 +8,16 @@
   presses and could not skip.
 - A smaller mini player: click the size button in the mini player once for a
   one-row player about half as wide, and again to return to the full window.
+- Fix "Tide is damaged and can't be opened" on Mac. Packaging wrote files
+  into the app after signing it, which broke its signature. CI now checks both DMGs the way a
+  browser download opens them.
+- Restore automatic Mac update checks and open the matching disk image for
+  the offered version. Updates still replace Tide in Applications.
+- Let Tide own the Mac Now Playing session and keep the menu bar item
+  available between track and playback changes. AirPods, physical media
+  keys and the Finder first-launch flow still need hardware validation.
+- Verify the standalone Mac developer build and both stable bundles in CI.
+  Stable Mac bundles exclude the experimental Jam client.
 
 ## 0.4.28 - macOS preview
 

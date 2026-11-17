@@ -27,6 +27,25 @@ current checkout's generated Cargo output after validation when no longer needed
 Dev/test profiles disable incremental snapshots and limit debug symbols. Prefer hosted
 CI for full workspace and installer builds.
 
+### macOS
+
+On macOS 14 or later, install Xcode command-line tools, stable Rust, and
+Homebrew. From the checkout root, build Tide and its separate login helper
+into the same directory:
+
+```sh
+brew install mpv yt-dlp
+cargo build --release --locked -p tide-music
+cargo build --release --locked -p tide-provider --bin tide-login --features tide-provider/native-login
+target/release/tide-login --probe
+target/release/tide-music
+```
+
+For account and Library development, also run `scripts/setup-provider-macos.sh`.
+For a local build without the experimental Jam client, add
+`--no-default-features` to the Tide build command. Use
+`scripts/package-macos.sh` for a self-contained DMG with pinned runtimes.
+
 ## Checks
 
 ```powershell

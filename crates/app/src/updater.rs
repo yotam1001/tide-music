@@ -71,13 +71,37 @@ fn release_for(version: Version, digest: &str, size: u64) -> Result<Release, Str
     })
 }
 
-/// Stable macOS disk images are published for each architecture.
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-const MAC_DOWNLOAD: &str =
-    "https://github.com/yotam1001/tide-music/releases/latest/download/Tide.dmg";
+const MAC_DMG: &str = "Tide.dmg";
 #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-const MAC_DOWNLOAD: &str =
-    "https://github.com/yotam1001/tide-music/releases/latest/download/Tide-Intel.dmg";
+const MAC_DMG: &str = "Tide-Intel.dmg";
+
+#[cfg(any(test, target_os = "macos"))]
+fn mac_download_url(version: &Version, filename: &str) -> String {
+    format!("https://github.com/yotam1001/tide-music/releases/download/v{version}/{filename}")
+}
+
+#[cfg(target_os = "macos")]
+fn mac_download_available(version: &Version) -> Result<bool, String> {
+    let url = mac_download_url(version, MAC_DMG);
+    let response = agent(10)
+        .head(&url)
+        .header("User-Agent", "Tide-Updater")
+        .call()
+        .map_err(|_| "Could not check for the Mac disk image. Try again later.")?;
+    // The fixed GitHub release URL serves the file or redirects to its asset
+    // host. Inspect headers only, leaving the actual download to the browser.
+    match response.status().as_u16() {
+        200 => Ok(true),
+        301 | 302 | 303 | 307 | 308 => Ok(response
+            .headers()
+            .get("location")
+            .and_then(|header| header.to_str().ok())
+            .is_some_and(allowed_download)),
+        404 => Ok(false),
+        _ => Err("Could not check for the Mac disk image. Try again later.".into()),
+    }
+}
 
 fn agent(timeout: u64) -> ureq::Agent {
     ureq::Agent::config_builder()
@@ -108,6 +132,10 @@ pub(super) fn check() -> Result<Option<Release>, String> {
         release.size,
         unix_time()?,
     )?);
+    #[cfg(target_os = "macos")]
+    if !mac_download_available(&release.version)? {
+        return Ok(None);
+    }
     Ok(Some(release))
 }
 
@@ -115,7 +143,7 @@ fn unix_time() -> Result<u64, String> {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|time| time.as_secs())
-        .map_err(|_| "Check the Windows date and time before updating".into())
+        .map_err(|_| "Check your system date and time before updating".into())
 }
 fn require_authorization(release: &Release) -> Result<(), String> {
     if release
@@ -596,10 +624,14 @@ impl Updater {
                     ))
                 } else {
                     Completion::Checked(check().map(|candidate| {
-                        let cached = candidate
-                            .as_ref()
-                            .zip(base.as_ref())
-                            .and_then(|(release, base)| cached_installer(release, base));
+                        let cached = if cfg!(windows) {
+                            candidate
+                                .as_ref()
+                                .zip(base.as_ref())
+                                .and_then(|(release, base)| cached_installer(release, base))
+                        } else {
+                            None
+                        };
                         (candidate, cached)
                     }))
                 };
@@ -729,9 +761,15 @@ impl Updater {
 
 pub(super) fn wire(ui: &super::AppWindow, enabled: bool) -> Rc<RefCell<Updater>> {
     ui.set_app_version(env!("CARGO_PKG_VERSION").into());
+    #[cfg(not(target_os = "macos"))]
     let base = std::env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
         .filter(|p| p.is_absolute());
+    #[cfg(target_os = "macos")]
+    let base = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .map(|home| home.join("Library/Caches/TideMusic"));
     let executable = std::env::current_exe().ok();
     let installable = cfg!(windows)
         && base
@@ -760,14 +798,21 @@ pub(super) fn wire(ui: &super::AppWindow, enabled: bool) -> Rc<RefCell<Updater>>
         if let Some(ui) = weak.upgrade() {
             let mut updater = state.borrow_mut();
             updater.refresh_installability(&ui);
+            if updater.task.busy() {
+                return;
+            }
             if !ui.get_update_installable() {
                 // macOS: hand the disk image for this build's architecture to
                 // the browser; dragging Tide into Applications replaces this copy.
                 #[cfg(target_os = "macos")]
                 {
-                    let status = match crate::platform::open_web_page(MAC_DOWNLOAD) {
-                        Ok(()) => "Downloading the Mac disk image in your browser. Open it and drag Tide to Applications.",
-                        Err(_) => "Download the Mac disk image for your processor from the latest release, then drag Tide to Applications.",
+                    let Some(release) = updater.available.as_ref() else {
+                        return;
+                    };
+                    let url = mac_download_url(&release.version, MAC_DMG);
+                    let status = match crate::platform::open_web_page(&url) {
+                        Ok(()) => "Downloading the Mac disk image in your browser. Quit Tide, then open it and drag Tide to Applications.".into(),
+                        Err(_) => format!("Could not open your browser. Download {MAC_DMG} from the Tide {} release on GitHub.", release.version),
                     };
                     ui.set_update_status(status.into());
                     return;
@@ -777,9 +822,6 @@ pub(super) fn wire(ui: &super::AppWindow, enabled: bool) -> Rc<RefCell<Updater>>
                     ui.set_update_status("Automatic update is unavailable for this copy. Install TideSetup.exe from the latest release.".into());
                     return;
                 }
-            }
-            if updater.task.busy() {
-                return;
             }
             if let Some(path) = updater.ready.clone() {
                 let Some(release) = updater.available.as_ref() else {
@@ -848,11 +890,12 @@ pub(super) fn wire(ui: &super::AppWindow, enabled: bool) -> Rc<RefCell<Updater>>
         let weak = ui.as_weak();
         slint::Timer::single_shot(Duration::from_secs(15), move || {
             if let (Some(state), Some(ui)) = (state.upgrade(), weak.upgrade()) {
-                let base = state.borrow().base.clone();
-                if ui.get_auto_update_checks()
-                    && state.borrow().installable()
-                    && automatic_check_due(base.as_deref(), unix_time().unwrap_or(0))
-                {
+                let updater = state.borrow();
+                let due = ui.get_auto_update_checks()
+                    && (cfg!(target_os = "macos") || updater.installable())
+                    && automatic_check_due(updater.base.as_deref(), unix_time().unwrap_or(0));
+                drop(updater);
+                if due {
                     Updater::start(&state, &ui, false);
                 }
             }
@@ -899,6 +942,19 @@ mod tests {
     use super::*;
     #[cfg(windows)]
     use serde_json::json;
+
+    #[test]
+    fn mac_update_download_targets_the_offered_version_and_architecture() {
+        let version = Version::parse("0.5.0").unwrap();
+        assert_eq!(
+            mac_download_url(&version, "Tide.dmg"),
+            "https://github.com/yotam1001/tide-music/releases/download/v0.5.0/Tide.dmg"
+        );
+        assert_eq!(
+            mac_download_url(&version, "Tide-Intel.dmg"),
+            "https://github.com/yotam1001/tide-music/releases/download/v0.5.0/Tide-Intel.dmg"
+        );
+    }
 
     fn parse(version: &str) -> Release {
         release_for(
