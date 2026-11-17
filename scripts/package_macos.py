@@ -177,7 +177,7 @@ def main():
         target = ('aarch64' if arch == 'arm64' else arch) + '-apple-darwin'
         run('rustup', 'target', 'add', target)
         run('cargo', 'build', '--release', '--locked', '-p', 'tide-music',
-            '--no-default-features', '--target', target)
+            '--no-default-features', '--features', 'jams', '--target', target)
         # Native sign-in runs in its own owned helper process beside the player.
         run('cargo', 'build', '--release', '--locked', '-p', 'tide-provider',
             '--features', 'native-login', '--bin', 'tide-login', '--target', target)

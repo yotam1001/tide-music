@@ -1,6 +1,7 @@
 # Tide Music
 
-A native Windows music player built to keep RAM use low while gaming.
+A native YouTube Music player built to keep RAM use low while gaming. Available
+for Windows and in preview for macOS.
 
 [![Watch the Tide Music demo](docs/media/tide-promo-preview.gif)](docs/media/tide-promo.mp4)
 
@@ -19,8 +20,9 @@ Sign in from Tide's top-right profile icon after installation. The
 [Chrome companion](https://github.com/yotam1001/tide-music/releases/latest/download/tide-browser-chromium.zip)
 remains available as a fallback. The Windows installer is currently unsigned.
 
-**macOS:** a native Mac build is in development, with Control Center, the menu bar,
-the Dock menu and ⌘ shortcuts. See [Tide on macOS](docs/INSTALLATION_MACOS.md).
+**macOS preview (Sonoma 14 or later):** [Apple Silicon](https://github.com/yotam1001/tide-music/releases/download/v0.4.28-mac-preview/Tide.dmg) ·
+[Intel](https://github.com/yotam1001/tide-music/releases/download/v0.4.28-mac-preview/Tide-Intel.dmg) ·
+[Install and first launch](docs/INSTALLATION_MACOS.md)
 
 ![Tide's dark interface](docs/screenshots/full.png)
 
@@ -28,7 +30,7 @@ the Dock menu and ⌘ shortcuts. See [Tide on macOS](docs/INSTALLATION_MACOS.md)
 
 Native search previews with fetched YouTube Music catalogue artwork.
 
-## Get started
+## Get started on Windows
 
 You need **Windows x64** and internet access. No Rust, Python installation or
 API key is needed with the installer.
@@ -91,8 +93,9 @@ to another service or download your whole collection. Premium availability
 depends on your account and the accessible streams. Tide does not provide
 Premium, implement ad blocking, or guarantee every track or format.
 
-**Your session stays local.** Saved sign-in data is encrypted for your Windows
-user. There is no Tide account server, analytics or automatic crash uploader.
+**Your session stays local.** Tide encrypts saved sign-in data with Windows DPAPI
+or with a key in your Mac login Keychain. The app has no Tide account server,
+analytics or automatic crash uploader.
 Never share cookies or session files. [Privacy details](PRIVACY.md)
 
 **Memory use varies.** Include Tide and its temporary playback helpers when
@@ -101,7 +104,7 @@ the demo's figures. Installed Tide does not create Rust build caches.
 
 ## Updates and help
 
-**Settings → Check for updates** finds published stable releases and offers
+On Windows, **Settings → Check for updates** finds published stable releases and offers
 **Update Tide** with in-app progress and cancellation. Music continues until you
 choose **Restart to update**; setup runs in the background. Startup checks can be
 disabled. The updater skips beta
@@ -109,6 +112,9 @@ and draft releases. Installed previews can update to stable 0.1.3; future
 preview-only updates still need their installer. Accounts and
 preferences are kept during app updates. Update the unpacked companion separately
 through its guide.
+
+On macOS, install an update by replacing Tide in Applications with the version
+from the new disk image. See the [Mac update instructions](docs/INSTALLATION_MACOS.md#updates).
 
 [Troubleshooting](docs/TROUBLESHOOTING.md) ·
 [Report a bug](https://github.com/yotam1001/tide-music/issues/new) ·
@@ -126,8 +132,8 @@ Tide's original source is [MIT licensed](LICENSE). Dependencies keep their own
 licenses; see [third-party notices](THIRD_PARTY_NOTICES.md). Tide is not affiliated
 with Google or YouTube.
 
-## Experimental Jams development
+## Jams development
 
-Synchronized listening is developed behind the `experimental-jams` feature and
-is excluded from the stable installer. See the [Jam guide](experiments/jam/README.md)
-for the current developer setup and validation status.
+The Windows installer and the Mac 0.4.28 preview include opt-in synchronized
+listening. See the [Jam guide](experiments/jam/README.md) for relay self-hosting
+and development.

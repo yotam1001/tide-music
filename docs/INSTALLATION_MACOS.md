@@ -1,8 +1,7 @@
-# Tide on macOS (in development)
+# Tide on macOS (preview)
 
-The macOS build is being ported and has not been released yet. This page
-describes how it will install and what it adds on a Mac. Platform details and
-progress live in [MACOS_PORT.md](MACOS_PORT.md).
+Tide for Mac is available as a preview. See [MACOS_PORT.md](MACOS_PORT.md) for
+platform details.
 
 You need macOS 14 Sonoma or later on Apple Silicon or Intel. The disk image
 bundles its playback tools (mpv and yt-dlp), so Homebrew, Rust and Python are
@@ -10,15 +9,17 @@ not needed.
 
 ## Install and open
 
-1. Download **Tide.dmg** from the latest release.
+1. Open **Apple menu → About This Mac**. If you see **Chip** with an Apple M
+   series chip, download [Tide.dmg](https://github.com/yotam1001/tide-music/releases/download/v0.4.28-mac-preview/Tide.dmg).
+   If **Processor** shows Intel, download [Tide-Intel.dmg](https://github.com/yotam1001/tide-music/releases/download/v0.4.28-mac-preview/Tide-Intel.dmg).
 2. Open it and drag **Tide** onto **Applications**.
 3. Open Tide from Applications or Spotlight.
 
-Until Tide has an Apple Developer ID, the app is ad-hoc signed and Gatekeeper
-blocks the first launch. To allow it once, Control-click **Tide** in
-Applications, choose **Open**, then **Open** again. On macOS 15 and later, open
-**System Settings → Privacy & Security** and choose **Open Anyway** for Tide.
-Only do this for a disk image downloaded from this repository's releases.
+The preview is ad-hoc signed and has no Apple notarization. If Gatekeeper
+warns that Apple cannot verify the developer, check that you downloaded Tide
+from the official GitHub release. After the first launch attempt, go to
+**System Settings → Privacy & Security → Open Anyway** and follow the prompt.
+See [Apple’s first-launch instructions](https://support.apple.com/en-us/102445).
 
 ## Sign in
 
@@ -30,6 +31,13 @@ is discarded. A Zen profile's `cookies.sqlite` also works.
 Your session is encrypted in
 `~/Library/Application Support/TideMusic/account`, and its key is kept in your
 login Keychain. macOS may ask once whether Tide can use that Keychain item.
+
+## Listen together
+
+On the Mac 0.4.28 preview and Tide for Windows, start a song and choose
+**Jams → Start Jam**. Share the invite with a friend and have them choose
+**Jams → Join Jam**. Each listener connects their own YouTube Music account.
+Use the default shared relay or enter your own relay in Advanced settings.
 
 ## What's different on a Mac
 
@@ -58,9 +66,10 @@ login Keychain. macOS may ask once whether Tide can use that Keychain item.
 
 ## Updates
 
-Tide checks for new releases on launch. On a Mac, **Download Tide.dmg** opens
-the new disk image in your browser. Drag Tide into Applications again to replace
-the old copy. Your settings and session are kept.
+Tide checks for new stable releases on launch. You can download them from the
+app or use the Mac download links above. Quit Tide, open the new disk image,
+and drag Tide into Applications to replace the old copy. Your settings and
+session are kept.
 
 ## Uninstall
 

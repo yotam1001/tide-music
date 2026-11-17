@@ -71,10 +71,13 @@ fn release_for(version: Version, digest: &str, size: u64) -> Result<Release, Str
     })
 }
 
-/// The stable macOS disk image, published beside TideSetup.exe.
-#[cfg(target_os = "macos")]
+/// Stable macOS disk images are published for each architecture.
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 const MAC_DOWNLOAD: &str =
     "https://github.com/yotam1001/tide-music/releases/latest/download/Tide.dmg";
+#[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+const MAC_DOWNLOAD: &str =
+    "https://github.com/yotam1001/tide-music/releases/latest/download/Tide-Intel.dmg";
 
 fn agent(timeout: u64) -> ureq::Agent {
     ureq::Agent::config_builder()
@@ -758,13 +761,13 @@ pub(super) fn wire(ui: &super::AppWindow, enabled: bool) -> Rc<RefCell<Updater>>
             let mut updater = state.borrow_mut();
             updater.refresh_installability(&ui);
             if !ui.get_update_installable() {
-                // macOS: no in-place installer yet. Hand the signed release DMG to
+                // macOS: hand the disk image for this build's architecture to
                 // the browser; dragging Tide into Applications replaces this copy.
                 #[cfg(target_os = "macos")]
                 {
                     let status = match crate::platform::open_web_page(MAC_DOWNLOAD) {
-                        Ok(()) => "Downloading Tide.dmg in your browser. Open it and drag Tide to Applications.",
-                        Err(_) => "Download Tide.dmg from the latest release, then drag Tide to Applications.",
+                        Ok(()) => "Downloading the Mac disk image in your browser. Open it and drag Tide to Applications.",
+                        Err(_) => "Download the Mac disk image for your processor from the latest release, then drag Tide to Applications.",
                     };
                     ui.set_update_status(status.into());
                     return;
