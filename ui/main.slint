@@ -229,6 +229,9 @@ export component AppWindow inherits Window {
     in property <float> mini-opacity: 100;
     callback toggle-mini-pin();
     callback change-mini-opacity(float);
+    // One-row mini player, reached by a second click on the mini's size button.
+    in-out property <bool> mini-small: false;
+    callback shrink-mini();
     in property <bool> history-feedback-enabled: false;
     in property <string> history-feedback-status;
     callback toggle-history-feedback();
@@ -542,10 +545,10 @@ export component AppWindow inherits Window {
     icon: @image-url("assets/tide-icon.png");
     default-font-family: "Segoe UI";
     default-font-size: 14px;
-    preferred-width: root.collapsed ? 700px : root.compact-mode ? 780px : 1140px;
-    preferred-height: root.collapsed ? 132px : root.compact-mode ? 720px : 800px;
-    min-width: 650px;
-    min-height: root.collapsed ? (root.jam-active ? 146px : 112px) : 420px;
+    preferred-width: root.collapsed ? (root.mini-small ? 380px : 700px) : root.compact-mode ? 780px : 1140px;
+    preferred-height: root.collapsed ? (root.mini-small ? 80px : 132px) : root.compact-mode ? 720px : 800px;
+    min-width: root.collapsed && root.mini-small ? 320px : 650px;
+    min-height: root.collapsed ? (root.mini-small ? 80px : 112px) + (root.jam-active ? 34px : 0px) : 420px;
     background: Theme.window;
     forward-focus: app-focus;
     changed height => { root.sidebar-profile = root.height >= 650px; }
@@ -2175,14 +2178,16 @@ export component AppWindow inherits Window {
                 window-minimized: root.minimized;
                 transport-enabled: !root.jam-guest;
                 skip-enabled: root.can-skip;
-                preferred-height: root.collapsed ? 110px : 92px;
-                min-height: root.collapsed ? 110px : 92px;
+                preferred-height: root.collapsed ? (root.mini-small ? 80px : 110px) : 92px;
+                min-height: root.collapsed ? (root.mini-small ? 80px : 110px) : 92px;
                 max-height: root.collapsed ? 1000px : 92px;
                 vertical-stretch: root.collapsed ? 1 : 0;
                 track-title: root.track-title;
                 track-artist: root.track-artist;
                 mini-pinned: root.mini-pinned;
                 toggle-mini-pin => { root.toggle-mini-pin(); }
+                mini-small: root.mini-small;
+                shrink-mini => { root.shrink-mini(); }
                 artist-enabled: root.track-artist-enabled && !root.account-busy && !root.artist-picker-open && !root.settings-open && !root.account-open;
                 audio-quality: root.audio-quality;
                 playback-hint: root.collapsed && root.feedback-notice != "" ? root.feedback-notice : root.playback-hint;

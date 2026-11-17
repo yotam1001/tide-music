@@ -331,6 +331,17 @@ type LibraryResult = Result<tide_provider::Response, String>;
 /// Leave the maximized state, then resize on the next event-loop turn: Windows
 /// applies the un-maximize asynchronously and would otherwise restore the old
 /// size over the requested one.
+/// Window size for the mini player: the two-row standard layout, or the
+/// one-row small layout. A Jam adds its status line to either.
+pub(crate) fn mini_size(u: &AppWindow) -> slint::LogicalSize {
+    let jam = if u.get_jam_active() { 34.0 } else { 0.0 };
+    if u.get_mini_small() {
+        slint::LogicalSize::new(380.0, 80.0 + jam)
+    } else {
+        slint::LogicalSize::new(700.0, 132.0 + jam)
+    }
+}
+
 fn resize_after_unmaximize(u: &AppWindow, size: slint::LogicalSize) {
     if !u.window().is_maximized() {
         u.window().set_size(size);
@@ -4066,6 +4077,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         u.set_media_controls_enabled(s.settings.media_controls);
         save(&s.settings);
     });
+    {
+        // The mini player's size button: mini, then the smaller mini.
+        let weak = ui.as_weak();
+        ui.on_shrink_mini(move || {
+            if let Some(u) = weak.upgrade() {
+                if u.get_collapsed() && !u.get_mini_small() {
+                    u.set_mini_small(true);
+                    resize_after_unmaximize(&u, mini_size(&u));
+                }
+            }
+        });
+    }
     bind!(on_toggle_mini_pin, |s, u| {
         s.settings.mini_pinned = !s.settings.mini_pinned;
         u.set_mini_pinned(s.settings.mini_pinned);
@@ -4197,15 +4220,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         u.window().size().to_logical(u.window().scale_factor());
                     restored_maximized.set(u.window().is_maximized());
                 }
+                // Each trip to the mini player starts at its standard size.
+                u.set_mini_small(false);
                 u.set_collapsed(c);
                 if c {
-                    resize_after_unmaximize(
-                        &u,
-                        slint::LogicalSize::new(
-                            700.0,
-                            if u.get_jam_active() { 166.0 } else { 132.0 },
-                        ),
-                    );
+                    resize_after_unmaximize(&u, mini_size(&u));
                 } else {
                     let size = *restored_size.borrow();
                     // Compact mode may have been chosen meanwhile; it never maximizes.

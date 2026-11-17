@@ -166,8 +166,22 @@ fn native_ratings_remain_reachable_and_do_not_take_over_transport() {
     );
     assert_eq!(*transport.borrow(), 0, "Pin also changed playback");
     draw(&window, 700, 132, "mini-pin-on");
+    // One size button: the first click shrinks the mini player to one row,
+    // the second (in the same corner) returns to the full window.
+    let weak = ui.as_weak();
+    ui.on_shrink_mini(move || weak.upgrade().unwrap().set_mini_small(true));
     click(&ui, 660.0, 36.0);
-    assert!(!ui.get_collapsed(), "Expand became unreachable next to Pin");
+    assert!(ui.get_mini_small(), "Smaller mini player is not reachable");
+    assert!(ui.get_collapsed(), "Shrinking left the mini player");
+    draw(&window, 380, 80, "mini-small");
+    click(&ui, 356.0, 30.0);
+    assert!(
+        !ui.get_collapsed(),
+        "Expand is unreachable in the small mini"
+    );
+    assert_eq!(*pins.borrow(), 1, "A size click toggled the pin");
+    assert_eq!(*transport.borrow(), 0, "A size click changed playback");
+    ui.set_mini_small(false);
     ui.set_collection_enabled(true);
     ui.set_playlist_picker_song(
         "A long selected song title that must stay inside the chooser".into(),

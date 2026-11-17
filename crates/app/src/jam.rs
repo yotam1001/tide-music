@@ -351,7 +351,7 @@ pub fn leave(s: &mut State, u: &AppWindow, message: &str) {
     u.set_jam_guest(false);
     u.set_jam_status(message.into());
     if u.get_collapsed() {
-        u.window().set_size(slint::LogicalSize::new(700.0, 132.0));
+        u.window().set_size(crate::mini_size(u));
     }
 }
 pub fn account_changing(s: &mut State, u: &AppWindow) {
