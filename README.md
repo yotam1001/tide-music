@@ -1,138 +1,131 @@
+<div align="center">
+
+<img src="ui/assets/tide-icon.png" alt="Tide logo" width="112">
+
 # Tide Music
 
-A native YouTube Music player built to keep RAM use low while gaming. Available
-for Windows and in preview for macOS.
+**YouTube Music, without the browser.**
+A fast, native player that stays light on RAM, even while you game.
 
-[![Watch the Tide Music demo](docs/media/tide-promo-preview.gif)](docs/media/tide-promo.mp4)
+[![Download for Windows](https://img.shields.io/badge/Download-Windows-c2185b?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/yotam1001/tide-music/releases/latest/download/TideSetup.exe)
+[![macOS Apple Silicon](https://img.shields.io/badge/macOS-Apple%20Silicon-8e2449?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/yotam1001/tide-music/releases/latest/download/Tide.dmg)
+[![macOS Intel](https://img.shields.io/badge/macOS-Intel-8e2449?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/yotam1001/tide-music/releases/latest/download/Tide-Intel.dmg)
 
-[Watch the 48-second demo](docs/media/tide-promo.mp4)
+[![Latest release](https://img.shields.io/github/v/release/yotam1001/tide-music?label=latest&color=c2185b)](https://github.com/yotam1001/tide-music/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-8e2449)](LICENSE)
+[![Built with Rust](https://img.shields.io/badge/built%20with-Rust-b7410e?logo=rust)](docs/DEVELOPMENT.md)
 
-The demo shows an earlier prototype; its memory comparison is one measured
-example, not a fixed RAM guarantee.
+<br>
 
-Play YouTube Music, bring in your playlists and recommendations, and keep the
-player out of the way with a mini mode. Tide uses native audio playback rather
-than keeping an embedded browser running.
+<img src="docs/screenshots/readme/home.png" alt="Tide's home screen with personalised mixes, quick picks and album art" width="860">
 
-**Windows release:** [Download TideSetup.exe](https://github.com/yotam1001/tide-music/releases/latest/download/TideSetup.exe)
-from [the latest stable release](https://github.com/yotam1001/tide-music/releases/latest).
-Sign in from Tide's top-right profile icon after installation. The
-[Chrome companion](https://github.com/yotam1001/tide-music/releases/latest/download/tide-browser-chromium.zip)
-remains available as a fallback. The Windows installer is currently unsigned.
+</div>
 
-**macOS preview (Sonoma 14 or later):** [Apple Silicon](https://github.com/yotam1001/tide-music/releases/latest/download/Tide.dmg) ·
-[Intel](https://github.com/yotam1001/tide-music/releases/latest/download/Tide-Intel.dmg) ·
-[Install and first launch](docs/INSTALLATION_MACOS.md)
+---
 
-![Tide's dark interface](docs/screenshots/full.png)
+## Why Tide
 
-[Light theme](docs/screenshots/light.png)
+- 🪶 **Featherweight.** Native audio playback, with no embedded browser left running in the background.
+- 🎮 **Made for gaming.** A pinnable mini player keeps music one click away without stealing your RAM or your screen.
+- 🎧 **Your real library.** Sign in with your YouTube Music account to get your playlists, Liked Songs, Supermix and recommendations.
+- 🤝 **Jams.** Invite a friend, share one queue and listen together in sync.
+- 🔒 **Private by design.** Your session is encrypted on your machine. No Tide account, no analytics and no crash uploader.
 
-Native search previews with fetched YouTube Music catalogue artwork.
+## A closer look
 
-## Get started on Windows
+<table>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/readme/lyrics.png" alt="Karaoke lyrics view"><br><sub><b>Karaoke lyrics</b>: words light up in time with the song</sub></td>
+    <td width="50%"><img src="docs/screenshots/readme/queue.png" alt="Queue panel"><br><sub><b>Queue</b>: drag to reorder while Autoplay keeps the music going</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/readme/playlist.png" alt="Playlist view"><br><sub><b>Playlists</b>: play, shuffle, edit and search inside any playlist</sub></td>
+    <td><img src="docs/screenshots/readme/search.png" alt="Search results"><br><sub><b>Search</b>: songs, albums, artists and playlists in one place</sub></td>
+  </tr>
+</table>
 
-You need **Windows x64** and internet access. No Rust, Python installation or
-API key is needed with the installer.
+<div align="center">
+  <img src="docs/screenshots/readme/mini.png" alt="Mini player" width="600"><br>
+  <sub><b>Mini player</b>: pin it above your game and keep playing</sub>
+</div>
 
-1. Download **TideSetup.exe** from the latest release and install Tide.
-2. Open the profile icon → **Sign in with Google**. Choose your Music profile,
-   open Library in the temporary window, then **Connect this profile**.
-3. Search for music, open your Library, or choose a Home recommendation.
+## Features
 
-The login browser closes after connection. If native sign-in is unavailable,
-choose **Use browser companion instead**. [Account setup](docs/ACCOUNT_SETUP.md) ·
-[Installation](docs/INSTALLATION.md) · [Controls](docs/USING_TIDE.md).
+| | |
+|---|---|
+| 🎵 **Play anything** | Songs, albums, playlists and local audio files, with native playback |
+| 🎤 **Karaoke lyrics** | Word-by-word synced lyrics with smooth scrolling |
+| 🏠 **Your YouTube Music** | Home recommendations, playlists, Liked Songs, saved albums and history |
+| 📻 **Radio & Autoplay** | Start song radio or keep related music flowing automatically |
+| 🧑‍🎤 **Artist pages** | Click an artist to play, shuffle or queue their top songs |
+| 📋 **Smart queue** | Play next, drag to reorder, and search the queue or any playlist |
+| 👍 **Like & save** | Like or dislike songs and edit your own playlists |
+| 🔊 **Audio control** | Choose your output device and smooth volume between songs |
+| 🪟 **Mini player** | Always on top, with adjustable opacity |
+| ⌨️ **System integration** | Windows media keys, keyboard shortcuts and Discord status |
+| 🔄 **In-app updates** | Updates download in the background; restart whenever you're ready |
 
-## What you can do
+## Get started
 
-- Open synced lyrics with smooth scrolling, animated line emphasis and an album-colour backdrop.
-  Motion can be switched off; leaving lyrics, entering Mini or minimizing releases its extra view resources.
+**Windows (x64)**
 
-- Play songs, playlists and local audio with native playback.
-- Search songs, albums, artists and playlists; browse saved albums and listening history.
-- Search within playlists and the queue by title, artist or album.
-- Choose Tide’s audio output and optionally smooth volume between songs.
-- See small cover images in search, loaded through a bounded memory cache.
-- Listen together in Jams: invite friends, share a queue and stay in sync.
-- Select an artist name to browse their top songs, then play, shuffle or queue.
-- See loading/retry feedback and the observed audio format in the player.
-- See your playlists, Liked Songs and personalized recommendations.
-- Like or dislike the playing song, and save or remove entries in your own playlists.
-- Optionally send actual listening to YouTube Music history from Settings.
-- Shuffle playlists, queue songs next, and drag upcoming tracks into order.
-- Start song radio or enable Autoplay for related recommendations.
-- Switch themes, resize the window or use a mini player.
-- Use Windows media controls and download updates inside Tide; restart when ready.
-- Optionally share the playing song with Discord.
-- Pin the Mini player above other windows and adjust its opacity.
+1. Download **[TideSetup.exe](https://github.com/yotam1001/tide-music/releases/latest/download/TideSetup.exe)** and install it. You don't need Rust, Python or an API key.
+2. Click the profile icon → **Sign in with Google**, pick your Music profile, open Library, then click **Connect this profile**.
+3. Search, open your Library or tap a Home recommendation. That's it.
 
-Theme is the sun/moon button in the header. **Account** is beside **Settings**.
-**Queue** sits beside the player controls. [Learn the controls](docs/USING_TIDE.md)
+If native sign-in isn't available, choose **Use browser companion instead**
+([Chrome companion](https://github.com/yotam1001/tide-music/releases/latest/download/tide-browser-chromium.zip)).
 
-## Listen together
+**macOS (Sonoma 14 or later, preview)**
 
-Both people install the latest Tide and connect their own YouTube Music accounts.
-Play a song, choose **Jams** below **Library**, then **Start Jam → Copy invite**, and send the invite to your
-friend. They paste it into **Jams → Join Jam**. Guests can browse and press **+**
-to add songs; the host controls playback. Your volume stays local.
+Download for [Apple Silicon](https://github.com/yotam1001/tide-music/releases/latest/download/Tide.dmg)
+or [Intel](https://github.com/yotam1001/tide-music/releases/latest/download/Tide-Intel.dmg), then follow the
+[Mac install guide](docs/INSTALLATION_MACOS.md).
 
-No browser needs to remain open. The free shared server supports two rooms at
-once and may take about a minute to wake. **Advanced setup** supports your own
-server. Ending a hosted Jam keeps local music playing; leaving as a guest restores
-your original queue paused.
+📖 [Account setup](docs/ACCOUNT_SETUP.md) · [Installation](docs/INSTALLATION.md) · [Using Tide](docs/USING_TIDE.md)
 
-## Connection and privacy
+## Listen together with Jams
 
-Native sign-in uses a separate temporary browser and stores the verified session
-encrypted for your Windows user. The browser companion remains available as a
-fallback. Jams contact a relay only when you host or join.
+1. Both of you install Tide and connect your own YouTube Music accounts.
+2. Play a song, open **Jams**, then **Start Jam → Copy invite**.
+3. Your friend pastes the invite into **Jams → Join Jam**.
 
-**Your existing account is used.** Tide reads your library; it does not move it
-to another service or download your whole collection. Premium availability
-depends on your account and the accessible streams. Tide does not provide
-Premium, implement ad blocking, or guarantee every track or format.
+Guests browse and press **+** to add songs, the host controls playback, and
+everyone keeps their own volume. No browser needs to stay open. Jams use a free
+shared relay by default, and **Advanced setup** lets you
+[host your own](experiments/jam/README.md).
 
-**Your session stays local.** Tide encrypts saved sign-in data with Windows DPAPI
-or with a key in your Mac login Keychain. The app has no Tide account server,
-analytics or automatic crash uploader.
-Never share cookies or session files. [Privacy details](PRIVACY.md)
+## Privacy
 
-**Memory use varies.** Include Tide and its temporary playback helpers when
-comparing resource use. The [measurement notes](docs/media/memory-test.md) explain
-the demo's figures. Installed Tide does not create Rust build caches.
+- Sign-in data is encrypted with Windows DPAPI or your Mac login Keychain.
+- Tide has no account server, no analytics and no automatic crash uploads.
+- Jams contact a relay only when you host or join one.
+- Never share your cookies or session files with anyone.
 
-## Updates and help
+[Full privacy details](PRIVACY.md) · [Security policy](SECURITY.md)
 
-On Windows, **Settings → Check for updates** finds published stable releases and offers
-**Update Tide** with in-app progress and cancellation. Music continues until you
-choose **Restart to update**; setup runs in the background. Startup checks can be
-disabled. The updater skips beta
-and draft releases. Installed previews can update to stable 0.1.3; future
-preview-only updates still need their installer. Accounts and
-preferences are kept during app updates. Update the unpacked companion separately
-through its guide.
+## Updates & help
 
-On macOS, install an update by replacing Tide in Applications with the version
-from the new disk image. See the [Mac update instructions](docs/INSTALLATION_MACOS.md#updates).
+On Windows, open **Settings → Check for updates**. Music keeps playing while the
+update downloads, and you click **Restart to update** when you're ready. Your
+accounts and preferences carry over. On Mac, replace Tide in Applications with
+the new disk image ([details](docs/INSTALLATION_MACOS.md#updates)).
 
 [Troubleshooting](docs/TROUBLESHOOTING.md) ·
 [Report a bug](https://github.com/yotam1001/tide-music/issues/new) ·
 [Remove Tide](docs/INSTALLATION.md#remove-tide)
 
-Report security issues through [SECURITY.md](SECURITY.md), without publishing
-private information.
-
 ## Contribute
 
-See [Contributing](CONTRIBUTING.md) and the [developer guide](docs/DEVELOPMENT.md).
-Release maintainers can use the [launch checklist](docs/BETA_RELEASE.md).
+Pull requests are welcome! Start with [Contributing](CONTRIBUTING.md) and the
+[developer guide](docs/DEVELOPMENT.md). Maintainers can use the
+[launch checklist](docs/BETA_RELEASE.md).
 
-Tide's original source is [MIT licensed](LICENSE). Dependencies keep their own
-licenses; see [third-party notices](THIRD_PARTY_NOTICES.md). Tide is not affiliated
-with Google or YouTube.
+---
 
-## Jams development
-
-Synchronized listening is available in opt-in developer builds. See the
-[Jam guide](experiments/jam/README.md) for relay self-hosting and development.
+<div align="center">
+<sub>
+Tide is <a href="LICENSE">MIT licensed</a>. Dependencies keep their own licenses (<a href="THIRD_PARTY_NOTICES.md">third-party notices</a>).<br>
+Tide is not affiliated with Google or YouTube.
+</sub>
+</div>
