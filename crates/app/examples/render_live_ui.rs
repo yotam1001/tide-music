@@ -156,9 +156,7 @@ fn run() -> Result<(), String> {
         songs
             .iter()
             .map(|card| TrackRow {
-                // Recommendation cards carry no track identity; the row falls
-                // back to comparing title and artist.
-                key: "".into(),
+                key: card.id.clone().into(),
                 title: card.title.clone().into(),
                 artist: card.subtitle.clone().into(),
                 album: "".into(),
@@ -386,6 +384,7 @@ fn run() -> Result<(), String> {
                 visible
                     .iter()
                     .map(|card| TrackRow {
+                        key: card.id.clone().into(),
                         title: card.title.clone().into(),
                         artist: card.subtitle.clone().into(),
                         artist_enabled: !card.artists.is_empty(),

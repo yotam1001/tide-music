@@ -776,23 +776,8 @@ fn current_video_id(s: &State) -> Option<String> {
 }
 
 fn source_video_id(source: &str) -> Option<String> {
-    let url = url::Url::parse(source).ok()?;
-    if !is_youtube_source(source) {
-        return None;
-    }
-    let id = if url.host_str() == Some("youtu.be") {
-        url.path().trim_start_matches('/').to_string()
-    } else {
-        url.query_pairs()
-            .find(|(key, _)| key == "v")?
-            .1
-            .into_owned()
-    };
-    (id.len() == 11
-        && id
-            .bytes()
-            .all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_'))
-    .then_some(id)
+    // One parser for song identity, artist links and menu keys.
+    artists::video_id(source)
 }
 fn request_radio(s: &mut State, u: &AppWindow, tx: &mpsc::SyncSender<LibraryResult>, force: bool) {
     if !local_controls_allowed(s) {
