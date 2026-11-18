@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.4.30 - 2026-11-18
+
 - The song menu ("…" or right-click) no longer closes by itself when a
   song's cover finishes loading. It still closes when the row switches to a
   different song, including on Home shelves. Thanks to @bfs2021 for the fix
