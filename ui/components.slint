@@ -330,7 +330,7 @@ export component SongRow inherits Rectangle {
     // Identity of the song behind this row. `track` also carries `artwork`,
     // which arrives later and changes the struct; the menu must stay open for
     // that update and only close when the row is recycled for another song.
-    in property <string> track-key: root.track.key == "" ? root.track.title + "\n" + root.track.artist : root.track.key;
+    private property <string> track-key: root.track.key == "" ? root.track.title + "\n" + root.track.artist : root.track.key;
     in property <int> index;
     in property <bool> current: false;
     in property <bool> light-mode;
@@ -609,7 +609,7 @@ export component HomeCard inherits Rectangle {
     if root.item.kind == "song" : SongRow {
         width: parent.width; height: parent.height; tile-mode: !root.quick; editorial: root.editorial; featured: root.featured; quick-mode: root.quick;
         shared-queue: root.shared-queue; collection-enabled: root.collection-enabled;
-        track: { title: root.item.title, artist: root.item.subtitle, artist-enabled: root.item.subtitle != "", album: root.item.shelf, duration: "", artwork: root.item.artwork, recommended: false };
+        track: { key: root.item.id, title: root.item.title, artist: root.item.subtitle, artist-enabled: root.item.subtitle != "", album: root.item.shelf, duration: "", artwork: root.item.artwork, recommended: false };
         index: root.source-index; light-mode: root.light-mode; enabled: root.enabled;
         select => { root.select(root.source-index); } queue(next) => { root.queue(root.source-index, next); } radio => { root.radio(root.source-index); } artist => { root.artist(root.source-index); } add-playlist => { root.add-playlist(root.source-index); }
     }
