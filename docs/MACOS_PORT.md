@@ -2,8 +2,8 @@
 
 Goal: the same Tide (same Slint UI, playback engine, provider, Library, lyrics,
 Mini player, Discord, updates) running natively on macOS 14+ (Apple Silicon and
-Intel), plus a small set of macOS-only integrations. Jams keep the same rules as
-on Windows: opt-in, never in the stable bundle until explicitly approved.
+Intel), plus a small set of macOS-only integrations. Jams are a stable feature
+on both Windows and Mac.
 
 ## Architecture
 
@@ -96,8 +96,9 @@ The macOS workflow runs on pull requests, `mac/**` pushes, and manual dispatch.
 It runs formatting, workspace checks, Clippy, unit tests, and playback smoke on
 Apple Silicon. The developer job builds Tide and `tide-login` directly with Cargo
 and checks Homebrew playback tooling. The bundle jobs package for Apple Silicon
-and native Intel (`macos-15-intel`), check that Jams are absent from both stable
-images, and confirm the pinned mpv accepts `--media-controls=no`. Tide registers
+and, outside pull requests, native Intel (`macos-15-intel`); the tagged release
+workflow always builds both. They check that Jams are included in the stable
+images and confirm the pinned mpv accepts `--media-controls=no`. Tide registers
 its own Now Playing session.
 
 The published-download audit reproduced an invalid resource seal on both DMGs.
