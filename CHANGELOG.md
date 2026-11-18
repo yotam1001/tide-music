@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.4.31 - 2026-11-18
+
 - Jams are back. A packaging mistake in 0.4.26 left Jams out of the Windows
   app, so the **Jams** button below **Library** disappeared for 0.4.26 to
   0.4.30. Update to get it back. Jams are now in the Mac app as well.
