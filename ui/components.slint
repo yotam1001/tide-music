@@ -327,6 +327,10 @@ export component SongRow inherits Rectangle {
     callback remove-playlist();
     in property <bool> shared-queue: false;
     in property <TrackRow> track;
+    // Identity of the song behind this row. `track` also carries `artwork`,
+    // which arrives later and changes the struct; the menu must stay open for
+    // that update and only close when the row is recycled for another song.
+    in property <string> track-key: root.track.key == "" ? root.track.title + "\n" + root.track.artist : root.track.key;
     in property <int> index;
     in property <bool> current: false;
     in property <bool> light-mode;
@@ -349,7 +353,7 @@ export component SongRow inherits Rectangle {
     opacity: root.dragging ? 0.55 : 1;
     changed drag-in-progress => { if root.drag-in-progress { song-menu.close(); } }
     changed enabled => { if !root.enabled { song-menu.close(); } }
-    changed track => { song-menu.close(); }
+    changed track-key => { song-menu.close(); }
     changed index => { song-menu.close(); }
     changed current => { song-menu.close(); }
     border-radius: 7px;

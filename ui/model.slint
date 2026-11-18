@@ -2,6 +2,10 @@
 
 
 export struct TrackRow {
+    // Stable identity of the song. Unlike the rest of the struct it does not
+    // change when the cover or other metadata arrives, so a row can tell "this
+    // song was updated" apart from "this row now shows a different song".
+    key: string,
     title: string,
     artist: string,
     artist-enabled: bool,

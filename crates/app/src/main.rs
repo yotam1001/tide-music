@@ -1722,6 +1722,7 @@ fn content_rows(
         .iter()
         .enumerate()
         .map(|(index, t)| TrackRow {
+            key: source_video_id(&t.source).unwrap_or_default().into(),
             title: t.title.clone().into(),
             artist: t.artist.clone().into(),
             artist_enabled: artists::can_open(t),
@@ -1997,6 +1998,7 @@ fn refresh(ui: &AppWindow, state: &State) {
         .iter()
         .enumerate()
         .map(|(index, t)| TrackRow {
+            key: source_video_id(&t.source).unwrap_or_default().into(),
             title: t.title.clone().into(),
             artist: t.artist.clone().into(),
             artist_enabled: artists::can_open(t),
@@ -4808,7 +4810,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     .filter(|track| source_video_id(&track.source).is_some() && !skip_disliked(&s, track))
                                     .collect();
                                 u.set_related_rows(ModelRc::new(VecModel::from(s.related_tracks.iter()
-                                    .map(|track| TrackRow { title: track.title.clone().into(), artist: track.artist.clone().into(), ..Default::default() })
+                                    .map(|track| TrackRow { key: source_video_id(&track.source).unwrap_or_default().into(), title: track.title.clone().into(), artist: track.artist.clone().into(), ..Default::default() })
                                     .collect::<Vec<_>>())));
                                 u.set_related_note(if s.related_tracks.is_empty() { "No related songs were returned." } else { "Add songs without changing what’s playing." }.into());
                             } else {
