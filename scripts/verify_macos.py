@@ -43,10 +43,11 @@ def main():
         if not (app / 'Contents/Resources/helpers/youtube_music.py').is_file():
             raise RuntimeError('Account helper script is missing')
     player = str(app / 'Contents/MacOS/tide-music')
+    # Exercise the packaged Jam client without signing in or opening a room.
     jam = subprocess.run([player, '--smoke-jam-ownership'],
                          capture_output=True, text=True, timeout=30)
-    if jam.returncode != 1 or 'requires an experimental-jams build' not in jam.stderr:
-        raise RuntimeError('Stable macOS bundle must exclude Jams')
+    if jam.returncode != 0 or 'PASS offline Jam ownership:' not in jam.stdout + jam.stderr:
+        raise RuntimeError(f'Stable macOS bundle is missing Jams: {jam.returncode}: {jam.stderr}')
     # This argument validation returns before any Slint/window/account setup.
     probe = subprocess.run([player, '--verify-update-files'],
                            capture_output=True, text=True, timeout=30)

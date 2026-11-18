@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Jams are back. A packaging mistake in 0.4.26 left Jams out of the Windows
+  app, so the **Jams** button below **Library** disappeared for 0.4.26 to
+  0.4.30. Update to get it back. Jams are now in the Mac app as well.
+
 ## 0.4.30 - 2026-11-18
 
 - The song menu ("…" or right-click) no longer closes by itself when a

@@ -44,8 +44,8 @@ login Keychain. macOS may ask once whether Tide can use that Keychain item.
 
 ## Listen together
 
-Synchronized listening is available in opt-in developer builds. See the
-[Jam guide](../experiments/jam/README.md) for setup and relay self-hosting.
+Choose **Jams** below **Library** to host or join a Jam, the same as on
+Windows. See the [Jam guide](../experiments/jam/README.md) for relay self-hosting.
 
 ## What's different on a Mac
 

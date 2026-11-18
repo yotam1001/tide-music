@@ -350,10 +350,9 @@ try {
     # Exercise the exact installed production binary, not a separate feature
     # build, before claiming that the stable installer actually includes Jams.
     Invoke-CleanChild (Join-Path $taskUpdatedRelease 'tide-music.exe') @('--verify-installed-updater') 'installed-update-eligibility' 60 | Out-Null
-    Invoke-CleanChild (Join-Path $taskUpdatedRelease 'tide-music.exe') @('--smoke-jam-ownership') 'installed-jam-exclusion' 60 -ExpectedExitCode 1 | Out-Null
-    $taskJamError = Get-Content -LiteralPath (Join-Path $taskEvidence 'installed-jam-exclusion.stderr.log') -Raw
-    if ($taskJamError -notmatch 'Jam ownership verification requires an experimental-jams build') {
-        throw 'Stable installed player did not reject the experimental Jam probe.'
+    $taskJamOutput = Invoke-CleanChild (Join-Path $taskUpdatedRelease 'tide-music.exe') @('--smoke-jam-ownership') 'installed-jam-ownership' 60
+    if ($taskJamOutput -notmatch 'PASS offline Jam ownership:') {
+        throw 'Installed player did not include the verified Jam controls.'
     }
     Assert-CleanSentinel
 
