@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Failed release checks now leave the checkout ready for retry. Thanks to
+  @jay23606 for the fix and regression test (#164).
+
 ## 0.4.31 - 2026-11-18
 
 - Jams are back. A packaging mistake in 0.4.26 left Jams out of the Windows
