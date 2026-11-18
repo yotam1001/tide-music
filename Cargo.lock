@@ -4440,7 +4440,7 @@ dependencies = [
 
 [[package]]
 name = "tide-core"
-version = "0.4.30"
+version = "0.4.31"
 dependencies = [
  "serde",
 ]
@@ -4461,7 +4461,7 @@ dependencies = [
 
 [[package]]
 name = "tide-macos"
-version = "0.4.30"
+version = "0.4.31"
 dependencies = [
  "block2 0.6.2",
  "libc",
@@ -4479,7 +4479,7 @@ dependencies = [
 
 [[package]]
 name = "tide-music"
-version = "0.4.30"
+version = "0.4.31"
 dependencies = [
  "arboard",
  "image",
@@ -4507,7 +4507,7 @@ dependencies = [
 
 [[package]]
 name = "tide-playback"
-version = "0.4.30"
+version = "0.4.31"
 dependencies = [
  "serde_json",
  "tide-core",
@@ -4519,7 +4519,7 @@ dependencies = [
 
 [[package]]
 name = "tide-provider"
-version = "0.4.30"
+version = "0.4.31"
 dependencies = [
  "libc",
  "ring",
@@ -4536,7 +4536,7 @@ dependencies = [
 
 [[package]]
 name = "tide-windows"
-version = "0.4.30"
+version = "0.4.31"
 dependencies = [
  "serde_json",
  "url",
