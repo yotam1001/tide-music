@@ -11,7 +11,7 @@ architectures. The Homebrew developer job can be cancelled for runner
 unavailability if it never received a runner. Pass
 `--allow-queued-developer-cancel` only after confirming that cancellation.
 Keep the bundled mpv pin in `packaging/macos/runtime.lock.json` aligned with
-the playback smoke job. Stable Windows and Mac packages exclude Jams.
+the playback smoke job. Stable Windows and Mac packages include Jams.
 
 After merge, the script requires the Windows Release validation job and the
 tag's macOS release workflow. It checks the DMG signature gate on both

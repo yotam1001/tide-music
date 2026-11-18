@@ -13,5 +13,7 @@
 
 - Keep Tide and Jams free for users. Preserve a self-hosted relay path; do not
   introduce subscriptions or commit to paid hosting without explicit approval.
-- Jams remain opt-in and separate from the stable installer until explicitly
-  approved after synchronized playback and security validation.
+- Jams are a stable feature, approved by the owner on 2026-11-18. Windows and
+  Mac release packages must include them; do not build stable packages with
+  `--no-default-features` alone or turn the installed Jam checks into
+  exclusion checks.
