@@ -34,7 +34,7 @@ WINDOWS_FILES = (SETUP, PREVIEW, *COMPANIONS)
 PR_JOBS = {
     "Scripts, privacy and browser checks", "Pull request compile and formatting",
     "Audit currently published Mac downloads", "macOS Rust checks", "playback-smoke",
-    "bundle (arm64)", "bundle (x86_64)", "jam-lab", "private-proxy-config",
+    "bundle (arm64)", "jam-lab", "private-proxy-config",
     "render-container", "shared-relay-linux",
 }
 DEVELOPER_JOB = "macOS developer build with Homebrew runtimes"

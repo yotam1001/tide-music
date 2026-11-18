@@ -16,11 +16,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - arch: arm64
-            runner: macos-latest
-          - arch: x86_64
-            runner: macos-15-intel
+        # The Intel bundle takes ~35 minutes on PRs. macos-release.yml still
+        # builds and verifies both DMGs from the tag before anything ships.
+        include: ${{ fromJSON(github.event_name == 'pull_request'
+          && '[{"arch":"arm64","runner":"macos-latest"}]'
+          || '[{"arch":"arm64","runner":"macos-latest"},{"arch":"x86_64","runner":"macos-15-intel"}]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
