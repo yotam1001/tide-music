@@ -196,12 +196,18 @@ class Release:
             require(tuple(map(int, self.version.split("."))) > tuple(map(int, current[0].split("."))),
                     "Release version must advance the workspace version.")
             changes = update_source(current[0], self.version, self.args.date, self.args.pin)
-            for path, data in changes.items():
-                path.write_bytes(data)
-            command("git", "add", "--", *(str(path.relative_to(ROOT)) for path in changes))
-            python("check_public_files.py")
-            command("git", "diff", "--cached", "--check")
-            command("git", "commit", "-m", self.title)
+            try:
+                for path, data in changes.items():
+                    path.write_bytes(data)
+                command("git", "add", "--", *(str(path.relative_to(ROOT)) for path in changes))
+                python("check_public_files.py")
+                command("git", "diff", "--cached", "--check")
+                command("git", "commit", "-m", self.title)
+            except BaseException:
+                # Roll back our own edits so the documented retry passes the clean-tree check.
+                git("restore", "--source=HEAD", "--staged", "--worktree",
+                    "--", *(str(path.relative_to(ROOT)) for path in changes))
+                raise
         head = git("rev-parse", "HEAD")
         require(git("show", "-s", "--format=%s", head) == self.title, "Unexpected release branch commit.")
         require(re.search(rf"(?m)^## {re.escape(self.version)} - \d{{4}}-\d{{2}}-\d{{2}}$",
