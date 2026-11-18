@@ -55,17 +55,17 @@ def require(condition, message):
         raise ReleaseError(message)
 
 
-def command(*args, capture=False, env=None):
+def command(*args, capture=False, env=None, cwd=None):
     result = subprocess.run(
-        [str(arg) for arg in args], cwd=ROOT, check=True, env=env,
+        [str(arg) for arg in args], cwd=cwd or ROOT, check=True, env=env,
         stdout=subprocess.PIPE if capture else None,
         encoding="utf-8", errors="replace",
     )
     return result.stdout.strip() if capture else None
 
 
-def git(*args):
-    return command("git", *args, capture=True)
+def git(*args, cwd=None):
+    return command("git", *args, capture=True, cwd=cwd)
 
 
 def gh(*args):
@@ -76,8 +76,8 @@ def api(path):
     return json.loads(command("gh", "api", f"repos/{REPO}/{path}", capture=True))
 
 
-def python(script, *args):
-    command(sys.executable, ROOT / "scripts" / script, *args)
+def python(script, *args, cwd=None):
+    command(sys.executable, (cwd or ROOT) / "scripts" / script, *args, cwd=cwd)
 
 
 def sha256(path):
@@ -105,16 +105,16 @@ def matching_ci_run(workflow, sha, branch):
     return run
 
 
-def update_source(previous, version, release_date, extra_pins):
+def update_source(root, previous, version, release_date, extra_pins):
     pins = ("Cargo.toml", *LOCKS, *extra_pins)
-    hits = git("grep", "-l", "-F", "-e", previous, "--", ":!CHANGELOG.md").splitlines()
+    hits = git("grep", "-l", "-F", "-e", previous, "--", ":!CHANGELOG.md", cwd=root).splitlines()
     require(set(hits) <= set(pins), "Review previous version references and use --pin FILE for active pins: "
             + ", ".join(sorted(set(hits) - set(pins))))
     for name in pins:
-        require(git("ls-files", "--", name) == name, f"Pin is not a tracked file: {name}")
+        require(git("ls-files", "--", name, cwd=root) == name, f"Pin is not a tracked file: {name}")
     changes = {}
     for name in pins:
-        path = ROOT / name
+        path = root / name
         original = path.read_bytes()
         old, new = previous.encode(), version.encode()
         if name in LOCKS:
@@ -132,7 +132,7 @@ def update_source(previous, version, release_date, extra_pins):
         require(updated != original, f"No active {previous} pin found in {name}.")
         changes[path] = updated
 
-    changelog = ROOT / "CHANGELOG.md"
+    changelog = root / "CHANGELOG.md"
     original = changelog.read_bytes()
     newline = b"\r\n" if b"\r\n" in original else b"\n"
     heading = b"## Unreleased" + newline
@@ -195,13 +195,27 @@ class Release:
             require(git("rev-parse", "HEAD") == base, "Release branch must start at origin/main.")
             require(tuple(map(int, self.version.split("."))) > tuple(map(int, current[0].split("."))),
                     "Release version must advance the workspace version.")
-            changes = update_source(current[0], self.version, self.args.date, self.args.pin)
-            for path, data in changes.items():
-                path.write_bytes(data)
-            command("git", "add", "--", *(str(path.relative_to(ROOT)) for path in changes))
-            python("check_public_files.py")
-            command("git", "diff", "--cached", "--check")
-            command("git", "commit", "-m", self.title)
+            # Prepare off-branch so validation failures and interruptions leave the
+            # caller's index and files alone. Git's fast-forward protects local edits.
+            with tempfile.TemporaryDirectory(prefix="tide-prepare-") as temp:
+                checkout = Path(temp) / "work"
+                command("git", "worktree", "add", "--detach", checkout, base)
+                try:
+                    changes = update_source(checkout, current[0], self.version, self.args.date, self.args.pin)
+                    for path, data in changes.items():
+                        path.write_bytes(data)
+                    command("git", "add", "--", *(path.relative_to(checkout) for path in changes), cwd=checkout)
+                    python("check_public_files.py", cwd=checkout)
+                    command("git", "diff", "--cached", "--check", cwd=checkout)
+                    command("git", "commit", "-m", self.title, cwd=checkout)
+                    commit = git("rev-parse", "HEAD", cwd=checkout)
+                    require(git("branch", "--show-current") == self.branch and git("rev-parse", "HEAD") == base,
+                            "Release branch changed during preparation.")
+                    status = git("status", "--porcelain", "--untracked-files=no")
+                    require(not status, f"Tracked files changed during preparation:\n{status}")
+                    command("git", "merge", "--ff-only", commit)
+                finally:
+                    command("git", "worktree", "remove", "--force", checkout)
         head = git("rev-parse", "HEAD")
         require(git("show", "-s", "--format=%s", head) == self.title, "Unexpected release branch commit.")
         require(re.search(rf"(?m)^## {re.escape(self.version)} - \d{{4}}-\d{{2}}-\d{{2}}$",
