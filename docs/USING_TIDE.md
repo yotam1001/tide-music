@@ -72,8 +72,8 @@ owns a combination, Tide reports the conflict and keeps
 your previous shortcuts. Choose combinations unused by your games; exclusive
 keyboard handling in some games or elevated apps still needs hardware testing.
 
-**Settings → Audio** lets you choose Windows default or a specific output.
-Play a song once to discover outputs. Windows default follows system output
+**Settings → Audio** lets you choose System default or a specific output.
+Play a song once to discover outputs. System default follows system output
 changes; a selected device stays selected until you change it. An unavailable
 saved output is labeled clearly instead of silently replacing your preference.
 Output choices and normalization survive restarts and app updates and apply only

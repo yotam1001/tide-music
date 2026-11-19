@@ -173,7 +173,7 @@ fn filtered_playlist_and_queue_keep_absolute_indices_and_audio_has_its_own_page(
             ui.set_settings_open(true);
             ui.set_settings_audio_open(true);
             ui.set_audio_device_names(ModelRc::new(VecModel::from(vec![
-                "Windows default".into(),
+                "System default".into(),
                 "Headphones".into(),
             ])));
             ui.set_audio_status("Applies only to Tide".into());
