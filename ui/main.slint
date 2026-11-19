@@ -545,7 +545,7 @@ export component AppWindow inherits Window {
     callback toggle-animations();
     private property <bool> header-branding: true;
     private property <bool> sidebar-profile: false;
-    private property <bool> advanced-open: false;
+    in-out property <bool> advanced-open: false;
     private property <bool> music-search-enabled: root.account-connected && root.browsing-enabled;
     private property <bool> collection-navigation-enabled: root.account-connected && !root.account-busy
         && !root.settings-open && !root.account-open && !root.artist-picker-open && !root.lyrics-open

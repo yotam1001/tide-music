@@ -95,8 +95,9 @@ def _atomic_write_json(path: Path, payload: dict, mode: int) -> None:
     fd, tmp_name = tempfile.mkstemp(prefix=".tide-nmh-", dir=path.parent)
     tmp_path = Path(tmp_name)
     try:
-        os.fchmod(fd, mode)
         with os.fdopen(fd, "wb") as stream:
+            if hasattr(os, "fchmod"):
+                os.fchmod(stream.fileno(), mode)
             stream.write(encoded)
             stream.flush()
             os.fsync(stream.fileno())

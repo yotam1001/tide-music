@@ -15,6 +15,7 @@ setup = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(setup)
 
 
+@unittest.skipIf(os.name == "nt", "macOS companion setup requires POSIX permissions and symlinks")
 class MacOSCompanionSetupTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="tide-macos-nmh-test-")
