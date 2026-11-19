@@ -76,9 +76,13 @@ pub fn is_google_refusal_url(raw: &str) -> bool {
     secure_url(raw).is_some_and(|u| {
         u.host_str() == Some("accounts.google.com") && {
             let path = u.path().to_ascii_lowercase();
-            ["/signin/rejected", "/deniedsigninrejected", "/signinrejected"]
-                .iter()
-                .any(|marker| path.contains(marker))
+            [
+                "/signin/rejected",
+                "/deniedsigninrejected",
+                "/signinrejected",
+            ]
+            .iter()
+            .any(|marker| path.contains(marker))
         }
     })
 }
@@ -203,7 +207,9 @@ mod capture {
         }
         let cookies = deduplicate_cookies(cookies)?;
         if cookies.len() > 128
-            || !cookies.get("__Secure-3PAPISID").is_some_and(|v| !v.is_empty())
+            || !cookies
+                .get("__Secure-3PAPISID")
+                .is_some_and(|v| !v.is_empty())
         {
             return Err("YouTube Music sign-in cookies were missing or exceeded the limit");
         }
@@ -709,7 +715,8 @@ mod native {
             let _: () = msg_send![&*web, setNavigationDelegate: &*delegate];
             let _: () = msg_send![&*web, setUIDelegate: &*delegate];
             let _: () = msg_send![&*root, addSubview: &*web];
-            let label: Obj = msg_send![class!(NSTextField), wrappingLabelWithString: &*string(PROMPT_DEFAULT)];
+            let label: Obj =
+                msg_send![class!(NSTextField), wrappingLabelWithString: &*string(PROMPT_DEFAULT)];
             let _: () = msg_send![&*label, setFrame: NSRect::new(NSPoint::new(16.,44.),NSSize::new(768.,42.))];
             let _: () = msg_send![&*root, addSubview: &*label];
             let button: Obj = msg_send![class!(NSButton), buttonWithTitle: &*string("Connect this profile"), target: &*delegate, action: sel!(connect:)];

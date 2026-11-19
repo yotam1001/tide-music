@@ -4244,7 +4244,8 @@ mod tests {
 
     #[test]
     fn parse_headers_accepts_copy_as_curl_from_safari_chrome_firefox_and_cmd() {
-        let safari_curl = br#"curl 'https://music.youtube.com/youtubei/v1/browse?prettyPrint=false' \
+        let safari_curl =
+            br#"curl 'https://music.youtube.com/youtubei/v1/browse?prettyPrint=false' \
 -X 'POST' \
 -H 'Accept: */*' \
 -H 'Cookie: __Secure-3PAPISID=safari; SID=sid123' \
@@ -4290,10 +4291,10 @@ mod tests {
         assert_eq!(parsed["accept-language"], "en-US,en;q=0.9");
 
         // Rejects malformed / incomplete / injected cURL inputs.
-        assert!(
-            parse_headers(b"curl 'https://music.youtube.com' -H 'Cookie: __Secure-3PAPISID=open")
-                .is_err()
-        );
+        assert!(parse_headers(
+            b"curl 'https://music.youtube.com' -H 'Cookie: __Secure-3PAPISID=open"
+        )
+        .is_err());
         assert!(parse_headers(b"curl 'https://music.youtube.com' -b cookies.txt").is_err());
         assert!(parse_headers(
             b"curl 'https://music.youtube.com' -H $'Cookie: __Secure-3PAPISID=a; x=1\\nEvil: 1'"
@@ -4313,9 +4314,7 @@ mod tests {
         let provider =
             Provider::with_key_store(directory.clone(), Arc::new(InMemoryKeyStore::new()));
         provider
-            .import_bytes(
-                br#"{"cookie":"__Secure-3PAPISID=old; SID=old","x-goog-authuser":"0"}"#,
-            )
+            .import_bytes(br#"{"cookie":"__Secure-3PAPISID=old; SID=old","x-goog-authuser":"0"}"#)
             .unwrap();
         let original = fs::read(directory.join(SESSION_FILE_NAME)).unwrap();
 
@@ -4337,7 +4336,11 @@ mod tests {
         );
         // Invalid contents -> InvalidHeaders
         let bad_file = directory.join("bad.txt");
-        fs::write(&bad_file, b"curl 'https://music.youtube.com' -H 'Accept: */*'").unwrap();
+        fs::write(
+            &bad_file,
+            b"curl 'https://music.youtube.com' -H 'Accept: */*'",
+        )
+        .unwrap();
         assert_eq!(
             provider.import_session_file_verified(&bad_file, Arc::new(AtomicBool::new(false))),
             Err(SessionImportError::InvalidHeaders)
@@ -4349,7 +4352,10 @@ mod tests {
             provider.import_session_file_verified(&big_file, Arc::new(AtomicBool::new(false))),
             Err(SessionImportError::InvalidHeaders)
         );
-        assert_eq!(fs::read(directory.join(SESSION_FILE_NAME)).unwrap(), original);
+        assert_eq!(
+            fs::read(directory.join(SESSION_FILE_NAME)).unwrap(),
+            original
+        );
         fs::remove_dir_all(&directory).unwrap();
     }
 }

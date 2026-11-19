@@ -277,8 +277,8 @@ mod macos_impl {
         if meta.file_type().is_symlink() || !meta.is_file() {
             return Err("Refusing to modify an unsafe native-messaging manifest.".into());
         }
-        let data = fs::read(path)
-            .map_err(|_| "Could not read existing native-messaging manifest.")?;
+        let data =
+            fs::read(path).map_err(|_| "Could not read existing native-messaging manifest.")?;
         let parsed: serde_json::Value = serde_json::from_slice(&data)
             .map_err(|_| "Existing native-messaging manifest is unreadable.")?;
         if parsed.get("name").and_then(|v| v.as_str()) != Some(HOST_NAME) {
@@ -376,7 +376,9 @@ mod macos_impl {
             let mut origins = read_existing_origins(&policy)?;
             if !origins.contains(&origin) {
                 if origins.len() >= MAX_ALLOWED_ORIGINS {
-                    return Err("Maximum number of registered browser extension IDs reached.".into());
+                    return Err(
+                        "Maximum number of registered browser extension IDs reached.".into(),
+                    );
                 }
                 origins.push(origin);
             }
@@ -464,17 +466,14 @@ mod macos_impl {
         use std::os::unix::fs::symlink;
 
         fn temp_workspace(tag: &str) -> PathBuf {
-            let root = std::env::temp_dir()
-                .canonicalize()
-                .unwrap()
-                .join(format!(
-                    "tide-companion-{tag}-{}-{}",
-                    std::process::id(),
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_nanos()
-                ));
+            let root = std::env::temp_dir().canonicalize().unwrap().join(format!(
+                "tide-companion-{tag}-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
             fs::create_dir_all(&root).unwrap();
             root
         }
