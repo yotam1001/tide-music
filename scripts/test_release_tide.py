@@ -1,6 +1,7 @@
 """Check that a failed release preparation leaves no tracked edits behind for retry."""
 from datetime import date
 from pathlib import Path
+import json
 import os
 import subprocess
 import sys
@@ -102,6 +103,75 @@ tide.Release(SimpleNamespace(version="0.2.0", date=date.today(), pin=[])).prepar
                     mock.patch.object(release_tide, "python"):
                 release_tide.Release(args).prepare()
             self.assertEqual(run_git(work, "show", "-s", "--format=%s", "HEAD").strip(), "Release 0.2.0")
+
+
+class LatestOrderTests(unittest.TestCase):
+    """A stale draft must never be promoted over a newer public Latest."""
+
+    RELEASES = [
+        {"tagName": "v0.5.0", "isDraft": False, "isPrerelease": False, "isLatest": True},
+        {"tagName": "v0.4.9", "isDraft": True, "isPrerelease": False, "isLatest": False},
+        {"tagName": "v0.4.8", "isDraft": False, "isPrerelease": False, "isLatest": False},
+        {"tagName": "v0.6.0", "isDraft": False, "isPrerelease": True, "isLatest": False},
+    ]
+
+    def release(self, version, view):
+        args = mock.Mock(version=version)
+        release = release_tide.Release(args)
+        listing = json.dumps(self.RELEASES)
+        calls = []
+
+        def gh(*command):
+            calls.append(command)
+            if command[:2] == ("release", "list"):
+                return listing
+            if command[:2] == ("release", "edit"):
+                return "edited"
+            raise AssertionError(f"unexpected gh call {command}")
+
+        patches = [
+            mock.patch.object(release_tide, "gh", side_effect=gh),
+            mock.patch.object(release, "verify_release_assets", return_value=(view, {"x": "y"})),
+            mock.patch.object(release, "windows_dir", return_value=Path(self.temp)),
+            mock.patch.object(release, "merge_sha", return_value="abc"),
+            mock.patch.object(release_tide, "git", return_value="abc	refs/tags/v" + version),
+        ]
+        (Path(self.temp) / "verified-release-digests.json").write_text(json.dumps({"x": "y"}), "ascii")
+        return release, patches, calls
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.temp = temporary.name
+
+    def run_publish(self, version):
+        release, patches, calls = self.release(version, {"isDraft": True})
+        with patches[0], patches[1], patches[2], patches[3], patches[4]:
+            release.publish()
+        return [call for call in calls if call[:2] == ("release", "edit")]
+
+    def test_older_draft_is_rejected_before_editing_the_release(self):
+        release, patches, calls = self.release("0.4.9", {"isDraft": True})
+        with patches[0], patches[1], patches[2], patches[3], patches[4]:
+            with self.assertRaisesRegex(release_tide.ReleaseError, "older than published v0.5.0"):
+                release.publish()
+        self.assertFalse([call for call in calls if call[:2] == ("release", "edit")],
+                         "The stale draft was edited before the Latest check")
+
+    def test_newer_draft_is_promoted(self):
+        self.assertEqual(len(self.run_publish("0.5.1")), 1)
+
+    def test_prereleases_and_drafts_do_not_block_and_odd_tags_do(self):
+        self.assertEqual(release_tide.newer_public_releases(self.RELEASES, "v0.5.1"), [])
+        self.assertEqual(release_tide.newer_public_releases(self.RELEASES, "v0.4.9"), ["v0.5.0"])
+        odd = [{"tagName": "nightly", "isDraft": False, "isPrerelease": False, "isLatest": True}]
+        self.assertEqual(release_tide.newer_public_releases(odd, "v0.5.1"), ["nightly"])
+
+    def test_verify_rejects_a_downgraded_latest(self):
+        release, patches, _ = self.release("0.4.9", {"isDraft": False})
+        with patches[0], patches[1], patches[2], patches[3], patches[4]:
+            with self.assertRaisesRegex(release_tide.ReleaseError, "backward"):
+                release.verify()
 
 
 if __name__ == "__main__":

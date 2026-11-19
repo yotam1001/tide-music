@@ -89,6 +89,25 @@ def checksum_lines(digests):
     return "".join(f"{digest}  {name}\n" for name, digest in sorted(digests.items()))
 
 
+def version_key(tag):
+    match = re.fullmatch(rf"v({VERSION})", tag or "")
+    return tuple(map(int, match[1].split("."))) if match else None
+
+
+def newer_public_releases(releases, tag):
+    """Published stable releases whose version is above `tag`, or that cannot be ordered."""
+    own = version_key(tag)
+    require(own is not None, f"Unexpected release tag {tag}.")
+    newer = []
+    for item in releases:
+        if item["isDraft"] or item["isPrerelease"] or item["tagName"] == tag:
+            continue
+        key = version_key(item["tagName"])
+        if key is None or key > own:
+            newer.append(item["tagName"])
+    return newer
+
+
 def matching_ci_run(workflow, sha, branch):
     runs = json.loads(gh("run", "list", "--workflow", workflow, "--commit", sha,
                          "--branch", branch, "--event", "push", "--limit", "10", "--json",
@@ -357,6 +376,14 @@ try {
                 "GitHub release target must match the stable release merge commit.")
         return result
 
+    def require_newest_public(self):
+        """Refuse to promote or accept a release that would move Latest backward."""
+        releases = json.loads(gh("release", "list", "--limit", "100", "--json",
+                                 "tagName,isDraft,isPrerelease,isLatest"))
+        newer = newer_public_releases(releases, self.tag_name)
+        require(not newer, f"{self.tag_name} is older than published {', '.join(sorted(newer))}; "
+                "publishing it would move GitHub Latest backward.")
+
     def remote_digests(self, release, names, *, exact=False):
         assets = {asset["name"]: asset for asset in release["assets"]}
         require(set(names) <= assets.keys() and (not exact or set(names) == assets.keys()),
@@ -487,11 +514,13 @@ try {
         require(remote and remote.splitlines()[-1].split()[0] == self.merge_sha(),
                 "Release tag must already point to the release merge commit.")
         if release["isDraft"]:
+            self.require_newest_public()
             print(gh("release", "edit", self.tag_name, "--draft=false", "--latest=true"))
 
     def verify(self):
         release, digests = self.verify_release_assets()
         require(not release["isDraft"], "Release is still a draft.")
+        self.require_newest_public()
         with urllib.request.urlopen(f"https://api.github.com/repos/{REPO}/releases/latest", timeout=60) as reply:
             require(json.load(reply)["tag_name"] == self.tag_name, f"GitHub Latest is not {self.tag_name}.")
         with tempfile.TemporaryDirectory(dir=self.work) as temp:

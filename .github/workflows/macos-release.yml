@@ -58,16 +58,22 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python3 -m unittest discover -s scripts -p 'test_attach_macos_assets.py'
       - uses: actions/download-artifact@v4
         with:
           pattern: macos-release-*
           merge-multiple: true
           path: dist
+      # Uploads only to a draft. A rerun against a published release verifies
+      # its assets and leaves them alone, so SHA256SUMS.txt stays valid.
       - name: Attach DMGs and checksums
-        run: |
-          [[ "$RELEASE_TAG" == v* ]] || { echo 'Expected v-prefixed release tag'; exit 1; }
-          gh release view "$RELEASE_TAG" || gh release create "$RELEASE_TAG" --verify-tag --draft --title "$RELEASE_TAG"
-          gh release upload "$RELEASE_TAG" dist/*.dmg dist/*.sha256 --clobber
+        run: python3 scripts/attach_macos_assets.py "$RELEASE_TAG" dist
       # Never import the update signing key into CI. The maintainer downloads
       # these artifacts and signs update manifests locally per docs/RELEASE_SIGNING.md,
       # then uploads the signed manifests manually.
