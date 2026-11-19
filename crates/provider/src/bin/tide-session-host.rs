@@ -3,7 +3,8 @@
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
-    io::{Read, Write},
+    io::{self, Read, Write},
+    path::Path,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -102,6 +103,74 @@ fn chromium_origin(origin: &str) -> bool {
         .is_some_and(|id| id.len() == 32 && id.bytes().all(|b| (b'a'..=b'p').contains(&b)))
 }
 
+const POLICY_FILE: &str = "tide-session-host-policy.json";
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Policy {
+    allowed_origins: Vec<String>,
+}
+
+fn read_policy(path: &Path) -> io::Result<Policy> {
+    let invalid = || io::Error::new(io::ErrorKind::InvalidData, "invalid host policy");
+    let metadata = std::fs::symlink_metadata(path)?;
+    if !metadata.is_file() || metadata.len() > 2048 {
+        return Err(invalid());
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    let file = options.open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(invalid());
+    }
+    let mut data = Vec::new();
+    file.take(2049).read_to_end(&mut data)?;
+    if data.len() > 2048 {
+        return Err(invalid());
+    }
+    serde_json::from_slice(&data).map_err(|_| invalid())
+}
+
+#[cfg(target_os = "macos")]
+fn macos_policy(home: &Path, exe_dir: &Path) -> io::Result<Policy> {
+    if !home.is_absolute() {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid home"));
+    }
+    let user_dir = home.join("Library/Application Support/TideMusic");
+    for dir in user_dir.ancestors() {
+        match std::fs::symlink_metadata(dir) {
+            Ok(info) if !info.is_dir() => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "invalid policy directory",
+                ));
+            }
+            Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
+            _ => {}
+        }
+    }
+    match read_policy(&user_dir.join(POLICY_FILE)) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            read_policy(&exe_dir.join(POLICY_FILE))
+        }
+        result => result,
+    }
+}
+
+fn caller_policy() -> Option<Policy> {
+    let exe = std::env::current_exe().ok()?;
+    let exe_dir = exe.parent()?;
+    #[cfg(target_os = "macos")]
+    return macos_policy(Path::new(&std::env::var_os("HOME")?), exe_dir).ok();
+    #[cfg(not(target_os = "macos"))]
+    read_policy(&exe_dir.join(POLICY_FILE)).ok()
+}
+
 fn allowed_caller(args: &[String]) -> bool {
     // Firefox passes the host-manifest path followed by the extension ID.
     if args.len() == 2 && args[1] == FIREFOX_ID && std::path::Path::new(&args[0]).is_absolute() {
@@ -118,25 +187,7 @@ fn allowed_caller(args: &[String]) -> bool {
     {
         return false;
     }
-    #[derive(Deserialize)]
-    #[serde(deny_unknown_fields)]
-    struct Policy {
-        allowed_origins: Vec<String>,
-    }
-    let policy = (|| {
-        let path = std::env::current_exe()
-            .ok()?
-            .parent()?
-            .join("tide-session-host-policy.json");
-        let file = std::fs::File::open(path).ok()?;
-        let mut data = Vec::new();
-        file.take(2049).read_to_end(&mut data).ok()?;
-        if data.len() > 2048 {
-            return None;
-        }
-        serde_json::from_slice::<Policy>(&data).ok()
-    })();
-    policy.is_some_and(|p| {
+    caller_policy().is_some_and(|p| {
         p.allowed_origins.len() <= 16
             && p.allowed_origins.iter().all(|s| chromium_origin(s))
             && p.allowed_origins.contains(origin)
@@ -160,11 +211,7 @@ fn import_message(payload: &[u8], cancel: Arc<AtomicBool>) -> &'static str {
             .0
             .get("x-goog-authuser")
             .is_some_and(|s| s.len() <= 4 && s.bytes().all(|b| b.is_ascii_digit()))
-        || request
-            .headers
-            .0
-            .get("origin")
-            .is_some_and(|s| s != "https://music.youtube.com")
+        || request.headers.0.get("origin").map(String::as_str) != Some("https://music.youtube.com")
     {
         return "invalid_headers";
     }
@@ -264,6 +311,76 @@ mod tests {
             ));
         }
     }
+    #[test]
+    fn imports_require_the_exact_music_origin() {
+        for origin in [
+            None,
+            Some("https://music.youtube.com/"),
+            Some("https://youtube.com"),
+        ] {
+            let mut headers = serde_json::json!({"cookie":"fixture", "x-goog-authuser":"9999"});
+            if let Some(value) = origin {
+                headers["origin"] = value.into();
+            }
+            let data =
+                serde_json::json!({"version":1, "action":"import_session", "headers":headers});
+            assert_eq!(
+                import_message(
+                    &serde_json::to_vec(&data).unwrap(),
+                    Arc::new(AtomicBool::new(false)),
+                ),
+                "invalid_headers"
+            );
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_policy_prefers_user_file_and_only_falls_back_when_missing() {
+        use std::{fs, os::unix::fs::symlink};
+        let temp = std::env::temp_dir().canonicalize().unwrap().join(format!(
+            "tide-policy-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir(&temp).unwrap();
+        let user_dir = temp.join("Library/Application Support/TideMusic");
+        let primary = user_dir.join(POLICY_FILE);
+        let sibling = temp.join(POLICY_FILE);
+        let origin = format!("chrome-extension://{}/", "a".repeat(32));
+        fs::write(&sibling, br#"{"allowed_origins":[]}"#).unwrap();
+        assert!(macos_policy(&temp, &temp)
+            .unwrap()
+            .allowed_origins
+            .is_empty());
+        fs::create_dir_all(&user_dir).unwrap();
+        fs::write(
+            &primary,
+            serde_json::json!({"allowed_origins":[origin]}).to_string(),
+        )
+        .unwrap();
+        assert_eq!(
+            macos_policy(&temp, &temp).unwrap().allowed_origins,
+            [origin]
+        );
+        for invalid in [b"{}".to_vec(), vec![b' '; 2049]] {
+            fs::write(&primary, invalid).unwrap();
+            assert!(macos_policy(&temp, &temp).is_err());
+        }
+        fs::remove_file(&primary).unwrap();
+        symlink(&sibling, &primary).unwrap();
+        assert!(macos_policy(&temp, &temp).is_err());
+        fs::remove_file(&sibling).unwrap();
+        assert!(macos_policy(&temp, &temp).is_err()); // dangling symlink
+        fs::remove_file(&primary).unwrap();
+        symlink(&primary, &sibling).unwrap();
+        assert!(macos_policy(&temp, &temp).is_err());
+        fs::remove_dir_all(temp).unwrap();
+    }
+
     #[test]
     fn host_probe_is_credential_free_and_does_not_open_account_storage() {
         assert_eq!(

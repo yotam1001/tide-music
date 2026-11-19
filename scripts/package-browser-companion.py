@@ -50,8 +50,18 @@ def _publish_no_replace(staging: Path, destination: Path) -> None:
         # Windows os.rename refuses even an empty existing destination.
         os.rename(staging, destination)
         return
-    # Linux's stdlib os.rename may replace an empty directory; use its no-replace variant.
     library = ctypes.CDLL(None, use_errno=True)
+    # macOS provides renamex_np with RENAME_EXCL (4) for atomic no-overwrite rename.
+    renamex_np = getattr(library, "renamex_np", None)
+    if renamex_np is not None:
+        renamex_np.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
+        renamex_np.restype = ctypes.c_int
+        RENAME_EXCL = 4
+        if renamex_np(os.fsencode(staging), os.fsencode(destination), RENAME_EXCL) != 0:
+            code = ctypes.get_errno()
+            raise OSError(code, os.strerror(code), str(destination))
+        return
+    # Linux's stdlib os.rename may replace an empty directory; use its no-replace variant.
     rename_no_replace = getattr(library, "renameat2", None)
     if rename_no_replace is None:
         raise PackageError("This platform lacks an atomic no-overwrite directory rename")

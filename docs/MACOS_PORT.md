@@ -120,10 +120,26 @@ dialog, live Google sign-in and Keychain access, AirPods and hardware media keys
 output changes, global shortcuts, Discord, and Mini across Spaces and full-screen
 apps. The hosted playback probe uses muted local audio.
 
-## Native sign-in packaging
+## Native sign-in and browser companion packaging
 
 Ship `Contents/MacOS/tide-login`, built with
-`cargo build -p tide-provider --bin tide-login --features tide-provider/native-login`.
-The helper uses a non-persistent WebKit store on its main thread. Its offline
-`--probe` creates an offscreen window and WebView without Google traffic.
-Real Google sign-in and profile selection still require validation on a Mac.
+`cargo build -p tide-provider --bin tide-login --features tide-provider/native-login`,
+and `Contents/MacOS/tide-session-host`, built with
+`cargo build -p tide-provider --bin tide-session-host`, along with the bundled
+unpacked companion extensions in `Contents/Resources/browser-companion/{chromium,firefox}`.
+
+- The native sign-in helper (`tide-login`) uses a non-persistent `WKWebView`
+  store on its main thread, enforces strict `music.youtube.com` / `.youtube.com`
+  cookie scoping, detects Google embedded-webview refusals (exit code `8`,
+  common on Family Link accounts), and cleans up its child process group on
+  cancellation. Its offline `--probe` creates an offscreen window and WebView
+  and runs the offline cookie-scope check without Google traffic.
+- Because Google often blocks embedded WebViews for Family Link accounts and
+  Tide does not spoof browser User-Agents, `Tide.app` ships first-class macOS
+  Browser Companion support (Chrome, Edge, Brave, Arc, Firefox, Zen) plus
+  online-verified `Copy as cURL` session import (including Safari).
+- All mutable native-messaging manifests and the host allowlist policy
+  (`~/Library/Application Support/TideMusic/tide-session-host-policy.json`)
+  live outside `Tide.app` so the bundle's code signature seal is never mutated.
+- Real Google sign-in, Family Link Browser Companion import, and Keychain
+  prompts still require physical validation on a Mac.

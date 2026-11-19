@@ -1,9 +1,43 @@
 """Verify the assembled bundle without a user session or GUI."""
 import argparse
+import json
 from pathlib import Path
+import struct
 import subprocess
 
 from package_macos import macho, run
+
+
+def verify_session_host(host: Path):
+    if not host.is_file():
+        raise RuntimeError('Browser companion native host is missing')
+    payload = json.dumps({'version': 1, 'action': 'check_host', 'headers': {}}).encode('utf-8')
+    framed = struct.pack('<I', len(payload)) + payload
+    # Send one framed check_host message and keep stdin open briefly via Popen so the
+    # host can reply before EOF signals cancellation.
+    proc = subprocess.Popen(
+        [str(host), '/Applications/Tide.app/org.tidemusic.session.json', 'tide-session@tide-music'],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        assert proc.stdin is not None and proc.stdout is not None
+        proc.stdin.write(framed)
+        proc.stdin.flush()
+        header = proc.stdout.read(4)
+        if len(header) != 4:
+            raise RuntimeError('Browser companion host did not return a framed reply header')
+        length = struct.unpack('<I', header)[0]
+        body = proc.stdout.read(length)
+        reply = json.loads(body.decode('utf-8'))
+        if reply != {'version': 1, 'ok': True, 'code': 'host_ready'}:
+            raise RuntimeError(f'Unexpected browser companion host reply: {reply}')
+    finally:
+        if proc.stdin is not None:
+            proc.stdin.close()
+        proc.wait(timeout=10)
+    print('PASS: browser companion host offline check_host probe')
 
 
 def main():
@@ -16,6 +50,10 @@ def main():
     run('codesign', '--verify', '--strict', '--verbose=2', app)
     if not (app / 'Contents/MacOS/tide-login').is_file():
         raise RuntimeError('Native sign-in helper is missing')
+    verify_session_host(app / 'Contents/MacOS/tide-session-host')
+    for family in ('chromium', 'firefox'):
+        if not (app / 'Contents/Resources/browser-companion' / family / 'manifest.json').is_file():
+            raise RuntimeError(f'Bundled {family} browser companion manifest is missing')
     for path in app.rglob('*'):
         if macho(path):
             deps = subprocess.check_output(['otool', '-L', str(path)], text=True)

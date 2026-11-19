@@ -3223,6 +3223,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let state = state.clone();
         let weak = ui.as_weak();
+        let tx = library_tx.clone();
         let picker_busy = picker_busy.clone();
         ui.on_import_account(move || {
             if !local_controls_allowed(&state.borrow()) {
@@ -3232,13 +3233,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let revision = picker_busy.account_revision.get();
             let selection = picker_busy.clone();
             let weak = weak.clone();
+            let tx = tx.clone();
             let error_ui = weak.upgrade();
             let result = spawn_picker(&picker_busy, async move {
                 let file = rfd::AsyncFileDialog::new()
-                    .set_title("Import a local YouTube Music session")
+                    .set_title("Import a YouTube Music session (Copy as cURL, headers, or JSON)")
                     .add_filter(
-                        "Browser request headers / authentication JSON",
-                        &["txt", "json"],
+                        "Session files (cURL, headers, JSON)",
+                        &["txt", "json", "curl", "sh"],
                     )
                     .pick_file()
                     .await;
@@ -3250,20 +3252,54 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     return;
                 };
                 let mut s = state.borrow_mut();
-                if s.library_worker.is_some() {
+                if s.library_worker.is_some() || s.pending_saved_connection.is_some() {
+                    u.set_account_status(
+                        "A request is still in progress. Try importing again.".into(),
+                    );
                     return;
                 }
-                let result = s
-                    .provider
-                    .as_ref()
-                    .ok_or("Secure account storage is unavailable".to_string())
-                    .and_then(|p| p.import_session(file.path()));
-                match result {
-                    Ok(()) => {
-                        stage_current_saved_connection(&mut s, &u);
-                    }
-                    Err(error) => u.set_account_status(error.into()),
-                }
+                let Some(provider) = s.provider.clone() else {
+                    u.set_account_status("Secure account storage is unavailable".into());
+                    return;
+                };
+                let path = file.path().to_owned();
+                s.library_cancel.store(false, Ordering::Release);
+                s.library_action = LibraryAction::Connect;
+                s.library_request = None;
+                s.queued_library_request = None;
+                let cancel = s.library_cancel.clone();
+                let tx = tx.clone();
+                u.set_account_busy(true);
+                u.set_account_status("Verifying your imported YouTube Music session…".into());
+                s.library_worker = Some(std::thread::spawn(move || {
+                    let result = match provider.import_session_file_verified(&path, cancel) {
+                        Ok(()) => Ok(tide_provider::Response::Connected),
+                        Err(tide_provider::SessionImportError::InvalidHeaders) => Err(
+                            "That file did not contain valid YouTube Music cookies, Copy as cURL, or browser JSON."
+                                .into(),
+                        ),
+                        Err(tide_provider::SessionImportError::SessionRejected) => Err(
+                            "YouTube Music rejected that session. Copy a fresh request from a signed-in music.youtube.com tab."
+                                .into(),
+                        ),
+                        Err(tide_provider::SessionImportError::VerificationUnavailable) => Err(
+                            "YouTube Music could not verify that session right now. Check your connection and try again."
+                                .into(),
+                        ),
+                        Err(tide_provider::SessionImportError::SessionChanged) => Err(
+                            "Your saved connection changed during import. Retry if needed."
+                                .into(),
+                        ),
+                        Err(tide_provider::SessionImportError::StorageError) => Err(
+                            "Tide could not read the file or save the verified session."
+                                .into(),
+                        ),
+                        Err(tide_provider::SessionImportError::Cancelled) => {
+                            Err("Session import canceled.".into())
+                        }
+                    };
+                    let _ = tx.try_send(result);
+                }));
             });
             if let (Err(error), Some(u)) = (result, error_ui) {
                 u.set_account_status(error.into());
@@ -3801,6 +3837,138 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ) {
                 if let Some(u) = weak.upgrade() {
                     u.set_account_status(error.into());
+                }
+            }
+        });
+    }
+    {
+        let refresh_companion = |u: &AppWindow| {
+            let Ok(exe) = std::env::current_exe() else {
+                u.set_companion_setup_available(false);
+                return;
+            };
+            let status = tide_provider::browser_companion::status(&exe);
+            u.set_companion_setup_available(
+                cfg!(target_os = "macos") && status.host_path.is_some(),
+            );
+            u.set_companion_extension_bundled(status.extension_dir.is_some());
+            let summary = if status.registered_browsers.is_empty() {
+                "Connected browsers: none yet".to_string()
+            } else {
+                let labels: Vec<&str> = status
+                    .registered_browsers
+                    .iter()
+                    .map(|browser| browser.label())
+                    .collect();
+                format!("Connected browsers: {}", labels.join(", "))
+            };
+            u.set_companion_registered_summary(summary.into());
+            if u.get_companion_extension_id().is_empty() {
+                if let Some(first_id) = status.allowed_extension_ids.first() {
+                    u.set_companion_extension_id(first_id.clone().into());
+                }
+            }
+        };
+        refresh_companion(&ui);
+        let state_reg = state.clone();
+        let weak = ui.as_weak();
+        ui.on_register_companion_browser(move |browser_index, extension_id| {
+            if !local_controls_allowed(&state_reg.borrow()) {
+                return;
+            }
+            let Some(u) = weak.upgrade() else {
+                return;
+            };
+            let Some(&browser) = tide_provider::browser_companion::MacBrowser::ALL
+                .get(usize::try_from(browser_index).unwrap_or(usize::MAX))
+            else {
+                u.set_companion_setup_status("Select a supported browser first.".into());
+                return;
+            };
+            let Ok(exe) = std::env::current_exe() else {
+                u.set_companion_setup_status("Could not locate Tide’s executable.".into());
+                return;
+            };
+            let trimmed = extension_id.trim();
+            let ext_arg = (!trimmed.is_empty()).then_some(trimmed);
+            match tide_provider::browser_companion::register_macos_browser(&exe, browser, ext_arg) {
+                Ok(message) => {
+                    refresh_companion(&u);
+                    u.set_companion_setup_status(message.into());
+                }
+                Err(error) => u.set_companion_setup_status(error.into()),
+            }
+        });
+        let state_unreg = state.clone();
+        let weak = ui.as_weak();
+        ui.on_unregister_companion_browser(move |browser_index| {
+            if !local_controls_allowed(&state_unreg.borrow()) {
+                return;
+            }
+            let Some(u) = weak.upgrade() else {
+                return;
+            };
+            let Some(&browser) = tide_provider::browser_companion::MacBrowser::ALL
+                .get(usize::try_from(browser_index).unwrap_or(usize::MAX))
+            else {
+                u.set_companion_setup_status("Select a supported browser first.".into());
+                return;
+            };
+            match tide_provider::browser_companion::unregister_macos_browser(browser) {
+                Ok(true) => {
+                    refresh_companion(&u);
+                    u.set_companion_setup_status(
+                        format!(
+                            "Removed Tide browser companion registration for {}.",
+                            browser.label()
+                        )
+                        .into(),
+                    );
+                }
+                Ok(false) => {
+                    refresh_companion(&u);
+                    u.set_companion_setup_status(
+                        format!("{} was not registered.", browser.label()).into(),
+                    );
+                }
+                Err(error) => u.set_companion_setup_status(error.into()),
+            }
+        });
+        let weak = ui.as_weak();
+        ui.on_reveal_companion_extension(move || {
+            let Some(u) = weak.upgrade() else {
+                return;
+            };
+            let target = std::env::current_exe()
+                .ok()
+                .and_then(|exe| tide_provider::browser_companion::bundled_extension_dir(&exe))
+                .map(|root| {
+                    let sub = if u.get_companion_browser_index() == 4 {
+                        root.join("firefox")
+                    } else {
+                        root.join("chromium")
+                    };
+                    if sub.is_dir() {
+                        sub
+                    } else {
+                        root
+                    }
+                });
+            let Some(dir) = target else {
+                u.set_companion_setup_status(
+                    "Bundled browser companion extension folder was not found.".into(),
+                );
+                return;
+            };
+            if let Err(error) = platform::reveal_in_file_manager(&dir) {
+                u.set_companion_setup_status(error.into());
+            }
+        });
+        let weak = ui.as_weak();
+        ui.on_open_ytmusic_browser(move || {
+            if let Err(error) = platform::open_web_page("https://music.youtube.com/") {
+                if let Some(u) = weak.upgrade() {
+                    u.set_companion_setup_status(error.into());
                 }
             }
         });
