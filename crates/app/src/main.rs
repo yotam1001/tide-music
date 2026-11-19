@@ -245,6 +245,22 @@ fn next_sleep_timer(current: Option<SleepTimer>, now: Instant) -> Option<SleepTi
     Some(SleepTimer::At(now + Duration::from_secs(minutes * 60)))
 }
 
+/// Clears a timed sleep timer whose deadline passed while nothing was playing,
+/// so an idle expiry can never pause the next playback session.
+fn expire_idle_sleep_timer(
+    timer: &mut Option<SleepTimer>,
+    active_playback: bool,
+    now: Instant,
+) -> bool {
+    match *timer {
+        Some(SleepTimer::At(deadline)) if !active_playback && now >= deadline => {
+            *timer = None;
+            true
+        }
+        _ => false,
+    }
+}
+
 fn sleep_label(timer: Option<SleepTimer>, now: Instant) -> String {
     match timer {
         None => String::new(),
@@ -4335,10 +4351,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     s.radio_resume_when_ready = false;
                 }
                 if was_current && s.active_playback {
-                    if s.settings.queue.tracks.get(index).is_some() {
-                        play(&mut s, &u);
-                    } else {
+                    // A rejected successor (for example a moved local file)
+                    // leaves the old generation running, so stop it rather
+                    // than let the removed song play under the new title.
+                    let started = s.settings.queue.tracks.get(index).is_some() && play(&mut s, &u);
+                    if !started {
+                        let error = s.command_error.clone();
+                        crossfade::Crossfade::cancel(&mut s);
                         send(&mut s, &u, PlaybackCommand::Stop);
+                        if let Some(error) = error {
+                            // Keep the load failure visible after stopping.
+                            s.command_error = Some(error.clone());
+                            u.set_status_text(error.into());
+                        }
                         s.active_playback = false;
                         u.set_paused(true);
                         u.set_position(0.0);
@@ -5284,6 +5309,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                 }
+                let active = s.active_playback;
+                if expire_idle_sleep_timer(&mut s.sleep_timer, active, Instant::now()) {
+                    u.set_sleep_label("".into());
+                }
                 if let Some(engine) = &s.engine {
                     let p = engine.snapshot();
                     audio_settings::refresh(&s, &u, &p);
@@ -5936,6 +5965,69 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ui.set_paused(true);
             }
             println!("PASS: edited saved playhead resumed decoded local audio");
+            {
+                // Removing the playing song when its successor is a local file
+                // that has since gone missing must stop the removed song.
+                let mut s = state.borrow_mut();
+                let saved_queue = s.settings.queue.clone();
+                let missing = std::env::temp_dir().join(format!(
+                    "tide-missing-successor-{}.flac",
+                    std::process::id()
+                ));
+                let _ = std::fs::remove_file(&missing);
+                let mut successor = saved_queue.tracks[0].clone();
+                successor.title = "Missing successor".into();
+                successor.source = missing.to_string_lossy().into_owned();
+                s.settings.queue = Queue {
+                    tracks: vec![saved_queue.tracks[0].clone(), successor.clone()],
+                    current: Some(0),
+                };
+                assert!(play(&mut s, &ui), "Fixture audio did not start");
+                let engine = s.engine.as_ref().expect("Local playback runtime");
+                let deadline = Instant::now() + Duration::from_secs(10);
+                loop {
+                    let p = engine.snapshot();
+                    assert!(p.error.is_none(), "Fixture playback failed");
+                    if p.generation == s.generation && !p.loading && p.position > 0.0 {
+                        break;
+                    }
+                    assert!(Instant::now() < deadline, "Fixture audio did not play");
+                    std::thread::sleep(Duration::from_millis(25));
+                }
+                let generation = s.generation;
+                drop(s);
+                ui.invoke_remove_queue_track(0);
+                let mut s = state.borrow_mut();
+                assert!(
+                    !s.active_playback,
+                    "Removed song kept playing after a rejected successor"
+                );
+                assert_eq!(
+                    s.generation, generation,
+                    "A rejected successor must not commit a generation"
+                );
+                assert_eq!(s.settings.queue.tracks.len(), 1);
+                assert_eq!(s.settings.queue.tracks[0].source, successor.source);
+                assert!(
+                    s.settings.playback_bookmark.is_none(),
+                    "Removed song's position was bookmarked"
+                );
+                let p = s
+                    .engine
+                    .as_ref()
+                    .expect("Local playback runtime")
+                    .snapshot();
+                assert!(
+                    p.paused && p.position == 0.0,
+                    "Removed song's audio was not stopped"
+                );
+                assert!(ui.get_paused());
+                s.settings.queue = saved_queue;
+                s.command_error = None;
+                ui.set_error_message("".into());
+                refresh(&ui, &s);
+            }
+            println!("PASS: removing the playing song stops it when the successor file is missing");
             ui.set_status_text("Visual test data · playback inactive".into());
             println!("PASS: native song/playlist play preserves browsing; search seed, queue priority, autoplay off, shuffle, reorder and removal");
             println!("PASS: media Next/Previous share player actions and preserve browsing");
@@ -6540,6 +6632,45 @@ mod tests {
             sleep_label(Some(SleepTimer::At(now)), now + Duration::from_secs(5)),
             "1 min"
         );
+    }
+
+    #[test]
+    fn sleep_timer_that_elapses_while_idle_is_cleared_before_the_next_session() {
+        let start = Instant::now();
+        let deadline = start + Duration::from_secs(15 * 60);
+        let mut timer = Some(SleepTimer::At(deadline));
+        // Playback stops before the deadline; nothing happens until it passes.
+        assert!(!expire_idle_sleep_timer(
+            &mut timer,
+            false,
+            start + Duration::from_secs(60)
+        ));
+        assert_eq!(timer, Some(SleepTimer::At(deadline)));
+        // Still idle after the deadline: the timer is dropped, not kept for later.
+        assert!(expire_idle_sleep_timer(
+            &mut timer,
+            false,
+            deadline + Duration::from_secs(1)
+        ));
+        assert_eq!(timer, None);
+        // Pressing Play afterwards finds no timer to pause the new song.
+        assert!(!expire_idle_sleep_timer(
+            &mut timer,
+            true,
+            deadline + Duration::from_secs(2)
+        ));
+        assert_eq!(timer, None);
+        // An active session still owns its deadline and the end-of-song timer is untouched.
+        let mut active = Some(SleepTimer::At(deadline));
+        assert!(!expire_idle_sleep_timer(
+            &mut active,
+            true,
+            deadline + Duration::from_secs(1)
+        ));
+        assert_eq!(active, Some(SleepTimer::At(deadline)));
+        let mut end_of_song = Some(SleepTimer::EndOfSong);
+        assert!(!expire_idle_sleep_timer(&mut end_of_song, false, deadline));
+        assert_eq!(end_of_song, Some(SleepTimer::EndOfSong));
     }
     #[test]
     fn every_saved_setting_is_restored_on_load() {

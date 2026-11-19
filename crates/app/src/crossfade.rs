@@ -130,7 +130,9 @@ pub fn tick(s: &mut State, u: &AppWindow, p: &tide_core::PlaybackSnapshot) -> bo
     // The outgoing song reaching its end completes a running mix: at EOF the
     // engine reports itself paused, which must not read as the user pausing.
     if let Phase::Mixing {
-        index, generation, ..
+        index,
+        source,
+        generation,
     } = s.crossfade.phase.clone()
     {
         let finished = p.generation == s.generation
@@ -139,10 +141,10 @@ pub fn tick(s: &mut State, u: &AppWindow, p: &tide_core::PlaybackSnapshot) -> bo
                 .standby
                 .as_ref()
                 .is_some_and(|engine| engine.snapshot().error.is_none());
-        if finished && Some(index) == next_queue_index(s) {
+        if finished {
             trace(|| "outgoing song ended; standby takes over".into());
-            take_over(s, u, index, generation);
-            return true;
+            // A failed check cancels the mix; the ordinary transition follows.
+            return take_over(s, u, index, &source, generation);
         }
     }
     let next = next_queue_index(s).filter(|&index| Some(index) != s.settings.queue.current);
@@ -285,8 +287,7 @@ pub fn tick(s: &mut State, u: &AppWindow, p: &tide_core::PlaybackSnapshot) -> bo
             }
             let t = 1.0 - (remaining / seconds);
             if t >= 1.0 || p.ended || remaining <= 0.15 {
-                take_over(s, u, index, generation);
-                return true;
+                return take_over(s, u, index, &source, generation);
             }
             let (outgoing, incoming) = gains(t);
             if (outgoing - s.crossfade.primary_db).abs() >= GAIN_STEP_DB {
@@ -300,10 +301,45 @@ pub fn tick(s: &mut State, u: &AppWindow, p: &tide_core::PlaybackSnapshot) -> bo
     }
 }
 
+/// Whether the standby engine still holds exactly the song planned for the
+/// queue row that plays next. A queue edit can shift another song into that
+/// row between ticks, so the row index alone is not enough.
+fn promotion_matches(
+    queue: &Queue,
+    next: Option<usize>,
+    index: usize,
+    source: &str,
+    generation: u64,
+    standby: Option<&tide_core::PlaybackSnapshot>,
+) -> bool {
+    next == Some(index)
+        && queue
+            .tracks
+            .get(index)
+            .is_some_and(|track| track.source == source)
+        && standby
+            .is_some_and(|snapshot| snapshot.generation == generation && snapshot.error.is_none())
+}
+
 /// Promote the standby engine: it already plays the next song at full gain.
-fn take_over(s: &mut State, u: &AppWindow, index: usize, generation: u64) {
+/// Returns false, after cancelling the mix, when the plan no longer matches
+/// the queue or the standby engine.
+fn take_over(s: &mut State, u: &AppWindow, index: usize, source: &str, generation: u64) -> bool {
+    let standby = s.crossfade.standby.as_ref().map(|engine| engine.snapshot());
+    if !promotion_matches(
+        &s.settings.queue,
+        next_queue_index(s),
+        index,
+        source,
+        generation,
+        standby.as_ref(),
+    ) {
+        trace(|| "planned song changed before the handoff; cancelled".into());
+        Crossfade::cancel(s);
+        return false;
+    }
     let Some(standby) = s.crossfade.standby.take() else {
-        return;
+        return false;
     };
     s.crossfade.phase = Phase::Idle;
     if let Some(old) = s.engine.replace(standby) {
@@ -319,6 +355,7 @@ fn take_over(s: &mut State, u: &AppWindow, index: usize, generation: u64) {
     refresh(u, s);
     u.set_paused(false);
     save(&s.settings);
+    true
 }
 
 #[cfg(test)]
@@ -336,5 +373,85 @@ mod tests {
         assert!(inc.abs() < 1e-9);
         assert_eq!(gains(-1.0), gains(0.0));
         assert_eq!(gains(2.0), gains(1.0));
+    }
+
+    fn track(source: &str) -> Track {
+        Track {
+            title: source.into(),
+            artist: String::new(),
+            artists: Vec::new(),
+            album: String::new(),
+            source: source.into(),
+            duration_seconds: Some(120),
+            artwork_url: None,
+            recommended: false,
+        }
+    }
+
+    #[test]
+    fn handoff_rejects_a_song_that_moved_into_the_planned_row() {
+        // A is mixing into B (row 1, standby generation 8) when B is removed
+        // just before the final tick, so C slides into row 1.
+        let queue = Queue {
+            tracks: vec![track("a"), track("c")],
+            current: Some(0),
+        };
+        let standby = tide_core::PlaybackSnapshot {
+            generation: 8,
+            ..Default::default()
+        };
+        assert!(!promotion_matches(
+            &queue,
+            Some(1),
+            1,
+            "b",
+            8,
+            Some(&standby)
+        ));
+
+        let planned = Queue {
+            tracks: vec![track("a"), track("b"), track("c")],
+            current: Some(0),
+        };
+        assert!(promotion_matches(
+            &planned,
+            Some(1),
+            1,
+            "b",
+            8,
+            Some(&standby)
+        ));
+        // A stale standby generation, a failed standby or a changed next row
+        // also refuse the promotion.
+        assert!(!promotion_matches(
+            &planned,
+            Some(1),
+            1,
+            "b",
+            9,
+            Some(&standby)
+        ));
+        let failed = tide_core::PlaybackSnapshot {
+            generation: 8,
+            error: Some("failed".into()),
+            ..Default::default()
+        };
+        assert!(!promotion_matches(
+            &planned,
+            Some(1),
+            1,
+            "b",
+            8,
+            Some(&failed)
+        ));
+        assert!(!promotion_matches(
+            &planned,
+            Some(2),
+            1,
+            "b",
+            8,
+            Some(&standby)
+        ));
+        assert!(!promotion_matches(&planned, Some(1), 1, "b", 8, None));
     }
 }
