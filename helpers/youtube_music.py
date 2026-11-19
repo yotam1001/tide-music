@@ -226,12 +226,20 @@ def read_cookie_database(database, strict=False):
         return []
 
 
+def zen_profiles_root():
+    if os.environ.get("APPDATA"):
+        return (Path(os.environ["APPDATA"]) / "zen" / "Profiles").resolve(strict=True)
+    if sys.platform == "darwin":
+        return (Path.home() / "Library" / "Application Support" / "zen" / "Profiles").resolve(strict=True)
+    raise ValueError("invalid selected profile")
+
+
 def selected_zen_database(value):
     database = Path(value)
     if not database.is_absolute() or database.name != "cookies.sqlite" or database.is_symlink():
         raise ValueError("invalid selected profile")
     canonical = database.resolve(strict=True)
-    root = (Path(os.environ["APPDATA"]) / "zen" / "Profiles").resolve(strict=True)
+    root = zen_profiles_root()
     # Windows file pickers/TEMP can use harmless 8.3 aliases. Enforce the resolved
     # boundary rather than requiring the spelling to already be canonical.
     if not canonical.is_relative_to(root) or not canonical.is_file():

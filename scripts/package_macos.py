@@ -157,6 +157,22 @@ def notarize(dmg):
     run('xcrun', 'stapler', 'validate', dmg)
 
 
+def stage_browser_companion(resources):
+    """Copy allowlist-validated browser companion extensions into Resources."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        'browser_packager', ROOT / 'scripts/package-browser-companion.py')
+    packager = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(packager)
+    source = ROOT / 'browser-companion'
+    for family in ('chromium', 'firefox'):
+        payload = packager._read_payload(source, family)
+        dest = resources / 'browser-companion' / family
+        dest.mkdir(parents=True)
+        for name, data in sorted(payload.items()):
+            (dest / name).write_bytes(data)
+
+
 def main():
     parser = argparse.ArgumentParser(__doc__)
     parser.add_argument('--arch', choices=['arm64', 'x86_64', 'universal'], default=platform.machine())
@@ -173,6 +189,7 @@ def main():
     arches = ['arm64', 'x86_64'] if args.arch == 'universal' else [args.arch]
     binaries = []
     logins = []
+    hosts = []
     for arch in arches:
         target = ('aarch64' if arch == 'arm64' else arch) + '-apple-darwin'
         run('rustup', 'target', 'add', target)
@@ -181,9 +198,13 @@ def main():
         # Native sign-in runs in its own owned helper process beside the player.
         run('cargo', 'build', '--release', '--locked', '-p', 'tide-provider',
             '--features', 'native-login', '--bin', 'tide-login', '--target', target)
+        # Browser companion native-messaging host lets users connect from Chrome/Firefox/Edge/Brave/Arc.
+        run('cargo', 'build', '--release', '--locked', '-p', 'tide-provider',
+            '--bin', 'tide-session-host', '--target', target)
         target_dir = Path(os.environ.get('CARGO_TARGET_DIR', ROOT / 'target'))
         binaries.append(target_dir / target / 'release/tide-music')
         logins.append(target_dir / target / 'release/tide-login')
+        hosts.append(target_dir / target / 'release/tide-session-host')
     # Runtime builds are per arch: universal emits two DMGs with a universal Tide.
     for arch in arches:
         with tempfile.TemporaryDirectory(prefix='tide-macos-') as temporary:
@@ -196,16 +217,20 @@ def main():
             (resources / 'bin').mkdir(parents=True)
             binary = contents / 'MacOS/tide-music'
             login = contents / 'MacOS/tide-login'
+            host = contents / 'MacOS/tide-session-host'
             if len(binaries) == 2:
                 run('lipo', '-create', *binaries, '-output', binary)
                 run('lipo', '-create', *logins, '-output', login)
+                run('lipo', '-create', *hosts, '-output', host)
             else:
                 shutil.copy2(binaries[0], binary)
                 shutil.copy2(logins[0], login)
+                shutil.copy2(hosts[0], host)
             (contents / 'Info.plist').write_text((PACK / 'Info.plist').read_text().replace('@VERSION@', version))
             icon(resources, work)
             shutil.copytree(PACK / 'licenses', resources / 'licenses')
             shutil.copy(PACK / 'THIRD_PARTY_NOTICES.md', resources)
+            stage_browser_companion(resources)
             if not args.no_runtime:
                 runtime(arch, resources, work)
             run('xattr', '-cr', app)

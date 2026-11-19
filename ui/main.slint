@@ -120,6 +120,17 @@ export component AppWindow inherits Window {
     in property <bool> native-login-available;
     in property <bool> native-login-busy;
     in property <string> native-login-status;
+    in property <bool> companion-setup-available: false;
+    in-out property <bool> companion-setup-open: false;
+    in property <bool> companion-extension-bundled: false;
+    in property <string> companion-registered-summary;
+    in property <string> companion-setup-status;
+    in-out property <int> companion-browser-index: 0;
+    in-out property <string> companion-extension-id;
+    callback register-companion-browser(int, string);
+    callback unregister-companion-browser(int);
+    callback reveal-companion-extension();
+    callback open-ytmusic-browser();
     in property <string> account-name;
     in property <string> account-status;
     in-out property <bool> library-open: false;
@@ -1978,10 +1989,72 @@ export component AppWindow inherits Window {
                             if root.native-login-status != "" : Text { text: root.native-login-status; color: root.secondary; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
                             if !root.account-verified : Text { text: root.native-login-available ? "Sign in with Google, then choose the YouTube Music profile you listen with." : "Import your signed-in YouTube Music tab with Tide’s browser companion to use your playlists and recommendations."; color: root.secondary; font-size: 13px; wrap: word-wrap; }
                             if root.native-login-available : LibraryButton { height: 42px; quiet: false; light-mode: root.light-mode; caption: root.native-login-busy ? "Sign-in window open…" : root.account-verified ? "Reconnect YouTube Music" : "Sign in with Google"; label: "Open the temporary Google sign-in window"; enabled: !root.account-busy && !root.native-login-busy; active: !root.account-verified; clicked => { root.native-sign-in(); } }
-                            LibraryButton { height: root.native-login-available ? 36px : 42px; quiet: root.native-login-available; light-mode: root.light-mode; caption: root.native-login-available ? "Use browser companion instead" : root.account-verified ? "Manage connection" : "Connect YouTube Music"; label: "Open browser companion connection guide"; enabled: !root.account-busy && !root.native-login-busy; active: !root.native-login-available && !root.account-verified; clicked => { root.open-account-help(); } }
+                            LibraryButton { height: root.native-login-available ? 36px : 42px; quiet: root.native-login-available; light-mode: root.light-mode; caption: root.native-login-available ? (root.companion-setup-available && root.companion-setup-open ? "Hide browser companion setup" : "Use browser companion instead") : root.account-verified ? "Manage connection" : "Connect YouTube Music"; label: "Open browser companion setup or connection guide"; enabled: !root.account-busy && !root.native-login-busy; active: !root.native-login-available && !root.account-verified; clicked => { if root.companion-setup-available { root.companion-setup-open = !root.companion-setup-open; } else { root.open-account-help(); } } }
                             if root.native-login-busy : LibraryButton { height: 36px; light-mode: root.light-mode; caption: "Close sign-in window"; label: "Close the owned temporary sign-in window"; clicked => { root.cancel-native-sign-in(); } }
                             if root.account-busy : LibraryButton { height: 36px; light-mode: root.light-mode; caption: "Cancel connection"; label: "Cancel account request"; clicked => { root.cancel-account(); } }
                             Rectangle { height: 1px; background: root.outline; }
+                            if root.companion-setup-available && root.companion-setup-open : VerticalLayout {
+                                spacing: 10px;
+                                Text { text: "Browser companion (recommended for Family Link)"; color: root.foreground; font-size: 13px; font-weight: 600; wrap: word-wrap; }
+                                Text { text: "Sign in to YouTube Music in Chrome, Edge, Brave, Arc, Firefox, or Zen, load Tide’s companion extension, and connect your browser here. On Safari or extension-restricted accounts, use Advanced → Import session file with Copy as cURL."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
+                                if root.companion-registered-summary != "" : Text { text: root.companion-registered-summary; color: root.secondary; font-size: 12px; wrap: word-wrap; }
+                                HorizontalLayout {
+                                    height: 36px; spacing: 8px;
+                                    ComboBox {
+                                        horizontal-stretch: 1;
+                                        model: ["Chrome", "Edge", "Brave", "Arc", "Firefox / Zen"];
+                                        current-index <=> root.companion-browser-index;
+                                        enabled: !root.account-busy && !root.native-login-busy;
+                                        accessible-label: "Browser for Tide companion";
+                                    }
+                                }
+                                if root.companion-browser-index < 4 : LineEdit {
+                                    height: 34px;
+                                    text <=> root.companion-extension-id;
+                                    placeholder-text: "32-letter extension ID from chrome://extensions";
+                                    enabled: !root.account-busy && !root.native-login-busy;
+                                    accessible-label: "Chromium browser companion extension ID";
+                                }
+                                HorizontalLayout {
+                                    height: 36px; spacing: 8px;
+                                    LibraryButton {
+                                        horizontal-stretch: 1; quiet: false; light-mode: root.light-mode;
+                                        caption: "Connect browser";
+                                        label: "Register Tide browser companion for selected browser";
+                                        enabled: !root.account-busy && !root.native-login-busy;
+                                        clicked => { root.register-companion-browser(root.companion-browser-index, root.companion-extension-id); }
+                                    }
+                                    LibraryButton {
+                                        width: 88px; quiet: true; light-mode: root.light-mode;
+                                        caption: "Remove";
+                                        label: "Unregister Tide browser companion for selected browser";
+                                        enabled: !root.account-busy && !root.native-login-busy;
+                                        clicked => { root.unregister-companion-browser(root.companion-browser-index); }
+                                    }
+                                }
+                                HorizontalLayout {
+                                    height: 36px; spacing: 8px;
+                                    if root.companion-extension-bundled : LibraryButton {
+                                        horizontal-stretch: 1; quiet: true; light-mode: root.light-mode;
+                                        caption: "Reveal extension";
+                                        label: "Reveal bundled browser companion extension folder in Finder";
+                                        clicked => { root.reveal-companion-extension(); }
+                                    }
+                                    LibraryButton {
+                                        horizontal-stretch: 1; quiet: true; light-mode: root.light-mode;
+                                        caption: "Open YT Music";
+                                        label: "Open YouTube Music in your default browser";
+                                        clicked => { root.open-ytmusic-browser(); }
+                                    }
+                                }
+                                LibraryButton {
+                                    height: 32px; quiet: true; light-mode: root.light-mode;
+                                    caption: "Open setup guide";
+                                    label: "Open browser companion connection guide";
+                                    clicked => { root.open-account-help(); }
+                                }
+                                if root.companion-setup-status != "" : Text { text: root.companion-setup-status; color: root.secondary; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
+                            }
                             LibraryButton { height: 36px; light-mode: root.light-mode; caption: root.advanced-open ? "Advanced connection options  ⌃" : "Advanced connection options  ⌄"; label: root.advanced-open ? "Hide advanced account options" : "Show advanced account options"; clicked => { root.advanced-open = !root.advanced-open; } }
                             if root.advanced-open : VerticalLayout {
                                 spacing: 12px;
@@ -1989,7 +2062,8 @@ export component AppWindow inherits Window {
                                 Text { text: "Use this only if the imported session opened the wrong Google account. Select your YouTube profile in the browser before importing."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
                                 HorizontalLayout { height: 36px; spacing: 8px; ComboBox { horizontal-stretch: 1; model: ["Account 1", "Account 2", "Account 3", "Account 4", "Account 5", "Account 6", "Account 7", "Account 8", "Account 9", "Account 10"]; current-index <=> root.account-index; enabled: root.account-connected && !root.account-busy && !root.native-login-busy; } LibraryButton { width: 76px; quiet: false; light-mode: root.light-mode; caption: "Switch"; label: "Connect selected Google account"; enabled: root.account-connected && !root.account-busy && !root.native-login-busy; clicked => { root.switch-account(root.account-index); } } }
                                 LibraryButton { height: 36px; quiet: false; light-mode: root.light-mode; caption: "Import Zen profile"; label: "Select an existing Zen cookie database for advanced import"; enabled: !root.account-busy && !root.native-login-busy; clicked => { root.connect-account(); } }
-                                LibraryButton { height: 36px; quiet: false; light-mode: root.light-mode; caption: "Import session file"; label: "Import session from a local file"; enabled: !root.account-busy && !root.native-login-busy; clicked => { root.import-account(); } }
+                                Text { text: "Import a saved Copy as cURL command (Safari, Chrome, Firefox), raw request headers, or browser JSON. Verified online before replacing your session."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
+                                LibraryButton { height: 36px; quiet: false; light-mode: root.light-mode; caption: "Import session file"; label: "Import Copy as cURL, request headers, or browser JSON from a local file"; enabled: !root.account-busy && !root.native-login-busy; clicked => { root.import-account(); } }
                             }
                             if root.account-connected : LibraryButton { height: 36px; quiet: false; light-mode: root.light-mode; caption: "Disconnect account"; label: "Disconnect YouTube Music account"; enabled: !root.account-busy && !root.native-login-busy; clicked => { root.disconnect-account(); } }
 

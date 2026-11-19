@@ -1,13 +1,14 @@
 # Tide privacy notice
 
-Last updated: 2026-11-04
+Last updated: 2026-11-19
 
 
-This notice covers the Tide Windows player, its optional session companion
-extension, and its local native helper in this repository. Tide is an unofficial
-YouTube Music client. The companion's single purpose is to transfer a session
-from a YouTube Music tab you explicitly select to your local Tide installation,
-so Tide can access your library and play music using that account.
+This notice covers the Tide desktop player (Windows and macOS), its optional
+session companion extension, and its local native helpers in this repository.
+Tide is an unofficial YouTube Music client. The companion's single purpose is to
+transfer a session from a YouTube Music tab you explicitly select to your local
+Tide installation, so Tide can access your library and play music using that
+account.
 
 **Tide handles authentication information.** A session can grant account access;
 local processing does not make it nonsensitive. There is no Tide account service,
@@ -16,24 +17,27 @@ version. Tide does not send your session to the project maintainers or a Tide
 server, sell it, or use it for advertisements, profiling or unrelated purposes.
 Google/YouTube and download providers have their own data practices.
 
-Native sign-in opens Google's pages in a separate WebView2 helper with a fresh,
-private temporary browser profile. Google receives the information you enter;
-Tide does not capture password fields or expose a general page-to-native bridge.
-After you select **Connect this profile**, the helper reads scoped Music session
-cookies and allowlisted account-selection metadata, verifies them, and commits
-the verified session to the encrypted local store. The helper's browser processes
-are stopped and its temporary profile is removed after normal completion. Failed
-cleanup after a crash is retried by the ownership-checked stale-profile sweep.
-The player does not keep WebView2 running during ordinary playback.
+Native sign-in opens Google's pages in a separate helper (`tide-login.exe` using
+WebView2 on Windows, or `tide-login` using a non-persistent `WKWebView` on
+macOS) with a fresh, private temporary session. Google receives the information
+you enter; Tide does not spoof browser User-Agents, capture password fields or
+expose a general page-to-native bridge. After you select **Connect this
+profile**, the helper reads scoped Music session cookies and allowlisted
+account-selection metadata, verifies them, and commits the verified session to
+the encrypted local store. The helper's browser processes are stopped and its
+temporary profile is removed after normal completion. Failed cleanup after a
+crash is retried by the ownership-checked stale-profile sweep. The player does
+not keep the login WebView running during ordinary playback.
 
-Installed Windows players check the public Tide GitHub release endpoint once
+Installed desktop players check the public Tide GitHub release endpoint once
 after startup for newer stable versions. Disable startup checks in Settings;
 manual checks are also available. GitHub receives normal network metadata such
 as the IP address and Tide's app version in its User-Agent, without Google
-credentials, account names, listening history or a GitHub token. Installer
-downloads start only after choosing **Install and restart** and can contact
-GitHub's release-asset hosts. One installer and one partial download are kept
-in the local `TideMusic/updates` cache, each capped at 96 MiB. No telemetry or
+credentials, account names, listening history or a GitHub token. On Windows,
+installer downloads start only after choosing **Install and restart** and can
+contact GitHub's release-asset hosts, keeping one installer and one partial
+download in `TideMusic/updates` (each capped at 96 MiB). On macOS, updates open
+the release disk image in your browser for manual replacement. No telemetry or
 crash reporting is included in the updater.
 
 ## Optional listening rooms
@@ -72,7 +76,8 @@ Opening its popup does not authorize import. **Import selected tab** arms a
 capture for up to two minutes in the selected tab at
 `https://music.youtube.com`. The companion observes a matching Music browse
 request and waits for a successful response before sending one local transfer.
-Chrome may suspend its background worker earlier, requiring an explicit retry.
+The browser may suspend its background worker earlier, requiring an explicit
+retry.
 
 The allowed request headers are:
 
@@ -81,7 +86,7 @@ The allowed request headers are:
 - `x-goog-authuser` and optional `x-goog-pageid`: selected Google account and
   Music identity identifiers;
 - optional `x-goog-visitor-id` and `user-agent`: visitor and browser information;
-- `origin`: the YouTube Music origin.
+- `origin`: the YouTube Music origin (`https://music.youtube.com`).
 
 The extension uses request URL, tab, method and response status to select and
 validate that transfer. It does not send the URL query string to the helper.
@@ -92,13 +97,13 @@ telemetry or independent network fetches. Its Music-site access and `webRequest`
 permission observe requests; `activeTab` identifies your chosen tab and
 `nativeMessaging` communicates with the local helper.
 
-Session headers are held temporarily in memory and transferred through Chrome's
-native-messaging channel to the registered Tide host on the same computer. The
-popup receives status codes, not the session headers. References are released
-after sending, cancellation, expiry or other termination conditions; JavaScript
-garbage collection and browser buffers do not guarantee secure memory erasure.
-**Cancel** after the helper has committed cannot undo a completed import. Use
-**Disconnect** in Tide to remove its saved session.
+Session headers are held temporarily in memory and transferred through your
+browser's native-messaging channel to the registered Tide host on the same
+computer. The popup receives status codes, not the session headers. References
+are released after sending, cancellation, expiry or other termination conditions;
+JavaScript garbage collection and browser buffers do not guarantee secure memory
+erasure. **Cancel** after the helper has committed cannot undo a completed
+import. Use **Disconnect** in Tide to remove its saved session.
 
 ## What the native player and helper process
 
@@ -139,16 +144,27 @@ Turning the setting off stops new submissions but does not delete history
 already sent. Ordinary upstream playback requests remain visible to YouTube
 regardless of this optional history setting.
 
-Manual connection alternatives process the local authentication file or scoped
-YouTube cookies from the Zen cookie database you explicitly select. Original
-manual import files remain under your control. Those alternatives do not make
-the companion collect other browser profiles or passwords.
+Manual connection alternatives process the local authentication file (Copy as
+cURL, raw request headers, or browser JSON, verified online before replacing a
+saved session) or scoped YouTube cookies from the Zen cookie database you
+explicitly select. Original manual import files remain under your control;
+delete any temporary cURL or header files after import. Those alternatives do
+not make the companion collect other browser profiles or passwords.
 
 ## Local storage and security boundaries
 
-On Windows, the persistent session is stored at
-`%APPDATA%\TideMusic\account\session.dpapi`, encrypted using Windows DPAPI for
-your Windows user. Tide restricts its account directory to its owner and SYSTEM.
+- **Windows:** the persistent session is stored at
+  `%APPDATA%\TideMusic\account\session.dpapi`, encrypted using Windows DPAPI for
+  your Windows user. Tide restricts its account directory to its owner and
+  SYSTEM.
+- **macOS:** the persistent session is stored at
+  `~/Library/Application Support/TideMusic/account/session.sealed`, encrypted
+  with AES-GCM using a 256-bit key stored in your macOS login Keychain
+  (`com.tidemusic.Tide.session`), with `0700` directory and `0600` file
+  permissions. The browser companion allowlist policy lives at
+  `~/Library/Application Support/TideMusic/tide-session-host-policy.json`
+  outside the signed `Tide.app` bundle.
+
 This does not protect against every program running as your user, a compromised
 computer, privileged access or all backup/recovery scenarios.
 
@@ -160,10 +176,11 @@ IDs can conservatively leave a lease behind. Persistent session encryption does
 not mean these temporary files or in-memory credentials are encrypted.
 
 Preferences and queue metadata normally live in
-`%APPDATA%\TideMusic\settings.json`, with a durable local/user-directory fallback
-when roaming app data is unavailable. Runtime executables, installation ownership
-records, the exact allowed extension ID and native-host registration are separate
-installation data. The extension ID is not a session credential.
+`%APPDATA%\TideMusic\settings.json` on Windows or
+`~/Library/Application Support/TideMusic/settings.json` on macOS, with a durable
+local/user-directory fallback when needed. Runtime executables, installation
+ownership records, the exact allowed extension ID and native-host registration
+are separate installation data. The extension ID is not a session credential.
 
 Installation downloads public playback/helper dependencies from GitHub, Python's
 download service and PyPI/file hosting. These services receive download request
