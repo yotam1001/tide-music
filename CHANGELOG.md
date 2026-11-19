@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Improved YouTube Music sign-in on Mac, including accounts managed by Google
+  Family Link (#168):
+  - Tide detects when Google blocks sign-in in the embedded Mac sign-in window
+    and automatically opens the built-in **Browser Companion** setup so you can
+    connect directly from Chrome, Edge, Brave, Arc, Firefox or Zen.
+  - Hardened the Mac sign-in window's navigation, popup, cookie scoping and
+    cancel cleanup behavior.
+  - **Import headers file** now accepts **Copy as cURL** from Safari, Chrome,
+    Edge, Brave, Arc, Firefox and Zen, and verifies the imported session before
+    replacing an existing account.
+  - Fixed Zen browser profile detection on Mac.
+- Audio settings now show **System default** as the default output label on both
+  Windows and Mac (#166).
 - Failed release checks now leave the checkout ready for retry. Thanks to
   @jay23606 for the fix and regression test (#164).
 
