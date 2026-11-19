@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.4.32 - 2026-11-19
+
 - Improved YouTube Music sign-in on Mac, including accounts managed by Google
   Family Link (#168):
   - Tide detects when Google blocks sign-in in the embedded Mac sign-in window
