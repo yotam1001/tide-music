@@ -75,6 +75,7 @@ jobs:
       - run: brew install mpv yt-dlp
       - run: cargo build --release --locked -p tide-music
       - run: cargo build --release --locked -p tide-provider --bin tide-login --features tide-provider/native-login
+      - run: cargo build --release --locked -p tide-provider --bin tide-session-host
       - run: target/release/tide-login --probe
       - run: cargo test -p tide-playback --locked real_mpv_exits_when_lifetime_connection_closes -- --ignored
       - run: cargo test -p tide-playback --locked native_recovery_fault_probe -- --ignored
@@ -98,6 +99,10 @@ jobs:
       - run: cargo clippy -p tide-provider -p tide-macos --features tide-provider/native-login,tide-macos/native-login --lib --bins -- -D warnings
       - run: cargo run -p tide-provider --features native-login --bin tide-login -- --probe
       - run: cargo test --workspace --locked --no-fail-fast
+      - run: cargo test -p tide-macos --features native-login --locked
+      - run: python3 -m unittest discover -s scripts -p 'test_setup_browser_companion_macos.py'
+      - run: python3 -m unittest discover -s scripts -p 'test_browser_companion_package.py'
+      - run: python3 -m unittest discover -s helpers -p 'test_youtube_music.py'
 
   playback-smoke:
     runs-on: macos-latest

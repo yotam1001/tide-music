@@ -9,6 +9,14 @@ pub fn main() {
     eprintln!("Native login currently requires Windows.");
 }
 
+#[cfg(target_os = "macos")]
+static TERMINATED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(target_os = "macos")]
+extern "C" fn handle_termination_signal(_: libc::c_int) {
+    TERMINATED.store(true, std::sync::atomic::Ordering::Release);
+}
+
 #[cfg(any(windows, target_os = "macos"))]
 fn run() -> Result<i32, ()> {
     use std::{
@@ -45,6 +53,8 @@ fn run() -> Result<i32, ()> {
         })? {
             Outcome::Cancelled => Ok(if probe { 0 } else { 2 }),
             Outcome::TimedOut => Ok(7),
+            #[cfg(target_os = "macos")]
+            Outcome::Blocked => Ok(8),
             Outcome::Candidate(candidate) if !probe => {
                 use crate::SessionImportError;
                 // Exit codes are a fixed, credential-free contract with the player.
@@ -74,6 +84,19 @@ fn run() -> Result<i32, ()> {
     if args.len() > 1 || args.first().is_some_and(|arg| arg != "--probe") {
         return Err(());
     }
+    #[cfg(target_os = "macos")]
+    unsafe {
+        // When Tide cancels the outer helper via SIGTERM, forward shutdown to
+        // the inner WKWebView child process group and clean up the profile dir.
+        libc::signal(
+            libc::SIGTERM,
+            handle_termination_signal as *const () as libc::sighandler_t,
+        );
+        libc::signal(
+            libc::SIGINT,
+            handle_termination_signal as *const () as libc::sighandler_t,
+        );
+    }
     let probe = !args.is_empty();
     let provider = crate::Provider::new().map_err(|_| ())?;
     let profile = provider.new_login_directory().map_err(|_| ())?;
@@ -96,6 +119,10 @@ fn run() -> Result<i32, ()> {
     let mut child = tide_playback::OwnedProcess::spawn(&mut command).map_err(|_| ())?;
     let deadline = Instant::now() + Duration::from_secs(if probe { 90 } else { 10 * 60 });
     let code = loop {
+        #[cfg(target_os = "macos")]
+        if TERMINATED.load(std::sync::atomic::Ordering::Acquire) {
+            break 2;
+        }
         if let Some(status) = child.try_wait().map_err(|_| ())? {
             break status.code().unwrap_or(1);
         }
@@ -124,6 +151,7 @@ fn run() -> Result<i32, ()> {
     match code {
         0 => println!("Native login {} completed; owned process tree stopped and isolated profile removed.", if probe { "offline probe" } else { "verification" }),
         2 => println!("Native login cancelled; saved account unchanged."),
+        8 => eprintln!("Google blocked sign-in in the embedded window; use the browser companion or browser header import instead."),
         _ => eprintln!("Native login could not finish; saved account was not replaced by an unverified session."),
     }
     Ok(code)

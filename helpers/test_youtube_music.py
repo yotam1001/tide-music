@@ -905,6 +905,20 @@ class LoginTests(unittest.TestCase):
             with patch("youtube_music.Path.is_symlink", return_value=True):
                 self.assertEqual(connect_existing(str(selected)), {"type": "error", "code": "profile"})
 
+    def test_selected_database_uses_macos_application_support_when_appdata_absent(self):
+        with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as unrelated, \
+                patch.dict("youtube_music.os.environ", {}, clear=False), \
+                patch("youtube_music.sys.platform", "darwin"), \
+                patch("youtube_music.Path.home", return_value=Path(home)):
+            os.environ.pop("APPDATA", None)
+            root = Path(home) / "Library" / "Application Support" / "zen" / "Profiles"
+            root.mkdir(parents=True)
+            profile = self.database(root)
+            selected = profile / "cookies.sqlite"
+            self.assertEqual(selected_zen_database(str(selected)), selected.resolve())
+            outside = self.database(unrelated) / "cookies.sqlite"
+            self.assertEqual(connect_existing(str(outside)), {"type": "error", "code": "profile"})
+
     @unittest.skipUnless(os.name == "nt", "Windows file path aliases")
     def test_selected_database_accepts_windows_short_path_alias(self):
         import ctypes

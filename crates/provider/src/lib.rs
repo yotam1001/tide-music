@@ -16,6 +16,7 @@ use std::{
 };
 use tide_core::Track;
 use zeroize::Zeroize;
+pub mod browser_companion;
 mod feedback;
 #[cfg(feature = "native-login")]
 pub mod native_login;
@@ -954,6 +955,45 @@ impl Provider {
         result
     }
 
+    /// Read a local headers, cURL, or browser JSON file, verify it online with
+    /// YouTube Music, and replace the saved session only if verification succeeds.
+    #[cfg(any(windows, unix))]
+    pub fn import_session_file_verified(
+        &self,
+        path: &Path,
+        cancel: Arc<AtomicBool>,
+    ) -> Result<(), SessionImportError> {
+        if cancel.load(Ordering::Acquire) {
+            return Err(SessionImportError::Cancelled);
+        }
+        let file = fs::File::open(path).map_err(|_| SessionImportError::StorageError)?;
+        let mut bytes = Vec::new();
+        if file
+            .take((MAX_SESSION + 1) as u64)
+            .read_to_end(&mut bytes)
+            .is_err()
+        {
+            bytes.zeroize();
+            return Err(SessionImportError::StorageError);
+        }
+        if bytes.len() > MAX_SESSION {
+            bytes.zeroize();
+            return Err(SessionImportError::InvalidHeaders);
+        }
+        let result = self.import_browser_session(&bytes, cancel);
+        bytes.zeroize();
+        result
+    }
+
+    #[cfg(not(any(windows, unix)))]
+    pub fn import_session_file_verified(
+        &self,
+        _path: &Path,
+        _cancel: Arc<AtomicBool>,
+    ) -> Result<(), SessionImportError> {
+        Err(SessionImportError::StorageError)
+    }
+
     /// Verify before replacing a saved session. A connection changed while the
     /// network request was in flight must not be overwritten by its result.
     #[cfg(any(windows, unix))]
@@ -1885,23 +1925,395 @@ fn read_limited(path: &Path, limit: usize) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
+struct ZeroizedMap(BTreeMap<String, String>);
+impl Drop for ZeroizedMap {
+    fn drop(&mut self) {
+        for value in self.0.values_mut() {
+            value.zeroize();
+        }
+    }
+}
+
+struct ZeroizedTokens(Vec<String>);
+impl Drop for ZeroizedTokens {
+    fn drop(&mut self) {
+        for token in &mut self.0 {
+            token.zeroize();
+        }
+    }
+}
+
+fn is_curl_command(text: &str) -> bool {
+    let trimmed = text.trim_start();
+    let rest = trimmed
+        .strip_prefix("curl.exe")
+        .or_else(|| trimmed.strip_prefix("curl"));
+    let Some(rest) = rest else {
+        return false;
+    };
+    rest.starts_with(char::is_whitespace) && !rest.trim_start().starts_with(':')
+}
+
+fn tokenize_curl_posix(text: &str) -> Result<ZeroizedTokens, &'static str> {
+    let mut tokens = ZeroizedTokens(Vec::new());
+    let mut current = zeroize::Zeroizing::new(String::new());
+    let mut has_token = false;
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            ' ' | '\t' | '\r' | '\n' => {
+                if has_token {
+                    tokens.0.push(std::mem::take(&mut *current));
+                    has_token = false;
+                }
+            }
+            '\\' => {
+                if chars.peek() == Some(&'\r') {
+                    chars.next();
+                    if chars.peek() == Some(&'\n') {
+                        chars.next();
+                    }
+                } else if chars.peek() == Some(&'\n') {
+                    chars.next();
+                } else if let Some(next) = chars.next() {
+                    current.push(next);
+                    has_token = true;
+                }
+            }
+            '\'' => {
+                has_token = true;
+                let mut closed = false;
+                for next in chars.by_ref() {
+                    if next == '\'' {
+                        closed = true;
+                        break;
+                    }
+                    current.push(next);
+                }
+                if !closed {
+                    return Err("Session cURL command has an unclosed quote");
+                }
+            }
+            '$' if chars.peek() == Some(&'\'') => {
+                chars.next();
+                has_token = true;
+                let mut closed = false;
+                while let Some(next) = chars.next() {
+                    if next == '\'' {
+                        closed = true;
+                        break;
+                    }
+                    if next == '\\' {
+                        let Some(esc) = chars.next() else {
+                            return Err("Session cURL command has an unclosed quote");
+                        };
+                        match esc {
+                            '\\' => current.push('\\'),
+                            '\'' => current.push('\''),
+                            '"' => current.push('"'),
+                            'n' => current.push('\n'),
+                            'r' => current.push('\r'),
+                            't' => current.push('\t'),
+                            'x' => {
+                                let mut hex = String::with_capacity(2);
+                                for _ in 0..2 {
+                                    if let Some(&h) = chars.peek() {
+                                        if h.is_ascii_hexdigit() {
+                                            hex.push(h);
+                                            chars.next();
+                                        }
+                                    }
+                                }
+                                if let Ok(byte) = u8::from_str_radix(&hex, 16) {
+                                    current.push(byte as char);
+                                }
+                            }
+                            other => current.push(other),
+                        }
+                    } else {
+                        current.push(next);
+                    }
+                }
+                if !closed {
+                    return Err("Session cURL command has an unclosed quote");
+                }
+            }
+            '"' => {
+                has_token = true;
+                let mut closed = false;
+                while let Some(next) = chars.next() {
+                    if next == '"' {
+                        closed = true;
+                        break;
+                    }
+                    if next == '\\' {
+                        if chars.peek() == Some(&'\r') {
+                            chars.next();
+                            if chars.peek() == Some(&'\n') {
+                                chars.next();
+                            }
+                        } else if chars.peek() == Some(&'\n') {
+                            chars.next();
+                        } else if let Some(esc) = chars.next() {
+                            match esc {
+                                '"' | '\\' | '$' | '`' => current.push(esc),
+                                other => {
+                                    current.push('\\');
+                                    current.push(other);
+                                }
+                            }
+                        } else {
+                            return Err("Session cURL command has an unclosed quote");
+                        }
+                    } else {
+                        current.push(next);
+                    }
+                }
+                if !closed {
+                    return Err("Session cURL command has an unclosed quote");
+                }
+            }
+            other => {
+                current.push(other);
+                has_token = true;
+            }
+        }
+    }
+    if has_token {
+        tokens.0.push(std::mem::take(&mut *current));
+    }
+    Ok(tokens)
+}
+
+fn tokenize_curl_cmd(text: &str) -> Result<ZeroizedTokens, &'static str> {
+    let mut normalized = zeroize::Zeroizing::new(String::with_capacity(text.len()));
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '^' {
+            if chars.peek() == Some(&'\r') {
+                chars.next();
+                if chars.peek() == Some(&'\n') {
+                    chars.next();
+                }
+                continue;
+            }
+            if chars.peek() == Some(&'\n') {
+                chars.next();
+                continue;
+            }
+        }
+        normalized.push(c);
+    }
+    let mut tokens = ZeroizedTokens(Vec::new());
+    let mut current = zeroize::Zeroizing::new(String::new());
+    let mut has_token = false;
+    let mut chars = normalized.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            ' ' | '\t' | '\r' | '\n' => {
+                if has_token {
+                    tokens.0.push(std::mem::take(&mut *current));
+                    has_token = false;
+                }
+            }
+            '^' if chars.peek() == Some(&'"') => {
+                chars.next();
+                has_token = true;
+                let mut closed = false;
+                while let Some(next) = chars.next() {
+                    if next == '^' {
+                        match chars.peek().copied() {
+                            Some('"') => {
+                                chars.next();
+                                closed = true;
+                                break;
+                            }
+                            Some('\\') => {
+                                chars.next();
+                                if chars.peek() == Some(&'^') {
+                                    chars.next();
+                                    if chars.peek() == Some(&'"') {
+                                        chars.next();
+                                        current.push('"');
+                                    } else {
+                                        current.push('\\');
+                                    }
+                                } else {
+                                    current.push('\\');
+                                }
+                            }
+                            Some(esc) => {
+                                chars.next();
+                                current.push(esc);
+                            }
+                            None => break,
+                        }
+                    } else if next == '\\' && chars.peek() == Some(&'"') {
+                        chars.next();
+                        current.push('"');
+                    } else {
+                        current.push(next);
+                    }
+                }
+                if !closed {
+                    return Err("Session cURL command has an unclosed quote");
+                }
+            }
+            '"' => {
+                has_token = true;
+                let mut closed = false;
+                while let Some(next) = chars.next() {
+                    if next == '"' {
+                        if chars.peek() == Some(&'"') {
+                            chars.next();
+                            current.push('"');
+                        } else {
+                            closed = true;
+                            break;
+                        }
+                    } else if next == '\\' && chars.peek() == Some(&'"') {
+                        chars.next();
+                        current.push('"');
+                    } else {
+                        current.push(next);
+                    }
+                }
+                if !closed {
+                    return Err("Session cURL command has an unclosed quote");
+                }
+            }
+            '^' => {
+                if let Some(esc) = chars.next() {
+                    current.push(esc);
+                    has_token = true;
+                }
+            }
+            other => {
+                current.push(other);
+                has_token = true;
+            }
+        }
+    }
+    if has_token {
+        tokens.0.push(std::mem::take(&mut *current));
+    }
+    Ok(tokens)
+}
+
+fn insert_curl_cookie(imported: &mut BTreeMap<String, String>, value: &str) {
+    let trimmed = value.trim();
+    // `-b <file>` without `=` specifies a cookie filename, not inline cookies.
+    if trimmed.is_empty() || !trimmed.contains('=') {
+        return;
+    }
+    if let Some(existing) = imported.get_mut("cookie") {
+        if existing != trimmed && existing.len() + trimmed.len() + 2 <= 32768 {
+            existing.push_str("; ");
+            existing.push_str(trimmed);
+        }
+    } else {
+        imported.insert("cookie".into(), trimmed.to_string());
+    }
+}
+
+fn insert_curl_header(imported: &mut BTreeMap<String, String>, raw: &str) {
+    let Some((key, value)) = raw.split_once(':') else {
+        return;
+    };
+    let key = key.trim().to_ascii_lowercase();
+    let value = value.trim();
+    if key == "cookie" {
+        insert_curl_cookie(imported, value);
+    } else if !key.is_empty() {
+        if let Some(mut old) = imported.insert(key, value.to_string()) {
+            old.zeroize();
+        }
+    }
+}
+
+fn parse_curl_headers(text: &str) -> Result<ZeroizedMap, &'static str> {
+    let cmd_style = text.contains("^\"") || text.contains("^\n") || text.contains("^\r\n");
+    let tokens = if cmd_style {
+        tokenize_curl_cmd(text)?
+    } else {
+        tokenize_curl_posix(text)?
+    };
+    let mut imported = ZeroizedMap(BTreeMap::new());
+    let mut index = 1;
+    while index < tokens.0.len() {
+        let token = tokens.0[index].as_str();
+        if token == "-H" || token == "--header" {
+            if let Some(value) = tokens.0.get(index + 1) {
+                insert_curl_header(&mut imported.0, value);
+                index += 2;
+                continue;
+            }
+        } else if let Some(value) = token.strip_prefix("--header=") {
+            insert_curl_header(&mut imported.0, value);
+        } else if let Some(value) = token.strip_prefix("-H") {
+            if !value.is_empty() {
+                insert_curl_header(&mut imported.0, value);
+            }
+        } else if token == "-b" || token == "--cookie" {
+            if let Some(value) = tokens.0.get(index + 1) {
+                insert_curl_cookie(&mut imported.0, value);
+                index += 2;
+                continue;
+            }
+        } else if let Some(value) = token.strip_prefix("--cookie=") {
+            insert_curl_cookie(&mut imported.0, value);
+        } else if let Some(value) = token.strip_prefix("-b") {
+            if !value.is_empty() {
+                insert_curl_cookie(&mut imported.0, value);
+            }
+        } else if token == "-A" || token == "--user-agent" {
+            if let Some(value) = tokens.0.get(index + 1) {
+                if let Some(mut old) = imported
+                    .0
+                    .insert("user-agent".into(), value.trim().to_string())
+                {
+                    old.zeroize();
+                }
+                index += 2;
+                continue;
+            }
+        } else if let Some(value) = token.strip_prefix("--user-agent=") {
+            if let Some(mut old) = imported
+                .0
+                .insert("user-agent".into(), value.trim().to_string())
+            {
+                old.zeroize();
+            }
+        }
+        index += 1;
+    }
+    Ok(imported)
+}
+
 fn parse_headers(bytes: &[u8]) -> Result<BTreeMap<String, String>, &'static str> {
     if bytes.len() > MAX_SESSION {
         return Err("Account session exceeds the input limit");
     }
     let text = std::str::from_utf8(bytes)
-        .map_err(|_| "Session file must be UTF-8 request headers or browser JSON")?;
-    let mut imported: BTreeMap<String, String> = if text.trim_start().starts_with('{') {
-        serde_json::from_str(text)
-            .map_err(|_| "Use browser authentication JSON, not OAuth tokens")?
+        .map_err(|_| "Session file must be UTF-8 request headers, cURL, or browser JSON")?;
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let mut imported = if text.trim_start().starts_with('{') {
+        ZeroizedMap(
+            serde_json::from_str(text)
+                .map_err(|_| "Use browser authentication JSON, not OAuth tokens")?,
+        )
+    } else if is_curl_command(text) {
+        parse_curl_headers(text)?
     } else {
-        text.lines()
-            .filter_map(|line| line.split_once(':'))
-            .map(|(key, value)| (key.trim().to_lowercase(), value.trim().to_string()))
-            .collect()
+        ZeroizedMap(
+            text.lines()
+                .filter_map(|line| line.split_once(':'))
+                .map(|(key, value)| (key.trim().to_lowercase(), value.trim().to_string()))
+                .collect(),
+        )
     };
-    let mut selected = BTreeMap::new();
-    for (key, mut value) in std::mem::take(&mut imported) {
+    let mut selected = ZeroizedMap(BTreeMap::new());
+    for (key, mut value) in std::mem::take(&mut imported.0) {
         let key = key.to_ascii_lowercase();
         if [
             "cookie",
@@ -1928,12 +2340,15 @@ fn parse_headers(bytes: &[u8]) -> Result<BTreeMap<String, String>, &'static str>
                 value.zeroize();
                 return Err("Session headers contain invalid characters");
             }
-            selected.insert(key, value);
+            if let Some(mut old) = selected.0.insert(key, value) {
+                old.zeroize();
+            }
         } else {
             value.zeroize();
         }
     }
     let cookie = selected
+        .0
         .get("cookie")
         .ok_or("The file needs a Cookie header from a signed-in YouTube Music request")?;
     if !cookie.split(';').any(|part| {
@@ -1946,17 +2361,21 @@ fn parse_headers(bytes: &[u8]) -> Result<BTreeMap<String, String>, &'static str>
     let mut jar = cookie_jar(cookie)?;
     jar.zeroize();
     for name in ["x-goog-authuser", "x-goog-pageid"] {
-        if let Some(value) = selected.get(name) {
+        if let Some(value) = selected.0.get(name) {
             if !value.bytes().all(|byte| byte.is_ascii_digit()) {
                 return Err("Session account selection is invalid");
             }
         }
     }
-    selected.insert("x-origin".into(), "https://music.youtube.com".into());
+    selected
+        .0
+        .insert("x-origin".into(), "https://music.youtube.com".into());
     // ytmusicapi identifies browser auth from this marker and calculates a
     // fresh SAPISIDHASH from the cookie for every actual request.
-    selected.insert("authorization".into(), "SAPISIDHASH".into());
-    Ok(selected)
+    selected
+        .0
+        .insert("authorization".into(), "SAPISIDHASH".into());
+    Ok(std::mem::take(&mut selected.0))
 }
 
 fn cookie_jar(cookie: &str) -> Result<String, &'static str> {
@@ -3821,5 +4240,122 @@ mod tests {
         drop(login);
         assert!(!path.exists());
         fs::remove_dir(directory).unwrap();
+    }
+
+    #[test]
+    fn parse_headers_accepts_copy_as_curl_from_safari_chrome_firefox_and_cmd() {
+        let safari_curl =
+            br#"curl 'https://music.youtube.com/youtubei/v1/browse?prettyPrint=false' \
+-X 'POST' \
+-H 'Accept: */*' \
+-H 'Cookie: __Secure-3PAPISID=safari; SID=sid123' \
+-H 'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15' \
+-H 'X-Goog-AuthUser: 1' \
+-H 'X-Goog-Visitor-Id: Cgt12345' \
+-H 'X-Random-Ignored: drop-me'"#;
+        let parsed = parse_headers(safari_curl).unwrap();
+        assert_eq!(parsed["cookie"], "__Secure-3PAPISID=safari; SID=sid123");
+        assert_eq!(parsed["x-goog-authuser"], "1");
+        assert_eq!(parsed["x-goog-visitor-id"], "Cgt12345");
+        assert_eq!(
+            parsed["user-agent"],
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15"
+        );
+        assert_eq!(parsed["x-origin"], "https://music.youtube.com");
+        assert_eq!(parsed["authorization"], "SAPISIDHASH");
+        assert!(!parsed.contains_key("x-random-ignored"));
+
+        let chrome_bash = br#"curl 'https://music.youtube.com/youtubei/v1/browse' \
+  -H 'accept-language: en-US,en;q=0.9' \
+  -b $'__Secure-3PAPISID=chrome; PREF=tz=America.Los_Angeles' \
+  --header='x-goog-pageid: 1020304050' \
+  -A "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/130.0.0.0""#;
+        let mut bom_chrome = b"\xEF\xBB\xBF".to_vec();
+        bom_chrome.extend_from_slice(chrome_bash);
+        let parsed = parse_headers(&bom_chrome).unwrap();
+        assert_eq!(
+            parsed["cookie"],
+            "__Secure-3PAPISID=chrome; PREF=tz=America.Los_Angeles"
+        );
+        assert_eq!(parsed["accept-language"], "en-US,en;q=0.9");
+        assert_eq!(parsed["x-goog-pageid"], "1020304050");
+        assert_eq!(
+            parsed["user-agent"],
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/130.0.0.0"
+        );
+
+        let chrome_cmd = b"curl ^\"https://music.youtube.com/youtubei/v1/browse^\" ^\r\n  -H ^\"accept-language: en-US,en;q=0.9^\" ^\r\n  -b ^\"__Secure-3PAPISID=cmd; SID=cmdsid^\" ^\r\n  -H ^\"x-goog-authuser: 2^\"";
+        let parsed = parse_headers(chrome_cmd).unwrap();
+        assert_eq!(parsed["cookie"], "__Secure-3PAPISID=cmd; SID=cmdsid");
+        assert_eq!(parsed["x-goog-authuser"], "2");
+        assert_eq!(parsed["accept-language"], "en-US,en;q=0.9");
+
+        // Rejects malformed / incomplete / injected cURL inputs.
+        assert!(parse_headers(
+            b"curl 'https://music.youtube.com' -H 'Cookie: __Secure-3PAPISID=open"
+        )
+        .is_err());
+        assert!(parse_headers(b"curl 'https://music.youtube.com' -b cookies.txt").is_err());
+        assert!(parse_headers(
+            b"curl 'https://music.youtube.com' -H $'Cookie: __Secure-3PAPISID=a; x=1\\nEvil: 1'"
+        )
+        .is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn import_session_file_verified_rejects_bad_files_without_clobbering_session() {
+        let directory = std::env::temp_dir().join(format!(
+            "tide-verified-file-import-{}-{}",
+            std::process::id(),
+            LEASE_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        private_directory(&directory).unwrap();
+        let provider =
+            Provider::with_key_store(directory.clone(), Arc::new(InMemoryKeyStore::new()));
+        provider
+            .import_bytes(br#"{"cookie":"__Secure-3PAPISID=old; SID=old","x-goog-authuser":"0"}"#)
+            .unwrap();
+        let original = fs::read(directory.join(SESSION_FILE_NAME)).unwrap();
+
+        // Missing file -> StorageError
+        assert_eq!(
+            provider.import_session_file_verified(
+                &directory.join("missing.txt"),
+                Arc::new(AtomicBool::new(false)),
+            ),
+            Err(SessionImportError::StorageError)
+        );
+        // Cancelled before read -> Cancelled
+        assert_eq!(
+            provider.import_session_file_verified(
+                &directory.join("missing.txt"),
+                Arc::new(AtomicBool::new(true)),
+            ),
+            Err(SessionImportError::Cancelled)
+        );
+        // Invalid contents -> InvalidHeaders
+        let bad_file = directory.join("bad.txt");
+        fs::write(
+            &bad_file,
+            b"curl 'https://music.youtube.com' -H 'Accept: */*'",
+        )
+        .unwrap();
+        assert_eq!(
+            provider.import_session_file_verified(&bad_file, Arc::new(AtomicBool::new(false))),
+            Err(SessionImportError::InvalidHeaders)
+        );
+        // Oversized file -> InvalidHeaders
+        let big_file = directory.join("big.txt");
+        fs::write(&big_file, vec![b'a'; MAX_SESSION + 1]).unwrap();
+        assert_eq!(
+            provider.import_session_file_verified(&big_file, Arc::new(AtomicBool::new(false))),
+            Err(SessionImportError::InvalidHeaders)
+        );
+        assert_eq!(
+            fs::read(directory.join(SESSION_FILE_NAME)).unwrap(),
+            original
+        );
+        fs::remove_dir_all(&directory).unwrap();
     }
 }

@@ -44,6 +44,7 @@ fn outcome_message(code: i32) -> &'static str {
         #[cfg(not(target_os = "macos"))]
         6 => "Tide couldn’t save the verified session in Windows. Try again from your usual Windows account.",
         7 => "Sign-in timed out. Reopen the window when you’re ready to finish.",
+        8 => "Google blocked sign-in in the embedded window (common for Family Link or supervised accounts). Use Browser companion or Import session file from your regular browser below.",
         _ => "Sign-in could not finish. Retry or use the browser companion below.",
     }
 }
@@ -97,6 +98,13 @@ pub(super) fn wire(ui: &AppWindow, state: Rc<RefCell<State>>) -> Rc<Login> {
                         if let Some(code) = outcome {
                             login.stop(&ui);
                             ui.set_native_login_status(outcome_message(code).into());
+                            if code == 8 {
+                                if ui.get_companion_setup_available() {
+                                    ui.set_companion_setup_open(true);
+                                } else {
+                                    ui.set_advanced_open(true);
+                                }
+                            }
                         }
                     });
                 }
@@ -159,5 +167,13 @@ mod tests {
         );
         std::fs::remove_file(root.join(name)).unwrap();
         std::fs::remove_dir(root).unwrap();
+    }
+
+    #[cfg(any(windows, target_os = "macos"))]
+    #[test]
+    fn blocked_outcome_mentions_family_link_and_browser_fallback() {
+        let message = outcome_message(8);
+        assert!(message.contains("Family Link"));
+        assert!(message.contains("Browser companion"));
     }
 }
