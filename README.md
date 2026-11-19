@@ -11,6 +11,7 @@ A fast, native player that stays light on RAM, even while you game.
 [![macOS Apple Silicon](https://img.shields.io/badge/macOS-Apple%20Silicon-8e2449?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/yotam1001/tide-music/releases/latest/download/Tide.dmg)
 [![macOS Intel](https://img.shields.io/badge/macOS-Intel-8e2449?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/yotam1001/tide-music/releases/latest/download/Tide-Intel.dmg)
 
+[![Website](https://img.shields.io/badge/website-tide--music--links.netlify.app-1a1a2e?style=flat)](https://tide-music-links.netlify.app)
 [![Latest release](https://img.shields.io/github/v/release/yotam1001/tide-music?label=latest&color=c2185b)](https://github.com/yotam1001/tide-music/releases/latest)
 [![License: MIT](https://img.shields.io/badge/license-MIT-8e2449)](LICENSE)
 [![Built with Rust](https://img.shields.io/badge/built%20with-Rust-b7410e?logo=rust)](docs/DEVELOPMENT.md)
@@ -53,16 +54,16 @@ A fast, native player that stays light on RAM, even while you game.
 
 | | |
 |---|---|
-| 🎵 **Play anything** | Songs, albums, playlists and local audio files, with native playback |
+| 🎵 **Play anything** | Songs, albums and playlists from YouTube Music, with native playback |
 | 🎤 **Karaoke lyrics** | Word-by-word synced lyrics with smooth scrolling |
 | 🏠 **Your YouTube Music** | Home recommendations, playlists, Liked Songs, saved albums and history |
 | 📻 **Radio & Autoplay** | Start song radio or keep related music flowing automatically |
 | 🧑‍🎤 **Artist pages** | Click an artist to play, shuffle or queue their top songs |
 | 📋 **Smart queue** | Play next, drag to reorder, and search the queue or any playlist |
 | 👍 **Like & save** | Like or dislike songs and edit your own playlists |
-| 🔊 **Audio control** | Choose your output device and smooth volume between songs |
-| 🪟 **Mini player** | Always on top, with adjustable opacity |
-| ⌨️ **System integration** | Windows media keys, keyboard shortcuts and Discord status |
+| 🔊 **Audio control** | Output device picker, bit-perfect exclusive mode, crossfade, equalizer, sleep timer and even volume |
+| 🪟 **Mini player** | Compact one-row player that stays on top with adjustable opacity |
+| ⌨️ **System integration** | Media keys, global shortcuts, trackpad swipes, macOS Control Center / menu bar and Discord status |
 | 🔄 **In-app updates** | Updates download in the background; restart whenever you're ready |
 
 ## Get started

@@ -11,7 +11,7 @@ and Edge and Firefox are not recommended paths yet.
 
 ## 1. Get the two matching downloads
 
-From [v0.1.3](https://github.com/yotam1001/tide-music/releases/latest), get:
+From [the latest release](https://github.com/yotam1001/tide-music/releases/latest), get:
 
 - [**TideSetup.exe**](https://github.com/yotam1001/tide-music/releases/latest/download/TideSetup.exe) — installs the Windows player and its local connection helper.
 - [**tide-browser-chromium.zip**](https://github.com/yotam1001/tide-music/releases/latest/download/tide-browser-chromium.zip) — the Chrome companion.

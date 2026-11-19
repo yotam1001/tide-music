@@ -31,7 +31,7 @@ pub fn apply(s: &State, u: &AppWindow) -> bool {
 fn outputs(s: &State, p: &tide_core::PlaybackSnapshot) -> Vec<tide_core::AudioDevice> {
     let mut devices = vec![tide_core::AudioDevice {
         name: "auto".into(),
-        description: "Windows default".into(),
+        description: "System default".into(),
     }];
     devices.extend(p.audio_devices.iter().cloned());
     if !devices.iter().any(|d| d.name == s.settings.audio_device) {
@@ -63,12 +63,12 @@ pub fn refresh(s: &State, u: &AppWindow, p: &tide_core::PlaybackSnapshot) {
             .collect(),
     ));
     u.set_audio_status(if p.audio_settings_error {
-        "The output or audio effect could not be applied. Choose Windows default or turn Even volume off."
+        "The output or audio effect could not be applied. Choose System default or turn Even volume off."
     } else if s.settings.audio_device != "auto" && !p.audio_devices.iter().any(|d| d.name == s.settings.audio_device) {
-        "Saved output unavailable. Reconnect it or choose Windows default."
+        "Saved output unavailable. Reconnect it or choose System default."
     } else if p.audio_devices.is_empty() {
         "Play a song to discover your headphones and speakers."
-    } else { "Applies only to Tide. Windows default follows your system output." }.into());
+    } else { "Applies only to Tide. System default follows your system output." }.into());
 }
 pub fn install(state: &Rc<RefCell<State>>, ui: &AppWindow) {
     {

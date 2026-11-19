@@ -3,14 +3,14 @@
 Start with the app version under **Settings → About Tide** (scroll if needed)
 and the exact error message. If the app cannot open, give the installer release.
 Use downloads from the [official repository](https://github.com/yotam1001/tide-music/releases).
-The current public installer is in the
-[Windows release](https://github.com/yotam1001/tide-music/releases/tag/v0.1.3).
+The current public installers (`TideSetup.exe` for Windows, `Tide.dmg` / `Tide-Intel.dmg` for macOS) are in the
+[latest release](https://github.com/yotam1001/tide-music/releases/latest).
 
 ## Installation and opening
 
 | Problem | Next step |
 | --- | --- |
-| I cannot find a public download | Open the Windows release above, expand Assets and choose **TideSetup.exe**. Source code ZIPs are not installers. |
+| I cannot find a public download | Open the latest release above, expand Assets and choose **TideSetup.exe** (Windows) or **Tide.dmg** / **Tide-Intel.dmg** (macOS). Source code ZIPs are not installers. |
 | I cannot find Tide after installing | Open Start and search **Tide**. Confirm setup reached its completion screen; merely downloading the EXE does not install it. |
 | Windows blocked the installer | Check the repository source and record the exact message. Do not disable protections or device policies. Report the block. |
 | Setup failed during downloads | Check your connection and free disk space, close Tide, and use **Try again**. Keep the error text if it fails again. |
@@ -38,9 +38,10 @@ are optional fallbacks, not the normal getting-started path.
 
 ## Playback and the window
 
-- **No sound:** check Tide's pause state, its volume, the Windows volume mixer
-  and the selected output device. Try a local audio file to separate audio-device
-  issues from YouTube connection problems.
+- **No sound:** check Tide's pause state, its volume, your system volume mixer
+  and the selected output device under **Settings → Audio** (try switching back
+  to **System default** or turning off bit-perfect output if another app holds
+  the device).
 - **A song will not load:** check the account state and try another song. Some
   content or formats may be unavailable through the unofficial integration.
 - **Music stops when the queue ends:** open Queue and check Autoplay. Related
