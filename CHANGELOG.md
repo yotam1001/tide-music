@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.4.33 - 2026-11-20
+
 - Fixed search results overlapping under the Top result card in the **All** search view.
 - Fixed playback handoff edge cases (#170):
   - Expired sleep timers now clear while idle instead of pausing the next playback session.
