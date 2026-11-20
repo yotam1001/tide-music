@@ -472,6 +472,7 @@ export component AppWindow inherits Window {
     in property <bool> search-retryable;
     in property <bool> home-refreshing;
     private property <int> search-result-count: root.search-kind == 0 ? root.search-rows.length : root.search-cards.length;
+    out property <bool> search-all-hero-visible: root.search-kind == 4 && root.search-cards.length > 0 && root.browse-width >= 600px && root.height >= 680px;
     in property <string> error-message;
     in property <bool> error-is-account;
     in-out property <bool> settings-open: false;
@@ -1129,7 +1130,7 @@ export component AppWindow inherits Window {
                                     }
                                 }
                                 // "All" leads with its first result too: album, artist, playlist or song.
-                                if root.search-kind == 4 && root.search-cards.length > 0 && root.browse-width >= 600px && root.height >= 680px : all-hero := Rectangle {
+                                if root.search-all-hero-visible : all-hero := Rectangle {
                                     height: 132px;
                                     border-radius: 10px;
                                     background: all-hero-touch.has-hover ? Theme.hover : Theme.raised;
@@ -1172,20 +1173,21 @@ export component AppWindow inherits Window {
                                     content-y <=> root.search-artwork-y;
                                     changed visible-height => { root.search-artwork-height = self.visible-height; }
                                     vertical-stretch: 1; accessible-label: "Music collection search results";
-                                    for card[index] in root.search-cards : VerticalLayout {
-                                        // The Top result card above already shows the first "All" result.
-                                        property <bool> in-hero: index == 0 && root.search-kind == 4 && root.browse-width >= 600px && root.height >= 680px;
-                                        visible: !self.in-hero;
-                                        height: self.in-hero ? 0px : self.preferred-height;
+                                    // The Top result card above already shows the first "All" result, so skip it
+                                    // here instead of collapsing item 0 to 0px inside ListView.
+                                    for visible-index in max(0, root.search-cards.length - (root.search-all-hero-visible ? 1 : 0)) : search-card-row := VerticalLayout {
+                                        property <int> card-index: visible-index + (root.search-all-hero-visible ? 1 : 0);
+                                        property <RecommendationRow> card: root.search-cards[self.card-index];
+                                        height: (self.card.shelf != "" ? LayoutMetrics.search-section-height : 0px) + LayoutMetrics.browse-row-height;
                                         // The All view labels each YouTube Music section once.
-                                        if card.shelf != "" : Text {
+                                        if search-card-row.card.shelf != "" : Text {
                                             height: LayoutMetrics.search-section-height; vertical-alignment: bottom;
-                                            text: card.shelf; color: root.foreground; font-size: 20px; font-weight: 800; overflow: elide;
+                                            text: search-card-row.card.shelf; color: root.foreground; font-size: 20px; font-weight: 800; overflow: elide;
                                         }
                                         HomeCard {
-                                            height: LayoutMetrics.browse-row-height; quick: true; item: card; source-index: index;
+                                            height: LayoutMetrics.browse-row-height; quick: true; item: search-card-row.card; source-index: search-card-row.card-index;
                                             light-mode: root.light-mode; enabled: root.browsing-enabled && !root.account-busy;
-                                            select => { root.select-search-card(index); }
+                                            select => { root.select-search-card(search-card-row.card-index); }
                                         }
                                     }
                                 }

@@ -223,4 +223,61 @@ fn typed_search_tabs_and_collections_keep_actions_at_each_size() {
     draw(&window, 1140, 800);
     click(&ui, 300.0, 86.0);
     assert_eq!(chosen.take().as_deref(), Some("First suggestion"));
+
+    // Regression: in the "All" view with the Top result hero visible, sectioned
+    // cards below must stack vertically rather than collapsing onto y = 0.
+    ui.set_suggestions_open(false);
+    ui.set_search_open(true);
+    ui.set_detail_open(false);
+    ui.set_search_kind(4);
+    ui.set_search_cards(ModelRc::new(VecModel::from(vec![
+        RecommendationRow {
+            id: "UCtop".into(),
+            title: "Top Artist".into(),
+            subtitle: "Top Artist".into(),
+            kind: "artist".into(),
+            shelf: "Top result".into(),
+            ..Default::default()
+        },
+        RecommendationRow {
+            id: "song1".into(),
+            title: "First Song".into(),
+            subtitle: "Top Artist".into(),
+            kind: "song".into(),
+            shelf: "Songs".into(),
+            ..Default::default()
+        },
+        RecommendationRow {
+            id: "song2".into(),
+            title: "Second Song".into(),
+            subtitle: "Top Artist".into(),
+            kind: "song".into(),
+            shelf: "".into(),
+            ..Default::default()
+        },
+        RecommendationRow {
+            id: "PL1".into(),
+            title: "Essentials".into(),
+            subtitle: "YouTube Music".into(),
+            kind: "playlist".into(),
+            shelf: "Playlists".into(),
+            ..Default::default()
+        },
+    ])));
+    let pixels = draw(&window, 1140, 800);
+    export("search-all-sections", 1140, 800, &pixels);
+    let left = ui.global::<LayoutMetrics>().get_navigation_wide() + 28.0;
+    // Hero card sits around y = 248..380; ListView starts below at ~400.
+    // Row 1: 40px "Songs" header + 72px card (card center ~476).
+    // Row 2: 72px card (card center ~548).
+    // Row 3: 40px "Playlists" header + 72px card (card center ~660).
+    for (expected, y) in [(0, 310.0), (1, 476.0), (2, 548.0), (3, 660.0)] {
+        opened.set(-1);
+        click(&ui, left + 30.0, y);
+        assert_eq!(
+            opened.get(),
+            expected,
+            "All-search card {expected} should be clickable at y={y} without overlapping"
+        );
+    }
 }
