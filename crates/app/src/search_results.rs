@@ -150,12 +150,17 @@ pub(super) fn refresh(s: &State, ui: &AppWindow) {
     let mut cache = s.artwork.borrow_mut();
     // The All view starts each section with a header; other kinds have none.
     let sectioned = ui.get_search_kind() == ALL;
+    let hero_offset = usize::from(ui.get_search_all_hero_visible());
     let headers: Vec<bool> = s
         .search_cards
         .iter()
         .enumerate()
         .map(|(index, card)| {
-            sectioned && (index == 0 || s.search_cards[index - 1].shelf != card.shelf)
+            sectioned
+                && !card.shelf.is_empty()
+                && (index == 0
+                    || index == hero_offset
+                    || s.search_cards[index - 1].shelf != card.shelf)
         })
         .collect();
     let row_height = ui.global::<LayoutMetrics>().get_browse_row_height();
@@ -165,6 +170,7 @@ pub(super) fn refresh(s: &State, ui: &AppWindow) {
         ui.get_search_artwork_height(),
         headers
             .iter()
+            .skip(hero_offset)
             .map(|&header| row_height + if header { header_height } else { 0.0 }),
     );
     let rows = s
@@ -186,7 +192,12 @@ pub(super) fn refresh(s: &State, ui: &AppWindow) {
                 .artwork_url
                 .as_deref()
                 .filter(|_| {
-                    ui.get_search_open() && !ui.get_detail_open() && visible.contains(&index)
+                    ui.get_search_open()
+                        && !ui.get_detail_open()
+                        && (index < hero_offset
+                            || index
+                                .checked_sub(hero_offset)
+                                .is_some_and(|row| visible.contains(&row)))
                 })
                 .map(|url| cache.get_or_request(url))
                 .unwrap_or_default(),

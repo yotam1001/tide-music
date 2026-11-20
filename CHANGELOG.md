@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Fixed search results overlapping under the Top result card in the **All** search view.
+- Fixed playback handoff edge cases (#170):
+  - Expired sleep timers now clear while idle instead of pausing the next playback session.
+  - Removing the currently playing song from the queue now stops it cleanly when the next song fails to load.
+  - Crossfade now validates the planned target and standby track before every promotion.
+
 ## 0.4.32 - 2026-11-19
 
 - Improved YouTube Music sign-in on Mac, including accounts managed by Google
