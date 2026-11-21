@@ -79,6 +79,9 @@ pub const EQUALIZER_PRESETS: [(&str, &str); 6] = [
     ),
 ];
 impl AudioOptions {
+    pub(crate) fn fade_active(&self) -> bool {
+        self.fade && !self.bit_perfect
+    }
     pub fn valid(&self) -> bool {
         (SILENT_GAIN_DB..=0.0).contains(&self.gain_db)
             && usize::from(self.equalizer) < EQUALIZER_PRESETS.len()
@@ -110,7 +113,7 @@ impl AudioOptions {
             filters.push("@tide-normalize:lavfi=[dynaudnorm=f=150:g=5:p=0.9:m=4]".into());
         }
         // Last, so normalization can't undo the fade.
-        if self.fade {
+        if self.fade_active() {
             filters.push("@tide-fade:lavfi=[volume=volume=1]".into());
         }
         filters.join(",")
@@ -195,6 +198,7 @@ mod tests {
             ..Default::default()
         };
         assert!(options.filter().is_empty());
+        assert!(!options.fade_active());
         assert!(options.filters_differ(&AudioOptions {
             bit_perfect: false,
             ..options.clone()
@@ -219,6 +223,7 @@ mod tests {
         assert!(options
             .filter()
             .ends_with("@tide-fade:lavfi=[volume=volume=1]"));
+        assert!(options.fade_active());
         assert!(options.filters_differ(&AudioOptions {
             fade: false,
             ..options.clone()

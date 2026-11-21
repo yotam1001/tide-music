@@ -1102,7 +1102,7 @@ async fn run_worker(
                             }
                             // Commands can't be sent while the snapshot lock is held.
                             if let (Some(level), Some(running)) = (fade_level, player.as_mut()) {
-                                let fading = running.audio_options.as_ref().is_some_and(|options| options.fade);
+                                let fading = running.audio_options.as_ref().is_some_and(AudioOptions::fade_active);
                                 if fading && level != running.fade_gain {
                                     running.fade_gain = level;
                                     // Best effort: a missed step is corrected by the next one.
