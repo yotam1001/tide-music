@@ -40,6 +40,7 @@ pub enum FeedbackRequest {
         video_id: String,
         playlist_id: String,
         entry_id: String,
+        page: u32,
     },
     History {
         video_id: String,
@@ -334,6 +335,7 @@ mod tests {
             video_id: "00000000001".into(),
             playlist_id: "PLfixture".into(),
             entry_id: "entry-two".into(),
+            page: 1,
         };
         let mut result = FeedbackResult {
             operation: FeedbackOperation::PlaylistRemove,

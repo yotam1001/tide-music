@@ -310,6 +310,10 @@ pub enum Request {
     },
     Playlist {
         id: String,
+        page: u32,
+    },
+    PlaylistShuffle {
+        id: Option<String>,
     },
     Radio {
         video_id: String,
@@ -324,7 +328,9 @@ pub enum Request {
         #[serde(skip_serializing_if = "Option::is_none")]
         playlist_id: Option<String>,
     },
-    Liked,
+    Liked {
+        page: u32,
+    },
     Supermix,
     Home,
     Artist {
@@ -422,6 +428,8 @@ pub enum Response {
         truncated: bool,
         #[serde(default)]
         playlist: Option<PlaylistDetails>,
+        #[serde(default)]
+        total: Option<u64>,
     },
     Feedback {
         result: FeedbackResult,

@@ -6,7 +6,7 @@ import io
 import json
 import unittest
 
-from youtube_music import feedback, playlist_context, run, main
+from youtube_music import MAX_TRACKS, feedback, playlist_context, run, main
 
 
 class FeedbackTests(unittest.TestCase):
@@ -145,12 +145,23 @@ class FeedbackTests(unittest.TestCase):
         result = feedback(client, self.request("playlistremove", playlist_id="PLfixture", entry_id="entry-two"))
         self.assertEqual(result["type"], "feedback")
         self.assertEqual(result["result"]["entry_id"], "entry-two")
+        client.get_playlist.assert_called_once_with("PLfixture", limit=MAX_TRACKS)
         client.remove_playlist_items.assert_called_once_with(
             "PLfixture", [{"videoId": self.video, "setVideoId": "entry-two"}])
         client = self.client()
         result = feedback(client, self.request("playlistremove", playlist_id="PLfixture", entry_id="entry-gone"))
         self.assertEqual(result["code"], "feedback_entry_changed")
         client.remove_playlist_items.assert_not_called()
+
+    def test_removing_from_a_later_page_verifies_the_selected_entry_with_a_bounded_read(self):
+        client = self.client()
+        items = [{"videoId": self.video, "setVideoId": str(i)} for i in range(5000)]
+        client.get_playlist.side_effect = lambda _, limit: {"owned": True, "tracks": items[:limit]}
+        request = self.request("playlistremove", playlist_id="PLfixture", entry_id="3400", page=1)
+        self.assertEqual(feedback(client, request)["type"], "feedback")
+        client.get_playlist.assert_called_once_with("PLfixture", limit=2 * MAX_TRACKS)
+        client.remove_playlist_items.assert_called_once_with(
+            "PLfixture", [{"videoId": self.video, "setVideoId": "3400"}])
 
     def test_ownership_must_be_verified_boolean_true(self):
         for owned in (False, None, "true", 1, {}):

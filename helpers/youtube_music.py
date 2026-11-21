@@ -829,6 +829,52 @@ def playlist_context(playlist, data):
     return {"id": playlist, "editable": data.get("owned") is True, "entries": entries}
 
 
+def read_playlist(client, request):
+    """Return one bounded view or a bounded uniform sample of playable entries."""
+    action = request["action"]
+    shuffle = action == "playlistshuffle"
+    playlist = None
+    if action == "playlist" or (shuffle and request.get("id") is not None):
+        playlist = identifier(request.get("id"))
+        if not playlist:
+            raise ValueError("invalid identifier")
+    page = request.get("page", 0)
+    if type(page) is not int or not 0 <= page <= 2**32 - 1:
+        raise ValueError("invalid playlist page")
+    start = page * MAX_TRACKS
+    end = start + MAX_TRACKS
+    limit = None if shuffle else end + 1
+    data = (client.get_playlist(playlist, limit=limit) if playlist
+            else client.get_liked_songs(limit=limit))
+    items = data.get("tracks", [])
+    if shuffle:
+        import random
+        sample = []
+        count = 0
+        for item in items:
+            if not isinstance(item, dict) or item.get("isAvailable") is False or not identifier(item.get("videoId"), True):
+                continue
+            count += 1
+            if count <= MAX_TRACKS:
+                sample.append(item)
+            else:
+                index = random.randrange(count)
+                if index < MAX_TRACKS:
+                    sample[index] = item
+        # The player shuffles the resulting queue before starting playback.
+        return {"type": "tracks", "tracks": tracks(sample), "truncated": count > MAX_TRACKS}
+    visible = items[start:end]
+    result = {"type": "tracks", "tracks": tracks(visible), "truncated": len(items) > end}
+    total = data.get("trackCount")
+    if type(total) is int and total >= len(items):
+        result["total"] = total
+    elif len(items) <= end:
+        result["total"] = len(items)
+    if playlist:
+        result["playlist"] = playlist_context(playlist, {"owned": data.get("owned"), "tracks": visible})
+    return result
+
+
 def valid_playlist_title(title):
     return (isinstance(title, str) and bool(title.strip()) and len(title) <= 100
             and not any(ord(c) < 32 or 127 <= ord(c) <= 159 or c in "<>" for c in title))
@@ -908,6 +954,12 @@ def feedback(client, request):
     if kind == "playlistsave":
         return save_collection(client, request)
     video = identifier(request.get("video_id"), True)
+    page = 0
+    if kind == "playlistremove" and "page" in request:
+        fields[kind].add("page")
+        page = request["page"]
+        if type(page) is not int or not 0 <= page <= 2**32 - 1:
+            return {"type": "error", "code": "feedback_invalid"}
     if not isinstance(kind, str) or kind not in fields or set(request) != fields[kind] or not video:
         return {"type": "error", "code": "feedback_invalid"}
     playlist = identifier(request.get("playlist_id")) if kind.startswith("playlist") else None
@@ -931,14 +983,14 @@ def feedback(client, request):
             if not isinstance(response, dict) or "error" in response:
                 raise ValueError("unconfirmed rating")
         elif kind in ("playlistadd", "playlistremove"):
-            data = client.get_playlist(playlist, limit=MAX_TRACKS + 1 if entry else 1)
+            data = client.get_playlist(playlist, limit=(page + 1) * MAX_TRACKS if entry else 1)
             if not isinstance(data, dict) or data.get("owned") is not True:
                 return {"type": "error", "code": "feedback_readonly"}
             if entry:
                 items = data.get("tracks", [])
                 if not isinstance(items, list) or not any(
                         isinstance(item, dict) and item.get("videoId") == video
-                        and item.get("setVideoId") == entry for item in items[:MAX_TRACKS]):
+                        and item.get("setVideoId") == entry for item in items):
                     return {"type": "error", "code": "feedback_entry_changed"}
                 response = client.remove_playlist_items(playlist, [{"videoId": video, "setVideoId": entry}])
             else:
@@ -1481,19 +1533,8 @@ def run(client, request):
                     "truncated": False}
         except Exception as error:
             return verified_request_failure(error, client)
-    if action in ("playlist", "liked"):
-        if action == "playlist":
-            playlist = identifier(request.get("id"))
-            if not playlist:
-                raise ValueError("invalid identifier")
-            data = client.get_playlist(playlist, limit=MAX_TRACKS + 1)
-        else:
-            data = client.get_liked_songs(limit=MAX_TRACKS + 1)
-        items = data.get("tracks", [])
-        result = {"type": "tracks", "tracks": tracks(items), "truncated": len(items) > MAX_TRACKS}
-        if action == "playlist":
-            result["playlist"] = playlist_context(playlist, data)
-        return result
+    if action in ("playlist", "liked", "playlistshuffle"):
+        return read_playlist(client, request)
     if action == "home":
         # Keep every shelf in provider order; the app picks from each one.
         # The API may overshoot its row limit; cap our output too.

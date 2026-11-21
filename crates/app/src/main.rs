@@ -310,6 +310,7 @@ struct State {
     recommendations: Vec<tide_provider::Card>,
     discovery: discovery::Discovery,
     detail_tracks: Vec<Track>,
+    detail_playlist_page: Option<tide_provider::Request>,
     related_tracks: Vec<Track>,
     detail_cover_url: Option<String>,
     /// The playlist or album shown in detail, for "Save to library".
@@ -527,7 +528,7 @@ fn request_library_view(
                 | tide_provider::Request::Home
                 | tide_provider::Request::Playlist { .. }
                 | tide_provider::Request::Album { .. }
-                | tide_provider::Request::Liked
+                | tide_provider::Request::Liked { .. }
                 | tide_provider::Request::Supermix
                 | tide_provider::Request::Artist { .. }
                 | tide_provider::Request::Artists { .. }
@@ -574,8 +575,12 @@ fn request_library_view(
             generation: s.generation,
             replace_upcoming: false,
         },
-        tide_provider::Request::Playlist { .. } if s.shuffle_request => LibraryAction::Shuffle,
-        tide_provider::Request::Playlist { id } => LibraryAction::Preview {
+        tide_provider::Request::Playlist { .. } | tide_provider::Request::Liked { .. }
+            if s.shuffle_request =>
+        {
+            LibraryAction::Shuffle
+        }
+        tide_provider::Request::Playlist { id, .. } => LibraryAction::Preview {
             radio_seed: None,
             title: s
                 .library_playlists
@@ -592,7 +597,7 @@ fn request_library_view(
                 })
                 .unwrap_or_else(|| "Playlist".into()),
         },
-        tide_provider::Request::Liked => LibraryAction::Preview {
+        tide_provider::Request::Liked { .. } => LibraryAction::Preview {
             radio_seed: None,
             title: "Liked Songs".into(),
         },
@@ -626,10 +631,19 @@ fn request_library_view(
         return;
     };
     s.library_cancel.store(false, Ordering::Release);
-    if let LibraryAction::Preview { title, radio_seed } = &action {
+    let paging = u.get_detail_open()
+        && !u.get_detail_is_artist()
+        && matches!(action, LibraryAction::Preview { .. })
+        && s.detail_playlist_page
+            .as_ref()
+            .is_some_and(|current| same_playlist(current, &request));
+    if paging {
+        // Keep the previous rows and their edit identities usable if the fetch fails.
+        u.set_detail_busy(true);
+    } else if let LibraryAction::Preview { title, radio_seed } = &action {
         u.set_detail_navigation(
             match &request {
-                tide_provider::Request::Liked => "liked",
+                tide_provider::Request::Liked { .. } => "liked",
                 tide_provider::Request::Supermix => "supermix",
                 tide_provider::Request::Radio { .. } => "radio",
                 tide_provider::Request::Album { .. } => "album",
@@ -638,7 +652,7 @@ fn request_library_view(
             .into(),
         );
         s.detail_save_target = match &request {
-            tide_provider::Request::Playlist { id } | tide_provider::Request::Album { id } => {
+            tide_provider::Request::Playlist { id, .. } | tide_provider::Request::Album { id } => {
                 Some(id.clone())
             }
             _ => None,
@@ -651,7 +665,7 @@ fn request_library_view(
             .is_some_and(|id| s.library_playlists.iter().any(|p| &p.id == id));
         u.set_detail_savable(s.detail_save_target.is_some() && !in_library);
         let cover_id = match &request {
-            tide_provider::Request::Playlist { id } | tide_provider::Request::Album { id } => {
+            tide_provider::Request::Playlist { id, .. } | tide_provider::Request::Album { id } => {
                 Some(id.as_str())
             }
             tide_provider::Request::Supermix => Some("supermix"),
@@ -688,6 +702,9 @@ fn request_library_view(
             }
             .into(),
         );
+        s.detail_playlist_page = None;
+        u.set_previous_page(false);
+        u.set_next_page(false);
         s.detail_tracks.clear();
         u.set_detail_title(title.clone().into());
         u.set_detail_artwork_y(0.0);
@@ -699,6 +716,7 @@ fn request_library_view(
     if matches!(action, LibraryAction::Artist) {
         u.set_detail_busy(true);
     }
+    let shuffle_collection = matches!(action, LibraryAction::Shuffle);
     s.library_action = action;
     s.library_request = Some(request.clone());
     s.shuffle_request = false;
@@ -715,6 +733,19 @@ fn request_library_view(
         .into(),
     );
     s.library_worker = Some(std::thread::spawn(move || {
+        let request = if shuffle_collection {
+            match request {
+                tide_provider::Request::Playlist { id, .. } => {
+                    tide_provider::Request::PlaylistShuffle { id: Some(id) }
+                }
+                tide_provider::Request::Liked { .. } => {
+                    tide_provider::Request::PlaylistShuffle { id: None }
+                }
+                other => other,
+            }
+        } else {
+            request
+        };
         let _ = tx.try_send(provider.execute(request, cancel));
     }));
 }
@@ -744,12 +775,21 @@ fn is_navigation(request: &tide_provider::Request) -> bool {
             | Mood { .. }
             | Album { .. }
             | Playlist { .. }
-            | Liked
+            | Liked { .. }
             | Supermix
             | Home
             | Artist { .. }
             | Artists { .. }
     )
+}
+
+fn same_playlist(current: &tide_provider::Request, next: &tide_provider::Request) -> bool {
+    use tide_provider::Request::{Liked, Playlist};
+    match (current, next) {
+        (Liked { .. }, Liked { .. }) => true,
+        (Playlist { id: a, .. }, Playlist { id: b, .. }) => a == b,
+        _ => false,
+    }
 }
 
 /// The song autoplay continues from: the most recent one the listener picked
@@ -956,7 +996,7 @@ fn content_failure_message(request: Option<&tide_provider::Request>) -> &'static
         }
         Some(
             tide_provider::Request::Playlist { .. }
-            | tide_provider::Request::Liked
+            | tide_provider::Request::Liked { .. }
             | tide_provider::Request::Supermix,
         ) => "Couldn't load this playlist. Retry to load its songs.",
         Some(tide_provider::Request::Artist { .. } | tide_provider::Request::Artists { .. }) => {
@@ -981,7 +1021,7 @@ fn content_retry_request(request: &tide_provider::Request) -> Option<tide_provid
         | tide_provider::Request::Playlist { .. }
         | tide_provider::Request::Album { .. }
         | tide_provider::Request::Supermix
-        | tide_provider::Request::Liked
+        | tide_provider::Request::Liked { .. }
         | tide_provider::Request::Artist { .. }
         | tide_provider::Request::Artists { .. } => Some(request.clone()),
         // Account selection needs explicit account UI; radio retries must retain
@@ -1808,7 +1848,15 @@ fn open_provider_card(
             start_tracks(s, u, vec![recommendation_track(&card)], 0, false);
         }
         Some(card_navigation::Action::Playlist) => {
-            request_library(s, u, tx, tide_provider::Request::Playlist { id: card.id });
+            request_library(
+                s,
+                u,
+                tx,
+                tide_provider::Request::Playlist {
+                    id: card.id,
+                    page: 0,
+                },
+            );
         }
         Some(card_navigation::Action::Album) => {
             request_library(s, u, tx, tide_provider::Request::Album { id: card.id });
@@ -2917,6 +2965,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         recommendations: Vec::new(),
         discovery: discovery::Discovery::default(),
         detail_tracks: Vec::new(),
+        detail_playlist_page: None,
         related_tracks: Vec::new(),
         detail_cover_url: None,
         detail_save_target: None,
@@ -3147,7 +3196,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         &mut s,
                         &u,
                         &tx,
-                        tide_provider::Request::Playlist { id: playlist.id },
+                        tide_provider::Request::Playlist {
+                            id: playlist.id,
+                            page: 0,
+                        },
                     );
                 }
             }
@@ -3382,7 +3434,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 u.set_jam_open(false);
                 u.set_queue_open(false);
-                request_library(&mut s, &u, &tx, tide_provider::Request::Liked);
+                request_library(&mut s, &u, &tx, tide_provider::Request::Liked { page: 0 });
             }
         });
     }
@@ -3402,7 +3454,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         &mut s,
                         &u,
                         &tx,
-                        tide_provider::Request::Playlist { id: p.id },
+                        tide_provider::Request::Playlist { id: p.id, page: 0 },
                     );
                 }
             }
@@ -3487,13 +3539,52 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let state = state.clone();
         let weak = ui.as_weak();
+        let tx = library_tx.clone();
         ui.on_shuffle_detail(move || {
             if !local_controls_allowed(&state.borrow()) {
                 return;
             }
             if let Some(u) = weak.upgrade() {
                 let mut s = state.borrow_mut();
+                if !u.get_detail_is_artist() {
+                    if let Some(request) = s.detail_playlist_page.clone() {
+                        s.shuffle_request = true;
+                        request_library(&mut s, &u, &tx, request);
+                        return;
+                    }
+                }
                 start_detail_tracks(&mut s, &u, 0, true);
+            }
+        });
+    }
+    {
+        let state = state.clone();
+        let weak = ui.as_weak();
+        let tx = library_tx.clone();
+        ui.on_change_playlist_page(move |forward| {
+            let Some(u) = weak.upgrade() else { return };
+            let mut s = state.borrow_mut();
+            if u.get_detail_is_artist()
+                || !u.get_detail_open()
+                || u.get_detail_busy()
+                || (forward && !u.get_next_page())
+                || (!forward && !u.get_previous_page())
+            {
+                return;
+            }
+            if let Some(mut request) = s.detail_playlist_page.clone() {
+                match &mut request {
+                    tide_provider::Request::Playlist { page, .. }
+                    | tide_provider::Request::Liked { page } => {
+                        *page = if forward {
+                            page.saturating_add(1)
+                        } else {
+                            page.saturating_sub(1)
+                        };
+                    }
+                    _ => return,
+                }
+                request_library(&mut s, &u, &tx, request);
             }
         });
     }
@@ -5073,7 +5164,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 refresh_content_models(&s, &u);
                             }
                         }
-                        Ok(tide_provider::Response::Tracks { tracks, truncated, playlist }) => {
+                        Ok(tide_provider::Response::Tracks { tracks, truncated, playlist, total }) => {
                             let tracks: Vec<Track> = tracks
                                 .into_iter()
                                 .take(tide_core::MAX_QUEUE_TRACKS)
@@ -5164,16 +5255,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                             if matches!(s.library_action, LibraryAction::Preview { .. }) {
                                 let playlist_id = match s.library_request.as_ref() {
-                                    Some(tide_provider::Request::Playlist { id }) => Some(id.clone()),
+                                    Some(tide_provider::Request::Playlist { id, .. }) => Some(id.clone()),
                                     _ => None,
                                 };
+                                let page = match &s.library_request {
+                                    Some(tide_provider::Request::Playlist { page, .. } | tide_provider::Request::Liked { page }) => Some(*page),
+                                    _ => None,
+                                };
+                                if let Some(page) = page {
+                                    u.set_detail_artwork_y(0.0);
+                                    u.set_previous_page(page > 0);
+                                    u.set_next_page(truncated);
+                                    if page > 0 || truncated {
+                                        s.detail_playlist_page = s.library_request.clone();
+                                        let total = total.map(|n| format!(" · {n} tracks in collection")).unwrap_or_default();
+                                        u.set_detail_note(format!("Page {}{total}", u64::from(page) + 1).into());
+                                    } else {
+                                        s.detail_playlist_page = None;
+                                        u.set_detail_note("".into());
+                                    }
+                                }
                                 s.detail_tracks = tracks;
                                 music_feedback::set_playlist(&mut s, &u, playlist, playlist_id.as_deref());
                                 u.set_detail_busy(false);
                                 refresh_content_models(&s, &u);
                                 u.set_account_status(
                                     if truncated {
-                                        "Showing the first 2,000 playlist tracks"
+                                        "More tracks are available on the next page"
                                     } else {
                                         "Playlist ready"
                                     }
@@ -5202,8 +5310,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     s.settings.queue.shuffle_all(seed);
                                 }
                                 if play(&mut s, &u) {
+                                    let shuffled = matches!(s.library_action, LibraryAction::Shuffle);
+                                    if shuffled {
+                                        let (id, title) = match &s.library_request {
+                                            Some(tide_provider::Request::Liked { .. }) => (Some("LM".into()), "Liked Songs".to_owned()),
+                                            Some(tide_provider::Request::Playlist { id, .. }) => {
+                                                let title = s.library_playlists.iter().find(|p| &p.id == id)
+                                                    .map(|p| p.title.clone()).unwrap_or_else(|| "Playlist".into());
+                                                (Some(id.clone()), title)
+                                            }
+                                            _ => (None, String::new()),
+                                        };
+                                        s.queue_context = id;
+                                        u.set_queue_source(title.into());
+                                    }
                                     u.set_account_status(
-                                        if truncated {
+                                        if truncated && shuffled {
+                                            "Playing a shuffle from across the playlist"
+                                        } else if truncated {
                                             "Playing the first 2,000 playlist tracks"
                                         } else {
                                             "Playlist loaded into the player"
@@ -6520,14 +6644,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 mod tests {
     use super::*;
     #[test]
+    fn paging_keeps_rows_only_for_the_same_collection() {
+        use tide_provider::Request::{Album, Liked, Playlist};
+        let page = |id: &str, page| Playlist {
+            id: id.into(),
+            page,
+        };
+        let current = page("PLfirst", 0);
+        assert!(same_playlist(&current, &page("PLfirst", 1)));
+        assert!(same_playlist(&Liked { page: 1 }, &Liked { page: 0 }));
+        assert!(!same_playlist(&current, &page("PLsecond", 1)));
+        assert!(!same_playlist(&current, &Liked { page: 1 }));
+        assert!(!same_playlist(
+            &current,
+            &Album {
+                id: "PLfirst".into()
+            }
+        ));
+    }
+    #[test]
     fn only_page_views_are_queued_behind_a_loading_page() {
         use tide_provider::Request;
         // Opening pages is latest-wins; playback and account work never is.
         assert!(super::is_navigation(&Request::Home));
         assert!(super::is_navigation(&Request::Playlist {
+            page: 0,
             id: "PLx".into()
         }));
-        assert!(super::is_navigation(&Request::Liked));
+        assert!(super::is_navigation(&Request::Liked { page: 0 }));
         assert!(!super::is_navigation(&Request::Radio {
             video_id: "x".into()
         }));
@@ -6877,9 +7021,10 @@ mod tests {
         for request in [
             Request::Library,
             Request::Home,
-            Request::Liked,
+            Request::Liked { page: 0 },
             Request::Supermix,
             Request::Playlist {
+                page: 0,
                 id: "fixture-playlist".into(),
             },
         ] {

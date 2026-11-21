@@ -13,6 +13,33 @@ class BrowsingTests(unittest.TestCase):
     artist = "UC1234567890123456789012"
     art = "https://i.ytimg.com/vi/K4DyBUG242c/hqdefault.jpg"
 
+    def test_5000_track_playlist_pages_and_full_collection_shuffle(self):
+        from unittest.mock import patch
+        items = [{"videoId": f"{i:011d}", "setVideoId": str(i), "title": str(i)}
+                 for i in range(5000)]
+        items[2000]["isAvailable"] = False
+        def fetch(limit):
+            return {"tracks": items[:limit], "trackCount": len(items), "owned": True}
+        client = SimpleNamespace(get_playlist=lambda _, limit: fetch(limit),
+                                 get_liked_songs=fetch)
+        for request in ({"action": "playlist", "id": "PLfixture"}, {"action": "liked"}):
+            titles = []
+            for page in range(3):
+                reply = run(client, dict(request, page=page))
+                tracks = [row["title"] for row in reply["tracks"]]
+                self.assertLessEqual(len(tracks), MAX_TRACKS)
+                self.assertEqual(reply["truncated"], page < 2)
+                self.assertEqual(reply["total"], 5000)
+                if "id" in request:
+                    self.assertEqual(reply["playlist"]["entries"], tracks)
+                titles.extend(tracks)
+            self.assertEqual(titles, [str(i) for i in range(5000) if i != 2000])
+            with patch("random.randrange", return_value=0):
+                reply = run(client, {"action": "playlistshuffle", "id": request.get("id")})
+            self.assertEqual(len(reply["tracks"]), MAX_TRACKS)
+            self.assertEqual(reply["tracks"][0]["title"], "4999")
+            self.assertTrue(reply["truncated"])
+
     def test_library_playlist_count_distinguishes_empty_from_unknown(self):
         entries = [{"playlistId": f"PLfixture{i}", "title": "Playlist", "count": count}
                    for i, count in enumerate([None, 0, "1", "1,250", True, "unknown"])]
