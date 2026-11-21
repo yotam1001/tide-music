@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Fixed crossfade edge cases (#150, #151):
+  - Volume changes and muting during a crossfade now apply to the incoming track as well and persist after handoff.
+  - Clearing the queue or pressing Stop during a crossfade now stops and retires the incoming track immediately and restores normal gain for the next session.
+
 ## 0.4.33 - 2026-11-20
 
 - Fixed search results overlapping under the Top result card in the **All** search view.
