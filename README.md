@@ -118,7 +118,8 @@ the new disk image ([details](docs/INSTALLATION_MACOS.md#updates)).
 
 ## Contribute
 
-Pull requests are welcome! Start with [Contributing](CONTRIBUTING.md) and the
+Start from `main` and open your pull request against `main`. See the
+[branch guide](CONTRIBUTING.md#which-branch-should-i-use) and the
 [developer guide](docs/DEVELOPMENT.md). Maintainers can use the
 [launch checklist](docs/BETA_RELEASE.md).
 
