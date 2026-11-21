@@ -2196,18 +2196,44 @@ fn next_queue_index(s: &State) -> Option<usize> {
     })
 }
 
-fn send(state: &mut State, ui: &AppWindow, cmd: PlaybackCommand) -> bool {
-    if !local_controls_allowed(state) && !matches!(cmd, PlaybackCommand::SetVolume(_)) {
-        return false;
-    }
+fn route_command<E: crossfade::CrossfadeEngine>(
+    engine: Option<&E>,
+    crossfade: &mut crossfade::Crossfade<E>,
+    settings: &Settings,
+    cmd: PlaybackCommand,
+) -> Result<(), String> {
     // Bit-perfect output keeps the stream unscaled: any level plays at 100%,
     // and the device or DAC sets loudness. Mute still works.
     let cmd = match cmd {
-        PlaybackCommand::SetVolume(volume) if state.settings.bit_perfect && volume > 0.0 => {
+        PlaybackCommand::SetVolume(volume) if settings.bit_perfect && volume > 0.0 => {
             PlaybackCommand::SetVolume(100.0)
         }
         other => other,
     };
+    if matches!(cmd, PlaybackCommand::Stop | PlaybackCommand::Shutdown) {
+        crossfade.cancel_with(settings, engine);
+    }
+    let volume = match cmd {
+        PlaybackCommand::SetVolume(volume) => Some(volume),
+        _ => None,
+    };
+    let result = engine
+        .ok_or_else(|| "Playback runtime unavailable. See setup instructions.".to_string())
+        .and_then(|engine| engine.send(cmd));
+    if let Some(volume) = volume {
+        if result.is_ok() {
+            crossfade.set_volume_with(settings, engine, volume);
+        } else {
+            crossfade.cancel_with(settings, engine);
+        }
+    }
+    result
+}
+
+fn send(state: &mut State, ui: &AppWindow, cmd: PlaybackCommand) -> bool {
+    if !local_controls_allowed(state) && !matches!(cmd, PlaybackCommand::SetVolume(_)) {
+        return false;
+    }
     let clears_audio = matches!(cmd, PlaybackCommand::Stop | PlaybackCommand::Shutdown);
 
     if let Some((_, _, position, paused)) = &mut state.connection_resume {
@@ -2221,11 +2247,12 @@ fn send(state: &mut State, ui: &AppWindow, cmd: PlaybackCommand) -> bool {
             _ => {}
         }
     }
-    let result = state
-        .engine
-        .as_ref()
-        .ok_or_else(|| "Playback runtime unavailable. See setup instructions.".to_string())
-        .and_then(|engine| engine.send(cmd));
+    let result = route_command(
+        state.engine.as_ref(),
+        &mut state.crossfade,
+        &state.settings,
+        cmd,
+    );
     match result {
         Ok(()) => {
             if clears_audio {
@@ -2383,6 +2410,7 @@ fn play_at(state: &mut State, ui: &AppWindow, position: f64) -> bool {
         report_error(state, ui, error);
         return false;
     }
+    crossfade::Crossfade::cancel(state);
     if position == 0.0 {
         state.settings.playback_bookmark = None;
     }
@@ -5316,6 +5344,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if let Some(engine) = &s.engine {
                     let p = engine.snapshot();
                     audio_settings::refresh(&s, &u, &p);
+                    if !s.active_playback {
+                        crossfade::Crossfade::cancel(&mut s);
+                    }
                     if p.generation != s.generation || !s.active_playback {
                         return;
                     }
