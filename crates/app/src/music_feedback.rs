@@ -554,7 +554,16 @@ pub fn install(
         let Some(id) = s.music_feedback.playlist.as_ref().map(|p| p.id.clone()) else {
             return;
         };
-        request_library(&mut s, &u, &tx, tide_provider::Request::Playlist { id });
+        let page = match &s.detail_playlist_page {
+            Some(tide_provider::Request::Playlist { id: current, page }) if current == &id => *page,
+            _ => 0,
+        };
+        request_library(
+            &mut s,
+            &u,
+            &tx,
+            tide_provider::Request::Playlist { id, page },
+        );
     });
 }
 
@@ -1063,6 +1072,7 @@ pub fn read_probe() -> Result<(), String> {
             .execute(
                 Request::Playlist {
                     id: playlist.id.clone(),
+                    page: 0,
                 },
                 cancel.clone(),
             )

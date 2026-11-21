@@ -453,6 +453,9 @@ export component AppWindow inherits Window {
     }
     out property <string> active-navigation: root.jam-open ? "jams" : root.detail-open ? (root.detail-is-artist ? "" : root.detail-navigation) : root.search-open ? "" : root.library-open ? "library" : "home";
     in property <string> detail-note;
+    in property <bool> previous-page;
+    in property <bool> next-page;
+    callback change-playlist-page(bool);
     in property <[TrackRow]> detail-rows;
     in property <bool> detail-busy;
     in-out property <bool> search-open;
@@ -978,6 +981,11 @@ export component AppWindow inherits Window {
                                         caption: "Cancel"; label: "Cancel playlist change";
                                         clicked => { root.playlist-manage-mode = 0; }
                                     }
+                                }
+                                if !root.detail-is-artist && (root.previous-page || root.next-page) : HorizontalLayout {
+                                    height: 34px; spacing: 8px; alignment: start;
+                                    LibraryButton { width: 110px; light-mode: root.light-mode; caption: "Previous page"; label: "Previous playlist page"; enabled: root.previous-page && !root.detail-busy && root.browsing-enabled; clicked => { root.change-playlist-page(false); } }
+                                    LibraryButton { width: 96px; light-mode: root.light-mode; caption: "Next page"; label: "Next playlist page"; enabled: root.next-page && !root.detail-busy && root.browsing-enabled; clicked => { root.change-playlist-page(true); } }
                                 }
                                 if root.detail-note != "" && (!root.detail-is-artist || root.detail-rows.length == 0) : Text { text: root.detail-note; color: root.secondary; font-size: 12px; wrap: word-wrap; }
                                 if root.detail-has-cover && !root.detail-is-artist && root.detail-rows.length > 0 : Rectangle {

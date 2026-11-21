@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Browse playlists and Liked Songs beyond 2,000 entries. Shuffle draws from the entire collection and keeps up to 2,000 playable tracks in the queue.
+
 ## 0.4.33 - 2026-11-20
 
 - Fixed search results overlapping under the Top result card in the **All** search view.

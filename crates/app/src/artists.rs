@@ -3,6 +3,9 @@ use super::*;
 use tide_core::Artist;
 
 pub(super) struct Origin {
+    page_request: Option<tide_provider::Request>,
+    previous_page: bool,
+    next_page: bool,
     playlist: Option<tide_provider::PlaylistDetails>,
     open: bool,
     title: String,
@@ -169,6 +172,9 @@ pub(super) fn open(
     if s.artist_origin.is_none() {
         let playlist = music_feedback::take_playlist(s, u);
         s.artist_origin = Some(Origin {
+            page_request: s.detail_playlist_page.take(),
+            previous_page: u.get_previous_page(),
+            next_page: u.get_next_page(),
             playlist,
             open: u.get_detail_open(),
             title: u.get_detail_title().to_string(),
@@ -262,6 +268,9 @@ pub(super) fn back(s: &mut State, u: &AppWindow) {
     u.set_artist_picker_open(false);
     u.set_detail_busy(false);
     if let Some(origin) = s.artist_origin.take() {
+        s.detail_playlist_page = origin.page_request;
+        u.set_previous_page(origin.previous_page);
+        u.set_next_page(origin.next_page);
         s.detail_tracks = origin.tracks;
         music_feedback::restore_playlist(s, u, origin.playlist);
         u.set_detail_title(origin.title.into());
