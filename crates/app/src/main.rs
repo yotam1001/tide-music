@@ -631,7 +631,16 @@ fn request_library_view(
         return;
     };
     s.library_cancel.store(false, Ordering::Release);
-    if let LibraryAction::Preview { title, radio_seed } = &action {
+    let paging = u.get_detail_open()
+        && !u.get_detail_is_artist()
+        && matches!(action, LibraryAction::Preview { .. })
+        && s.detail_playlist_page
+            .as_ref()
+            .is_some_and(|current| same_playlist(current, &request));
+    if paging {
+        // Keep the previous rows and their edit identities usable if the fetch fails.
+        u.set_detail_busy(true);
+    } else if let LibraryAction::Preview { title, radio_seed } = &action {
         u.set_detail_navigation(
             match &request {
                 tide_provider::Request::Liked { .. } => "liked",
@@ -772,6 +781,15 @@ fn is_navigation(request: &tide_provider::Request) -> bool {
             | Artist { .. }
             | Artists { .. }
     )
+}
+
+fn same_playlist(current: &tide_provider::Request, next: &tide_provider::Request) -> bool {
+    use tide_provider::Request::{Liked, Playlist};
+    match (current, next) {
+        (Liked { .. }, Liked { .. }) => true,
+        (Playlist { id: a, .. }, Playlist { id: b, .. }) => a == b,
+        _ => false,
+    }
 }
 
 /// The song autoplay continues from: the most recent one the listener picked
@@ -5245,12 +5263,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     _ => None,
                                 };
                                 if let Some(page) = page {
+                                    u.set_detail_artwork_y(0.0);
+                                    u.set_previous_page(page > 0);
+                                    u.set_next_page(truncated);
                                     if page > 0 || truncated {
                                         s.detail_playlist_page = s.library_request.clone();
-                                        u.set_previous_page(page > 0);
-                                        u.set_next_page(truncated);
                                         let total = total.map(|n| format!(" · {n} tracks in collection")).unwrap_or_default();
                                         u.set_detail_note(format!("Page {}{total}", u64::from(page) + 1).into());
+                                    } else {
+                                        s.detail_playlist_page = None;
+                                        u.set_detail_note("".into());
                                     }
                                 }
                                 s.detail_tracks = tracks;
@@ -6621,6 +6643,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn paging_keeps_rows_only_for_the_same_collection() {
+        use tide_provider::Request::{Album, Liked, Playlist};
+        let page = |id: &str, page| Playlist {
+            id: id.into(),
+            page,
+        };
+        let current = page("PLfirst", 0);
+        assert!(same_playlist(&current, &page("PLfirst", 1)));
+        assert!(same_playlist(&Liked { page: 1 }, &Liked { page: 0 }));
+        assert!(!same_playlist(&current, &page("PLsecond", 1)));
+        assert!(!same_playlist(&current, &Liked { page: 1 }));
+        assert!(!same_playlist(
+            &current,
+            &Album {
+                id: "PLfirst".into()
+            }
+        ));
+    }
     #[test]
     fn only_page_views_are_queued_behind_a_loading_page() {
         use tide_provider::Request;

@@ -954,6 +954,12 @@ def feedback(client, request):
     if kind == "playlistsave":
         return save_collection(client, request)
     video = identifier(request.get("video_id"), True)
+    page = 0
+    if kind == "playlistremove" and "page" in request:
+        fields[kind].add("page")
+        page = request["page"]
+        if type(page) is not int or not 0 <= page <= 2**32 - 1:
+            return {"type": "error", "code": "feedback_invalid"}
     if not isinstance(kind, str) or kind not in fields or set(request) != fields[kind] or not video:
         return {"type": "error", "code": "feedback_invalid"}
     playlist = identifier(request.get("playlist_id")) if kind.startswith("playlist") else None
@@ -977,7 +983,7 @@ def feedback(client, request):
             if not isinstance(response, dict) or "error" in response:
                 raise ValueError("unconfirmed rating")
         elif kind in ("playlistadd", "playlistremove"):
-            data = client.get_playlist(playlist, limit=None if entry else 1)
+            data = client.get_playlist(playlist, limit=(page + 1) * MAX_TRACKS if entry else 1)
             if not isinstance(data, dict) or data.get("owned") is not True:
                 return {"type": "error", "code": "feedback_readonly"}
             if entry:

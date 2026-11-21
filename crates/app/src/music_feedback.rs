@@ -536,6 +536,10 @@ pub fn install(
             video_id,
             playlist_id: context.id.clone(),
             entry_id,
+            page: match &s.detail_playlist_page {
+                Some(tide_provider::Request::Playlist { id, page }) if id == &context.id => *page,
+                _ => 0,
+            },
         };
         if begin(&mut s, request) {
             u.set_collection_busy(true);
