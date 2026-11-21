@@ -596,6 +596,7 @@ mod tests {
     #[derive(Clone, Default)]
     struct FakeEngineState {
         snapshot: tide_core::PlaybackSnapshot,
+        reject_volume: bool,
         gain_db: f64,
         stopped: bool,
         retired: bool,
@@ -613,6 +614,7 @@ mod tests {
                     ..Default::default()
                 },
                 gain_db: 0.0,
+                reject_volume: false,
                 stopped: false,
                 retired: false,
             })))
@@ -636,6 +638,9 @@ mod tests {
             let mut state = self.0.borrow_mut();
             match command {
                 PlaybackCommand::SetVolume(volume) => {
+                    if state.reject_volume {
+                        return Err("volume queue full".into());
+                    }
                     if !volume.is_finite() || !(0.0..=100.0).contains(&volume) {
                         return Err("invalid volume".into());
                     }
@@ -699,6 +704,34 @@ mod tests {
             volume,
             next,
         }
+    }
+
+    #[test]
+    fn rejected_primary_mute_stops_the_incoming_track() {
+        let primary = FakeEngine::new(60.0);
+        primary.state_mut().reject_volume = true;
+        let standby = FakeEngine::new(60.0);
+        standby.state_mut().snapshot.paused = false;
+        let mut crossfade = Crossfade {
+            standby: Some(standby.clone()),
+            phase: Phase::Mixing {
+                index: 1,
+                source: "b".into(),
+                generation: 2,
+            },
+            primary_db: -3.0,
+            standby_db: -3.0,
+        };
+        let result = route_command(
+            Some(&primary),
+            &mut crossfade,
+            &crossfade_settings(),
+            PlaybackCommand::SetVolume(0.0),
+        );
+        assert_eq!(result.unwrap_err(), "volume queue full");
+        assert_eq!(crossfade.phase, Phase::Idle);
+        assert!(standby.state().stopped && standby.state().retired);
+        assert_eq!(primary.state().gain_db, 0.0);
     }
 
     #[test]

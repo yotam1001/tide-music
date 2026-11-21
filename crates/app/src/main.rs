@@ -2220,9 +2220,11 @@ fn route_command<E: crossfade::CrossfadeEngine>(
     let result = engine
         .ok_or_else(|| "Playback runtime unavailable. See setup instructions.".to_string())
         .and_then(|engine| engine.send(cmd));
-    if result.is_ok() {
-        if let Some(volume) = volume {
+    if let Some(volume) = volume {
+        if result.is_ok() {
             crossfade.set_volume_with(settings, engine, volume);
+        } else {
+            crossfade.cancel_with(settings, engine);
         }
     }
     result
