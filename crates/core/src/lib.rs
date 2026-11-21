@@ -252,18 +252,47 @@ impl Queue {
     /// Append recommendations once per source without changing the selection.
     /// Examine at most one queue's worth of inputs, even from an unbounded iterator.
     pub fn append_deduplicated(&mut self, tracks: impl IntoIterator<Item = Track>) -> usize {
-        let mut sources: HashSet<String> = self.tracks.iter().map(|t| t.source.clone()).collect();
-        let mut appended = 0;
-        for track in tracks.into_iter().take(MAX_QUEUE_TRACKS) {
-            if self.tracks.len() >= MAX_QUEUE_TRACKS {
-                break;
-            }
-            if !track.source.trim().is_empty() && sources.insert(track.source.clone()) {
-                self.tracks.push(track);
-                appended += 1;
-            }
+        self.extend_retained(0..self.tracks.len(), tracks)
+    }
+
+    /// Keep the current song and up to 20 played rows. Replace upcoming rows
+    /// for an explicit radio request only after finding a usable recommendation.
+    pub fn apply_radio(&mut self, tracks: Vec<Track>, replace_upcoming: bool) -> usize {
+        let current = self.current.filter(|&i| i < self.tracks.len());
+        let start = current.map_or(0, |i| i.saturating_sub(20));
+        let end = if replace_upcoming {
+            current.map_or(0, |i| i + 1)
+        } else {
+            self.tracks.len()
+        };
+        self.extend_retained(start..end, tracks)
+    }
+
+    fn extend_retained(
+        &mut self,
+        retained: std::ops::Range<usize>,
+        tracks: impl IntoIterator<Item = Track>,
+    ) -> usize {
+        let capacity = MAX_QUEUE_TRACKS.saturating_sub(retained.len());
+        let mut sources: HashSet<_> = self.tracks[retained.clone()]
+            .iter()
+            .map(|t| t.source.clone())
+            .collect();
+        let mut accepted = tracks
+            .into_iter()
+            .take(MAX_QUEUE_TRACKS)
+            .filter(|track| !track.source.trim().is_empty() && sources.insert(track.source.clone()))
+            .take(capacity)
+            .peekable();
+        if accepted.peek().is_none() {
+            return 0;
         }
-        appended
+        self.tracks.truncate(retained.end);
+        self.tracks.drain(..retained.start);
+        self.current = self.current.and_then(|i| i.checked_sub(retained.start));
+        let before = self.tracks.len();
+        self.tracks.extend(accepted);
+        self.tracks.len() - before
     }
 
     /// Keep a bounded recent history while retaining the current and all upcoming
@@ -648,6 +677,41 @@ mod tests {
             current: Some(0),
         };
         assert_eq!(q.append_deduplicated(std::iter::repeat(track("a"))), 0);
+    }
+
+    #[test]
+    fn rejected_radio_batch_preserves_history_selection_and_upcoming_rows() {
+        for replace in [false, true] {
+            let mut queue = Queue {
+                tracks: (0..25).map(|i| track(&i.to_string())).collect(),
+                current: Some(22),
+            };
+            let original = queue.clone();
+            assert_eq!(
+                queue.apply_radio(vec![track("21"), track("22"), track("")], replace),
+                0
+            );
+            assert_eq!(queue.tracks, original.tracks);
+            assert_eq!(queue.current, original.current);
+        }
+    }
+
+    #[test]
+    fn radio_replacement_keeps_the_playing_song_and_deduplicates_against_retained_history() {
+        let mut queue = Queue {
+            tracks: (0..25).map(|i| track(&i.to_string())).collect(),
+            current: Some(22),
+        };
+        assert_eq!(
+            queue.apply_radio(
+                vec![track("21"), track("23"), track("new"), track("new")],
+                true
+            ),
+            2
+        );
+        assert_eq!(queue.current, Some(20));
+        assert_eq!(queue.tracks[0].source, "2");
+        assert_eq!(queue.tracks[20..], [track("22"), track("23"), track("new")]);
     }
     #[test]
     fn shuffle_all_is_reproducible_and_can_change_first_track() {
