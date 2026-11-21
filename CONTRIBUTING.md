@@ -1,5 +1,26 @@
 # Contributing
 
+## Which branch should I use?
+
+`main` is Tide's integration branch for Windows, macOS, Jams and the release tools.
+Start new work from the latest `origin/main` and target `main` in the pull request.
+To start a fix, for example, run `git fetch origin` followed by
+`git switch --no-track -c fix/short-description origin/main`.
+
+| Branch or tag | Purpose |
+| --- | --- |
+| `main` | The shared development baseline. |
+| `fix/…`, `feat/…`, `docs/…`, `ci/…` | A single change. Use a descriptive name such as `fix/crossfade-mute`. |
+| `release/<version>` | Preparation for one release. The corresponding `v<version>` tag identifies the shipped source. |
+| `mac/…`, `release-automation/…` | Scoped platform or tooling work that integrates into `main`. |
+| `codex/…`, `claude…`, `t3/…` | Task branches. Check the associated PR and worktree for their subject and status. |
+
+The [open pull requests](https://github.com/yotam1001/tide-music/pulls) show work
+currently proposed for integration. After fetching, `git branch -r --no-merged origin/main`
+also shows remote-tracking tips with commits outside the history of `main`.
+Squash merges and cherry-picks can leave a branch on that list after its changes
+have landed. Use `git worktree list` to find local checkouts before retiring branches.
+
 Keep playback, provider access and interface code separate. Preserve the full charcoal/burgundy and compact earthy palette directions. Avoid adding continuous animations, polling or unbounded artwork caches.
 
 Follow the guarded format, test and Clippy commands in the
