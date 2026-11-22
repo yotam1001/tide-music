@@ -75,6 +75,12 @@ pub fn visible_range(
             last = index + 1;
         }
         y = next;
+        if let Some(first_visible) = first {
+            let start = first_visible.saturating_sub(OVERSCAN);
+            if count - start >= MAX_VISIBLE_IMAGES || count - last >= OVERSCAN {
+                break;
+            }
+        }
     }
     let Some(first) = first else { return 0..0 };
     let start = first.saturating_sub(OVERSCAN);
@@ -94,6 +100,17 @@ mod tests {
         assert_eq!(visible_range(0.0, 380.0, [76.0; 100]), 0..7);
         assert_eq!(visible_range(-1520.0, 380.0, [76.0; 100]), 18..27);
         assert_eq!(visible_range(-7220.0, 380.0, [76.0; 100]), 93..100);
+    }
+
+    #[test]
+    fn thumbnail_layout_stops_after_the_viewport_and_overscan() {
+        let mut rows_read = 0;
+        let heights = (0..2000).map(|_| {
+            rows_read += 1;
+            76.0
+        });
+        assert_eq!(visible_range(0.0, 380.0, heights), 0..7);
+        assert_eq!(rows_read, 7);
     }
 
     #[test]

@@ -382,6 +382,7 @@ export component TransportButtons inherits Rectangle {
     in property <bool> repeat-enabled;
     in property <bool> light-mode: false;
     in property <bool> show-repeat: true;
+    in property <bool> shuffle-enabled;
     in property <bool> show-shuffle: true;
     callback previous-track;
     callback toggle-pause;
@@ -402,7 +403,7 @@ export component TransportButtons inherits Rectangle {
         alignment: center;
 
         if root.show-shuffle : TideButton { quiet: true;
-            enabled: root.enabled;
+            enabled: root.enabled && root.shuffle-enabled;
             width: 36px;
             height: 36px;
             label: "Shuffle upcoming tracks";

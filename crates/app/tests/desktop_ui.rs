@@ -3,7 +3,7 @@ use slint::platform::{
     software_renderer::{MinimalSoftwareWindow, RepaintBufferType},
     Key, PointerEventButton, WindowEvent,
 };
-use slint::{ComponentHandle, LogicalPosition, ModelRc, PhysicalSize, Rgb8Pixel, VecModel};
+use slint::{ComponentHandle, LogicalPosition, Model, ModelRc, PhysicalSize, Rgb8Pixel, VecModel};
 use std::{cell::Cell, rc::Rc};
 use tide_music::*;
 
@@ -83,6 +83,25 @@ fn sidebar_home_transport_and_keyboard_shortcuts_keep_their_actions() {
             ..Default::default()
         },
     ])));
+    assert!(
+        !ui.get_can_shuffle(),
+        "One upcoming song has no alternate order"
+    );
+    let rows = ui.get_rows();
+    let rows = rows.as_any().downcast_ref::<VecModel<TrackRow>>().unwrap();
+    rows.push(TrackRow {
+        recommended: true,
+        ..Default::default()
+    });
+    assert!(
+        !ui.get_can_shuffle(),
+        "A manual song stays ahead of autoplay"
+    );
+    rows.push(TrackRow {
+        recommended: true,
+        ..Default::default()
+    });
+    assert!(ui.get_can_shuffle());
     ui.set_library_playlists(ModelRc::new(VecModel::from(
         (0..300)
             .map(|i| PlaylistRow {

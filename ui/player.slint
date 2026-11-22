@@ -12,6 +12,7 @@ export component PlayerBar inherits Rectangle {
     private property <color> glow: root.tinted ? root.tint : Theme.accent;
     animate glow { duration: ControlMotion.enabled ? 420ms : 0ms; easing: ease-in-out; }
     in property <bool> transport-enabled: true;
+    in property <bool> shuffle-enabled;
     in property <bool> skip-enabled: root.transport-enabled;
     in property <bool> window-minimized: false;
     private property <int> input-revision: 0;
@@ -202,7 +203,7 @@ export component PlayerBar inherits Rectangle {
             alignment: center;
             TransportButtons {
                 height: 46px;
-                enabled: root.transport-enabled; next-enabled: root.skip-enabled;
+                enabled: root.transport-enabled; next-enabled: root.skip-enabled; shuffle-enabled: root.shuffle-enabled;
                 paused: root.paused; light-mode: root.light-mode; repeat-enabled: root.repeat-enabled;
                 show-repeat: !root.compact && !root.narrow; show-shuffle: !root.compact && !root.narrow;
                 toggle-repeat => { root.toggle-repeat(); } shuffle-queue => { root.shuffle-queue(); }
