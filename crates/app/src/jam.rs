@@ -153,6 +153,7 @@ fn accept_requests(s: &mut State, u: &AppWindow, requests: Vec<QueueRequest>) {
         }
     }
     if changed {
+        advance_playback_intent(s, u);
         refresh(u, s);
     }
 }
@@ -292,6 +293,7 @@ fn begin_guest(s: &mut State, u: &AppWindow) -> Result<(), &'static str> {
     }
     s.jam.original = Some((s.settings.queue.clone(), s.settings.transient));
     s.settings.transient = true;
+    advance_playback_intent(s, u);
     s.settings.queue = Queue::default();
     s.jam.guest = true;
     s.jam.follower = Some(Follower::starting_after(s.generation));
@@ -299,7 +301,6 @@ fn begin_guest(s: &mut State, u: &AppWindow) -> Result<(), &'static str> {
     s.radio_resume_when_ready = false;
     s.radio_requests.reset();
     s.library_retry = None;
-    s.shuffle_request = false;
     s.active_playback = false;
     u.set_settings_open(false);
     u.set_account_open(false);

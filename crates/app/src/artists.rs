@@ -4,6 +4,7 @@ use tide_core::Artist;
 
 pub(super) struct Origin {
     page_request: Option<tide_provider::Request>,
+    page_refresh: PlaylistPageRefresh,
     previous_page: bool,
     next_page: bool,
     playlist: Option<tide_provider::PlaylistDetails>,
@@ -173,6 +174,7 @@ pub(super) fn open(
         let playlist = music_feedback::take_playlist(s, u);
         s.artist_origin = Some(Origin {
             page_request: s.detail_playlist_page.take(),
+            page_refresh: s.detail_playlist_refresh,
             previous_page: u.get_previous_page(),
             next_page: u.get_next_page(),
             playlist,
@@ -191,6 +193,7 @@ pub(super) fn open(
         });
     }
     s.artist_page = Page::default();
+    set_playlist_page_refresh(s, u, PlaylistPageRefresh::Current);
     s.detail_tracks.clear();
     u.set_detail_open(true);
     u.set_detail_is_artist(true);
@@ -264,11 +267,28 @@ fn unavailable(u: &AppWindow) {
     u.set_detail_note("YouTube Music did not return an artist page for this song.".into());
 }
 
+pub(super) fn invalidate_playlist_origin(s: &mut State, playlist_id: &str) {
+    for origin in s.artist_origin.iter_mut().chain(
+        s.artist_album_back
+            .iter_mut()
+            .filter_map(|back| back.origin.as_mut()),
+    ) {
+        if origin
+            .page_request
+            .as_ref()
+            .is_some_and(|request| is_playlist_page(request, playlist_id))
+        {
+            origin.page_refresh = PlaylistPageRefresh::Pending;
+        }
+    }
+}
+
 pub(super) fn back(s: &mut State, u: &AppWindow) {
     u.set_artist_picker_open(false);
     u.set_detail_busy(false);
     if let Some(origin) = s.artist_origin.take() {
         s.detail_playlist_page = origin.page_request;
+        set_playlist_page_refresh(s, u, origin.page_refresh);
         u.set_previous_page(origin.previous_page);
         u.set_next_page(origin.next_page);
         s.detail_tracks = origin.tracks;

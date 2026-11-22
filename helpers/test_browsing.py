@@ -40,6 +40,27 @@ class BrowsingTests(unittest.TestCase):
             self.assertEqual(reply["tracks"][0]["title"], "4999")
             self.assertTrue(reply["truncated"])
 
+    def test_refetching_after_removal_fills_the_page_boundary(self):
+        items = [{"videoId": f"{i:011d}", "setVideoId": str(i), "title": str(i)}
+                 for i in range(MAX_TRACKS + 2)]
+        client = SimpleNamespace(get_playlist=lambda _, limit: {
+            "tracks": items[:limit], "trackCount": len(items), "owned": True,
+        })
+        request = {"action": "playlist", "id": "PLfixture"}
+        before = run(client, dict(request, page=0))
+        self.assertEqual(before["playlist"]["entries"][-1], str(MAX_TRACKS - 1))
+
+        # A confirmed removal shifts the first entry of the old next page left.
+        items.pop(1)
+        refreshed = run(client, dict(request, page=0))
+        next_page = run(client, dict(request, page=1))
+        self.assertEqual(refreshed["playlist"]["entries"][-1], str(MAX_TRACKS))
+        self.assertEqual(next_page["playlist"]["entries"], [str(MAX_TRACKS + 1)])
+        self.assertEqual(
+            refreshed["playlist"]["entries"] + next_page["playlist"]["entries"],
+            [item["setVideoId"] for item in items],
+        )
+
     def test_library_playlist_count_distinguishes_empty_from_unknown(self):
         entries = [{"playlistId": f"PLfixture{i}", "title": "Playlist", "count": count}
                    for i, count in enumerate([None, 0, "1", "1,250", True, "unknown"])]

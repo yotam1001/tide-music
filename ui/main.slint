@@ -469,7 +469,12 @@ export component AppWindow inherits Window {
     in property <bool> next-page;
     callback change-playlist-page(bool);
     in property <[TrackRow]> detail-rows;
+    in property <bool> detail-page-stale;
     in property <bool> detail-busy;
+    private property <bool> detail-transport-enabled: root.detail-open && !root.jam-guest && root.browsing-enabled && !root.detail-busy;
+    out property <bool> detail-play-enabled: root.detail-transport-enabled && root.detail-rows.length > 0;
+    out property <bool> detail-shuffle-enabled: root.detail-transport-enabled && !root.detail-is-artist
+        && ((root.previous-page || root.next-page) ? !root.account-busy : root.detail-rows.length > 0);
     in-out property <bool> search-open;
     in property <[TrackRow]> search-rows;
     in property <[RecommendationRow]> search-cards;
@@ -929,8 +934,8 @@ export component AppWindow inherits Window {
                                         if root.detail-cover-visible : Rectangle { height: 4px; }
                                         if root.detail-cover-visible : HorizontalLayout {
                                             height: 56px; spacing: 14px; alignment: start; cross-axis-alignment: center;
-                                            LibraryButton { width: 56px; height: 56px; round: true; show-tooltip: true; light-mode: root.light-mode; icon-path: "M 7 4 L 20 12 L 7 20 Z"; label: "Play " + root.detail-title; active: true; enabled: !root.jam-guest && root.browsing-enabled && !root.detail-busy && root.detail-rows.length > 0; clicked => { root.play-detail(); } }
-                                            LibraryButton { width: 44px; height: 44px; round: true; quiet: true; show-tooltip: true; light-mode: root.light-mode; icon-path: "M 3 6 L 7 6 C 11 6 13 18 17 18 L 21 18 M 17 14 L 21 18 L 17 22 M 3 18 L 7 18 C 11 18 13 6 17 6 L 21 6 M 17 2 L 21 6 L 17 10"; label: "Shuffle " + root.detail-title; enabled: !root.jam-guest && root.browsing-enabled && !root.detail-busy && root.detail-rows.length > 0; clicked => { root.shuffle-detail(); } }
+                                            LibraryButton { width: 56px; height: 56px; round: true; show-tooltip: true; light-mode: root.light-mode; icon-path: "M 7 4 L 20 12 L 7 20 Z"; label: "Play " + root.detail-title; active: true; enabled: root.detail-play-enabled; clicked => { root.play-detail(); } }
+                                            LibraryButton { width: 44px; height: 44px; round: true; quiet: true; show-tooltip: true; light-mode: root.light-mode; icon-path: "M 3 6 L 7 6 C 11 6 13 18 17 18 L 21 18 M 17 14 L 21 18 L 17 22 M 3 18 L 7 18 C 11 18 13 6 17 6 L 21 6 M 17 2 L 21 6 L 17 10"; label: "Shuffle " + root.detail-title; enabled: root.detail-shuffle-enabled; clicked => { root.shuffle-detail(); } }
                                             // Someone else's playlist or an album: keep it in your library.
                                             if root.detail-savable && !root.detail-editable && !root.jam-guest && (root.detail-navigation == "" || root.detail-navigation == "album") : LibraryButton {
                                                 width: root.detail-saved ? 104px : 168px; height: 40px; quiet: false; active: root.detail-saved; light-mode: root.light-mode;
@@ -945,14 +950,14 @@ export component AppWindow inherits Window {
                                 }
                                 if root.detail-is-artist : HorizontalLayout {
                                     height: 48px; spacing: 12px; cross-axis-alignment: center;
-                                    LibraryButton { width: 48px; height: 48px; round: true; active: true; light-mode: root.light-mode; show-tooltip: true; icon-path: "M 7 4 L 20 12 L 7 20 Z"; label: "Play top songs"; enabled: !root.jam-guest && root.browsing-enabled && !root.detail-busy && root.detail-rows.length > 0; clicked => { root.play-detail(); } }
+                                    LibraryButton { width: 48px; height: 48px; round: true; active: true; light-mode: root.light-mode; show-tooltip: true; icon-path: "M 7 4 L 20 12 L 7 20 Z"; label: "Play top songs"; enabled: root.detail-play-enabled; clicked => { root.play-detail(); } }
                                     Text { horizontal-stretch: 1; text: "Popular"; color: root.foreground; font-size: 23px; font-weight: 650; vertical-alignment: center; }
                                 }
                                 if !root.detail-is-artist : HorizontalLayout {
                                     height: 36px;
                                     spacing: 8px;
-                                    if !root.detail-cover-visible : LibraryButton { width: root.detail-cover-visible ? 100px : 36px; round: !root.detail-cover-visible; show-tooltip: true; light-mode: root.light-mode; caption: root.detail-cover-visible ? "Play" : "▶"; leading-icon: root.detail-cover-visible ? "M 7 4 L 20 12 L 7 20 Z" : ""; label: "Play " + root.detail-title; active: true; enabled: !root.jam-guest && root.browsing-enabled && !root.detail-busy && root.detail-rows.length > 0; clicked => { root.play-detail(); } }
-                                    if !root.detail-cover-visible : LibraryButton { width: root.detail-cover-visible ? 104px : 36px; show-tooltip: true; light-mode: root.light-mode; caption: root.detail-cover-visible ? "Shuffle" : "⇄"; leading-icon: root.detail-cover-visible ? "M 3 6 L 7 6 C 11 6 13 18 17 18 L 21 18 M 17 14 L 21 18 L 17 22 M 3 18 L 7 18 C 11 18 13 6 17 6 L 21 6 M 17 2 L 21 6 L 17 10" : ""; label: "Shuffle " + root.detail-title; enabled: !root.jam-guest && root.browsing-enabled && !root.detail-busy && root.detail-rows.length > 0; clicked => { root.shuffle-detail(); } }
+                                    if !root.detail-cover-visible : LibraryButton { width: root.detail-cover-visible ? 100px : 36px; round: !root.detail-cover-visible; show-tooltip: true; light-mode: root.light-mode; caption: root.detail-cover-visible ? "Play" : "▶"; leading-icon: root.detail-cover-visible ? "M 7 4 L 20 12 L 7 20 Z" : ""; label: "Play " + root.detail-title; active: true; enabled: root.detail-play-enabled; clicked => { root.play-detail(); } }
+                                    if !root.detail-cover-visible : LibraryButton { width: root.detail-cover-visible ? 104px : 36px; show-tooltip: true; light-mode: root.light-mode; caption: root.detail-cover-visible ? "Shuffle" : "⇄"; leading-icon: root.detail-cover-visible ? "M 3 6 L 7 6 C 11 6 13 18 17 18 L 21 18 M 17 14 L 21 18 L 17 22 M 3 18 L 7 18 C 11 18 13 6 17 6 L 21 6 M 17 2 L 21 6 L 17 10" : ""; label: "Shuffle " + root.detail-title; enabled: root.detail-shuffle-enabled; clicked => { root.shuffle-detail(); } }
                                     if root.detail-playlist-known : LibraryButton { width: 36px; show-tooltip: true; light-mode: root.light-mode; icon-path: "M 20 7 L 20 3 M 20 7 L 16 7 M 20 7 A 9 9 0 1 0 21 14"; label: "Refresh this playlist from YouTube Music"; enabled: root.browsing-enabled && !root.account-busy && !root.collection-busy; clicked => { root.refresh-detail-playlist(); } }
                                     if root.detail-manageable : LibraryButton {
                                         width: 36px; height: 36px; show-tooltip: true; light-mode: root.light-mode;
@@ -996,8 +1001,8 @@ export component AppWindow inherits Window {
                                 }
                                 if !root.detail-is-artist && (root.previous-page || root.next-page) : HorizontalLayout {
                                     height: 34px; spacing: 8px; alignment: start;
-                                    LibraryButton { width: 110px; light-mode: root.light-mode; caption: "Previous page"; label: "Previous playlist page"; enabled: root.previous-page && !root.detail-busy && root.browsing-enabled; clicked => { root.change-playlist-page(false); } }
-                                    LibraryButton { width: 96px; light-mode: root.light-mode; caption: "Next page"; label: "Next playlist page"; enabled: root.next-page && !root.detail-busy && root.browsing-enabled; clicked => { root.change-playlist-page(true); } }
+                                    LibraryButton { width: 110px; light-mode: root.light-mode; caption: "Previous page"; label: "Previous playlist page"; enabled: root.previous-page && !root.detail-page-stale && !root.detail-busy && !root.collection-busy && root.browsing-enabled; clicked => { root.change-playlist-page(false); } }
+                                    LibraryButton { width: 96px; light-mode: root.light-mode; caption: "Next page"; label: "Next playlist page"; enabled: root.next-page && !root.detail-page-stale && !root.detail-busy && !root.collection-busy && root.browsing-enabled; clicked => { root.change-playlist-page(true); } }
                                 }
                                 if root.detail-note != "" && (!root.detail-is-artist || root.detail-rows.length == 0) : Text { text: root.detail-note; color: root.secondary; font-size: 12px; wrap: word-wrap; }
                                 if root.detail-has-cover && !root.detail-is-artist && root.detail-rows.length > 0 : Rectangle {
@@ -1027,7 +1032,7 @@ export component AppWindow inherits Window {
                                     vertical-stretch: 1;
                                     accessible-label: "Tracks in " + root.detail-title;
                                     for visible-index in (root.detail-filter == "" ? root.detail-rows.length : root.detail-matches.length) : SongRow {
-                                        private property <int> source-index: root.detail-filter == "" ? visible-index : root.detail-matches[visible-index]; collection-row: root.detail-has-cover && !root.detail-is-artist; shared-queue: root.jam-guest; collection-enabled: root.collection-enabled && !root.collection-busy; playlist-removable: root.detail-editable && self.source-index < root.detail-editable-entries.length && root.detail-editable-entries[self.source-index]; enabled: root.browsing-enabled; track: root.detail-rows[self.source-index]; index: self.source-index; light-mode: root.light-mode; now-playing: root.is-current-song(self.track); live: !root.paused; select => { root.select-detail-track(self.source-index); } queue(next) => { root.queue-detail-track(self.source-index, next); } radio => { root.start-track-radio(1, self.source-index); } artist => { root.open-artist(1, self.source-index); } add-playlist => { root.add-to-playlist(1, self.source-index); } remove-playlist => { root.remove-playlist-song(self.source-index); } }
+                                        private property <int> source-index: root.detail-filter == "" ? visible-index : root.detail-matches[visible-index]; collection-row: root.detail-has-cover && !root.detail-is-artist; shared-queue: root.jam-guest; collection-enabled: root.collection-enabled && !root.collection-busy; playlist-removable: !root.detail-page-stale && !root.detail-busy && root.detail-editable && self.source-index < root.detail-editable-entries.length && root.detail-editable-entries[self.source-index]; enabled: root.browsing-enabled; track: root.detail-rows[self.source-index]; index: self.source-index; light-mode: root.light-mode; now-playing: root.is-current-song(self.track); live: !root.paused; select => { root.select-detail-track(self.source-index); } queue(next) => { root.queue-detail-track(self.source-index, next); } radio => { root.start-track-radio(1, self.source-index); } artist => { root.open-artist(1, self.source-index); } add-playlist => { root.add-to-playlist(1, self.source-index); } remove-playlist => { root.remove-playlist-song(self.source-index); } }
                                 }
                                 if root.detail-is-artist && (root.detail-rows.length > 0 || root.artist-releases.length > 0) : ScrollView {
                                     content-y <=> root.detail-artwork-y;

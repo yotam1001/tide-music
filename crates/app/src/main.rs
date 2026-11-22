@@ -188,7 +188,9 @@ enum LibraryAction {
     Replace,
     Connect,
     Artist,
-    Shuffle,
+    Shuffle {
+        intent: u64,
+    },
     Preview {
         title: String,
         radio_seed: Option<Track>,
@@ -203,6 +205,18 @@ enum LibraryAction {
     },
 }
 impl LibraryAction {
+    fn shuffle_intent(&self) -> Option<u64> {
+        match self {
+            Self::Shuffle { intent } => Some(*intent),
+            _ => None,
+        }
+    }
+
+    fn shuffle_is_current(&self, intent: u64) -> bool {
+        self.shuffle_intent()
+            .is_none_or(|requested| requested == intent)
+    }
+
     fn accepts_response(&self, generation: u64, seed: Option<&str>, autoplay: bool) -> bool {
         match self {
             Self::Radio {
@@ -276,6 +290,14 @@ fn sleep_label(timer: Option<SleepTimer>, now: Instant) -> String {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PlaylistPageRefresh {
+    Current,
+    Pending,
+    // Keep paging disabled on a failed refresh until a fresh page arrives.
+    RefreshRequested,
+}
+
 struct State {
     music_feedback: music_feedback::Music,
     #[cfg(feature = "experimental-jams")]
@@ -283,6 +305,7 @@ struct State {
     settings: Settings,
     engine: Option<tide_playback::PlaybackHandle>,
     generation: u64,
+    playback_intent: u64,
     active_playback: bool,
     load_requested_at: Option<(u64, Instant)>,
     command_error: Option<String>,
@@ -311,6 +334,7 @@ struct State {
     discovery: discovery::Discovery,
     detail_tracks: Vec<Track>,
     detail_playlist_page: Option<tide_provider::Request>,
+    detail_playlist_refresh: PlaylistPageRefresh,
     related_tracks: Vec<Track>,
     detail_cover_url: Option<String>,
     /// The playlist or album shown in detail, for "Save to library".
@@ -328,8 +352,7 @@ struct State {
     account_verified: bool,
     library_action: LibraryAction,
     library_request: Option<tide_provider::Request>,
-    library_retry: Option<(tide_provider::Request, bool)>,
-    shuffle_request: bool,
+    library_retry: Option<(tide_provider::Request, Option<u64>)>,
     radio_requests: radio::RadioRequests,
     /// Songs autoplay added this session, so long listening sessions keep
     /// moving forward instead of circling back to the same picks.
@@ -495,6 +518,8 @@ fn connect_picker(
         ui.set_account_status(error.into());
     }
 }
+const FETCHING_MUSIC: &str = "Fetching YouTube Music…";
+
 fn request_library(
     s: &mut State,
     u: &AppWindow,
@@ -539,15 +564,9 @@ fn request_library_view(
     if s.library_worker.is_some() || s.pending_saved_connection.is_some() {
         // Latest navigation wins: remember the newest page instead of
         // dropping the click, and open it when the current request finishes.
-        if s.pending_saved_connection.is_none()
-            && radio_seed.is_none()
-            && !s.shuffle_request
-            && is_navigation(&request)
-        {
+        if s.pending_saved_connection.is_none() && radio_seed.is_none() && is_navigation(&request) {
             s.queued_library_request = Some(request);
         }
-        // A Shuffle click that could not start must not shuffle a later playlist.
-        s.shuffle_request = false;
         return;
     }
     s.queued_library_request = None;
@@ -575,10 +594,11 @@ fn request_library_view(
             generation: s.generation,
             replace_upcoming: false,
         },
-        tide_provider::Request::Playlist { .. } | tide_provider::Request::Liked { .. }
-            if s.shuffle_request =>
-        {
-            LibraryAction::Shuffle
+        tide_provider::Request::PlaylistShuffle { .. } => {
+            advance_playback_intent(s, u);
+            LibraryAction::Shuffle {
+                intent: s.playback_intent,
+            }
         }
         tide_provider::Request::Playlist { id, .. } => LibraryAction::Preview {
             radio_seed: None,
@@ -638,7 +658,10 @@ fn request_library_view(
             .as_ref()
             .is_some_and(|current| same_playlist(current, &request));
     if paging {
-        // Keep the previous rows and their edit identities usable if the fetch fails.
+        if s.detail_playlist_refresh != PlaylistPageRefresh::Current {
+            set_playlist_page_refresh(s, u, PlaylistPageRefresh::RefreshRequested);
+        }
+        // Keep the previous rows available if the fetch fails.
         u.set_detail_busy(true);
     } else if let LibraryAction::Preview { title, radio_seed } = &action {
         u.set_detail_navigation(
@@ -703,6 +726,7 @@ fn request_library_view(
             .into(),
         );
         s.detail_playlist_page = None;
+        set_playlist_page_refresh(s, u, PlaylistPageRefresh::Current);
         u.set_previous_page(false);
         u.set_next_page(false);
         s.detail_tracks.clear();
@@ -716,10 +740,8 @@ fn request_library_view(
     if matches!(action, LibraryAction::Artist) {
         u.set_detail_busy(true);
     }
-    let shuffle_collection = matches!(action, LibraryAction::Shuffle);
     s.library_action = action;
     s.library_request = Some(request.clone());
-    s.shuffle_request = false;
     let cancel = s.library_cancel.clone();
     let tx = tx.clone();
     u.set_home_refreshing(matches!(request, tide_provider::Request::Home));
@@ -728,24 +750,11 @@ fn request_library_view(
         if connecting {
             "Verifying your selected YouTube Music account…"
         } else {
-            "Fetching YouTube Music…"
+            FETCHING_MUSIC
         }
         .into(),
     );
     s.library_worker = Some(std::thread::spawn(move || {
-        let request = if shuffle_collection {
-            match request {
-                tide_provider::Request::Playlist { id, .. } => {
-                    tide_provider::Request::PlaylistShuffle { id: Some(id) }
-                }
-                tide_provider::Request::Liked { .. } => {
-                    tide_provider::Request::PlaylistShuffle { id: None }
-                }
-                other => other,
-            }
-        } else {
-            request
-        };
         let _ = tx.try_send(provider.execute(request, cancel));
     }));
 }
@@ -790,6 +799,21 @@ fn same_playlist(current: &tide_provider::Request, next: &tide_provider::Request
         (Playlist { id: a, .. }, Playlist { id: b, .. }) => a == b,
         _ => false,
     }
+}
+
+fn is_playlist_page(request: &tide_provider::Request, playlist_id: &str) -> bool {
+    matches!(request, tide_provider::Request::Playlist { id, .. } if id == playlist_id)
+}
+
+fn set_playlist_page_refresh(s: &mut State, u: &AppWindow, refresh: PlaylistPageRefresh) {
+    s.detail_playlist_refresh = refresh;
+    u.set_detail_page_stale(refresh != PlaylistPageRefresh::Current);
+}
+
+fn detail_collection_shuffle(s: &State, u: &AppWindow) -> bool {
+    !u.get_detail_is_artist()
+        && s.detail_playlist_page.is_some()
+        && (u.get_previous_page() || u.get_next_page())
 }
 
 /// The song autoplay continues from: the most recent one the listener picked
@@ -914,14 +938,16 @@ fn require_reconnect(s: &mut State, u: &AppWindow) {
 }
 
 fn library_failure(s: &mut State, u: &AppWindow, authentication: bool) {
-    u.set_playback_error_action("".into());
-    if !s.library_action.accepts_response(
-        s.generation,
-        current_video_id(s).as_deref(),
-        s.settings.autoplay,
-    ) {
+    if !s.library_action.shuffle_is_current(s.playback_intent)
+        || !s.library_action.accepts_response(
+            s.generation,
+            current_video_id(s).as_deref(),
+            s.settings.autoplay,
+        )
+    {
         return;
     }
+    u.set_playback_error_action("".into());
     // Candidate verification does not replace the encrypted session on failure.
     // Keep the previously verified account and its playback intact.
     if matches!(s.library_action, LibraryAction::Connect) && s.account_verified {
@@ -966,7 +992,7 @@ fn library_failure(s: &mut State, u: &AppWindow, authentication: bool) {
             .library_request
             .as_ref()
             .and_then(content_retry_request)
-            .map(|request| (request, matches!(s.library_action, LibraryAction::Shuffle)));
+            .map(|request| (request, s.library_action.shuffle_intent()));
         s.account_error = false;
         u.set_error_is_account(false);
         u.set_error_retryable(s.library_retry.is_some());
@@ -1000,6 +1026,7 @@ fn content_failure_message(request: Option<&tide_provider::Request>) -> &'static
         Some(
             tide_provider::Request::Playlist { .. }
             | tide_provider::Request::Liked { .. }
+            | tide_provider::Request::PlaylistShuffle { .. }
             | tide_provider::Request::Supermix,
         ) => "Couldn't load this playlist. Retry to load its songs.",
         Some(tide_provider::Request::Artist { .. } | tide_provider::Request::Artists { .. }) => {
@@ -1022,6 +1049,7 @@ fn content_retry_request(request: &tide_provider::Request) -> Option<tide_provid
         | tide_provider::Request::Mood { .. }
         | tide_provider::Request::Home
         | tide_provider::Request::Playlist { .. }
+        | tide_provider::Request::PlaylistShuffle { .. }
         | tide_provider::Request::Album { .. }
         | tide_provider::Request::Supermix
         | tide_provider::Request::Liked { .. }
@@ -1114,6 +1142,8 @@ fn stage_saved_connection(
     s.recommendations.clear();
     s.discovery.clear();
     s.detail_tracks.clear();
+    s.detail_playlist_page = None;
+    set_playlist_page_refresh(s, u, PlaylistPageRefresh::Current);
     s.detail_cover_url = None;
     u.set_forward_collection(false);
     s.artist_origin = None;
@@ -1312,6 +1342,8 @@ fn configure_account_playback(s: &mut State, u: &AppWindow) -> bool {
     s.radio_resume_when_ready = false;
     s.radio_requests.reset();
     s.detail_tracks.clear();
+    s.detail_playlist_page = None;
+    set_playlist_page_refresh(s, u, PlaylistPageRefresh::Current);
     s.detail_cover_url = None;
     u.set_forward_collection(false);
     s.artist_origin = None;
@@ -1956,6 +1988,7 @@ fn queue_choice(s: &mut State, u: &AppWindow, track: Track, play_next: bool) {
     }
     let was_empty = s.settings.queue.tracks.is_empty();
     if s.settings.queue.insert_manual(track, play_next) {
+        advance_playback_intent(s, u);
         if was_empty {
             s.queue_context = None;
             u.set_queue_source("".into());
@@ -2249,6 +2282,26 @@ fn next_queue_index(s: &State) -> Option<usize> {
     })
 }
 
+// Queue and transport changes can supersede a shuffle without loading a new engine generation.
+fn advance_playback_intent(state: &mut State, ui: &AppWindow) {
+    state.playback_intent = state.playback_intent.wrapping_add(1);
+    if state
+        .library_retry
+        .as_ref()
+        .is_some_and(|(_, intent)| intent.is_some())
+    {
+        state.library_retry = None;
+        if !state
+            .engine
+            .as_ref()
+            .is_some_and(|engine| engine.snapshot().error.is_some())
+        {
+            ui.set_error_message("".into());
+            ui.set_error_retryable(false);
+        }
+    }
+}
+
 fn send(state: &mut State, ui: &AppWindow, cmd: PlaybackCommand) -> bool {
     if !local_controls_allowed(state) && !matches!(cmd, PlaybackCommand::SetVolume(_)) {
         return false;
@@ -2262,6 +2315,14 @@ fn send(state: &mut State, ui: &AppWindow, cmd: PlaybackCommand) -> bool {
         other => other,
     };
     let clears_audio = matches!(cmd, PlaybackCommand::Stop | PlaybackCommand::Shutdown);
+    if clears_audio
+        || matches!(
+            cmd,
+            PlaybackCommand::SetPaused(_) | PlaybackCommand::TogglePause
+        )
+    {
+        advance_playback_intent(state, ui);
+    }
     let volume = match cmd {
         PlaybackCommand::SetVolume(level) => Some(level),
         _ => None,
@@ -2377,6 +2438,7 @@ fn update_bookmark(settings: &mut Settings, snapshot: &tide_core::PlaybackSnapsh
 }
 
 fn resume_or_play(state: &mut State, ui: &AppWindow) {
+    advance_playback_intent(state, ui);
     play_at(
         state,
         ui,
@@ -2400,6 +2462,7 @@ fn seek_before_playback(settings: &mut Settings, requested: f64) -> Option<f64> 
 }
 
 fn play(state: &mut State, ui: &AppWindow) -> bool {
+    advance_playback_intent(state, ui);
     play_at(state, ui, 0.0)
 }
 
@@ -2491,6 +2554,7 @@ fn next_track(s: &mut State, u: &AppWindow, tx: &mpsc::SyncSender<LibraryResult>
     if !local_controls_allowed(s) {
         return;
     }
+    advance_playback_intent(s, u);
     let previous = s.settings.queue.current;
     if let Some(index) = next_queue_index(s) {
         s.settings.queue.select(index);
@@ -2954,6 +3018,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         settings,
         engine,
         generation: 0,
+        playback_intent: 0,
         active_playback: false,
         load_requested_at: None,
         command_error: None,
@@ -2981,6 +3046,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         discovery: discovery::Discovery::default(),
         detail_tracks: Vec::new(),
         detail_playlist_page: None,
+        detail_playlist_refresh: PlaylistPageRefresh::Current,
         related_tracks: Vec::new(),
         detail_cover_url: None,
         detail_save_target: None,
@@ -2996,7 +3062,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         library_action: LibraryAction::default(),
         library_request: None,
         library_retry: None,
-        shuffle_request: false,
         radio_requests: radio::RadioRequests::default(),
         autoplay_recent: std::collections::VecDeque::new(),
         sleep_timer: None,
@@ -3181,6 +3246,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             if let Some(u) = weak.upgrade() {
                 let mut s = state.borrow_mut();
+                advance_playback_intent(&mut s, &u);
                 s.settings.autoplay = true;
                 u.set_autoplay_enabled(true);
                 save(&s.settings);
@@ -3206,14 +3272,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .and_then(|index| s.library_playlists.get(index))
                     .cloned()
                 {
-                    s.shuffle_request = true;
                     request_library(
                         &mut s,
                         &u,
                         &tx,
-                        tide_provider::Request::Playlist {
-                            id: playlist.id,
-                            page: 0,
+                        tide_provider::Request::PlaylistShuffle {
+                            id: Some(playlist.id),
                         },
                     );
                 }
@@ -3561,12 +3625,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             if let Some(u) = weak.upgrade() {
                 let mut s = state.borrow_mut();
-                if !u.get_detail_is_artist() {
-                    if let Some(request) = s.detail_playlist_page.clone() {
-                        s.shuffle_request = true;
-                        request_library(&mut s, &u, &tx, request);
-                        return;
-                    }
+                if !u.get_detail_open() || u.get_detail_busy() {
+                    return;
+                }
+                if detail_collection_shuffle(&s, &u) {
+                    let id = match &s.detail_playlist_page {
+                        Some(tide_provider::Request::Playlist { id, .. }) => Some(id.clone()),
+                        Some(tide_provider::Request::Liked { .. }) => None,
+                        _ => return,
+                    };
+                    request_library(
+                        &mut s,
+                        &u,
+                        &tx,
+                        tide_provider::Request::PlaylistShuffle { id },
+                    );
+                    return;
                 }
                 start_detail_tracks(&mut s, &u, 0, true);
             }
@@ -3582,6 +3656,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if u.get_detail_is_artist()
                 || !u.get_detail_open()
                 || u.get_detail_busy()
+                || u.get_collection_busy()
+                || s.detail_playlist_refresh != PlaylistPageRefresh::Current
                 || (forward && !u.get_next_page())
                 || (!forward && !u.get_previous_page())
             {
@@ -3861,9 +3937,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             send(&mut s, &u, PlaybackCommand::SetPaused(snapshot.paused));
                             u.set_paused(snapshot.paused);
                         }
-                    } else if let Some((request, shuffle)) = s.library_retry.take() {
-                        s.shuffle_request = shuffle;
-                        request_library(&mut s, &u, &tx, request);
+                    } else if let Some((request, intent)) = s.library_retry.take() {
+                        if intent.is_none_or(|intent| intent == s.playback_intent) {
+                            request_library(&mut s, &u, &tx, request);
+                        }
                     } else if matches!(s.library_action, LibraryAction::Radio { .. })
                         && s.account_verified
                     {
@@ -3944,6 +4021,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let mut s = state.borrow_mut();
                 if let (Ok(index), Ok(target)) = (usize::try_from(index), usize::try_from(target)) {
                     if s.settings.queue.move_upcoming_to(index, target) {
+                        advance_playback_intent(&mut s, &u);
                         refresh(&u, &s);
                         save(&s.settings);
                     }
@@ -4227,6 +4305,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
     bind!(on_shuffle_queue, |s, u| {
+        advance_playback_intent(&mut s, &u);
         let seed = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(1, |t| t.as_nanos() as u64);
@@ -4425,6 +4504,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             s.radio_requests.reset();
         } else {
             s.radio_resume_when_ready = false;
+            advance_playback_intent(&mut s, &u);
             s.settings.queue.remove_autoplay_upcoming();
             refresh(&u, &s);
         }
@@ -4446,6 +4526,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if s.settings.queue.remove(index).is_none() {
                     return;
                 }
+                advance_playback_intent(&mut s, &u);
                 if s.settings.queue.current.is_some_and(|current| {
                     s.settings.queue.tracks.len().saturating_sub(current + 1) <= 2
                 }) {
@@ -4482,6 +4563,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
     bind!(on_clear_queue, |s, u| {
+        advance_playback_intent(&mut s, &u);
         if s.engine.is_some() && !send(&mut s, &u, PlaybackCommand::Stop) {
             return;
         }
@@ -5055,6 +5137,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     u.set_account_busy(false);
                     u.set_detail_busy(false);
                     let playback_session_updated = sync_playback_cookies(&mut s);
+                    if !s.library_action.shuffle_is_current(s.playback_intent) {
+                        if u.get_account_status() == FETCHING_MUSIC {
+                            u.set_account_status("".into());
+                        }
+                        continue;
+                    }
                     if matches!(
                         &result,
                         Ok(tide_provider::Response::Library { .. }
@@ -5283,15 +5371,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     _ => None,
                                 };
                                 if let Some(page) = page {
-                                    u.set_detail_artwork_y(0.0);
+                                    // Pending means another write finished after this fetch began.
+                                    if s.detail_playlist_refresh == PlaylistPageRefresh::RefreshRequested {
+                                        set_playlist_page_refresh(&mut s, &u, PlaylistPageRefresh::Current);
+                                    } else {
+                                        u.set_detail_artwork_y(0.0);
+                                    }
                                     u.set_previous_page(page > 0);
                                     u.set_next_page(truncated);
+                                    s.detail_playlist_page = s.library_request.clone();
                                     if page > 0 || truncated {
-                                        s.detail_playlist_page = s.library_request.clone();
                                         let total = total.map(|n| format!(" · {n} tracks in collection")).unwrap_or_default();
                                         u.set_detail_note(format!("Page {}{total}", u64::from(page) + 1).into());
                                     } else {
-                                        s.detail_playlist_page = None;
                                         u.set_detail_note("".into());
                                     }
                                 }
@@ -5321,7 +5413,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         current: Some(0),
                                     },
                                 );
-                                if matches!(s.library_action, LibraryAction::Shuffle) {
+                                let shuffled = s.library_action.shuffle_intent().is_some();
+                                if shuffled {
                                     let seed = std::time::SystemTime::now()
                                         .duration_since(std::time::UNIX_EPOCH)
                                         .unwrap_or_default()
@@ -5329,12 +5422,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         as u64;
                                     s.settings.queue.shuffle_all(seed);
                                 }
-                                if play(&mut s, &u) {
-                                    let shuffled = matches!(s.library_action, LibraryAction::Shuffle);
+                                if play_at(&mut s, &u, 0.0) {
                                     if shuffled {
                                         let (id, title) = match &s.library_request {
-                                            Some(tide_provider::Request::Liked { .. }) => (Some("LM".into()), "Liked Songs".to_owned()),
-                                            Some(tide_provider::Request::Playlist { id, .. }) => {
+                                            Some(tide_provider::Request::PlaylistShuffle { id: None }) => (Some("LM".into()), "Liked Songs".to_owned()),
+                                            Some(tide_provider::Request::PlaylistShuffle { id: Some(id) }) => {
                                                 let title = s.library_playlists.iter().find(|p| &p.id == id)
                                                     .map(|p| p.title.clone()).unwrap_or_else(|| "Playlist".into());
                                                 (Some(id.clone()), title)
@@ -5405,6 +5497,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 #[cfg(feature = "experimental-jams")]
                 jam::tick(&mut s, &u, &library_tx);
                 music_feedback::tick(&mut s, &u);
+                if s.detail_playlist_refresh == PlaylistPageRefresh::Pending
+                    && s.library_worker.is_none()
+                    && s.pending_saved_connection.is_none()
+                    && u.get_detail_open()
+                    && !u.get_detail_is_artist()
+                {
+                    if let Some(request) = s.detail_playlist_page.clone() {
+                        request_library(&mut s, &u, &library_tx, request);
+                    }
+                }
                 let artwork_changed = s.artwork.borrow_mut().poll();
                 if artwork_changed {
                     refresh(&u, &s);
@@ -5536,7 +5638,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let previous = s.settings.queue.current;
                         if let Some(index) = next_queue_index(&s) {
                             s.settings.queue.select(index);
-                            if !play(&mut s, &u) {
+                            if !play_at(&mut s, &u, 0.0) {
                                 s.settings.queue.current = previous;
                                 s.active_playback = false;
                                 refresh(&u, &s);
@@ -6905,6 +7007,19 @@ mod tests {
         let shorter = update_model(unchanged, vec![9]);
         assert_eq!(shorter.row_count(), 1);
         assert_eq!(shorter.row_data(0), Some(9));
+    }
+
+    #[test]
+    fn shuffle_completion_and_retry_belong_to_the_requesting_intent() {
+        let action = LibraryAction::Shuffle { intent: 4 };
+        let retry_intent = action.shuffle_intent();
+        assert!(action.shuffle_is_current(4));
+        assert_eq!(retry_intent, Some(4));
+
+        // A queue edit can change the intent while leaving the engine generation untouched.
+        assert!(!action.shuffle_is_current(5));
+        assert_ne!(retry_intent, Some(5));
+        assert!(LibraryAction::Replace.shuffle_is_current(5));
     }
 
     #[test]
