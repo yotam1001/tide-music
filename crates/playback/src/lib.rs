@@ -14,7 +14,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
 use tide_core::{PlaybackCommand, PlaybackSnapshot};
-use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader, WriteHalf};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader, WriteHalf};
 use tokio::sync::{mpsc, watch};
 use url::Url;
 
@@ -724,7 +724,12 @@ struct RunningPlayer {
     writer: PipeWriter,
     reader_task: tokio::task::JoinHandle<()>,
     session_id: u64,
-    audio_options: Option<AudioOptions>,
+    audio: PlayerAudio,
+}
+
+#[cfg(any(windows, unix))]
+struct PlayerAudio {
+    options: Option<AudioOptions>,
     /// Level last sent to the fade filter.
     fade_gain: f64,
 }
@@ -973,7 +978,7 @@ async fn run_worker(
                             audio_options.lock().unwrap_or_else(|p| p.into_inner()).clone()
                         };
                         if let Some(running) = player.as_mut() {
-                            fault = apply_audio_options(running, &options).await.is_err();
+                            fault = running.audio.configure(&mut running.writer, &options).await.is_err();
                         }
                     }
                     WorkerCommand::Action { epoch, command } => {
@@ -1015,7 +1020,7 @@ async fn run_worker(
                         if let Ok(message) = serde_json::from_str::<Value>(&line) {
                             if matches!(message.get("request_id").and_then(Value::as_i64), Some(-103..=-101))
                                 && message.get("error").and_then(Value::as_str).is_some_and(|e| e != "success") {
-                                if let Some(running) = player.as_mut() { running.audio_options = None; }
+                                if let Some(running) = player.as_mut() { running.audio.options = None; }
                             }
                             let audio_message = matches!(message.get("request_id").and_then(Value::as_i64), Some(-103..=-101))
                                 || (message.get("event").and_then(Value::as_str) == Some("property-change")
@@ -1102,15 +1107,7 @@ async fn run_worker(
                             }
                             // Commands can't be sent while the snapshot lock is held.
                             if let (Some(level), Some(running)) = (fade_level, player.as_mut()) {
-                                let fading = running.audio_options.as_ref().is_some_and(AudioOptions::fade_active);
-                                if fading && level != running.fade_gain {
-                                    running.fade_gain = level;
-                                    // Best effort: a missed step is corrected by the next one.
-                                    // The last argument targets the graph's volume filter;
-                                    // mpv rejects the command without it.
-                                    let _ = send_ipc_command(&mut running.writer,
-                                        json!(["af-command", "tide-fade", "volume", format!("{level:.2}"), "volume"]), Some(-103)).await;
-                                }
+                                running.audio.update_fade(&mut running.writer, level).await;
                             }
                             if loaded && !fault {
                                 if let Some(running) = player.as_mut() {
@@ -1194,7 +1191,7 @@ async fn run_worker(
                                 next_session_id = next_session_id.wrapping_add(1).max(1);
                                 let options = audio_options.lock().unwrap_or_else(|p| p.into_inner()).clone();
                                 if observe_properties(&mut running).await.is_err()
-                                    || apply_audio_options(&mut running, &options).await.is_err() {
+                                    || running.audio.configure(&mut running.writer, &options).await.is_err() {
                                     fault = true;
                                 } else if let Some(token) = current.load.promised.take() {
                                     // mpv started meanwhile; load once the extraction already
@@ -1486,8 +1483,10 @@ async fn launch_player(
         writer,
         reader_task,
         session_id,
-        audio_options: None,
-        fade_gain: 1.0,
+        audio: PlayerAudio {
+            options: None,
+            fade_gain: 1.0,
+        },
     };
     if let Err(error) = send_ipc_command(
         &mut running.writer,
@@ -1633,65 +1632,86 @@ async fn observe_properties(player: &mut RunningPlayer) -> io::Result<()> {
 }
 
 #[cfg(any(windows, unix))]
-async fn apply_audio_options(player: &mut RunningPlayer, options: &AudioOptions) -> io::Result<()> {
-    if player
-        .audio_options
-        .as_ref()
-        .is_none_or(|old| old.device != options.device)
-    {
-        send_ipc_command(
-            &mut player.writer,
-            json!(["set_property", "audio-device", options.device]),
-            Some(-101),
-        )
-        .await?;
+impl PlayerAudio {
+    async fn configure(
+        &mut self,
+        writer: &mut (impl AsyncWrite + Unpin),
+        options: &AudioOptions,
+    ) -> io::Result<()> {
+        if self
+            .options
+            .as_ref()
+            .is_none_or(|old| old.device != options.device)
+        {
+            send_ipc_command(
+                writer,
+                json!(["set_property", "audio-device", options.device]),
+                Some(-101),
+            )
+            .await?;
+        }
+        if self
+            .options
+            .as_ref()
+            .is_none_or(|old| old.bit_perfect != options.bit_perfect)
+        {
+            // Exclusive mode bypasses the Windows mixer and its resampling.
+            send_ipc_command(
+                writer,
+                json!(["set_property", "audio-exclusive", options.bit_perfect]),
+                Some(-101),
+            )
+            .await?;
+        }
+        let gain_db = if options.bit_perfect {
+            0.0
+        } else {
+            options.gain_db
+        };
+        if self
+            .options
+            .as_ref()
+            .is_none_or(|old| (if old.bit_perfect { 0.0 } else { old.gain_db }) != gain_db)
+        {
+            send_ipc_command(
+                writer,
+                json!(["set_property", "volume-gain", gain_db]),
+                Some(-101),
+            )
+            .await?;
+        }
+        if self
+            .options
+            .as_ref()
+            .is_none_or(|old| options.filters_differ(old))
+        {
+            // A rebuilt chain starts its fade filter at full level.
+            self.fade_gain = 1.0;
+            send_ipc_command(writer, json!(["af", "set", options.filter()]), Some(-102)).await?;
+        }
+        self.options = Some(options.clone());
+        Ok(())
     }
-    if player
-        .audio_options
-        .as_ref()
-        .is_none_or(|old| old.bit_perfect != options.bit_perfect)
-    {
-        // Exclusive mode bypasses the Windows mixer and its resampling.
-        send_ipc_command(
-            &mut player.writer,
-            json!(["set_property", "audio-exclusive", options.bit_perfect]),
-            Some(-101),
-        )
-        .await?;
+
+    async fn update_fade(&mut self, writer: &mut (impl AsyncWrite + Unpin), level: f64) {
+        if self.options.as_ref().is_some_and(AudioOptions::fade_active) && level != self.fade_gain {
+            self.fade_gain = level;
+            // Best effort: a missed step is corrected by the next one.
+            // mpv requires the last argument to target the graph's volume filter.
+            let _ = send_ipc_command(
+                writer,
+                json!([
+                    "af-command",
+                    "tide-fade",
+                    "volume",
+                    format!("{level:.2}"),
+                    "volume"
+                ]),
+                Some(-103),
+            )
+            .await;
+        }
     }
-    let gain_db = if options.bit_perfect {
-        0.0
-    } else {
-        options.gain_db
-    };
-    if player
-        .audio_options
-        .as_ref()
-        .is_none_or(|old| (if old.bit_perfect { 0.0 } else { old.gain_db }) != gain_db)
-    {
-        send_ipc_command(
-            &mut player.writer,
-            json!(["set_property", "volume-gain", gain_db]),
-            Some(-101),
-        )
-        .await?;
-    }
-    if player
-        .audio_options
-        .as_ref()
-        .is_none_or(|old| options.filters_differ(old))
-    {
-        // A rebuilt chain starts its fade filter at full level.
-        player.fade_gain = 1.0;
-        send_ipc_command(
-            &mut player.writer,
-            json!(["af", "set", options.filter()]),
-            Some(-102),
-        )
-        .await?;
-    }
-    player.audio_options = Some(options.clone());
-    Ok(())
 }
 
 #[cfg(any(windows, unix))]
@@ -1751,7 +1771,7 @@ fn next_request_id(state: &mut PlayerState) -> i64 {
 
 #[cfg(any(windows, unix))]
 async fn send_ipc_command(
-    writer: &mut PipeWriter,
+    writer: &mut (impl AsyncWrite + Unpin),
     command: Value,
     request_id: Option<i64>,
 ) -> io::Result<()> {
@@ -2125,6 +2145,56 @@ mod tests {
             apply_property(&mut p, "audio-params/samplerate", &value);
             assert!(p.audio_sample_rate.is_none());
         }
+    }
+
+    #[cfg(any(windows, unix))]
+    #[tokio::test]
+    async fn worker_suppresses_fade_commands_during_bit_perfect_and_resumes_afterward() {
+        // Capture the worker's real IPC writes without launching mpv.
+        let (mut writer, reader) = tokio::io::duplex(4096);
+        let mut audio = PlayerAudio {
+            options: None,
+            fade_gain: 1.0,
+        };
+        let mut options = AudioOptions {
+            fade: true,
+            ..Default::default()
+        };
+
+        audio.configure(&mut writer, &options).await.unwrap();
+        audio.update_fade(&mut writer, 0.5).await;
+
+        options.bit_perfect = true;
+        audio.configure(&mut writer, &options).await.unwrap();
+        audio.update_fade(&mut writer, 0.25).await;
+        audio.update_fade(&mut writer, 0.75).await;
+
+        options.bit_perfect = false;
+        audio.configure(&mut writer, &options).await.unwrap();
+        audio.update_fade(&mut writer, 0.25).await;
+        drop(writer);
+
+        let mut reader = BufReader::new(reader);
+        let mut messages = Vec::new();
+        while let Some(line) = read_ipc_line(&mut reader).await.unwrap() {
+            messages.push(serde_json::from_str::<Value>(&line).unwrap());
+        }
+        let fade_filter = "@tide-fade:lavfi=[volume=volume=1]";
+        assert_eq!(
+            messages,
+            [
+                json!({"command": ["set_property", "audio-device", "auto"], "request_id": -101}),
+                json!({"command": ["set_property", "audio-exclusive", false], "request_id": -101}),
+                json!({"command": ["set_property", "volume-gain", 0.0], "request_id": -101}),
+                json!({"command": ["af", "set", fade_filter], "request_id": -102}),
+                json!({"command": ["af-command", "tide-fade", "volume", "0.50", "volume"], "request_id": -103}),
+                json!({"command": ["set_property", "audio-exclusive", true], "request_id": -101}),
+                json!({"command": ["af", "set", ""], "request_id": -102}),
+                json!({"command": ["set_property", "audio-exclusive", false], "request_id": -101}),
+                json!({"command": ["af", "set", fade_filter], "request_id": -102}),
+                json!({"command": ["af-command", "tide-fade", "volume", "0.25", "volume"], "request_id": -103}),
+            ]
+        );
     }
 
     #[cfg(any(windows, unix))]
