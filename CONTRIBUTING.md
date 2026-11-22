@@ -12,6 +12,7 @@ To start a fix, for example, run `git fetch origin` followed by
 | `main` | The shared development baseline. |
 | `fix/…`, `feat/…`, `docs/…`, `ci/…` | A single change. Use a descriptive name such as `fix/crossfade-mute`. |
 | `release/<version>` | Preparation for one release. The corresponding `v<version>` tag identifies the shipped source. |
+| `release-<version>` | Legacy release branch naming, as in `origin/release-0.4.20`. |
 | `mac/…`, `release-automation/…` | Scoped platform or tooling work that integrates into `main`. |
 | `codex/…`, `claude…`, `t3/…` | Task branches. Check the associated PR and worktree for their subject and status. |
 
