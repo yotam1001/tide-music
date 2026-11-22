@@ -24,6 +24,7 @@ pub(super) fn start(
     let mut skip_done = false;
     let mut skip_generation = None;
     let mut seek_done = false;
+    let mut stopped_during_crossfade = false;
     let mut last_minute = 0;
     let mut last_cookie_updates = 0;
     let mut last_cookie_updates_not_applied = 0;
@@ -70,6 +71,21 @@ pub(super) fn start(
         }
         let Some(engine) = s.engine.as_ref() else { fail("engine unavailable"); return; };
         let p = engine.snapshot();
+        if local && !stopped_during_crossfade && s.crossfade.primary_gain_db() < -1.0 {
+            drop(s);
+            u.invoke_media_command(5, 0.0);
+            let stopped = state.borrow();
+            if stopped.active_playback || stopped.crossfade.primary_gain_db() != 0.0 {
+                fail("Stop left a crossfade active"); return;
+            }
+            drop(stopped);
+            stopped_during_crossfade = true;
+            u.invoke_toggle_pause();
+            skip_generation = Some(state.borrow().generation);
+            previous = p;
+            println!("Listening check: stopped during crossfade and restarted playback");
+            return;
+        }
         // Measure the request-to-decoded-progress delay, including extraction
         // and loading. A generation change alone does not prove audio started.
         // Sampling introduces up to one timer interval of uncertainty.

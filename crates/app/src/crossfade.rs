@@ -59,6 +59,16 @@ pub fn gains(t: f64) -> (f64, f64) {
 }
 
 impl Crossfade {
+    pub fn set_volume(s: &mut State, level: f64) {
+        if s.crossfade
+            .standby
+            .as_ref()
+            .is_some_and(|engine| engine.send(PlaybackCommand::SetVolume(level)).is_err())
+        {
+            Self::cancel(s);
+        }
+    }
+
     /// The main engine's current crossfade gain, for audio settings changes.
     pub fn primary_gain_db(&self) -> f64 {
         self.primary_db
