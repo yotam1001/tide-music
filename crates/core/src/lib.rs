@@ -265,7 +265,11 @@ impl Queue {
         } else {
             self.tracks.len()
         };
-        self.extend_retained(start..end, tracks)
+        let added = self.extend_retained(start..end, tracks);
+        if added > 0 {
+            self.current = current.map(|i| i - start);
+        }
+        added
     }
 
     fn extend_retained(
@@ -289,7 +293,6 @@ impl Queue {
         }
         self.tracks.truncate(retained.end);
         self.tracks.drain(..retained.start);
-        self.current = self.current.and_then(|i| i.checked_sub(retained.start));
         let before = self.tracks.len();
         self.tracks.extend(accepted);
         self.tracks.len() - before
@@ -713,6 +716,32 @@ mod tests {
         assert_eq!(queue.tracks[0].source, "2");
         assert_eq!(queue.tracks[20..], [track("22"), track("23"), track("new")]);
     }
+
+    #[test]
+    fn radio_clears_a_stale_selection_only_after_accepting_a_recommendation() {
+        for replace in [false, true] {
+            let mut queue = Queue {
+                tracks: vec![track("old")],
+                current: Some(1),
+            };
+            assert_eq!(queue.apply_radio(vec![track("")], replace), 0);
+            assert_eq!(queue.current, Some(1));
+            assert_eq!(queue.tracks, [track("old")]);
+
+            assert_eq!(
+                queue.apply_radio(vec![track("new"), track("other")], replace),
+                2
+            );
+            assert_eq!(queue.current, None);
+            let expected = if replace {
+                vec![track("new"), track("other")]
+            } else {
+                vec![track("old"), track("new"), track("other")]
+            };
+            assert_eq!(queue.tracks, expected);
+        }
+    }
+
     #[test]
     fn shuffle_all_is_reproducible_and_can_change_first_track() {
         let mut q = Queue {
