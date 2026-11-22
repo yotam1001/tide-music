@@ -117,6 +117,7 @@ export component QueueDrawer inherits Rectangle {
     in property <bool> light-mode;
     in property <bool> autoplay-enabled;
     in property <bool> repeat-enabled;
+    in property <bool> navigation-enabled: true;
     callback close();
     callback select(int);
     callback remove(int);
@@ -126,6 +127,7 @@ export component QueueDrawer inherits Rectangle {
     callback artist(int);
     callback toggle-autoplay();
     callback toggle-repeat();
+    in property <bool> shuffle-enabled;
     callback shuffle();
     callback clear();
     private property <int> drag-source: -1;
@@ -163,7 +165,7 @@ export component QueueDrawer inherits Rectangle {
         x: max(0px, root.width - self.width - 14px); y: 48px;
         light-mode: root.light-mode; separator-after: 1;
         items: [
-            { title: "Shuffle upcoming", code: 4, enabled: root.enabled && root.rows.length > 1 },
+            { title: "Shuffle upcoming", code: 4, enabled: root.enabled && root.shuffle-enabled },
             { title: root.repeat-enabled ? "Turn repeat off" : "Repeat queue", code: 5, enabled: root.enabled },
             { title: "Clear queue", code: 3, enabled: root.enabled && root.rows.length > 0 },
         ];
@@ -184,10 +186,10 @@ export component QueueDrawer inherits Rectangle {
                     text: "From " + root.source-name; color: Theme.muted; font-size: 11px; overflow: elide;
                 }
             }
-            LibraryButton { width: 66px; height: 30px; light-mode: root.light-mode; caption: root.related-open ? "Queue" : "Related"; label: root.related-open ? "Back to the queue" : "See songs related to the current track"; enabled: root.related-enabled && root.enabled; active: root.related-open; clicked => { root.cancel-drag(); root.related-open = !root.related-open; if root.related-open { root.load-related(); } } }
-            if !root.related-open : LibraryButton { width: 30px; height: 30px; show-tooltip: true; light-mode: root.light-mode; active: root.filter-open || root.filtering; icon-path: "M 16 10 A 6 6 0 1 0 4 10 A 6 6 0 1 0 16 10 M 14 14 L 21 21"; label: "Search queue"; clicked => { root.filter-open = !root.filter-open; if !root.filter-open { root.query = ""; root.filter-changed(); } } }
+            LibraryButton { width: 66px; height: 30px; light-mode: root.light-mode; caption: root.related-open ? "Queue" : "Related"; label: root.related-open ? "Back to the queue" : "See songs related to the current track"; enabled: (root.related-open && root.navigation-enabled) || (root.related-enabled && root.enabled); active: root.related-open; clicked => { root.cancel-drag(); root.related-open = !root.related-open; if root.related-open { root.load-related(); } } }
+            if !root.related-open : LibraryButton { width: 30px; height: 30px; show-tooltip: true; light-mode: root.light-mode; active: root.filter-open || root.filtering; icon-path: "M 16 10 A 6 6 0 1 0 4 10 A 6 6 0 1 0 16 10 M 14 14 L 21 21"; label: "Search queue"; clicked => { root.filter-open = !(root.filter-open || root.filtering); if !root.filter-open { root.query = ""; root.filter-changed(); } } }
             if !root.related-open : LibraryButton { width: 30px; height: 30px; enabled: root.enabled; caption: "..."; label: "More queue actions"; light-mode: root.light-mode; clicked => { queue-menu.show(); } }
-            LibraryButton { width: 30px; height: 30px; enabled: root.enabled; caption: "×"; label: "Close queue drawer"; light-mode: root.light-mode; clicked => { root.cancel-drag(); root.close(); } }
+            LibraryButton { width: 30px; height: 30px; enabled: root.navigation-enabled; caption: "×"; label: "Close queue drawer"; light-mode: root.light-mode; clicked => { root.cancel-drag(); root.close(); } }
         }
         if !root.related-open && (root.filter-open || root.filtering) : HorizontalLayout {
             height: 34px; spacing: 6px;
@@ -195,7 +197,7 @@ export component QueueDrawer inherits Rectangle {
             if root.filtering : LibraryButton { width: 30px; height: 30px; caption: "×"; label: "Clear queue search"; light-mode: root.light-mode; clicked => { root.query = ""; root.filter-changed(); } }
         }
         if !root.related-open && root.filtering : Text { height: 16px; text: "Clear search to reorder songs"; color: Theme.muted; font-size: 11px; }
-        if !root.related-open && root.filtering && root.matches.length == 0 : EmptyState { vertical-stretch: 1; light-mode: root.light-mode; heading: "No matching songs"; detail: "Try another title, artist or album."; }
+        if !root.related-open && root.rows.length > 0 && root.filtering && root.matches.length == 0 : EmptyState { vertical-stretch: 1; light-mode: root.light-mode; heading: "No matching songs"; detail: "Try another title, artist or album."; }
         if root.related-open : Text { text: root.related-note; wrap: word-wrap; color: Theme.muted; font-size: 12px; accessible-live-region: polite; }
         if root.related-open : ListView {
             vertical-stretch: 1; accessible-label: "Related songs";
@@ -257,7 +259,7 @@ export component QueueDrawer inherits Rectangle {
                     current-index: root.current-index;
                     live: root.live;
                     light-mode: root.light-mode;
-                    heading: root.filtering ? (visible-index == 0 || self.index == root.current-index + 1 || self.track.recommended != root.rows[root.matches[max(0, visible-index - 1)]].recommended) : (self.index == max(0, root.current-index) || self.index == root.current-index + 1 || self.track.recommended != root.rows[max(0, self.index - 1)].recommended);
+                    heading: root.filtering ? (visible-index == 0 || root.matches[max(0, visible-index - 1)] == root.current-index || self.track.recommended != root.rows[root.matches[max(0, visible-index - 1)]].recommended) : (self.index == max(0, root.current-index) || self.index == root.current-index + 1 || self.track.recommended != root.rows[max(0, self.index - 1)].recommended);
                     drag-source: root.drag-source;
                     drag-recommended: root.drag-recommended;
                     drag-in-list: queue-area.drag-in-list;
@@ -272,7 +274,7 @@ export component QueueDrawer inherits Rectangle {
                     requeue(next) => { root.requeue(self.index, next); }
                     // Moves stay within the song's own section, as with dragging.
                     can-move-up: !root.filtering && self.index - 1 > root.current-index && root.rows[self.index - 1].recommended == self.track.recommended;
-                    can-move-down: !root.filtering && self.index + 1 < root.rows.length && root.rows[self.index + 1].recommended == self.track.recommended;
+                    can-move-down: !root.filtering && self.index > root.current-index && self.index + 1 < root.rows.length && root.rows[self.index + 1].recommended == self.track.recommended;
                     move-by(delta) => { root.cancel-drag(); root.reorder(self.index, self.index + delta); }
                     radio => { root.radio(self.index); }
                     artist => { root.artist(self.index); }

@@ -21,7 +21,7 @@ impl MiniWindow {
                 0,
                 0,
                 0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER,
             )
             .map_err(|e| e.to_string())?;
             let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
