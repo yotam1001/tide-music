@@ -5331,24 +5331,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     library_failure(&mut s, &u, false);
                                     continue;
                                 }
-                                if replace_upcoming {
-                                    let keep =
-                                        s.settings.queue.current.map_or(0, |index| index + 1);
-                                    s.settings.queue.tracks.truncate(keep);
+                                for track in &mut tracks {
+                                    track.recommended = true;
                                 }
-                                s.settings.queue.trim_played_history(20);
-                                let old_len = s.settings.queue.tracks.len();
-                                let added = s.settings.queue.append_deduplicated(
-                                    tracks.into_iter().map(|mut t| {
-                                        t.recommended = true;
-                                        t
-                                    }),
-                                );
+                                let added = s.settings.queue.apply_radio(tracks, replace_upcoming);
                                 if added == 0 {
                                     library_failure(&mut s, &u, false);
                                     continue;
                                 }
                                 s.radio_requests.succeeded();
+                                let old_len = s.settings.queue.tracks.len() - added;
                                 let added_ids: Vec<String> = s.settings.queue.tracks[old_len..]
                                     .iter()
                                     .filter_map(|track| source_video_id(&track.source))
