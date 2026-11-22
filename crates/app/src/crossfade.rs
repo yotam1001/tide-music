@@ -597,6 +597,7 @@ mod tests {
     struct FakeEngineState {
         snapshot: tide_core::PlaybackSnapshot,
         reject_volume: bool,
+        reject_controls: bool,
         gain_db: f64,
         stopped: bool,
         retired: bool,
@@ -613,10 +614,7 @@ mod tests {
                     paused: true,
                     ..Default::default()
                 },
-                gain_db: 0.0,
-                reject_volume: false,
-                stopped: false,
-                retired: false,
+                ..Default::default()
             })))
         }
 
@@ -637,6 +635,11 @@ mod tests {
         fn send(&self, command: PlaybackCommand) -> Result<(), String> {
             let mut state = self.0.borrow_mut();
             match command {
+                PlaybackCommand::Seek(_) | PlaybackCommand::SetPaused(_)
+                    if state.reject_controls =>
+                {
+                    return Err("control queue full".into());
+                }
                 PlaybackCommand::SetVolume(volume) => {
                     if state.reject_volume {
                         return Err("volume queue full".into());
@@ -648,6 +651,9 @@ mod tests {
                 }
                 PlaybackCommand::SetPaused(paused) => {
                     state.snapshot.paused = paused;
+                }
+                PlaybackCommand::Seek(position) => {
+                    state.snapshot.position = position;
                 }
                 PlaybackCommand::Stop | PlaybackCommand::Shutdown => {
                     state.stopped = true;
@@ -732,6 +738,48 @@ mod tests {
         assert_eq!(crossfade.phase, Phase::Idle);
         assert!(standby.state().stopped && standby.state().retired);
         assert_eq!(primary.state().gain_db, 0.0);
+    }
+
+    #[test]
+    fn seek_and_pause_cancel_the_crossfade_only_when_accepted() {
+        for command in [
+            PlaybackCommand::Seek(32.0),
+            PlaybackCommand::SetPaused(true),
+        ] {
+            let settings = crossfade_settings();
+            let primary = FakeEngine::new(60.0);
+            {
+                let mut state = primary.state_mut();
+                state.reject_controls = true;
+                state.snapshot.paused = false;
+                state.gain_db = -3.0;
+            }
+            let standby = FakeEngine::new(60.0);
+            standby.state_mut().snapshot.paused = false;
+            let mut crossfade = Crossfade {
+                standby: Some(standby.clone()),
+                phase: Phase::Mixing {
+                    index: 1,
+                    source: "b".into(),
+                    generation: 2,
+                },
+                primary_db: -3.0,
+                standby_db: -3.0,
+            };
+
+            let rejected =
+                route_command(Some(&primary), &mut crossfade, &settings, command.clone());
+            assert_eq!(rejected.unwrap_err(), "control queue full");
+            assert!(matches!(crossfade.phase, Phase::Mixing { .. }));
+            assert!(!standby.state().stopped && !standby.state().retired);
+            assert_eq!(primary.state().gain_db, -3.0);
+
+            primary.state_mut().reject_controls = false;
+            route_command(Some(&primary), &mut crossfade, &settings, command).unwrap();
+            assert_eq!(crossfade.phase, Phase::Idle);
+            assert!(standby.state().stopped && standby.state().retired);
+            assert_eq!(primary.state().gain_db, 0.0);
+        }
     }
 
     #[test]

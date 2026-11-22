@@ -327,9 +327,21 @@ export component AppWindow inherits Window {
     in property <int> current-index;
     in property <int> next-queue-index: root.current-index + 1 < root.rows.length ? root.current-index + 1 : -1;
     in property <bool> has-radio-seed;
+    private property <int> first-upcoming: max(0, root.current-index + 1);
+    private property <int> upcoming-count: root.rows.length - root.first-upcoming;
+    // Manual tracks and autoplay suggestions shuffle within separate groups.
+    out property <bool> can-shuffle: root.upcoming-count > 2 || (root.upcoming-count == 2
+        && root.rows[root.first-upcoming].recommended == root.rows[root.first-upcoming + 1].recommended);
     out property <bool> can-skip: root.jam-guest || (root.rows.length > 0
         && (root.next-queue-index >= 0
         || (root.has-radio-seed && root.autoplay-enabled && root.account-verified)));
+    private property <string> current-song-key: root.current-index >= 0 && root.current-index < root.rows.length
+        ? root.rows[root.current-index].key : "";
+    pure function is-current-song(track: TrackRow) -> bool {
+        return root.current-index >= 0 && (track.key != "" && root.current-song-key != ""
+            ? track.key == root.current-song-key
+            : track.title == root.track-title && track.artist == root.track-artist);
+    }
     in property <string> track-title;
     in property <string> track-artist;
     in property <bool> track-artist-enabled;
@@ -1007,7 +1019,7 @@ export component AppWindow inherits Window {
                                     vertical-stretch: 1;
                                     accessible-label: "Tracks in " + root.detail-title;
                                     for visible-index in (root.detail-filter == "" ? root.detail-rows.length : root.detail-matches.length) : SongRow {
-                                        private property <int> source-index: root.detail-filter == "" ? visible-index : root.detail-matches[visible-index]; collection-row: root.detail-has-cover && !root.detail-is-artist; shared-queue: root.jam-guest; collection-enabled: root.collection-enabled && !root.collection-busy; playlist-removable: root.detail-editable && self.source-index < root.detail-editable-entries.length && root.detail-editable-entries[self.source-index]; enabled: root.browsing-enabled; track: root.detail-rows[self.source-index]; index: self.source-index; light-mode: root.light-mode; now-playing: root.current-index >= 0 && self.track.title == root.track-title && self.track.artist == root.track-artist; live: !root.paused; select => { root.select-detail-track(self.source-index); } queue(next) => { root.queue-detail-track(self.source-index, next); } radio => { root.start-track-radio(1, self.source-index); } artist => { root.open-artist(1, self.source-index); } add-playlist => { root.add-to-playlist(1, self.source-index); } remove-playlist => { root.remove-playlist-song(self.source-index); } }
+                                        private property <int> source-index: root.detail-filter == "" ? visible-index : root.detail-matches[visible-index]; collection-row: root.detail-has-cover && !root.detail-is-artist; shared-queue: root.jam-guest; collection-enabled: root.collection-enabled && !root.collection-busy; playlist-removable: root.detail-editable && self.source-index < root.detail-editable-entries.length && root.detail-editable-entries[self.source-index]; enabled: root.browsing-enabled; track: root.detail-rows[self.source-index]; index: self.source-index; light-mode: root.light-mode; now-playing: root.is-current-song(self.track); live: !root.paused; select => { root.select-detail-track(self.source-index); } queue(next) => { root.queue-detail-track(self.source-index, next); } radio => { root.start-track-radio(1, self.source-index); } artist => { root.open-artist(1, self.source-index); } add-playlist => { root.add-to-playlist(1, self.source-index); } remove-playlist => { root.remove-playlist-song(self.source-index); } }
                                 }
                                 if root.detail-is-artist && (root.detail-rows.length > 0 || root.artist-releases.length > 0) : ScrollView {
                                     content-y <=> root.detail-artwork-y;
@@ -1017,7 +1029,7 @@ export component AppWindow inherits Window {
                                     VerticalLayout {
                                         width: parent.width;
                                         for visible-index in (root.artist-all-tracks ? root.detail-rows.length : min(5, root.detail-rows.length)) : SongRow {
-                                            private property <int> source-index: visible-index; ranked: true; shared-queue: root.jam-guest; collection-enabled: root.collection-enabled && !root.collection-busy; enabled: root.browsing-enabled; track: root.detail-rows[self.source-index]; index: self.source-index; light-mode: root.light-mode; now-playing: root.current-index >= 0 && self.track.title == root.track-title && self.track.artist == root.track-artist; live: !root.paused; select => { root.select-detail-track(self.source-index); } queue(next) => { root.queue-detail-track(self.source-index, next); } radio => { root.start-track-radio(1, self.source-index); } artist => { root.open-artist(1, self.source-index); } add-playlist => { root.add-to-playlist(1, self.source-index); } }
+                                            private property <int> source-index: visible-index; ranked: true; shared-queue: root.jam-guest; collection-enabled: root.collection-enabled && !root.collection-busy; enabled: root.browsing-enabled; track: root.detail-rows[self.source-index]; index: self.source-index; light-mode: root.light-mode; now-playing: root.is-current-song(self.track); live: !root.paused; select => { root.select-detail-track(self.source-index); } queue(next) => { root.queue-detail-track(self.source-index, next); } radio => { root.start-track-radio(1, self.source-index); } artist => { root.open-artist(1, self.source-index); } add-playlist => { root.add-to-playlist(1, self.source-index); } }
                                         if root.detail-rows.length > 5 : HorizontalLayout {
                                             height: 34px; alignment: start;
                                             LibraryButton { width: 108px; caption: root.artist-all-tracks ? "Show less" : "See more"; label: self.caption; light-mode: root.light-mode; clicked => { root.artist-all-tracks = !root.artist-all-tracks; } }
@@ -1167,7 +1179,7 @@ export component AppWindow inherits Window {
                                     changed visible-height => { root.search-artwork-height = self.visible-height; }
                                     vertical-stretch: 1;
                                     accessible-label: "Music search results";
-                                    for row[index] in root.search-rows : SongRow { shared-queue: root.jam-guest; collection-enabled: root.collection-enabled && !root.collection-busy; enabled: root.browsing-enabled; track: row; index: index; light-mode: root.light-mode; now-playing: root.current-index >= 0 && self.track.title == root.track-title && self.track.artist == root.track-artist; live: !root.paused; select => { root.select-search-track(index); } queue(next) => { root.queue-search-track(index, next); } radio => { root.start-track-radio(2, index); } artist => { root.open-artist(2, index); } add-playlist => { root.add-to-playlist(2, index); } }
+                                    for row[index] in root.search-rows : SongRow { shared-queue: root.jam-guest; collection-enabled: root.collection-enabled && !root.collection-busy; enabled: root.browsing-enabled; track: row; index: index; light-mode: root.light-mode; now-playing: root.is-current-song(self.track); live: !root.paused; select => { root.select-search-track(index); } queue(next) => { root.queue-search-track(index, next); } radio => { root.start-track-radio(2, index); } artist => { root.open-artist(2, index); } add-playlist => { root.add-to-playlist(2, index); } }
                                 }
                                 if root.search-kind > 0 && root.search-cards.length > 0 : ListView {
                                     content-y <=> root.search-artwork-y;
@@ -1607,6 +1619,7 @@ export component AppWindow inherits Window {
                         live: !root.paused;
                         source-name: root.jam-guest ? "Shared Jam" : root.queue-source;
                         related-open <=> root.related-open;
+                        shuffle-enabled: root.can-shuffle;
                         related-enabled: root.account-verified && root.current-index >= 0;
                         related-rows: root.related-rows; related-note: root.related-note;
                         load-related => { root.load-related(); }
@@ -1616,7 +1629,8 @@ export component AppWindow inherits Window {
                         filter-changed => { root.filter-queue(); }
                         artwork-scroll-y <=> root.queue-artwork-y;
                         artwork-view-height <=> root.queue-artwork-height;
-                        enabled: !root.settings-open && !root.account-open && !root.jam-open && !root.jam-guest;
+                        navigation-enabled: !root.settings-open && !root.account-open && !root.jam-open;
+                        enabled: self.navigation-enabled && !root.jam-guest;
 
                         width: 340px;
                         rows: root.rows;
@@ -1802,6 +1816,7 @@ export component AppWindow inherits Window {
                         live: !root.paused;
                         source-name: root.jam-guest ? "Shared Jam" : root.queue-source;
                         related-open <=> root.related-open;
+                        shuffle-enabled: root.can-shuffle;
                         related-enabled: root.account-verified && root.current-index >= 0;
                         related-rows: root.related-rows; related-note: root.related-note;
                         load-related => { root.load-related(); }
@@ -1811,7 +1826,8 @@ export component AppWindow inherits Window {
                         filter-changed => { root.filter-queue(); }
                         artwork-scroll-y <=> root.queue-artwork-y;
                         artwork-view-height <=> root.queue-artwork-height;
-                        enabled: !root.settings-open && !root.account-open && !root.jam-open && !root.jam-guest;
+                        navigation-enabled: !root.settings-open && !root.account-open && !root.jam-open;
+                        enabled: self.navigation-enabled && !root.jam-guest;
 
                         x: max(0px, parent.width - 340px);
                         collection-enabled: root.collection-enabled && !root.collection-busy;
@@ -2254,6 +2270,7 @@ export component AppWindow inherits Window {
                 window-minimized: root.minimized;
                 transport-enabled: !root.jam-guest;
                 skip-enabled: root.can-skip;
+                shuffle-enabled: root.can-shuffle;
                 preferred-height: root.collapsed ? (root.mini-small ? 80px : 110px) : 92px;
                 min-height: root.collapsed ? (root.mini-small ? 80px : 110px) : 92px;
                 max-height: root.collapsed ? 1000px : 92px;

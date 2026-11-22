@@ -244,7 +244,7 @@ fn host_timeline(s: &State) -> Result<Timeline, &'static str> {
 // command cannot be accepted, dropping the engine signals its separate shutdown
 // channel and joins owned helpers before reporting stopped playback.
 fn stop_confirmed(s: &mut State) {
-    crate::crossfade::Crossfade::cancel(s);
+    crossfade::Crossfade::cancel(s);
     if let Some(engine) = &s.engine {
         let _ = engine.prepare_next(None);
         if engine.send(PlaybackCommand::Stop).is_err() {

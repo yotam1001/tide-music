@@ -341,7 +341,7 @@ export component SongRow inherits Rectangle {
     in property <bool> show-menu: true;
     in property <bool> enabled: true;
     in property <bool> show-duration: true;
-    // The song loaded in the player (rows outside the queue compare titles).
+    // The song loaded in the player, including matches outside the queue.
     in property <bool> now-playing: false;
     in property <bool> live: false;
     callback select();
