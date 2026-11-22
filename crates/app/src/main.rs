@@ -835,6 +835,9 @@ fn source_video_id(source: &str) -> Option<String> {
     // One parser for song identity, artist links and menu keys.
     artists::video_id(source)
 }
+fn song_row_key(source: &str) -> slint::SharedString {
+    source_video_id(source).as_deref().unwrap_or(source).into()
+}
 fn request_radio(s: &mut State, u: &AppWindow, tx: &mpsc::SyncSender<LibraryResult>, force: bool) {
     if !local_controls_allowed(s) {
         return;
@@ -1300,6 +1303,7 @@ fn configure_account_playback(s: &mut State, u: &AppWindow) -> bool {
     s.library_retry = None;
     s.pending_cookie_updates.clear();
     s.cookie_update_retry_at = None;
+    drop(std::mem::take(&mut s.crossfade));
     s.engine.take(); // Drop/join helpers before releasing their cookie lease.
     s.cookie_updates_applied = 0;
     s.cookie_updates_not_applied = 0;
@@ -1763,7 +1767,7 @@ fn content_rows(
         .iter()
         .enumerate()
         .map(|(index, t)| TrackRow {
-            key: source_video_id(&t.source).unwrap_or_default().into(),
+            key: song_row_key(&t.source),
             title: t.title.clone().into(),
             artist: t.artist.clone().into(),
             artist_enabled: artists::can_open(t),
@@ -1953,6 +1957,7 @@ fn queue_choice(s: &mut State, u: &AppWindow, track: Track, play_next: bool) {
     let was_empty = s.settings.queue.tracks.is_empty();
     if s.settings.queue.insert_manual(track, play_next) {
         if was_empty {
+            s.queue_context = None;
             u.set_queue_source("".into());
         }
         refresh(u, s);
@@ -2009,7 +2014,7 @@ fn refresh(ui: &AppWindow, state: &State) {
         selected.iter().enumerate().map(|(position, index)| {
             let track = &state.settings.queue.tracks[*index];
             let heading = position == 0
-                || *index == current + 1
+                || Some(selected[position.saturating_sub(1)]) == state.settings.queue.current
                 || track.recommended
                     != state.settings.queue.tracks[selected[position.saturating_sub(1)]]
                         .recommended;
@@ -2047,7 +2052,7 @@ fn refresh(ui: &AppWindow, state: &State) {
         .iter()
         .enumerate()
         .map(|(index, t)| TrackRow {
-            key: source_video_id(&t.source).unwrap_or_default().into(),
+            key: song_row_key(&t.source),
             title: t.title.clone().into(),
             artist: t.artist.clone().into(),
             artist_enabled: artists::can_open(t),
@@ -2257,6 +2262,10 @@ fn send(state: &mut State, ui: &AppWindow, cmd: PlaybackCommand) -> bool {
         other => other,
     };
     let clears_audio = matches!(cmd, PlaybackCommand::Stop | PlaybackCommand::Shutdown);
+    let volume = match cmd {
+        PlaybackCommand::SetVolume(level) => Some(level),
+        _ => None,
+    };
 
     if let Some((_, _, position, paused)) = &mut state.connection_resume {
         match &cmd {
@@ -2276,6 +2285,11 @@ fn send(state: &mut State, ui: &AppWindow, cmd: PlaybackCommand) -> bool {
         .and_then(|engine| engine.send(cmd));
     match result {
         Ok(()) => {
+            if let Some(level) = volume {
+                crossfade::Crossfade::set_volume(state, level);
+            } else {
+                crossfade::Crossfade::cancel(state);
+            }
             if clears_audio {
                 ui.set_audio_quality("".into());
                 ui.set_playback_hint("".into());
@@ -2431,6 +2445,7 @@ fn play_at(state: &mut State, ui: &AppWindow, position: f64) -> bool {
         report_error(state, ui, error);
         return false;
     }
+    crossfade::Crossfade::cancel(state);
     if position == 0.0 {
         state.settings.playback_bookmark = None;
     }
@@ -4467,8 +4482,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
     bind!(on_clear_queue, |s, u| {
-        send(&mut s, &u, PlaybackCommand::Stop);
+        if s.engine.is_some() && !send(&mut s, &u, PlaybackCommand::Stop) {
+            return;
+        }
         s.settings.queue = Queue::default();
+        s.settings.playback_bookmark = None;
+        s.connection_resume = None;
+        s.queue_context = None;
         u.set_queue_source("".into());
         s.active_playback = false;
         s.radio_resume_when_ready = false;
@@ -5079,7 +5099,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     .filter(|track| source_video_id(&track.source).is_some() && !skip_disliked(&s, track))
                                     .collect();
                                 u.set_related_rows(ModelRc::new(VecModel::from(s.related_tracks.iter()
-                                    .map(|track| TrackRow { key: source_video_id(&track.source).unwrap_or_default().into(), title: track.title.clone().into(), artist: track.artist.clone().into(), ..Default::default() })
+                                    .map(|track| TrackRow { key: song_row_key(&track.source), title: track.title.clone().into(), artist: track.artist.clone().into(), ..Default::default() })
                                     .collect::<Vec<_>>())));
                                 u.set_related_note(if s.related_tracks.is_empty() { "No related songs were returned." } else { "Add songs without changing what’s playing." }.into());
                             } else {
@@ -6615,6 +6635,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Join the playback worker now, rather than waiting for the last State owner
     // to disappear, so native helpers finish before the application returns.
     s.music_feedback.shutdown();
+    drop(std::mem::take(&mut s.crossfade));
     if let Some(engine) = s.engine.take() {
         drop(engine);
     }

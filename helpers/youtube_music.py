@@ -1135,6 +1135,7 @@ def lrclib_lyrics(watch, video):
         except HTTPError as error:
             if error.code != 404:
                 raise
+            error.close()
             record = None
 
         def matched_lines(candidate):
@@ -1162,6 +1163,7 @@ def lrclib_lyrics(watch, video):
         if lines:
             return {"type": "lyrics", "lines": lines, "synced": True, "source": "Source: LRCLIB", "retry_after_seconds": 0}
     except HTTPError as error:
+        error.close()
         if error.code in (429, 503):
             value = error.headers.get("Retry-After", "60") if error.headers else "60"
             try:

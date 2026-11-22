@@ -132,6 +132,7 @@ lines:
         error = HTTPError("https://lrclib.net/api/get", 429, "Rate limited", headers, None)
         with patch("urllib.request.urlopen", side_effect=error):
             result = helper.lrclib_lyrics(watch, "fixture0001")
+        self.assertTrue(error.closed)
         self.assertEqual(result["retry_after_seconds"], 120)
         self.assertEqual(result["lines"], [])
         with patch.object(helper, "lrclib_lyrics") as lookup:
