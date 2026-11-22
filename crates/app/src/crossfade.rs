@@ -19,13 +19,66 @@ const PRELOAD_SECONDS: f64 = 12.0;
 /// Resend a gain only when it moves by at least this much.
 const GAIN_STEP_DB: f64 = 0.5;
 
-#[derive(Default)]
-pub struct Crossfade {
+pub struct Crossfade<E = PlaybackHandle> {
     phase: Phase,
-    standby: Option<PlaybackHandle>,
+    standby: Option<E>,
     /// Gain last sent to the main engine; 0 when not fading.
     primary_db: f64,
     standby_db: f64,
+}
+
+impl<E> Default for Crossfade<E> {
+    fn default() -> Self {
+        Self {
+            phase: Phase::Idle,
+            standby: None,
+            primary_db: 0.0,
+            standby_db: 0.0,
+        }
+    }
+}
+
+pub(crate) trait CrossfadeEngine: Sized {
+    fn snapshot(&self) -> tide_core::PlaybackSnapshot;
+    fn send(&self, command: PlaybackCommand) -> Result<(), String>;
+    fn load_at(&self, source: String, generation: u64, position: f64) -> Result<(), String>;
+    fn configure_audio(&self, options: tide_playback::AudioOptions) -> Result<(), String>;
+    fn retire(self);
+}
+
+impl CrossfadeEngine for PlaybackHandle {
+    fn snapshot(&self) -> tide_core::PlaybackSnapshot {
+        PlaybackHandle::snapshot(self)
+    }
+
+    fn send(&self, command: PlaybackCommand) -> Result<(), String> {
+        PlaybackHandle::send(self, command)
+    }
+
+    fn load_at(&self, source: String, generation: u64, position: f64) -> Result<(), String> {
+        PlaybackHandle::load_at(self, source, generation, position)
+    }
+
+    fn configure_audio(&self, options: tide_playback::AudioOptions) -> Result<(), String> {
+        PlaybackHandle::configure_audio(self, options)
+    }
+
+    /// Drop the standby engine off the UI thread; shutdown joins its worker.
+    fn retire(self) {
+        let _ = std::thread::Builder::new()
+            .name("tide-crossfade-retire".into())
+            .spawn(move || drop(self));
+    }
+}
+
+#[derive(Clone, Copy)]
+struct TickContext {
+    local_controls_allowed: bool,
+    jam_active: bool,
+    active_playback: bool,
+    sleep_end_of_song: bool,
+    volume: f64,
+    next: Option<usize>,
 }
 
 #[derive(Default, Clone, PartialEq, Debug)]
@@ -58,67 +111,321 @@ pub fn gains(t: f64) -> (f64, f64) {
     (db(angle.cos()), db(angle.sin()))
 }
 
-impl Crossfade {
-    pub fn set_volume(s: &mut State, level: f64) {
-        if s.crossfade
-            .standby
-            .as_ref()
-            .is_some_and(|engine| engine.send(PlaybackCommand::SetVolume(level)).is_err())
-        {
-            Self::cancel(s);
-        }
-    }
-
+impl<E: CrossfadeEngine> Crossfade<E> {
     /// The main engine's current crossfade gain, for audio settings changes.
     pub fn primary_gain_db(&self) -> f64 {
         self.primary_db
     }
 
-    fn set_primary(s: &mut State, gain_db: f64) {
-        let options = audio_settings::options(&s.settings, gain_db);
-        if let Some(engine) = s.engine.as_ref() {
+    fn set_primary_with(&mut self, settings: &Settings, primary: Option<&E>, gain_db: f64) {
+        let options = audio_settings::options(settings, gain_db);
+        if let Some(engine) = primary {
             let _ = engine.configure_audio(options);
         }
-        s.crossfade.primary_db = gain_db;
+        self.primary_db = gain_db;
     }
 
-    fn set_standby(s: &mut State, gain_db: f64) {
-        let options = audio_settings::options(&s.settings, gain_db);
-        if let Some(engine) = s.crossfade.standby.as_ref() {
+    fn set_standby_with(&mut self, settings: &Settings, gain_db: f64) {
+        let options = audio_settings::options(settings, gain_db);
+        if let Some(engine) = self.standby.as_ref() {
             let _ = engine.configure_audio(options);
         }
-        s.crossfade.standby_db = gain_db;
+        self.standby_db = gain_db;
     }
 
-    /// Drop the standby engine off the UI thread; shutdown joins its worker.
-    fn retire(engine: PlaybackHandle) {
-        let _ = std::thread::Builder::new()
-            .name("tide-crossfade-retire".into())
-            .spawn(move || drop(engine));
+    /// Keep any preloaded or mixing standby engine at the same volume as the main engine.
+    pub(crate) fn set_volume_with(
+        &mut self,
+        settings: &Settings,
+        primary: Option<&E>,
+        volume: f64,
+    ) {
+        let clamped = volume.clamp(0.0, 100.0);
+        let failed = self
+            .standby
+            .as_ref()
+            .is_some_and(|engine| engine.send(PlaybackCommand::SetVolume(clamped)).is_err());
+        if failed {
+            self.cancel_with(settings, primary);
+        }
     }
 
     /// Abandon a pending or running crossfade and restore the main engine.
-    pub fn cancel(s: &mut State) {
-        if s.crossfade.phase == Phase::Idle && s.crossfade.standby.is_none() {
+    pub(crate) fn cancel_with(&mut self, settings: &Settings, primary: Option<&E>) {
+        if self.phase == Phase::Idle && self.standby.is_none() && self.primary_db == 0.0 {
             return;
         }
-        s.crossfade.phase = Phase::Idle;
-        if let Some(standby) = s.crossfade.standby.take() {
-            Self::retire(standby);
+        self.phase = Phase::Idle;
+        if let Some(standby) = self.standby.take() {
+            let _ = standby.send(PlaybackCommand::Stop);
+            standby.retire();
         }
-        if s.crossfade.primary_db != 0.0 {
-            Self::set_primary(s, 0.0);
+        self.standby_db = 0.0;
+        if self.primary_db != 0.0 {
+            self.set_primary_with(settings, primary, 0.0);
         }
+    }
+
+    fn tick_with<F>(
+        &mut self,
+        primary: &mut Option<E>,
+        settings: &mut Settings,
+        generation: &mut u64,
+        context: TickContext,
+        p: &tide_core::PlaybackSnapshot,
+        start_standby: F,
+    ) -> bool
+    where
+        F: FnOnce() -> Result<E, String>,
+    {
+        let seconds = f64::from(settings.crossfade_seconds);
+        // The outgoing song reaching its end completes a running mix: at EOF the
+        // engine reports itself paused, which must not read as the user pausing.
+        if let Phase::Mixing {
+            index,
+            source,
+            generation: standby_generation,
+        } = self.phase.clone()
+        {
+            let finished = p.generation == *generation
+                && (p.ended || p.duration - p.position <= 0.15)
+                && self
+                    .standby
+                    .as_ref()
+                    .is_some_and(|engine| engine.snapshot().error.is_none());
+            if finished {
+                trace(|| "outgoing song ended; standby takes over".into());
+                // A failed check cancels the mix; the ordinary transition follows.
+                return self.take_over_with(
+                    primary,
+                    settings,
+                    generation,
+                    context.next,
+                    index,
+                    &source,
+                    standby_generation,
+                );
+            }
+        }
+        let next = context.next;
+        let next_source = next.and_then(|index| {
+            settings
+                .queue
+                .tracks
+                .get(index)
+                .map(|track| track.source.clone())
+        });
+        let eligible = seconds > 0.0
+            && !settings.bit_perfect
+            && context.local_controls_allowed
+            && !context.jam_active
+            && context.active_playback
+            && !context.sleep_end_of_song
+            && primary.is_some()
+            && p.generation == *generation
+            && !p.paused
+            && !p.loading
+            && p.error.is_none()
+            && p.duration.is_finite()
+            && p.duration >= 2.0 * seconds + PRELOAD_SECONDS
+            && next_source.is_some();
+        if !eligible {
+            if self.phase != Phase::Idle {
+                trace(|| {
+                    format!(
+                        "cancelled: paused={} loading={} ended={} remaining={:.1}",
+                        p.paused,
+                        p.loading,
+                        p.ended,
+                        p.duration - p.position
+                    )
+                });
+            }
+            self.cancel_with(settings, primary.as_ref());
+            return false;
+        }
+        let (Some(index), Some(source)) = (next, next_source) else {
+            return false;
+        };
+        let remaining = p.duration - p.position;
+        match self.phase.clone() {
+            Phase::Idle => {
+                if remaining > seconds + PRELOAD_SECONDS || remaining <= seconds + 1.0 {
+                    return false;
+                }
+                let standby = match self.standby.take() {
+                    Some(engine) => engine,
+                    None => match start_standby() {
+                        Ok(engine) => engine,
+                        Err(_) => return false,
+                    },
+                };
+                let standby_generation = (*generation).wrapping_add(1);
+                self.standby = Some(standby);
+                self.set_standby_with(settings, SILENT_GAIN_DB);
+                let engine = self.standby.as_ref().unwrap();
+                let loaded = engine
+                    .send(PlaybackCommand::SetVolume(context.volume.clamp(0.0, 100.0)))
+                    .and_then(|()| engine.load_at(source.clone(), standby_generation, 0.0))
+                    .and_then(|()| engine.send(PlaybackCommand::SetPaused(true)));
+                if loaded.is_err() {
+                    self.cancel_with(settings, primary.as_ref());
+                    return false;
+                }
+                trace(|| format!("preloading next song at {remaining:.1}s left"));
+                self.phase = Phase::Preloading {
+                    index,
+                    source,
+                    generation: standby_generation,
+                };
+                false
+            }
+            Phase::Preloading {
+                index: planned,
+                source: planned_source,
+                generation: standby_generation,
+            } => {
+                // The queue, a seek or a skip changed what plays next.
+                if planned != index
+                    || planned_source != source
+                    || remaining > seconds + PRELOAD_SECONDS + 2.0
+                {
+                    self.cancel_with(settings, primary.as_ref());
+                    return false;
+                }
+                let Some(standby) = self.standby.as_ref().map(|e| e.snapshot()) else {
+                    self.cancel_with(settings, primary.as_ref());
+                    return false;
+                };
+                if standby.error.is_some() {
+                    self.cancel_with(settings, primary.as_ref());
+                    return false;
+                }
+                let ready = standby.generation == standby_generation
+                    && !standby.loading
+                    && standby.duration > 0.0;
+                if remaining <= seconds && ready {
+                    let engine = self.standby.as_ref().unwrap();
+                    if engine.send(PlaybackCommand::SetPaused(false)).is_err() {
+                        self.cancel_with(settings, primary.as_ref());
+                        return false;
+                    }
+                    trace(|| format!("mixing from {remaining:.1}s left"));
+                    self.phase = Phase::Mixing {
+                        index,
+                        source,
+                        generation: standby_generation,
+                    };
+                } else if remaining <= 1.0 {
+                    trace(|| {
+                        format!(
+                            "standby not ready in time (loading={} duration={})",
+                            standby.loading, standby.duration
+                        )
+                    });
+                    // Not ready in time: let the ordinary transition happen.
+                    self.cancel_with(settings, primary.as_ref());
+                }
+                false
+            }
+            Phase::Mixing {
+                index: planned,
+                source: planned_source,
+                generation: standby_generation,
+            } => {
+                if planned != index || planned_source != source || remaining > seconds + 1.0 {
+                    self.cancel_with(settings, primary.as_ref());
+                    return false;
+                }
+                let standby = self.standby.as_ref().map(|e| e.snapshot());
+                if standby
+                    .as_ref()
+                    .is_none_or(|snapshot| snapshot.error.is_some())
+                {
+                    self.cancel_with(settings, primary.as_ref());
+                    return false;
+                }
+                let t = 1.0 - (remaining / seconds);
+                if t >= 1.0 || p.ended || remaining <= 0.15 {
+                    return self.take_over_with(
+                        primary,
+                        settings,
+                        generation,
+                        context.next,
+                        index,
+                        &source,
+                        standby_generation,
+                    );
+                }
+                let (outgoing, incoming) = gains(t);
+                if (outgoing - self.primary_db).abs() >= GAIN_STEP_DB {
+                    self.set_primary_with(settings, primary.as_ref(), outgoing);
+                }
+                if (incoming - self.standby_db).abs() >= GAIN_STEP_DB {
+                    self.set_standby_with(settings, incoming);
+                }
+                false
+            }
+        }
+    }
+
+    /// Promote the standby engine: it already plays the next song at full gain.
+    /// Returns false, after cancelling the mix, when the plan no longer matches
+    /// the queue or the standby engine.
+    #[allow(clippy::too_many_arguments)]
+    fn take_over_with(
+        &mut self,
+        primary: &mut Option<E>,
+        settings: &mut Settings,
+        generation: &mut u64,
+        next: Option<usize>,
+        index: usize,
+        source: &str,
+        standby_generation: u64,
+    ) -> bool {
+        let standby = self.standby.as_ref().map(|engine| engine.snapshot());
+        if !promotion_matches(
+            &settings.queue,
+            next,
+            index,
+            source,
+            standby_generation,
+            standby.as_ref(),
+        ) {
+            trace(|| "planned song changed before the handoff; cancelled".into());
+            self.cancel_with(settings, primary.as_ref());
+            return false;
+        }
+        let Some(standby) = self.standby.take() else {
+            return false;
+        };
+        self.phase = Phase::Idle;
+        if let Some(old) = primary.replace(standby) {
+            old.retire();
+        }
+        self.primary_db = self.standby_db;
+        self.standby_db = 0.0;
+        self.set_primary_with(settings, primary.as_ref(), 0.0);
+        *generation = standby_generation;
+        settings.queue.select(index);
+        settings.playback_bookmark = None;
+        true
     }
 }
 
-fn start_standby(s: &State) -> Result<PlaybackHandle, String> {
-    let lease = s.cookie_lease.as_ref().map(|l| l.path().to_path_buf());
-    let index = s
-        .saved_connection
-        .as_ref()
-        .map_or(0, |connection| connection.account_index);
-    if s.connection_probe {
+impl Crossfade {
+    /// Abandon a pending or running crossfade and restore the main engine.
+    pub fn cancel(s: &mut State) {
+        s.crossfade.cancel_with(&s.settings, s.engine.as_ref());
+    }
+}
+
+fn start_standby(
+    lease: Option<PathBuf>,
+    index: u32,
+    connection_probe: bool,
+) -> Result<PlaybackHandle, String> {
+    if connection_probe {
         tide_playback::start_connection_probe(lease, index)
     } else {
         tide_playback::start_with_account(lease, index)
@@ -136,179 +443,37 @@ fn trace(message: impl FnOnce() -> String) {
 /// true when the standby took over; the caller must then skip the rest of
 /// this tick, since `p` describes the retired engine.
 pub fn tick(s: &mut State, u: &AppWindow, p: &tide_core::PlaybackSnapshot) -> bool {
-    let seconds = f64::from(s.settings.crossfade_seconds);
-    // The outgoing song reaching its end completes a running mix: at EOF the
-    // engine reports itself paused, which must not read as the user pausing.
-    if let Phase::Mixing {
-        index,
-        source,
-        generation,
-    } = s.crossfade.phase.clone()
-    {
-        let finished = p.generation == s.generation
-            && (p.ended || p.duration - p.position <= 0.15)
-            && s.crossfade
-                .standby
-                .as_ref()
-                .is_some_and(|engine| engine.snapshot().error.is_none());
-        if finished {
-            trace(|| "outgoing song ended; standby takes over".into());
-            // A failed check cancels the mix; the ordinary transition follows.
-            return take_over(s, u, index, &source, generation);
-        }
-    }
     let next = next_queue_index(s).filter(|&index| Some(index) != s.settings.queue.current);
-    let next_source = next.and_then(|index| {
-        s.settings
-            .queue
-            .tracks
-            .get(index)
-            .map(|track| track.source.clone())
-    });
-    let eligible = seconds > 0.0
-        && !s.settings.bit_perfect
-        && local_controls_allowed(s)
-        && !u.get_jam_active()
-        && s.active_playback
-        && s.sleep_timer != Some(SleepTimer::EndOfSong)
-        && s.engine.is_some()
-        && p.generation == s.generation
-        && !p.paused
-        && !p.loading
-        && p.error.is_none()
-        && p.duration.is_finite()
-        && p.duration >= 2.0 * seconds + PRELOAD_SECONDS
-        && next_source.is_some();
-    if !eligible {
-        if s.crossfade.phase != Phase::Idle {
-            trace(|| {
-                format!(
-                    "cancelled: paused={} loading={} ended={} remaining={:.1}",
-                    p.paused,
-                    p.loading,
-                    p.ended,
-                    p.duration - p.position
-                )
-            });
-        }
-        Crossfade::cancel(s);
-        return false;
-    }
-    let (Some(index), Some(source)) = (next, next_source) else {
-        return false;
+    let context = TickContext {
+        local_controls_allowed: local_controls_allowed(s),
+        jam_active: u.get_jam_active(),
+        active_playback: s.active_playback,
+        sleep_end_of_song: s.sleep_timer == Some(SleepTimer::EndOfSong),
+        volume: f64::from(u.get_volume()),
+        next,
     };
-    let remaining = p.duration - p.position;
-    match s.crossfade.phase.clone() {
-        Phase::Idle => {
-            if remaining > seconds + PRELOAD_SECONDS || remaining <= seconds + 1.0 {
-                return false;
-            }
-            let standby = match s.crossfade.standby.take() {
-                Some(engine) => engine,
-                None => match start_standby(s) {
-                    Ok(engine) => engine,
-                    Err(_) => return false,
-                },
-            };
-            let generation = s.generation.wrapping_add(1);
-            s.crossfade.standby = Some(standby);
-            Crossfade::set_standby(s, SILENT_GAIN_DB);
-            let engine = s.crossfade.standby.as_ref().unwrap();
-            let volume = f64::from(u.get_volume());
-            let loaded = engine
-                .send(PlaybackCommand::SetVolume(volume.clamp(0.0, 100.0)))
-                .and_then(|()| engine.load_at(source.clone(), generation, 0.0))
-                .and_then(|()| engine.send(PlaybackCommand::SetPaused(true)));
-            if loaded.is_err() {
-                Crossfade::cancel(s);
-                return false;
-            }
-            trace(|| format!("preloading next song at {remaining:.1}s left"));
-            s.crossfade.phase = Phase::Preloading {
-                index,
-                source,
-                generation,
-            };
-            false
-        }
-        Phase::Preloading {
-            index: planned,
-            source: planned_source,
-            generation,
-        } => {
-            // The queue, a seek or a skip changed what plays next.
-            if planned != index
-                || planned_source != source
-                || remaining > seconds + PRELOAD_SECONDS + 2.0
-            {
-                Crossfade::cancel(s);
-                return false;
-            }
-            let Some(standby) = s.crossfade.standby.as_ref().map(|e| e.snapshot()) else {
-                Crossfade::cancel(s);
-                return false;
-            };
-            if standby.error.is_some() {
-                Crossfade::cancel(s);
-                return false;
-            }
-            let ready =
-                standby.generation == generation && !standby.loading && standby.duration > 0.0;
-            if remaining <= seconds && ready {
-                let engine = s.crossfade.standby.as_ref().unwrap();
-                if engine.send(PlaybackCommand::SetPaused(false)).is_err() {
-                    Crossfade::cancel(s);
-                    return false;
-                }
-                trace(|| format!("mixing from {remaining:.1}s left"));
-                s.crossfade.phase = Phase::Mixing {
-                    index,
-                    source,
-                    generation,
-                };
-            } else if remaining <= 1.0 {
-                trace(|| {
-                    format!(
-                        "standby not ready in time (loading={} duration={})",
-                        standby.loading, standby.duration
-                    )
-                });
-                // Not ready in time: let the ordinary transition happen.
-                Crossfade::cancel(s);
-            }
-            false
-        }
-        Phase::Mixing {
-            index: planned,
-            source: planned_source,
-            generation,
-        } => {
-            if planned != index || planned_source != source || remaining > seconds + 1.0 {
-                Crossfade::cancel(s);
-                return false;
-            }
-            let standby = s.crossfade.standby.as_ref().map(|e| e.snapshot());
-            if standby
-                .as_ref()
-                .is_none_or(|snapshot| snapshot.error.is_some())
-            {
-                Crossfade::cancel(s);
-                return false;
-            }
-            let t = 1.0 - (remaining / seconds);
-            if t >= 1.0 || p.ended || remaining <= 0.15 {
-                return take_over(s, u, index, &source, generation);
-            }
-            let (outgoing, incoming) = gains(t);
-            if (outgoing - s.crossfade.primary_db).abs() >= GAIN_STEP_DB {
-                Crossfade::set_primary(s, outgoing);
-            }
-            if (incoming - s.crossfade.standby_db).abs() >= GAIN_STEP_DB {
-                Crossfade::set_standby(s, incoming);
-            }
-            false
-        }
+    let lease = s.cookie_lease.as_ref().map(|l| l.path().to_path_buf());
+    let index = s
+        .saved_connection
+        .as_ref()
+        .map_or(0, |connection| connection.account_index);
+    let connection_probe = s.connection_probe;
+    if !s.crossfade.tick_with(
+        &mut s.engine,
+        &mut s.settings,
+        &mut s.generation,
+        context,
+        p,
+        || start_standby(lease, index, connection_probe),
+    ) {
+        return false;
     }
+    s.active_playback = true;
+    s.load_requested_at = None;
+    refresh(u, s);
+    u.set_paused(false);
+    save(&s.settings);
+    true
 }
 
 /// Whether the standby engine still holds exactly the song planned for the
@@ -329,43 +494,6 @@ fn promotion_matches(
             .is_some_and(|track| track.source == source)
         && standby
             .is_some_and(|snapshot| snapshot.generation == generation && snapshot.error.is_none())
-}
-
-/// Promote the standby engine: it already plays the next song at full gain.
-/// Returns false, after cancelling the mix, when the plan no longer matches
-/// the queue or the standby engine.
-fn take_over(s: &mut State, u: &AppWindow, index: usize, source: &str, generation: u64) -> bool {
-    let standby = s.crossfade.standby.as_ref().map(|engine| engine.snapshot());
-    if !promotion_matches(
-        &s.settings.queue,
-        next_queue_index(s),
-        index,
-        source,
-        generation,
-        standby.as_ref(),
-    ) {
-        trace(|| "planned song changed before the handoff; cancelled".into());
-        Crossfade::cancel(s);
-        return false;
-    }
-    let Some(standby) = s.crossfade.standby.take() else {
-        return false;
-    };
-    s.crossfade.phase = Phase::Idle;
-    if let Some(old) = s.engine.replace(standby) {
-        Crossfade::retire(old);
-    }
-    s.crossfade.primary_db = s.crossfade.standby_db;
-    Crossfade::set_primary(s, 0.0);
-    s.generation = generation;
-    s.settings.queue.select(index);
-    s.settings.playback_bookmark = None;
-    s.active_playback = true;
-    s.load_requested_at = None;
-    refresh(u, s);
-    u.set_paused(false);
-    save(&s.settings);
-    true
 }
 
 #[cfg(test)]
@@ -463,5 +591,381 @@ mod tests {
             Some(&standby)
         ));
         assert!(!promotion_matches(&planned, Some(1), 1, "b", 8, None));
+    }
+
+    #[derive(Clone, Default)]
+    struct FakeEngineState {
+        snapshot: tide_core::PlaybackSnapshot,
+        reject_volume: bool,
+        reject_controls: bool,
+        gain_db: f64,
+        stopped: bool,
+        retired: bool,
+    }
+
+    #[derive(Clone)]
+    struct FakeEngine(Rc<RefCell<FakeEngineState>>);
+
+    impl FakeEngine {
+        fn new(volume: f64) -> Self {
+            Self(Rc::new(RefCell::new(FakeEngineState {
+                snapshot: tide_core::PlaybackSnapshot {
+                    volume,
+                    paused: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            })))
+        }
+
+        fn state(&self) -> std::cell::Ref<'_, FakeEngineState> {
+            self.0.borrow()
+        }
+
+        fn state_mut(&self) -> std::cell::RefMut<'_, FakeEngineState> {
+            self.0.borrow_mut()
+        }
+    }
+
+    impl CrossfadeEngine for FakeEngine {
+        fn snapshot(&self) -> tide_core::PlaybackSnapshot {
+            self.0.borrow().snapshot.clone()
+        }
+
+        fn send(&self, command: PlaybackCommand) -> Result<(), String> {
+            let mut state = self.0.borrow_mut();
+            match command {
+                PlaybackCommand::Seek(_) | PlaybackCommand::SetPaused(_)
+                    if state.reject_controls =>
+                {
+                    return Err("control queue full".into());
+                }
+                PlaybackCommand::SetVolume(volume) => {
+                    if state.reject_volume {
+                        return Err("volume queue full".into());
+                    }
+                    if !volume.is_finite() || !(0.0..=100.0).contains(&volume) {
+                        return Err("invalid volume".into());
+                    }
+                    state.snapshot.volume = volume;
+                }
+                PlaybackCommand::SetPaused(paused) => {
+                    state.snapshot.paused = paused;
+                }
+                PlaybackCommand::Seek(position) => {
+                    state.snapshot.position = position;
+                }
+                PlaybackCommand::Stop | PlaybackCommand::Shutdown => {
+                    state.stopped = true;
+                    state.snapshot.paused = true;
+                    state.snapshot.position = 0.0;
+                    state.snapshot.duration = 0.0;
+                    state.snapshot.loading = false;
+                }
+                _ => {}
+            }
+            Ok(())
+        }
+
+        fn load_at(&self, _source: String, generation: u64, position: f64) -> Result<(), String> {
+            let mut state = self.0.borrow_mut();
+            state.stopped = false;
+            state.snapshot.generation = generation;
+            state.snapshot.position = position;
+            state.snapshot.duration = 0.0;
+            state.snapshot.paused = false;
+            state.snapshot.loading = true;
+            state.snapshot.ended = false;
+            state.snapshot.error = None;
+            Ok(())
+        }
+
+        fn configure_audio(&self, options: tide_playback::AudioOptions) -> Result<(), String> {
+            self.0.borrow_mut().gain_db = options.gain_db;
+            Ok(())
+        }
+
+        fn retire(self) {
+            self.0.borrow_mut().retired = true;
+        }
+    }
+
+    fn crossfade_settings() -> Settings {
+        Settings {
+            crossfade_seconds: 6,
+            queue: Queue {
+                tracks: vec![track("a"), track("b")],
+                current: Some(0),
+            },
+            ..Settings::default()
+        }
+    }
+
+    fn tick_context(volume: f64, next: Option<usize>) -> TickContext {
+        TickContext {
+            local_controls_allowed: true,
+            jam_active: false,
+            active_playback: true,
+            sleep_end_of_song: false,
+            volume,
+            next,
+        }
+    }
+
+    #[test]
+    fn rejected_primary_mute_stops_the_incoming_track() {
+        let primary = FakeEngine::new(60.0);
+        primary.state_mut().reject_volume = true;
+        let standby = FakeEngine::new(60.0);
+        standby.state_mut().snapshot.paused = false;
+        let mut crossfade = Crossfade {
+            standby: Some(standby.clone()),
+            phase: Phase::Mixing {
+                index: 1,
+                source: "b".into(),
+                generation: 2,
+            },
+            primary_db: -3.0,
+            standby_db: -3.0,
+        };
+        let result = route_command(
+            Some(&primary),
+            &mut crossfade,
+            &crossfade_settings(),
+            PlaybackCommand::SetVolume(0.0),
+        );
+        assert_eq!(result.unwrap_err(), "volume queue full");
+        assert_eq!(crossfade.phase, Phase::Idle);
+        assert!(standby.state().stopped && standby.state().retired);
+        assert_eq!(primary.state().gain_db, 0.0);
+    }
+
+    #[test]
+    fn seek_and_pause_cancel_the_crossfade_only_when_accepted() {
+        for command in [
+            PlaybackCommand::Seek(32.0),
+            PlaybackCommand::SetPaused(true),
+        ] {
+            let settings = crossfade_settings();
+            let primary = FakeEngine::new(60.0);
+            {
+                let mut state = primary.state_mut();
+                state.reject_controls = true;
+                state.snapshot.paused = false;
+                state.gain_db = -3.0;
+            }
+            let standby = FakeEngine::new(60.0);
+            standby.state_mut().snapshot.paused = false;
+            let mut crossfade = Crossfade {
+                standby: Some(standby.clone()),
+                phase: Phase::Mixing {
+                    index: 1,
+                    source: "b".into(),
+                    generation: 2,
+                },
+                primary_db: -3.0,
+                standby_db: -3.0,
+            };
+
+            let rejected =
+                route_command(Some(&primary), &mut crossfade, &settings, command.clone());
+            assert_eq!(rejected.unwrap_err(), "control queue full");
+            assert!(matches!(crossfade.phase, Phase::Mixing { .. }));
+            assert!(!standby.state().stopped && !standby.state().retired);
+            assert_eq!(primary.state().gain_db, -3.0);
+
+            primary.state_mut().reject_controls = false;
+            route_command(Some(&primary), &mut crossfade, &settings, command).unwrap();
+            assert_eq!(crossfade.phase, Phase::Idle);
+            assert!(standby.state().stopped && standby.state().retired);
+            assert_eq!(primary.state().gain_db, 0.0);
+        }
+    }
+
+    #[test]
+    fn volume_changes_during_preload_and_mixing_reach_standby_and_survive_promotion() {
+        let mut settings = crossfade_settings();
+        let mut generation = 1u64;
+        let primary_probe = FakeEngine::new(60.0);
+        {
+            let mut p = primary_probe.state_mut();
+            p.snapshot.generation = generation;
+            p.snapshot.duration = 120.0;
+            p.snapshot.position = 105.0; // 15s remaining -> triggers preload
+            p.snapshot.paused = false;
+        }
+        let mut primary = Some(primary_probe.clone());
+        let standby_probe = FakeEngine::new(100.0);
+        let mut crossfade = Crossfade::<FakeEngine>::default();
+
+        // Enter Preloading at 60% volume.
+        let promoted = crossfade.tick_with(
+            &mut primary,
+            &mut settings,
+            &mut generation,
+            tick_context(60.0, Some(1)),
+            &primary_probe.snapshot(),
+            || Ok(standby_probe.clone()),
+        );
+        assert!(!promoted);
+        assert!(matches!(crossfade.phase, Phase::Preloading { .. }));
+        assert_eq!(primary_probe.state().snapshot.volume, 60.0);
+        assert_eq!(standby_probe.state().snapshot.volume, 60.0);
+
+        // Mute during preload: both engines must drop to 0%.
+        route_command(
+            primary.as_ref(),
+            &mut crossfade,
+            &settings,
+            PlaybackCommand::SetVolume(0.0),
+        )
+        .unwrap();
+        assert_eq!(primary_probe.state().snapshot.volume, 0.0);
+        assert_eq!(standby_probe.state().snapshot.volume, 0.0);
+
+        // Standby finishes loading and overlap begins at 6s remaining.
+        {
+            let mut s = standby_probe.state_mut();
+            s.snapshot.loading = false;
+            s.snapshot.duration = 120.0;
+        }
+        primary_probe.state_mut().snapshot.position = 114.5;
+        let promoted = crossfade.tick_with(
+            &mut primary,
+            &mut settings,
+            &mut generation,
+            tick_context(0.0, Some(1)),
+            &primary_probe.snapshot(),
+            || Err("unexpected standby start".into()),
+        );
+        assert!(!promoted);
+        assert!(matches!(crossfade.phase, Phase::Mixing { .. }));
+        assert!(!standby_probe.state().snapshot.paused);
+        assert_eq!(standby_probe.state().snapshot.volume, 0.0);
+
+        // Change volume during mixing (0% -> 25% -> 0%): both engines follow every change.
+        primary_probe.state_mut().snapshot.position = 117.0;
+        let promoted = crossfade.tick_with(
+            &mut primary,
+            &mut settings,
+            &mut generation,
+            tick_context(0.0, Some(1)),
+            &primary_probe.snapshot(),
+            || Err("unexpected standby start".into()),
+        );
+        assert!(!promoted);
+        route_command(
+            primary.as_ref(),
+            &mut crossfade,
+            &settings,
+            PlaybackCommand::SetVolume(25.0),
+        )
+        .unwrap();
+        assert_eq!(primary_probe.state().snapshot.volume, 25.0);
+        assert_eq!(standby_probe.state().snapshot.volume, 25.0);
+
+        route_command(
+            primary.as_ref(),
+            &mut crossfade,
+            &settings,
+            PlaybackCommand::SetVolume(0.0),
+        )
+        .unwrap();
+        assert_eq!(primary_probe.state().snapshot.volume, 0.0);
+        assert_eq!(standby_probe.state().snapshot.volume, 0.0);
+
+        // Complete handoff: promoted engine stays muted at 0% and normal 0 dB gain.
+        primary_probe.state_mut().snapshot.position = 119.9;
+        let promoted = crossfade.tick_with(
+            &mut primary,
+            &mut settings,
+            &mut generation,
+            tick_context(0.0, Some(1)),
+            &primary_probe.snapshot(),
+            || Err("unexpected standby start".into()),
+        );
+        assert!(promoted);
+        assert!(primary_probe.state().retired);
+        let promoted_engine = primary.as_ref().unwrap();
+        assert_eq!(promoted_engine.state().snapshot.volume, 0.0);
+        assert_eq!(promoted_engine.state().gain_db, 0.0);
+        assert_eq!(crossfade.primary_gain_db(), 0.0);
+    }
+
+    #[test]
+    fn clear_queue_and_media_stop_during_crossfade_stop_both_engines_and_restore_gain() {
+        for clear_queue in [true, false] {
+            let mut settings = crossfade_settings();
+            let mut generation = 1u64;
+            let primary_probe = FakeEngine::new(70.0);
+            {
+                let mut p = primary_probe.state_mut();
+                p.snapshot.generation = generation;
+                p.snapshot.duration = 120.0;
+                p.snapshot.position = 105.0;
+                p.snapshot.paused = false;
+            }
+            let mut primary = Some(primary_probe.clone());
+            let standby_probe = FakeEngine::new(100.0);
+            let mut crossfade = Crossfade::<FakeEngine>::default();
+
+            // Preload, then advance into audible Mixing overlap so primary gain is attenuated.
+            assert!(!crossfade.tick_with(
+                &mut primary,
+                &mut settings,
+                &mut generation,
+                tick_context(70.0, Some(1)),
+                &primary_probe.snapshot(),
+                || Ok(standby_probe.clone()),
+            ));
+            {
+                let mut s = standby_probe.state_mut();
+                s.snapshot.loading = false;
+                s.snapshot.duration = 120.0;
+            }
+            primary_probe.state_mut().snapshot.position = 114.5;
+            assert!(!crossfade.tick_with(
+                &mut primary,
+                &mut settings,
+                &mut generation,
+                tick_context(70.0, Some(1)),
+                &primary_probe.snapshot(),
+                || Err("unexpected standby start".into()),
+            ));
+            primary_probe.state_mut().snapshot.position = 117.0;
+            assert!(!crossfade.tick_with(
+                &mut primary,
+                &mut settings,
+                &mut generation,
+                tick_context(70.0, Some(1)),
+                &primary_probe.snapshot(),
+                || Err("unexpected standby start".into()),
+            ));
+            assert!(matches!(crossfade.phase, Phase::Mixing { .. }));
+            assert!(!standby_probe.state().snapshot.paused);
+            assert!(primary_probe.state().gain_db < -1.0);
+
+            // Both clear-queue and system media-controls Stop route Stop and mark playback inactive.
+            route_command(
+                primary.as_ref(),
+                &mut crossfade,
+                &settings,
+                PlaybackCommand::Stop,
+            )
+            .unwrap();
+            if clear_queue {
+                settings.queue = Queue::default();
+            }
+
+            assert!(primary_probe.state().stopped);
+            assert!(primary_probe.state().snapshot.paused);
+            assert!(standby_probe.state().stopped);
+            assert!(standby_probe.state().snapshot.paused);
+            assert!(standby_probe.state().retired);
+            assert!(crossfade.standby.is_none());
+            assert_eq!(crossfade.phase, Phase::Idle);
+            assert_eq!(primary_probe.state().gain_db, 0.0);
+            assert_eq!(crossfade.primary_gain_db(), 0.0);
+        }
     }
 }
