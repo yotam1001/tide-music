@@ -59,6 +59,37 @@ fn key(ui: &AppWindow, value: Key) {
         .dispatch_event(WindowEvent::KeyReleased { text });
 }
 #[test]
+fn an_unavailable_playlist_page_can_shuffle_the_collection() {
+    let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
+    slint::platform::set_platform(Box::new(TestPlatform(window))).unwrap();
+    let ui = AppWindow::new().unwrap();
+    ui.set_account_connected(true);
+    ui.set_account_verified(true);
+    ui.set_detail_open(true);
+
+    assert!(!ui.get_detail_play_enabled());
+    assert!(!ui.get_detail_shuffle_enabled());
+    ui.set_next_page(true);
+    assert!(ui.get_detail_shuffle_enabled());
+    assert!(!ui.get_detail_play_enabled());
+
+    ui.set_next_page(false);
+    ui.set_previous_page(true);
+    assert!(ui.get_detail_shuffle_enabled());
+    ui.set_account_busy(true);
+    assert!(!ui.get_detail_shuffle_enabled());
+    ui.set_account_busy(false);
+    ui.set_jam_guest(true);
+    assert!(!ui.get_detail_shuffle_enabled());
+
+    ui.set_jam_guest(false);
+    ui.set_previous_page(false);
+    ui.set_detail_rows(ModelRc::new(VecModel::from(vec![TrackRow::default()])));
+    assert!(ui.get_detail_play_enabled());
+    assert!(ui.get_detail_shuffle_enabled());
+}
+
+#[test]
 fn sidebar_home_transport_and_keyboard_shortcuts_keep_their_actions() {
     let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
     slint::platform::set_platform(Box::new(TestPlatform(window.clone()))).unwrap();

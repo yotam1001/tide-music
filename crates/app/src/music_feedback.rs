@@ -511,6 +511,12 @@ pub fn install(
             return;
         };
         let mut s = remove_state.borrow_mut();
+        if !u.get_detail_open()
+            || u.get_detail_busy()
+            || s.detail_playlist_refresh != PlaylistPageRefresh::Current
+        {
+            return;
+        }
         let Some(index) = usize::try_from(index).ok() else {
             return;
         };
@@ -536,6 +542,10 @@ pub fn install(
             video_id,
             playlist_id: context.id.clone(),
             entry_id,
+            page: match &s.detail_playlist_page {
+                Some(tide_provider::Request::Playlist { id, page }) if id == &context.id => *page,
+                _ => 0,
+            },
         };
         if begin(&mut s, request) {
             u.set_collection_busy(true);
@@ -554,7 +564,16 @@ pub fn install(
         let Some(id) = s.music_feedback.playlist.as_ref().map(|p| p.id.clone()) else {
             return;
         };
-        request_library(&mut s, &u, &tx, tide_provider::Request::Playlist { id });
+        let page = match &s.detail_playlist_page {
+            Some(tide_provider::Request::Playlist { id: current, page }) if current == &id => *page,
+            _ => 0,
+        };
+        request_library(
+            &mut s,
+            &u,
+            &tx,
+            tide_provider::Request::Playlist { id, page },
+        );
     });
 }
 
@@ -651,6 +670,19 @@ pub fn take_playlist(s: &mut State, u: &AppWindow) -> Option<PlaylistDetails> {
 pub fn restore_playlist(s: &mut State, u: &AppWindow, context: Option<PlaylistDetails>) {
     let id = context.as_ref().map(|p| p.id.clone());
     set_playlist(s, u, context, id.as_deref());
+}
+
+// A removal shifts the provider's raw offsets on every cached page. It may
+// finish after paging or leaving for an artist, so match the collection itself.
+fn invalidate_playlist_pages(s: &mut State, u: &AppWindow, playlist_id: &str) {
+    let matches = |request: &tide_provider::Request| is_playlist_page(request, playlist_id);
+    let loading = s.library_worker.is_some()
+        && matches!(s.library_action, LibraryAction::Preview { .. })
+        && s.library_request.as_ref().is_some_and(matches);
+    if s.detail_playlist_page.as_ref().is_some_and(matches) || loading {
+        set_playlist_page_refresh(s, u, PlaylistPageRefresh::Pending);
+    }
+    artists::invalidate_playlist_origin(s, playlist_id);
 }
 
 pub fn tick(s: &mut State, u: &AppWindow) {
@@ -884,37 +916,9 @@ pub fn tick(s: &mut State, u: &AppWindow) {
                     },
                 );
             }
-            if let FeedbackRequest::PlaylistRemove {
-                playlist_id,
-                entry_id,
-                ..
-            } = &work.request
-            {
+            if let FeedbackRequest::PlaylistRemove { playlist_id, .. } = &work.request {
                 if confirmed {
-                    if s.music_feedback.detail_revision == work.detail_revision {
-                        if let Some(context) = s
-                            .music_feedback
-                            .playlist
-                            .as_mut()
-                            .filter(|p| &p.id == playlist_id)
-                        {
-                            if let Some(index) = context
-                                .entries
-                                .iter()
-                                .position(|e| e.as_deref() == Some(entry_id.as_str()))
-                            {
-                                if index < s.detail_tracks.len()
-                                    && context.entries.len() == s.detail_tracks.len()
-                                {
-                                    context.entries.remove(index);
-                                    s.detail_tracks.remove(index);
-                                    let context = s.music_feedback.playlist.take();
-                                    restore_playlist(s, u, context);
-                                    refresh_content_models(s, u);
-                                }
-                            }
-                        }
-                    }
+                    invalidate_playlist_pages(s, u, playlist_id);
                     notice(
                         s,
                         u,
@@ -1063,6 +1067,7 @@ pub fn read_probe() -> Result<(), String> {
             .execute(
                 Request::Playlist {
                     id: playlist.id.clone(),
+                    page: 0,
                 },
                 cancel.clone(),
             )
