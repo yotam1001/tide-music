@@ -649,19 +649,6 @@ export component RatingButton inherits Rectangle {
 }
 
 // Actual byte progress in a compact native control; no separate update window.
-export component ShortcutRow inherits HorizontalLayout {
-    in property <string> action;
-    in property <string> binding;
-    in property <bool> recording;
-    in property <bool> light-mode;
-    callback record();
-    callback clear();
-    height: 44px; spacing: 8px; cross-axis-alignment: center;
-    Text { horizontal-stretch: 1; text: root.action; color: Theme.text; font-size: 13px; }
-    LibraryButton { width: 156px; height: 36px; quiet: false; active: root.recording; light-mode: root.light-mode; caption: root.recording ? "Press keys…" : root.binding == "" ? "Set shortcut" : root.binding; label: "Record " + root.action + " shortcut"; clicked => { root.record(); } }
-    LibraryButton { width: 30px; height: 30px; enabled: root.binding != "" || root.recording; light-mode: root.light-mode; caption: "×"; label: "Clear " + root.action + " shortcut"; clicked => { root.clear(); } }
-}
-
 export component UpdateAction inherits Rectangle {
     in property <bool> light-mode;
     in property <bool> busy;

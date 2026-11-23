@@ -171,17 +171,15 @@ fn filtered_playlist_and_queue_keep_absolute_indices_and_audio_has_its_own_page(
             ui.set_queue_filter("".into());
             ui.set_queue_open(false);
             ui.set_settings_open(true);
-            ui.set_settings_audio_open(true);
+            ui.set_settings_page(SettingsPage::Audio);
             ui.set_audio_device_names(ModelRc::new(VecModel::from(vec![
                 "System default".into(),
                 "Headphones".into(),
             ])));
             ui.set_audio_status("Applies only to Tide".into());
             draw(&window, width, "audio-settings");
-            assert!(!ui.get_settings_shortcuts_open());
             ui.set_settings_open(false);
             draw(&window, width, "audio-settings-closed");
-            assert!(!ui.get_settings_audio_open());
             ui.set_error_message(
                 "This song could not play. Retry or skip to the next song.".into(),
             );

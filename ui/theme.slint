@@ -102,27 +102,6 @@ export component PreferenceRow inherits Rectangle {
     }
 }
 
-export component SettingsLink inherits Rectangle {
-    in property <string> title;
-    in property <string> icon-path;
-    in property <bool> light-mode;
-    callback activated();
-    height: 44px; border-radius: 8px;
-    background: hover.has-hover ? (Theme.hover) : transparent;
-    border-width: action.has-focus ? 2px : 0px;
-    border-color: Theme.focus;
-    hover := TouchArea {
-        width: parent.width; height: parent.height; mouse-cursor: pointer;
-        action := Button { width: parent.width; height: parent.height; opacity: 0; text: ""; accessible-label: root.title; clicked => { root.activated(); } }
-    }
-    HorizontalLayout {
-        padding-left: 8px; padding-right: 8px; spacing: 12px; cross-axis-alignment: center;
-        Path { width: 20px; height: 20px; viewbox-width: 24; viewbox-height: 24; fill: transparent; stroke: Theme.muted; stroke-width: 1.5px; commands: root.icon-path; }
-        Text { horizontal-stretch: 1; text: root.title; color: Theme.text; font-size: 14px; }
-        Path { width: 16px; height: 16px; viewbox-width: 24; viewbox-height: 24; fill: transparent; stroke: Theme.muted; stroke-width: 1.5px; commands: "M 9 5 L 16 12 L 9 19"; }
-    }
-}
-
 export component SearchMark inherits Path {
     in property <color> ink;
     width: 18px;

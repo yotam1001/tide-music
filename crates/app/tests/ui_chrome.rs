@@ -48,6 +48,20 @@ fn content_left(ui: &AppWindow, width: u32, height: u32) -> f32 {
     nav + if height >= 650 { 28.0 } else { 18.0 }
 }
 
+// Settings is a centred sheet with a 212px category rail (wide windows).
+// Returns where to click for the Appearance category and the Light card,
+// with the Dark and Light cards splitting the theme row.
+fn appearance_targets(width: u32, height: u32) -> ((f32, f32), (f32, f32)) {
+    let (width, height) = (width as f32, height as f32);
+    let sheet_width = (width - 64.0).min(940.0);
+    let sheet_height = (height - 56.0).min(700.0);
+    let (x, y) = ((width - sheet_width) / 2.0, (height - sheet_height) / 2.0);
+    let card = (sheet_width - 212.0 - 64.0 - 32.0 - 10.0) / 2.0;
+    (
+        (x + 100.0, y + 258.0),
+        (x + 212.0 + 32.0 + 16.0 + card + 10.0 + card / 2.0, y + 210.0),
+    )
+}
 fn click(ui: &AppWindow, x: f32, y: f32) {
     let position = LogicalPosition::new(x, y);
     ui.window()
@@ -224,8 +238,12 @@ fn settings_theme_account_and_song_menu_remain_independent() {
                 ui.get_settings_open(),
                 "Settings is inaccessible at {width}"
             );
+            let (category, light_card) = appearance_targets(width, height);
             draw(&window, width, height);
-            click(&ui, width as f32 - 45.0, 397.0);
+            click(&ui, category.0, category.1);
+            assert_eq!(ui.get_settings_page(), SettingsPage::Appearance);
+            draw(&window, width, height);
+            click(&ui, light_card.0, light_card.1);
             assert!(
                 ui.get_light_mode(),
                 "Settings theme control is inaccessible at {width}"
@@ -551,16 +569,11 @@ fn settings_theme_account_and_song_menu_remain_independent() {
         let ui = weak.upgrade().unwrap();
         ui.set_media_controls_enabled(!ui.get_media_controls_enabled());
     });
-    // Secondary controls stay hidden until explicitly expanded.
-    ui.set_settings_more_open(false);
+    // Media keys sit on the Controls page, under the shortcuts. The sheet is
+    // centred, so it starts at y=250 in this tall window.
+    ui.set_settings_page(SettingsPage::Controls);
     draw(&window, 1140, 1200);
-    // Appearance (heading + Dark theme, 110px) and the Updates link (54px)
-    // sit above Advanced.
-    click(&ui, 920.0, 707.0);
-    assert!(ui.get_settings_more_open(), "More options is reachable");
-    draw(&window, 1140, 1200);
-    // Windows media keys is Advanced's first switch.
-    click(&ui, 920.0, 757.0);
+    click(&ui, 970.0, 641.0);
     assert!(!ui.get_media_controls_enabled());
     assert_eq!(ui.get_shortcut_toggle(), "Ctrl+Alt+P");
     assert_eq!(ui.get_shortcut_next(), "Ctrl+Alt+N");
@@ -589,7 +602,8 @@ fn settings_theme_account_and_song_menu_remain_independent() {
     let n = cancelled.clone();
     ui.on_cancel_native_sign_in(move || n.set(true));
     export("account-native-login", 1140, 800, &draw(&window, 1140, 800));
-    click(&ui, 920.0, 247.0);
+    // The sign-in action sits at the right of the account card.
+    click(&ui, 891.0, 184.0);
     assert_eq!(
         login_calls.get(),
         1,
@@ -597,9 +611,9 @@ fn settings_theme_account_and_song_menu_remain_independent() {
     );
     ui.set_native_login_busy(true);
     draw(&window, 1140, 800);
-    click(&ui, 920.0, 247.0);
+    click(&ui, 891.0, 173.0);
     assert_eq!(login_calls.get(), 1, "Do not launch a second login helper");
-    click(&ui, 920.0, 352.0);
+    click(&ui, 891.0, 214.0);
     assert!(
         cancelled.get(),
         "Temporary native sign-in must have a cancel action"

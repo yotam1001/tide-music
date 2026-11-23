@@ -122,6 +122,7 @@ fn native_ratings_remain_reachable_and_do_not_take_over_transport() {
     ui.set_collapsed(false);
     ui.set_jam_active(false);
     ui.set_jam_guest(false);
+    ui.set_settings_page(SettingsPage::Playback);
     ui.set_settings_open(true);
     let consent = Rc::new(RefCell::new(false));
     let captured = consent.clone();
@@ -132,7 +133,8 @@ fn native_ratings_remain_reachable_and_do_not_take_over_transport() {
     });
     draw(&window, 1140, 1400, "history-settings-off");
     assert!(!ui.get_history_feedback_enabled());
-    click(&ui, 920.0, 211.0);
+    // Settings is centred: its sheet starts at y=350 in this tall window.
+    click(&ui, 970.0, 715.0);
     assert!(
         *consent.borrow(),
         "History consent is not reachable in Settings"

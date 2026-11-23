@@ -1,13 +1,15 @@
 import { AboutSlint, Button, ComboBox, LineEdit, ListView, Palette, ScrollView } from "std-widgets.slint";
 import { TrackRow, JamMemberRow, ArtistRow, PlaylistRow, RecommendationRow, LyricRow, HomeBrowseRow } from "model.slint";
-import { ControlMotion, Theme, LayoutMetrics, PreferenceRow, SettingsLink, TideSlider, LibraryButton, LibraryTab, NavigationButton, EqualizerBars } from "theme.slint";
-import { Cover, PlaylistTile, LoadingTracks, EmptyState, ArtistLink, SongRow, LibraryEntry, HomeCard, ShortcutRow, UpdateAction, SidebarCollection, QuickTile, BrowseTile, MoodChip, RatingButton } from "components.slint";
+import { ControlMotion, Theme, LayoutMetrics, TideSlider, LibraryButton, LibraryTab, NavigationButton, EqualizerBars } from "theme.slint";
+import { Cover, PlaylistTile, LoadingTracks, EmptyState, ArtistLink, SongRow, LibraryEntry, HomeCard, UpdateAction, SidebarCollection, QuickTile, BrowseTile, MoodChip, RatingButton } from "components.slint";
 import { QueueDrawer } from "queue.slint";
+import { SettingsPage, SettingsIcons, SettingsNavItem, SettingsAccountChip, SettingsPageFade, SettingsGroup, SettingRow, SettingBlock, SettingToggle, SegmentedControl, ThemeCard, EqualizerPreset, ShortcutSetting, StatusPill } from "settings.slint";
 import { PlayerBar } from "player.slint";
 import { LyricsPage } from "lyrics.slint";
 
 export { TrackRow, JamMemberRow, ArtistRow, PlaylistRow, RecommendationRow, LyricRow, HomeBrowseRow, MenuAction } from "model.slint";
 export { ControlMotion, Theme, LayoutMetrics } from "theme.slint";
+export { SettingsPage } from "settings.slint";
 
 export component AppWindow inherits Window {
     in property <bool> jam-available: false;
@@ -284,7 +286,6 @@ export component AppWindow inherits Window {
     callback remove-playlist-song(int);
     callback refresh-detail-playlist();
     in-out property <int> shortcut-recording-index: -1;
-    in-out property <bool> settings-audio-open: false;
     in property <bool> normalize-volume: false;
     in property <[string]> audio-device-names;
     in property <int> audio-device-index;
@@ -305,11 +306,21 @@ export component AppWindow inherits Window {
     in property <string> sleep-label;
     callback cycle-sleep-timer();
     callback choose-audio-device(int);
-    in-out property <bool> settings-shortcuts-open: false;
-    in-out property <bool> settings-more-open: false;
+    // Settings and Account share one sheet; Account is its first category.
+    in-out property <SettingsPage> settings-page: SettingsPage.playback;
+    out property <SettingsPage> settings-shown-page: root.account-open ? SettingsPage.account : root.settings-page;
     in-out property <length> settings-scroll-y: 0px;
-    changed settings-shortcuts-open => { root.settings-scroll-y = 0px; }
-    changed settings-audio-open => { root.settings-scroll-y = 0px; }
+    // Category icon tiles: restrained tones that read on both themes.
+    private property <color> settings-tint-account: Theme.accent;
+    private property <color> settings-tint-playback: Theme.light ? #d0703f : #c8693a;
+    private property <color> settings-tint-audio: Theme.light ? #3b78b8 : #3a72b0;
+    private property <color> settings-tint-appearance: Theme.light ? #8358bd : #7b55b3;
+    private property <color> settings-tint-controls: Theme.light ? #2b8a7c : #2a8577;
+    private property <color> settings-tint-about: Theme.light ? #7c7378 : #5f6570;
+    changed settings-shown-page => {
+        root.settings-scroll-y = 0px;
+        if root.settings-shown-page != SettingsPage.controls { root.cancel-shortcut(); }
+    }
     callback begin-shortcut(int);
     callback cancel-shortcut();
     callback clear-shortcut(int);
@@ -590,7 +601,7 @@ export component AppWindow inherits Window {
     changed settings-open => {
         root.settings-scroll-y = 0px;
         if root.settings-open { root.suggestions-open = false; root.playlist-picker-open = false; root.account-open = false; root.jam-open = false; app-focus.focus(); }
-        else { root.cancel-shortcut(); root.settings-shortcuts-open = false; root.settings-audio-open = false; root.settings-more-open = false; }
+        else { root.cancel-shortcut(); }
     }
     changed account-open => {
         if root.account-open { root.suggestions-open = false; root.playlist-picker-open = false; root.settings-open = false; root.jam-open = false; app-focus.focus(); }
@@ -759,8 +770,8 @@ export component AppWindow inherits Window {
                         }
                     }
                     if !root.account-connected : Rectangle { horizontal-stretch: 1; }
-                    LibraryButton { width: 36px; height: 36px; show-tooltip: true; quiet: true; enabled: !root.artist-picker-open; light-mode: root.light-mode; icon-path: "M 9 4 L 9.5 2 L 14.5 2 L 15 4 L 17 5 L 19 4.5 L 21.5 9 L 20 10.5 L 20 13.5 L 21.5 15 L 19 19.5 L 17 19 L 15 20 L 14.5 22 L 9.5 22 L 9 20 L 7 19 L 5 19.5 L 2.5 15 L 4 13.5 L 4 10.5 L 2.5 9 L 5 4.5 L 7 5 Z M 12 8 A 4 4 0 1 0 12 16 A 4 4 0 1 0 12 8 Z"; label: "Open settings"; active: root.settings-open; clicked => { root.settings-open = !root.settings-open; } }
-                    LibraryButton { width: 36px; height: 36px; show-tooltip: true; quiet: true; enabled: !root.artist-picker-open && !root.jam-guest; light-mode: root.light-mode; icon-path: "M 12 2 A 10 10 0 1 0 12 22 A 10 10 0 1 0 12 2 Z M 12 6 A 3 3 0 1 0 12 12 A 3 3 0 1 0 12 6 Z M 5 19 C 5 12 19 12 19 19"; label: "Open YouTube Music account"; active: root.account-open; clicked => { root.account-open = !root.account-open; } }
+                    LibraryButton { width: 36px; height: 36px; round: true; show-tooltip: true; quiet: true; enabled: !root.artist-picker-open; light-mode: root.light-mode; icon-path: "M 9 4 L 9.5 2 L 14.5 2 L 15 4 L 17 5 L 19 4.5 L 21.5 9 L 20 10.5 L 20 13.5 L 21.5 15 L 19 19.5 L 17 19 L 15 20 L 14.5 22 L 9.5 22 L 9 20 L 7 19 L 5 19.5 L 2.5 15 L 4 13.5 L 4 10.5 L 2.5 9 L 5 4.5 L 7 5 Z M 12 8 A 4 4 0 1 0 12 16 A 4 4 0 1 0 12 8 Z"; label: "Open settings"; active: root.settings-open; clicked => { root.settings-open = !root.settings-open; } }
+                    LibraryButton { width: 36px; height: 36px; round: true; show-tooltip: true; quiet: true; enabled: !root.artist-picker-open && !root.jam-guest; light-mode: root.light-mode; icon-path: "M 12 2 A 10 10 0 1 0 12 22 A 10 10 0 1 0 12 2 Z M 12 6 A 3 3 0 1 0 12 12 A 3 3 0 1 0 12 6 Z M 5 19 C 5 12 19 12 19 19"; label: "Open YouTube Music account"; active: root.account-open; clicked => { root.account-open = !root.account-open; } }
 
                 }
             }
@@ -1865,243 +1876,6 @@ export component AppWindow inherits Window {
                         clear => { root.clear-queue(); }
                     }
                 }
-                if root.settings-open : Rectangle {
-                    width: parent.width; height: parent.height;
-                    Rectangle {
-                        x: 0px; y: 0px; width: max(0px, parent.width - 384px); height: parent.height; background: #00000070;
-                        opacity: ControlMotion.enabled ? 0 : 1;
-                        init => { self.opacity = 1; }
-                        animate opacity { duration: ControlMotion.enabled ? 240ms : 0ms; easing: ease-out; }
-                        TouchArea { clicked => { root.settings-open = false; } }
-                    }
-                    Rectangle {
-                        property <length> slide: ControlMotion.enabled ? 384px : 0px;
-                        init => { self.slide = 0; }
-                        animate slide { duration: ControlMotion.enabled ? 280ms : 0ms; easing: cubic-bezier(0.2, 0.9, 0.3, 1); }
-                        x: max(0px, parent.width - 384px) + self.slide; width: 384px; height: parent.height;
-                        background: root.surface; border-width: 1px; border-color: root.outline;
-                        drop-shadow-blur: 30px; drop-shadow-color: Theme.shadow;
-                        TouchArea { }
-                        ScrollView {
-                            content-y <=> root.settings-scroll-y;
-                            width: parent.width; height: parent.height; horizontal-scrollbar-policy: always-off;
-                            VerticalLayout {
-                                padding: 24px; spacing: 14px; alignment: start;
-                                HorizontalLayout { height: 42px; cross-axis-alignment: center; Text { horizontal-stretch: 1; text: "Settings"; color: root.foreground; font-size: 26px; font-weight: 800; } LibraryButton { width: 32px; height: 32px; caption: "×"; label: "Close settings"; light-mode: root.light-mode; clicked => { root.settings-open = false; } } }
-                                if root.settings-shortcuts-open : VerticalLayout {
-                                    spacing: 12px; alignment: start;
-                                    LibraryButton { height: 34px; caption: "‹  Back"; label: "Back to general settings"; light-mode: root.light-mode; clicked => { root.cancel-shortcut(); root.settings-shortcuts-open = false; } }
-                                    Text { height: 24px; text: "Keyboard shortcuts"; font-size: 18px; font-weight: 600; color: root.foreground; }
-                                    Text { height: 36px; text: root.mac-os ? "Select an action, then press a ⌘, ⌥ or ⌃ combination. Esc cancels." : "Select an action, then press a Ctrl or Alt combination. Esc cancels."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
-                                    ShortcutRow { action: "Play / pause"; binding: root.shortcut-toggle; recording: root.shortcut-recording-index == 0; light-mode: root.light-mode; record => { root.begin-shortcut(0); app-focus.focus(); } clear => { root.clear-shortcut(0); } }
-                                    ShortcutRow { action: "Next song"; binding: root.shortcut-next; recording: root.shortcut-recording-index == 1; light-mode: root.light-mode; record => { root.begin-shortcut(1); app-focus.focus(); } clear => { root.clear-shortcut(1); } }
-                                    ShortcutRow { action: "Previous song"; binding: root.shortcut-previous; recording: root.shortcut-recording-index == 2; light-mode: root.light-mode; record => { root.begin-shortcut(2); app-focus.focus(); } clear => { root.clear-shortcut(2); } }
-                                    if root.shortcut-status != "" : Text { text: root.shortcut-status; color: root.secondary; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
-                                    Rectangle { height: 1px; background: root.outline; }
-                                    Text { height: 56px; text: "While Tide has focus, press Space to play or pause, or J and L to seek 10 seconds. Media keys and custom shortcuts also work in the background."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
-                                }
-                                if root.settings-audio-open : VerticalLayout {
-                                    spacing: 12px; alignment: start;
-                                    LibraryButton { height: 34px; caption: "‹  Back"; label: "Back to general settings"; light-mode: root.light-mode; clicked => { root.settings-audio-open = false; } }
-                                    Text { text: "Audio"; color: root.foreground; font-size: 20px; font-weight: 600; }
-                                    Text { text: "Output device"; color: root.secondary; font-size: 12px; }
-                                    ComboBox { model: root.audio-device-names; current-index: root.audio-device-index; selected(value) => { root.choose-audio-device(self.current-index); } }
-                                    Text { text: root.audio-status; color: root.secondary; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
-                                    PreferenceRow { title: "Bit-perfect output"; detail: "Exclusive device access with no processing. Set loudness on your device or DAC."; checked: root.bit-perfect; light-mode: root.light-mode; toggled => { root.toggle-bit-perfect(); } }
-                                    if root.bit-perfect : Text { text: "Tide plays at full volume and turns off Even volume, crossfade, fades and the equalizer. Other apps can't play sound on this device meanwhile. YouTube Music streams are compressed, so this keeps the decoded audio unchanged rather than making it lossless."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
-                                    Text { text: "Volume step for wheel and arrow keys"; color: root.secondary; font-size: 12px; }
-                                    ComboBox { model: ["1%", "2%", "5%", "10%"]; current-index: root.volume-step-index; accessible-label: "Volume adjustment step"; selected(value) => { root.set-volume-step(self.current-index); } }
-                                    PreferenceRow { title: "Even volume"; detail: "Smooth volume differences between songs."; checked: root.normalize-volume && !root.bit-perfect; enabled: !root.bit-perfect; light-mode: root.light-mode; toggled => { root.toggle-normalization(); } }
-                                    Text { text: "Smooth out loud and quiet songs locally. This changes the sound and adds a small processing delay. Off preserves the original dynamics."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
-                                    PreferenceRow { title: "Fade between songs"; detail: root.crossfade-seconds == 0 ? "Ease each song in and out instead of cutting." : "Off while crossfade is on."; checked: root.fade-transitions && root.crossfade-seconds == 0 && !root.bit-perfect; enabled: root.crossfade-seconds == 0 && !root.bit-perfect; light-mode: root.light-mode; toggled => { root.toggle-fade-transitions(); } }
-                                    Text { text: "Crossfade"; color: root.foreground; font-size: 15px; font-weight: 600; }
-                                    HorizontalLayout {
-                                        height: 32px; spacing: 6px; alignment: start;
-                                        for length in [0, 3, 6, 9, 12] : LibraryTab {
-                                            width: length == 0 ? 60px : 58px; title: length == 0 ? "Off" : length + " s";
-                                            label: length == 0 ? "Crossfade off" : "Crossfade " + length + " seconds";
-                                            selected: root.crossfade-seconds == length; light-mode: root.light-mode; enabled: !root.bit-perfect;
-                                            select => { root.choose-crossfade(length); }
-                                        }
-                                    }
-                                    Text { text: root.crossfade-seconds == 0 ? "Overlap the end of each song with the start of the next." : "The next song starts under the end of this one. It uses a second, short-lived player while songs overlap."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
-                                    Text { text: "Equalizer"; color: root.foreground; font-size: 15px; font-weight: 600; }
-                                    for row in 2 : HorizontalLayout {
-                                        height: 32px; spacing: 8px; alignment: start;
-                                        for name[column] in (row == 0 ? ["Off", "Bass boost", "Bass reducer"] : ["Treble boost", "Vocal", "Loudness"]) : LibraryTab {
-                                            width: 104px; title: name; label: name + " equalizer preset";
-                                            selected: root.equalizer == row * 3 + column; light-mode: root.light-mode; enabled: !root.bit-perfect;
-                                            select => { root.choose-equalizer(row * 3 + column); }
-                                        }
-                                    }
-                                    Text { text: "Shapes Tide's sound only. Presets that raise a band lower the overall level first, so loud songs don't distort."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
-                                }
-                                if !root.settings-shortcuts-open && !root.settings-audio-open : VerticalLayout {
-                                    spacing: 10px; alignment: start;
-                                    Text { height: 24px; text: "Listening"; color: root.foreground; font-size: 17px; font-weight: 700; }
-                                    PreferenceRow { title: "Listening history"; detail: "Send played songs to YouTube Music for better recommendations."; checked: root.history-feedback-enabled; light-mode: root.light-mode; toggled => { root.toggle-history-feedback(); } }
-                                    if root.history-feedback-status != "" : Text { text: root.history-feedback-status; color: root.secondary; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
-                                    PreferenceRow { title: "Discord activity"; detail: "Show the playing song on your Discord profile."; checked: root.discord-presence-enabled; light-mode: root.light-mode; toggled => { root.toggle-discord-presence(); } }
-                                    if root.discord-presence-enabled : Text { text: root.discord-status; color: root.secondary; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
-                                    Text { height: 24px; text: "Appearance"; color: root.foreground; font-size: 17px; font-weight: 700; }
-                                    PreferenceRow { title: "Dark theme"; detail: "Switch between Tide's dark and warm light looks."; checked: !root.light-mode; enabled: !root.artist-picker-open; light-mode: root.light-mode; toggled => { root.switch-mode(); } }
-                                    PreferenceRow { title: "Animations"; detail: "Smooth transitions, hover effects and live level bars."; checked: root.animations-enabled; light-mode: root.light-mode; toggled => { root.toggle-animations(); } }
-                                    SettingsLink { title: "Audio"; icon-path: "M 4 10 L 8 10 L 13 5 L 13 19 L 8 14 L 4 14 Z M 17 8 C 21 10 21 14 17 16 M 19 4 C 27 9 27 15 19 20"; light-mode: root.light-mode; activated => { root.settings-audio-open = true; } }
-                                    SettingsLink { title: "Keyboard shortcuts"; icon-path: "M 2 5 L 22 5 L 22 19 L 2 19 Z M 5 9 L 7 9 M 10 9 L 12 9 M 15 9 L 19 9 M 5 12 L 7 12 M 10 12 L 12 12 M 15 12 L 19 12 M 6 16 L 18 16"; light-mode: root.light-mode; activated => { root.settings-shortcuts-open = true; app-focus.focus(); } }
-                                    SettingsLink { title: "Updates · Tide " + root.app-version; icon-path: "M12 3 V15 M7 10 L12 15 L17 10 M5 17 V21 H19 V17"; light-mode: root.light-mode; activated => { root.settings-open = false; root.suggestions-open = false; root.update-panel-open = true; app-focus.focus(); } }
-                                    Rectangle { height: 1px; background: root.outline; }
-                                    LibraryButton { height: 34px; caption: root.settings-more-open ? "Advanced  −" : "Advanced  +"; label: "Show additional settings"; light-mode: root.light-mode; clicked => { root.settings-more-open = !root.settings-more-open; } }
-                                    if root.settings-more-open : VerticalLayout {
-                                        spacing: 10px; alignment: start;
-                                        if root.windows-theme-supported : PreferenceRow { title: root.mac-os ? "Match system appearance" : "Follow Windows theme"; checked: root.follow-windows-theme; light-mode: root.light-mode; toggled => { root.toggle-follow-windows-theme(); } }
-                                        PreferenceRow { title: root.mac-os ? "Media keys and Control Center" : "Windows media keys"; checked: root.media-controls-enabled; light-mode: root.light-mode; toggled => { root.toggle-media-controls(); } }
-                                        if root.media-controls-enabled : PreferenceRow { title: root.mac-os ? "Show Tide in the menu bar" : "Keep playing when I close Tide"; checked: root.close-to-tray; light-mode: root.light-mode; toggled => { root.toggle-close-to-tray(); } }
-                                        if root.mac-os : PreferenceRow { title: "Notify when the song changes"; checked: root.notify-song-change; light-mode: root.light-mode; toggled => { root.toggle-notify-song-change(); } }
-                                        PreferenceRow { title: "Swipe the player to change songs"; detail: "Two-finger trackpad swipe over the player bar: right for next, left for previous."; checked: root.trackpad-swipe; light-mode: root.light-mode; toggled => { root.toggle-trackpad-swipe(); } }
-                                        if root.trackpad-swipe : PreferenceRow { title: "Reverse swipe direction"; checked: root.swipe-reversed; light-mode: root.light-mode; toggled => { root.toggle-swipe-reversed(); } }
-                                        if root.windows-theme-supported && !root.mac-os : LibraryButton { height: 34px; caption: "Set up four-finger swipes…"; label: "Open Windows touchpad settings. Under Four-finger gestures, choose Change audio and volume to skip songs from anywhere."; light-mode: root.light-mode; clicked => { root.open-touchpad-settings(); } }
-                                        PreferenceRow { title: "Skip known disliked songs"; checked: root.skip-disliked; light-mode: root.light-mode; toggled => { root.toggle-skip-disliked(); } }
-                                        PreferenceRow { title: "Check for updates on startup"; checked: root.auto-update-checks; light-mode: root.light-mode; toggled => { root.toggle-update-checks(); } }
-                                        Text { height: 18px; text: "Mini opacity · " + root.mini-opacity.to-fixed(0) + "%"; color: root.secondary; font-size: 12px; }
-                                        TideSlider { height: 28px; light-mode: root.light-mode; minimum: 60; maximum: 100; value: root.mini-opacity; label: "Mini player opacity"; value-text: root.mini-opacity.to-fixed(0) + "%"; released(value) => { root.change-mini-opacity(value); } }
-                                        if root.crash-log-available : LibraryButton { height: 34px; caption: "Open crash log"; label: "Show the crash log file in its folder. Review it before sharing it in a bug report."; light-mode: root.light-mode; clicked => { root.open-crash-log(); } }
-                                        AboutSlint { height: 112px; horizontal-stretch: 0; }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                if root.account-open : Rectangle {
-                    width: parent.width;
-                    height: parent.height;
-                    Rectangle {
-                        x: 0px; y: 0px; width: max(0px, parent.width - 420px); height: parent.height; background: #00000070;
-                        opacity: ControlMotion.enabled ? 0 : 1;
-                        init => { self.opacity = 1; }
-                        animate opacity { duration: ControlMotion.enabled ? 240ms : 0ms; easing: ease-out; }
-                        TouchArea { clicked => { root.account-open = false; } }
-                    }
-                    Rectangle {
-                        property <length> slide: ControlMotion.enabled ? 420px : 0px;
-                        init => { self.slide = 0; }
-                        animate slide { duration: ControlMotion.enabled ? 280ms : 0ms; easing: cubic-bezier(0.2, 0.9, 0.3, 1); }
-                        x: max(0px, parent.width - 420px) + self.slide;
-                        width: 420px;
-                        height: parent.height;
-                        background: root.surface;
-                        border-width: 1px;
-                        border-color: root.outline;
-                        drop-shadow-blur: 30px; drop-shadow-color: Theme.shadow;
-                        TouchArea { }
-                        ScrollView {
-                            width: parent.width;
-                            height: parent.height;
-                            horizontal-scrollbar-policy: always-off;
-                            VerticalLayout {
-                            padding: 24px;
-                            spacing: 16px;
-                            alignment: start;
-                            HorizontalLayout { height: 42px; cross-axis-alignment: center; Text { horizontal-stretch: 1; text: "Account"; color: root.foreground; font-size: 25px; font-weight: 650; } LibraryButton { width: 32px; height: 32px; light-mode: root.light-mode; caption: "×"; label: "Close account"; clicked => { root.account-open = false; } } }
-                            HorizontalLayout {
-                                height: 64px; spacing: 14px; cross-axis-alignment: center;
-                                Rectangle {
-                                    width: 48px; height: 48px; border-radius: 24px;
-                                    background: Theme.selected;
-                                    Path { x: 12px; y: 10px; width: 24px; height: 28px; viewbox-width: 24; viewbox-height: 28; fill: Colors.transparent; stroke: Theme.cover-ink; stroke-width: 1.6px; commands: "M 17 7 A 5 5 0 1 0 7 7 A 5 5 0 1 0 17 7 Z M 3 25 L 3 22 C 3 12 21 12 21 22 L 21 25"; }
-                                }
-                                VerticalLayout {
-                                    min-width: 0px; horizontal-stretch: 1; spacing: 5px; alignment: center;
-                                    Text { text: root.account-name != "" ? root.account-name : "YouTube Music"; color: root.foreground; font-size: 18px; font-weight: 600; overflow: elide; }
-                                    Text { text: root.account-busy ? "Connecting…" : root.account-verified ? "Connected to YouTube Music" : root.account-connected ? "Saved session · verification needed" : "Not connected"; color: root.secondary; font-size: 12px; overflow: elide; }
-                                }
-                            }
-                            if root.account-status != "" : Text { max-height: 72px; overflow: elide; text: root.account-status; color: root.secondary; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
-                            if root.native-login-status != "" : Text { text: root.native-login-status; color: root.secondary; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
-                            if !root.account-verified : Text { text: root.native-login-available ? "Sign in with Google, then choose the YouTube Music profile you listen with." : "Import your signed-in YouTube Music tab with Tide’s browser companion to use your playlists and recommendations."; color: root.secondary; font-size: 13px; wrap: word-wrap; }
-                            if root.native-login-available : LibraryButton { height: 42px; quiet: false; light-mode: root.light-mode; caption: root.native-login-busy ? "Sign-in window open…" : root.account-verified ? "Reconnect YouTube Music" : "Sign in with Google"; label: "Open the temporary Google sign-in window"; enabled: !root.account-busy && !root.native-login-busy; active: !root.account-verified; clicked => { root.native-sign-in(); } }
-                            LibraryButton { height: root.native-login-available ? 36px : 42px; quiet: root.native-login-available; light-mode: root.light-mode; caption: root.native-login-available ? (root.companion-setup-available && root.companion-setup-open ? "Hide browser companion setup" : "Use browser companion instead") : root.account-verified ? "Manage connection" : "Connect YouTube Music"; label: "Open browser companion setup or connection guide"; enabled: !root.account-busy && !root.native-login-busy; active: !root.native-login-available && !root.account-verified; clicked => { if root.companion-setup-available { root.companion-setup-open = !root.companion-setup-open; } else { root.open-account-help(); } } }
-                            if root.native-login-busy : LibraryButton { height: 36px; light-mode: root.light-mode; caption: "Close sign-in window"; label: "Close the owned temporary sign-in window"; clicked => { root.cancel-native-sign-in(); } }
-                            if root.account-busy : LibraryButton { height: 36px; light-mode: root.light-mode; caption: "Cancel connection"; label: "Cancel account request"; clicked => { root.cancel-account(); } }
-                            Rectangle { height: 1px; background: root.outline; }
-                            if root.companion-setup-available && root.companion-setup-open : VerticalLayout {
-                                spacing: 10px;
-                                Text { text: "Browser companion (recommended for Family Link)"; color: root.foreground; font-size: 13px; font-weight: 600; wrap: word-wrap; }
-                                Text { text: "Sign in to YouTube Music in Chrome, Edge, Brave, Arc, Firefox, or Zen, load Tide’s companion extension, and connect your browser here. On Safari or extension-restricted accounts, use Advanced → Import session file with Copy as cURL."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
-                                if root.companion-registered-summary != "" : Text { text: root.companion-registered-summary; color: root.secondary; font-size: 12px; wrap: word-wrap; }
-                                HorizontalLayout {
-                                    height: 36px; spacing: 8px;
-                                    ComboBox {
-                                        horizontal-stretch: 1;
-                                        model: ["Chrome", "Edge", "Brave", "Arc", "Firefox / Zen"];
-                                        current-index <=> root.companion-browser-index;
-                                        enabled: !root.account-busy && !root.native-login-busy;
-                                        accessible-label: "Browser for Tide companion";
-                                    }
-                                }
-                                if root.companion-browser-index < 4 : LineEdit {
-                                    height: 34px;
-                                    text <=> root.companion-extension-id;
-                                    placeholder-text: "32-letter extension ID from chrome://extensions";
-                                    enabled: !root.account-busy && !root.native-login-busy;
-                                    accessible-label: "Chromium browser companion extension ID";
-                                }
-                                HorizontalLayout {
-                                    height: 36px; spacing: 8px;
-                                    LibraryButton {
-                                        horizontal-stretch: 1; quiet: false; light-mode: root.light-mode;
-                                        caption: "Connect browser";
-                                        label: "Register Tide browser companion for selected browser";
-                                        enabled: !root.account-busy && !root.native-login-busy;
-                                        clicked => { root.register-companion-browser(root.companion-browser-index, root.companion-extension-id); }
-                                    }
-                                    LibraryButton {
-                                        width: 88px; quiet: true; light-mode: root.light-mode;
-                                        caption: "Remove";
-                                        label: "Unregister Tide browser companion for selected browser";
-                                        enabled: !root.account-busy && !root.native-login-busy;
-                                        clicked => { root.unregister-companion-browser(root.companion-browser-index); }
-                                    }
-                                }
-                                HorizontalLayout {
-                                    height: 36px; spacing: 8px;
-                                    if root.companion-extension-bundled : LibraryButton {
-                                        horizontal-stretch: 1; quiet: true; light-mode: root.light-mode;
-                                        caption: "Reveal extension";
-                                        label: "Reveal bundled browser companion extension folder in Finder";
-                                        clicked => { root.reveal-companion-extension(); }
-                                    }
-                                    LibraryButton {
-                                        horizontal-stretch: 1; quiet: true; light-mode: root.light-mode;
-                                        caption: "Open YT Music";
-                                        label: "Open YouTube Music in your default browser";
-                                        clicked => { root.open-ytmusic-browser(); }
-                                    }
-                                }
-                                LibraryButton {
-                                    height: 32px; quiet: true; light-mode: root.light-mode;
-                                    caption: "Open setup guide";
-                                    label: "Open browser companion connection guide";
-                                    clicked => { root.open-account-help(); }
-                                }
-                                if root.companion-setup-status != "" : Text { text: root.companion-setup-status; color: root.secondary; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
-                            }
-                            LibraryButton { height: 36px; light-mode: root.light-mode; caption: root.advanced-open ? "Advanced connection options  ⌃" : "Advanced connection options  ⌄"; label: root.advanced-open ? "Hide advanced account options" : "Show advanced account options"; clicked => { root.advanced-open = !root.advanced-open; } }
-                            if root.advanced-open : VerticalLayout {
-                                spacing: 12px;
-                                Text { text: "Google account slot"; color: root.foreground; font-size: 13px; font-weight: 600; }
-                                Text { text: "Use this only if the imported session opened the wrong Google account. Select your YouTube profile in the browser before importing."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
-                                HorizontalLayout { height: 36px; spacing: 8px; ComboBox { horizontal-stretch: 1; model: ["Account 1", "Account 2", "Account 3", "Account 4", "Account 5", "Account 6", "Account 7", "Account 8", "Account 9", "Account 10"]; current-index <=> root.account-index; enabled: root.account-connected && !root.account-busy && !root.native-login-busy; } LibraryButton { width: 76px; quiet: false; light-mode: root.light-mode; caption: "Switch"; label: "Connect selected Google account"; enabled: root.account-connected && !root.account-busy && !root.native-login-busy; clicked => { root.switch-account(root.account-index); } } }
-                                LibraryButton { height: 36px; quiet: false; light-mode: root.light-mode; caption: "Import Zen profile"; label: "Select an existing Zen cookie database for advanced import"; enabled: !root.account-busy && !root.native-login-busy; clicked => { root.connect-account(); } }
-                                Text { text: "Import a saved Copy as cURL command (Safari, Chrome, Firefox), raw request headers, or browser JSON. Verified online before replacing your session."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
-                                LibraryButton { height: 36px; quiet: false; light-mode: root.light-mode; caption: "Import session file"; label: "Import Copy as cURL, request headers, or browser JSON from a local file"; enabled: !root.account-busy && !root.native-login-busy; clicked => { root.import-account(); } }
-                            }
-                            if root.account-connected : LibraryButton { height: 36px; quiet: false; light-mode: root.light-mode; caption: "Disconnect account"; label: "Disconnect YouTube Music account"; enabled: !root.account-busy && !root.native-login-busy; clicked => { root.disconnect-account(); } }
-
-                            }
-                        }
-                    }
-                }
                 if root.artist-picker-open : Rectangle {
                     width: parent.width; height: parent.height; background: #00000060;
                     TouchArea { clicked => { root.back-detail(); } }
@@ -2368,6 +2142,414 @@ export component AppWindow inherits Window {
                         caption-start: true; leading-icon: "M 10.5 3 A 7.5 7.5 0 1 0 10.5 18 A 7.5 7.5 0 1 0 10.5 3 Z M 16 16 L 22 22";
                         active: index == root.suggestion-index;
                         clicked => { root.select-suggestion(suggestion); }
+                    }
+                }
+            }
+        }
+        // Settings: one centred sheet with a category rail. Account is the first
+        // category, so the header's account and settings buttons open the same place.
+        if (root.settings-open || root.account-open) && !root.collapsed && !root.lyrics-open : Rectangle {
+            width: root.width; height: root.height;
+            background: #00000080;
+            opacity: ControlMotion.enabled ? 0 : 1;
+            init => { self.opacity = 1; }
+            animate opacity { duration: ControlMotion.enabled ? 200ms : 0ms; easing: ease-out; }
+            TouchArea { clicked => { root.settings-open = false; root.account-open = false; } }
+            settings-sheet := Rectangle {
+                property <bool> split: root.width >= 760px;
+                property <length> rail-width: self.split ? 212px : 0px;
+                property <length> tabs-height: self.split ? 0px : 56px;
+                property <length> lift: ControlMotion.enabled ? 18px : 0px;
+                init => { self.lift = 0; }
+                animate lift { duration: ControlMotion.enabled ? 260ms : 0ms; easing: cubic-bezier(0.2, 0.9, 0.3, 1); }
+                width: min(940px, parent.width - (self.split ? 64px : 16px));
+                height: min(700px, parent.height - (self.split ? 56px : 16px));
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2 + self.lift;
+                background: root.surface; border-width: 1px; border-color: root.outline; border-radius: 18px;
+                drop-shadow-blur: 48px; drop-shadow-offset-y: 18px; drop-shadow-color: Theme.shadow;
+                clip: true;
+                TouchArea { }
+                // Category rail.
+                if settings-sheet.split : Rectangle {
+                    x: 0px; y: 0px; width: settings-sheet.rail-width; height: parent.height;
+                    background: Theme.chrome;
+                    Rectangle { x: parent.width - 1px; width: 1px; background: Theme.divider; }
+                    VerticalLayout {
+                        padding: 14px; padding-top: 20px; spacing: 2px;
+                        HorizontalLayout {
+                            height: 44px; padding-left: 6px; spacing: 10px; cross-axis-alignment: center;
+                            Image { width: 26px; height: 26px; source: @image-url("assets/tide-icon.png"); image-fit: contain; }
+                            Text { text: "Settings"; color: root.foreground; font-size: 18px; font-weight: 800; vertical-alignment: center; }
+                        }
+                        Rectangle { height: 10px; }
+                        SettingsAccountChip {
+                            name: root.account-name != "" ? root.account-name : "YouTube Music";
+                            status: root.account-busy ? "Connecting…" : root.account-verified ? "Connected" : root.account-connected ? "Needs verification" : "Not connected";
+                            connected: root.account-verified;
+                            active: root.settings-shown-page == SettingsPage.account;
+                            select => { root.account-open = true; }
+                        }
+                        Rectangle { height: 14px; Rectangle { x: 8px; y: 6px; width: parent.width - 16px; height: 1px; background: Theme.divider; } }
+                        SettingsNavItem { title: "Playback"; tint: root.settings-tint-playback; icon-path: SettingsIcons.playback; active: root.settings-shown-page == SettingsPage.playback; select => { root.settings-page = SettingsPage.playback; root.settings-open = true; } }
+                        SettingsNavItem { title: "Audio"; tint: root.settings-tint-audio; icon-path: SettingsIcons.audio; active: root.settings-shown-page == SettingsPage.audio; select => { root.settings-page = SettingsPage.audio; root.settings-open = true; } }
+                        SettingsNavItem { title: "Appearance"; tint: root.settings-tint-appearance; icon-path: SettingsIcons.appearance; active: root.settings-shown-page == SettingsPage.appearance; select => { root.settings-page = SettingsPage.appearance; root.settings-open = true; } }
+                        SettingsNavItem { title: "Controls"; tint: root.settings-tint-controls; icon-path: SettingsIcons.controls; active: root.settings-shown-page == SettingsPage.controls; select => { root.settings-page = SettingsPage.controls; root.settings-open = true; app-focus.focus(); } }
+                        SettingsNavItem { title: "About"; tint: root.settings-tint-about; icon-path: SettingsIcons.about; active: root.settings-shown-page == SettingsPage.about; badge: root.update-available; select => { root.settings-page = SettingsPage.about; root.settings-open = true; } }
+                        Rectangle { vertical-stretch: 1; }
+                    }
+                }
+                // Narrow windows: the categories become a scrolling tab strip.
+                if !settings-sheet.split : Flickable {
+                    x: 0px; y: 0px; width: parent.width; height: settings-sheet.tabs-height;
+                    viewport-width: max(self.width, settings-tabs.preferred-width);
+                    viewport-height: self.height;
+                    interactive: true;
+                    settings-tabs := HorizontalLayout {
+                        padding-left: 12px; padding-right: 12px; padding-top: 12px; padding-bottom: 8px; spacing: 6px;
+                        alignment: start;
+                        SettingsNavItem { compact: true; title: "Account"; tint: root.settings-tint-account; icon-path: SettingsIcons.account; active: root.settings-shown-page == SettingsPage.account; select => { root.account-open = true; } }
+                        SettingsNavItem { compact: true; title: "Playback"; tint: root.settings-tint-playback; icon-path: SettingsIcons.playback; active: root.settings-shown-page == SettingsPage.playback; select => { root.settings-page = SettingsPage.playback; root.settings-open = true; } }
+                        SettingsNavItem { compact: true; title: "Audio"; tint: root.settings-tint-audio; icon-path: SettingsIcons.audio; active: root.settings-shown-page == SettingsPage.audio; select => { root.settings-page = SettingsPage.audio; root.settings-open = true; } }
+                        SettingsNavItem { compact: true; title: "Appearance"; tint: root.settings-tint-appearance; icon-path: SettingsIcons.appearance; active: root.settings-shown-page == SettingsPage.appearance; select => { root.settings-page = SettingsPage.appearance; root.settings-open = true; } }
+                        SettingsNavItem { compact: true; title: "Controls"; tint: root.settings-tint-controls; icon-path: SettingsIcons.controls; active: root.settings-shown-page == SettingsPage.controls; select => { root.settings-page = SettingsPage.controls; root.settings-open = true; app-focus.focus(); } }
+                        SettingsNavItem { compact: true; title: "About"; tint: root.settings-tint-about; icon-path: SettingsIcons.about; active: root.settings-shown-page == SettingsPage.about; badge: root.update-available; select => { root.settings-page = SettingsPage.about; root.settings-open = true; } }
+                    }
+                }
+                if !settings-sheet.split : Rectangle { y: settings-sheet.tabs-height - 1px; height: 1px; background: Theme.divider; }
+                // Page header and scrolling content.
+                settings-content := Rectangle {
+                    x: settings-sheet.rail-width; y: settings-sheet.tabs-height;
+                    width: parent.width - self.x; height: parent.height - self.y;
+                    property <length> gutter: settings-sheet.split ? 32px : 18px;
+                    property <length> header-height: settings-sheet.split ? 84px : 56px;
+                    HorizontalLayout {
+                        y: 0px; height: parent.header-height;
+                        padding-left: parent.gutter; padding-right: settings-sheet.split ? 20px : 12px; spacing: 12px;
+                        cross-axis-alignment: center;
+                        VerticalLayout {
+                            horizontal-stretch: 1; min-width: 0px; spacing: 2px; alignment: center;
+                            Text {
+                                text: root.settings-shown-page == SettingsPage.account ? "Account"
+                                    : root.settings-shown-page == SettingsPage.audio ? "Audio"
+                                    : root.settings-shown-page == SettingsPage.appearance ? "Appearance"
+                                    : root.settings-shown-page == SettingsPage.controls ? "Controls"
+                                    : root.settings-shown-page == SettingsPage.about ? "About Tide" : "Playback";
+                                color: root.foreground; font-size: settings-sheet.split ? 24px : 20px; font-weight: 800; overflow: elide;
+                            }
+                            if settings-sheet.split : Text {
+                                text: root.settings-shown-page == SettingsPage.account ? "Your YouTube Music connection"
+                                    : root.settings-shown-page == SettingsPage.audio ? "Output device, volume and sound"
+                                    : root.settings-shown-page == SettingsPage.appearance ? "Theme, motion and the mini player"
+                                    : root.settings-shown-page == SettingsPage.controls ? "Keyboard, media keys and gestures"
+                                    : root.settings-shown-page == SettingsPage.about ? "Version, updates and support" : "How songs start, end and follow each other";
+                                color: root.secondary; font-size: 13px; overflow: elide;
+                            }
+                        }
+                        LibraryButton {
+                            width: 34px; height: 34px; round: true; show-tooltip: true; light-mode: root.light-mode;
+                            icon-path: "M 6 6 L 18 18 M 18 6 L 6 18";
+                            label: root.account-open ? "Close account" : "Close settings";
+                            clicked => { root.settings-open = false; root.account-open = false; }
+                        }
+                    }
+                    ScrollView {
+                        y: parent.header-height; width: parent.width; height: parent.height - self.y;
+                        content-y <=> root.settings-scroll-y;
+                        horizontal-scrollbar-policy: always-off;
+                        VerticalLayout {
+                            padding-left: settings-content.gutter; padding-right: settings-content.gutter;
+                            padding-top: 2px; padding-bottom: 28px; spacing: 24px; alignment: start;
+
+                            // ── Account ──
+                            if root.settings-shown-page == SettingsPage.account : SettingsPageFade {
+                                Rectangle {
+                                    border-radius: 14px;
+                                    background: Theme.light ? #f2e2d9 : #261c24;
+                                    border-width: 1px; border-color: Theme.divider;
+                                    HorizontalLayout {
+                                        padding: 18px; spacing: 16px; cross-axis-alignment: center;
+                                        Rectangle {
+                                            width: 60px; height: 60px; border-radius: 30px;
+                                            background: root.account-verified ? Theme.accent : Theme.selected;
+                                            Path { x: 17px; y: 15px; width: 26px; height: 30px; viewbox-width: 24; viewbox-height: 28; fill: transparent; stroke: root.account-verified ? #fff8f6 : Theme.cover-ink; stroke-width: 1.8px; commands: "M 17 7 A 5 5 0 1 0 7 7 A 5 5 0 1 0 17 7 Z M 3 25 L 3 22 C 3 12 21 12 21 22 L 21 25"; }
+                                        }
+                                        VerticalLayout {
+                                            horizontal-stretch: 1; min-width: 0px; spacing: 6px; alignment: center;
+                                            Text { text: root.account-name != "" ? root.account-name : "YouTube Music"; color: root.foreground; font-size: 19px; font-weight: 800; overflow: elide; }
+                                            HorizontalLayout {
+                                                alignment: start;
+                                                StatusPill {
+                                                    text: root.account-busy ? "Connecting…" : root.account-verified ? "Connected" : root.account-connected ? "Needs verification" : "Not connected";
+                                                    tone: root.account-verified ? 1 : root.account-connected || root.account-busy ? 2 : 0;
+                                                }
+                                            }
+                                        }
+                                        VerticalLayout {
+                                            width: settings-sheet.split ? 196px : 172px; spacing: 6px; alignment: center;
+                                            if root.native-login-available : LibraryButton { height: 38px; quiet: false; light-mode: root.light-mode; caption-size: 13px; caption: root.native-login-busy ? "Sign-in window open…" : root.account-verified ? "Reconnect" : "Sign in with Google"; label: "Open the temporary Google sign-in window"; enabled: !root.account-busy && !root.native-login-busy; active: !root.account-verified; clicked => { root.native-sign-in(); } }
+                                            if !root.native-login-available : LibraryButton { height: 38px; quiet: false; light-mode: root.light-mode; caption-size: 13px; caption: root.account-verified ? "Manage connection" : "Connect YouTube Music"; label: "Open browser companion setup or connection guide"; enabled: !root.account-busy && !root.native-login-busy; active: !root.account-verified; clicked => { if root.companion-setup-available { root.companion-setup-open = !root.companion-setup-open; } else { root.open-account-help(); } } }
+                                            if root.native-login-busy : LibraryButton { height: 32px; light-mode: root.light-mode; caption: "Close sign-in window"; label: "Close the owned temporary sign-in window"; clicked => { root.cancel-native-sign-in(); } }
+                                            if root.account-busy : LibraryButton { height: 32px; light-mode: root.light-mode; caption: "Cancel"; label: "Cancel account request"; clicked => { root.cancel-account(); } }
+                                        }
+                                    }
+                                }
+                                if root.account-status != "" || root.native-login-status != "" || !root.account-verified : VerticalLayout {
+                                    spacing: 8px;
+                                    if !root.account-verified : Text { text: root.native-login-available ? "Sign in with Google, then choose the YouTube Music profile you listen with. Your playlists, likes and recommendations come with it." : "Import your signed-in YouTube Music tab with Tide’s browser companion to use your playlists and recommendations."; color: root.foreground; font-size: 13px; wrap: word-wrap; }
+                                    if root.account-status != "" : Text { max-height: 72px; overflow: elide; text: root.account-status; color: root.secondary; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
+                                    if root.native-login-status != "" : Text { text: root.native-login-status; color: root.secondary; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
+                                }
+                                SettingsGroup {
+                                    title: "Other ways to connect";
+                                    note: root.companion-setup-open ? root.companion-setup-status : "";
+                                    if root.native-login-available : SettingRow {
+                                        separator: false;
+                                        title: "Browser companion";
+                                        detail: "Chrome, Edge, Brave, Arc, Firefox or Zen. Best for Family Link.";
+                                        LibraryButton { width: 112px; height: 32px; quiet: false; light-mode: root.light-mode; caption: root.companion-setup-available && root.companion-setup-open ? "Hide" : "Set up"; label: "Open browser companion setup or connection guide"; enabled: !root.account-busy && !root.native-login-busy; clicked => { if root.companion-setup-available { root.companion-setup-open = !root.companion-setup-open; } else { root.open-account-help(); } } }
+                                    }
+                                    if root.companion-setup-available && root.companion-setup-open : SettingBlock {
+                                        separator: root.native-login-available;
+                                        detail: "Sign in to YouTube Music in your browser, load Tide’s companion extension, then connect that browser here. On Safari or extension-restricted accounts, use Session file below with Copy as cURL.";
+                                        if root.companion-registered-summary != "" : Text { text: root.companion-registered-summary; color: root.secondary; font-size: 12px; wrap: word-wrap; }
+                                        ComboBox {
+                                            height: 36px;
+                                            model: ["Chrome", "Edge", "Brave", "Arc", "Firefox / Zen"];
+                                            current-index <=> root.companion-browser-index;
+                                            enabled: !root.account-busy && !root.native-login-busy;
+                                            accessible-label: "Browser for Tide companion";
+                                        }
+                                        if root.companion-browser-index < 4 : LineEdit {
+                                            height: 36px;
+                                            text <=> root.companion-extension-id;
+                                            placeholder-text: "32-letter extension ID from chrome://extensions";
+                                            enabled: !root.account-busy && !root.native-login-busy;
+                                            accessible-label: "Chromium browser companion extension ID";
+                                        }
+                                        HorizontalLayout {
+                                            height: 36px; spacing: 8px;
+                                            LibraryButton { horizontal-stretch: 1; quiet: false; active: true; light-mode: root.light-mode; caption: "Connect browser"; label: "Register Tide browser companion for selected browser"; enabled: !root.account-busy && !root.native-login-busy; clicked => { root.register-companion-browser(root.companion-browser-index, root.companion-extension-id); } }
+                                            LibraryButton { width: 92px; quiet: false; light-mode: root.light-mode; caption: "Remove"; label: "Unregister Tide browser companion for selected browser"; enabled: !root.account-busy && !root.native-login-busy; clicked => { root.unregister-companion-browser(root.companion-browser-index); } }
+                                        }
+                                        HorizontalLayout {
+                                            height: 34px; spacing: 8px;
+                                            if root.companion-extension-bundled : LibraryButton { horizontal-stretch: 1; light-mode: root.light-mode; caption: "Reveal extension"; label: "Reveal bundled browser companion extension folder in Finder"; clicked => { root.reveal-companion-extension(); } }
+                                            LibraryButton { horizontal-stretch: 1; light-mode: root.light-mode; caption: "Open YT Music"; label: "Open YouTube Music in your default browser"; clicked => { root.open-ytmusic-browser(); } }
+                                            LibraryButton { horizontal-stretch: 1; light-mode: root.light-mode; caption: "Setup guide"; label: "Open browser companion connection guide"; clicked => { root.open-account-help(); } }
+                                        }
+                                    }
+                                    SettingRow {
+                                        separator: root.native-login-available || (root.companion-setup-available && root.companion-setup-open);
+                                        title: "Advanced options";
+                                        detail: "Switch the Google account slot or import a saved session.";
+                                        LibraryButton { width: 112px; height: 32px; quiet: false; light-mode: root.light-mode; caption: root.advanced-open ? "Hide" : "Show"; label: root.advanced-open ? "Hide advanced account options" : "Show advanced account options"; clicked => { root.advanced-open = !root.advanced-open; } }
+                                    }
+                                    if root.advanced-open : SettingBlock {
+                                        title: "Google account slot";
+                                        detail: "Use this only if the imported session opened the wrong Google account. Select your YouTube profile in the browser before importing.";
+                                        HorizontalLayout { height: 36px; spacing: 8px; ComboBox { horizontal-stretch: 1; model: ["Account 1", "Account 2", "Account 3", "Account 4", "Account 5", "Account 6", "Account 7", "Account 8", "Account 9", "Account 10"]; current-index <=> root.account-index; enabled: root.account-connected && !root.account-busy && !root.native-login-busy; } LibraryButton { width: 84px; quiet: false; active: true; light-mode: root.light-mode; caption: "Switch"; label: "Connect selected Google account"; enabled: root.account-connected && !root.account-busy && !root.native-login-busy; clicked => { root.switch-account(root.account-index); } } }
+                                    }
+                                    if root.advanced-open : SettingRow {
+                                        title: "Zen profile";
+                                        detail: "Select an existing Zen cookie database.";
+                                        LibraryButton { width: 112px; height: 32px; quiet: false; light-mode: root.light-mode; caption: "Import"; label: "Select an existing Zen cookie database for advanced import"; enabled: !root.account-busy && !root.native-login-busy; clicked => { root.connect-account(); } }
+                                    }
+                                    if root.advanced-open : SettingRow {
+                                        title: "Session file";
+                                        detail: "A saved Copy as cURL command (Safari, Chrome, Firefox), raw request headers, or browser JSON. Verified online before replacing your session.";
+                                        LibraryButton { width: 112px; height: 32px; quiet: false; light-mode: root.light-mode; caption: "Import file"; label: "Import Copy as cURL, request headers, or browser JSON from a local file"; enabled: !root.account-busy && !root.native-login-busy; clicked => { root.import-account(); } }
+                                    }
+                                }
+                                if root.account-connected : SettingsGroup {
+                                    SettingRow {
+                                        separator: false; danger: true;
+                                        title: "Disconnect account";
+                                        detail: "Removes the saved session from this computer. Your YouTube Music library is not changed.";
+                                        LibraryButton { width: 112px; height: 32px; quiet: false; light-mode: root.light-mode; caption: "Disconnect"; label: "Disconnect YouTube Music account"; enabled: !root.account-busy && !root.native-login-busy; clicked => { root.disconnect-account(); } }
+                                    }
+                                }
+                            }
+
+                            // ── Playback ──
+                            if root.settings-shown-page == SettingsPage.playback : SettingsPageFade {
+                                SettingsGroup {
+                                    title: "Transitions";
+                                    SettingBlock {
+                                        separator: false; enabled: !root.bit-perfect;
+                                        title: "Crossfade";
+                                        detail: root.crossfade-seconds == 0 ? "Overlap the end of each song with the start of the next." : "The next song starts under the end of this one, using a second, short-lived player while songs overlap.";
+                                        SegmentedControl {
+                                            options: ["Off", "3 s", "6 s", "9 s", "12 s"]; label: "Crossfade";
+                                            enabled: !root.bit-perfect;
+                                            selected: root.crossfade-seconds == 0 ? 0 : root.crossfade-seconds == 3 ? 1 : root.crossfade-seconds == 6 ? 2 : root.crossfade-seconds == 9 ? 3 : root.crossfade-seconds == 12 ? 4 : -1;
+                                            select(index) => { root.choose-crossfade(index * 3); }
+                                        }
+                                    }
+                                    SettingToggle { title: "Fade between songs"; detail: root.crossfade-seconds == 0 ? "Ease each song in and out instead of cutting." : "Off while crossfade is on."; checked: root.fade-transitions && root.crossfade-seconds == 0 && !root.bit-perfect; enabled: root.crossfade-seconds == 0 && !root.bit-perfect; toggled => { root.toggle-fade-transitions(); } }
+                                }
+                                SettingsGroup {
+                                    title: "Listening";
+                                    note: root.history-feedback-status;
+                                    SettingToggle { separator: false; title: "Listening history"; detail: "Send played songs to YouTube Music for better recommendations."; checked: root.history-feedback-enabled; toggled => { root.toggle-history-feedback(); } }
+                                    SettingToggle { title: "Skip known disliked songs"; detail: "Pass over songs you've given a thumbs down."; checked: root.skip-disliked; toggled => { root.toggle-skip-disliked(); } }
+                                }
+                                SettingsGroup {
+                                    title: "Sharing";
+                                    note: root.discord-presence-enabled ? root.discord-status : "";
+                                    SettingToggle { separator: false; title: "Discord activity"; detail: "Show the playing song on your Discord profile."; checked: root.discord-presence-enabled; toggled => { root.toggle-discord-presence(); } }
+                                }
+                            }
+
+                            // ── Audio ──
+                            if root.settings-shown-page == SettingsPage.audio : SettingsPageFade {
+                                SettingsGroup {
+                                    title: "Output";
+                                    SettingBlock {
+                                        separator: false;
+                                        title: "Output device";
+                                        detail: root.audio-status;
+                                        ComboBox { height: 36px; model: root.audio-device-names; current-index: root.audio-device-index; accessible-label: "Output device"; selected(value) => { root.choose-audio-device(self.current-index); } }
+                                    }
+                                    SettingToggle { title: "Bit-perfect output"; detail: root.bit-perfect ? "Tide plays at full volume and turns off Even volume, crossfade, fades and the equalizer. Other apps can't play sound on this device meanwhile. YouTube Music streams are compressed, so this keeps the decoded audio unchanged rather than making it lossless." : "Exclusive device access with no processing. Set loudness on your device or DAC."; checked: root.bit-perfect; toggled => { root.toggle-bit-perfect(); } }
+                                    SettingRow {
+                                        title: "Volume step"; detail: "For the mouse wheel and arrow keys.";
+                                        SegmentedControl { width: 216px; options: ["1%", "2%", "5%", "10%"]; label: "Volume adjustment step"; selected: root.volume-step-index; select(index) => { root.set-volume-step(index); } }
+                                    }
+                                }
+                                SettingsGroup {
+                                    title: "Sound";
+                                    note: "Shapes Tide's sound only. Presets that raise a band lower the overall level first, so loud songs don't distort.";
+                                    SettingToggle { separator: false; title: "Even volume"; detail: "Smooth out loud and quiet songs locally. Adds a small processing delay; off keeps the original dynamics."; checked: root.normalize-volume && !root.bit-perfect; enabled: !root.bit-perfect; toggled => { root.toggle-normalization(); } }
+                                    SettingBlock {
+                                        title: "Equalizer"; enabled: !root.bit-perfect;
+                                        for row in 2 : HorizontalLayout {
+                                            spacing: 8px;
+                                            for name[column] in (row == 0 ? ["Off", "Bass boost", "Bass reducer"] : ["Treble boost", "Vocal", "Loudness"]) : EqualizerPreset {
+                                                title: name; preset: row * 3 + column;
+                                                selected: root.equalizer == row * 3 + column; enabled: !root.bit-perfect;
+                                                select => { root.choose-equalizer(row * 3 + column); }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // ── Appearance ──
+                            if root.settings-shown-page == SettingsPage.appearance : SettingsPageFade {
+                                SettingsGroup {
+                                    title: "Theme";
+                                    SettingBlock {
+                                        separator: false; enabled: !root.artist-picker-open;
+                                        HorizontalLayout {
+                                            spacing: 10px;
+                                            ThemeCard {
+                                                title: "Dark"; kind: 0;
+                                                selected: !root.light-mode && !(root.windows-theme-supported && root.follow-windows-theme);
+                                                select => { if root.follow-windows-theme { root.toggle-follow-windows-theme(); } if root.light-mode { root.switch-mode(); } }
+                                            }
+                                            ThemeCard {
+                                                title: "Light"; kind: 1;
+                                                selected: root.light-mode && !(root.windows-theme-supported && root.follow-windows-theme);
+                                                select => { if root.follow-windows-theme { root.toggle-follow-windows-theme(); } if !root.light-mode { root.switch-mode(); } }
+                                            }
+                                            if root.windows-theme-supported : ThemeCard {
+                                                title: root.mac-os ? "Match system" : "Match Windows"; kind: 2;
+                                                selected: root.follow-windows-theme;
+                                                select => { if !root.follow-windows-theme { root.toggle-follow-windows-theme(); } }
+                                            }
+                                        }
+                                    }
+                                }
+                                SettingsGroup {
+                                    title: "Motion";
+                                    SettingToggle { separator: false; title: "Animations"; detail: "Smooth transitions, hover effects and live level bars."; checked: root.animations-enabled; toggled => { root.toggle-animations(); } }
+                                }
+                                SettingsGroup {
+                                    title: "Mini player";
+                                    SettingRow {
+                                        separator: false;
+                                        title: "Opacity"; detail: "How see-through the floating mini player is.";
+                                        TideSlider { width: 168px; height: 28px; light-mode: root.light-mode; minimum: 60; maximum: 100; value: root.mini-opacity; label: "Mini player opacity"; value-text: root.mini-opacity.to-fixed(0) + "%"; released(value) => { root.change-mini-opacity(value); } }
+                                        Text { width: 40px; text: root.mini-opacity.to-fixed(0) + "%"; color: root.foreground; font-size: 13px; font-weight: 700; horizontal-alignment: right; vertical-alignment: center; }
+                                    }
+                                }
+                            }
+
+                            // ── Controls ──
+                            if root.settings-shown-page == SettingsPage.controls : SettingsPageFade {
+                                SettingsGroup {
+                                    title: "Keyboard shortcuts";
+                                    note: root.shortcut-status != "" ? root.shortcut-status
+                                        : (root.mac-os ? "Select a shortcut, then press a ⌘, ⌥ or ⌃ combination. Esc cancels. " : "Select a shortcut, then press a Ctrl or Alt combination. Esc cancels. ")
+                                        + "Custom shortcuts and media keys work in the background; while Tide has focus, Space plays or pauses and J / L seek 10 seconds.";
+                                    ShortcutSetting { separator: false; action: "Play / pause"; binding: root.shortcut-toggle; recording: root.shortcut-recording-index == 0; record => { root.begin-shortcut(0); app-focus.focus(); } clear => { root.clear-shortcut(0); } }
+                                    ShortcutSetting { action: "Next song"; binding: root.shortcut-next; recording: root.shortcut-recording-index == 1; record => { root.begin-shortcut(1); app-focus.focus(); } clear => { root.clear-shortcut(1); } }
+                                    ShortcutSetting { action: "Previous song"; binding: root.shortcut-previous; recording: root.shortcut-recording-index == 2; record => { root.begin-shortcut(2); app-focus.focus(); } clear => { root.clear-shortcut(2); } }
+                                }
+                                SettingsGroup {
+                                    title: root.mac-os ? "System" : "Windows";
+                                    SettingToggle { separator: false; title: root.mac-os ? "Media keys and Control Center" : "Windows media keys"; detail: root.mac-os ? "Play, pause and skip from your keyboard and Control Center." : "Play, pause and skip with your keyboard's media keys."; checked: root.media-controls-enabled; toggled => { root.toggle-media-controls(); } }
+                                    if root.media-controls-enabled : SettingToggle { title: root.mac-os ? "Show Tide in the menu bar" : "Keep playing when I close Tide"; detail: root.mac-os ? "" : "Closing the window keeps Tide in the system tray."; checked: root.close-to-tray; toggled => { root.toggle-close-to-tray(); } }
+                                    if root.mac-os : SettingToggle { title: "Notify when the song changes"; checked: root.notify-song-change; toggled => { root.toggle-notify-song-change(); } }
+                                }
+                                SettingsGroup {
+                                    title: "Trackpad";
+                                    SettingToggle { separator: false; title: "Swipe the player to change songs"; detail: "Two-finger swipe over the player bar: right for next, left for previous."; checked: root.trackpad-swipe; toggled => { root.toggle-trackpad-swipe(); } }
+                                    if root.trackpad-swipe : SettingToggle { title: "Reverse swipe direction"; checked: root.swipe-reversed; toggled => { root.toggle-swipe-reversed(); } }
+                                    if root.windows-theme-supported && !root.mac-os : SettingRow {
+                                        title: "Four-finger swipes"; detail: "Skip songs from anywhere: under Four-finger gestures, choose Change audio and volume.";
+                                        LibraryButton { width: 112px; height: 32px; quiet: false; light-mode: root.light-mode; caption: "Set up…"; label: "Open Windows touchpad settings. Under Four-finger gestures, choose Change audio and volume to skip songs from anywhere."; clicked => { root.open-touchpad-settings(); } }
+                                    }
+                                }
+                            }
+
+                            // ── About ──
+                            if root.settings-shown-page == SettingsPage.about : SettingsPageFade {
+                                Rectangle {
+                                    border-radius: 14px;
+                                    background: Theme.light ? #f2e2d9 : #261c24;
+                                    border-width: 1px; border-color: Theme.divider;
+                                    HorizontalLayout {
+                                        padding: 18px; spacing: 16px; cross-axis-alignment: center;
+                                        Image { width: 60px; height: 60px; source: @image-url("assets/tide-icon.png"); image-fit: contain; }
+                                        VerticalLayout {
+                                            horizontal-stretch: 1; min-width: 0px; spacing: 4px; alignment: center;
+                                            Text { text: "Tide"; color: root.foreground; font-size: 20px; font-weight: 800; }
+                                            Text { text: "Version " + root.app-version + (root.update-phase == 2 ? " · update ready" : root.update-available ? " · update available" : ""); color: root.secondary; font-size: 12px; overflow: elide; }
+                                        }
+                                        LibraryButton {
+                                            width: 148px; height: 36px; quiet: false; active: root.update-available || root.update-phase == 2;
+                                            notification: false; light-mode: root.light-mode; caption-size: 13px;
+                                            caption: root.update-phase == 2 ? "Restart to update" : root.update-available ? "View update" : root.update-busy ? "Checking…" : "Check for updates";
+                                            label: "Open Tide updates";
+                                            clicked => { root.suggestions-open = false; root.update-panel-open = true; app-focus.focus(); }
+                                        }
+                                    }
+                                }
+                                SettingsGroup {
+                                    title: "Updates";
+                                    SettingToggle { separator: false; title: "Check for updates on startup"; detail: "Tide asks GitHub for a newer stable release when it opens."; checked: root.auto-update-checks; toggled => { root.toggle-update-checks(); } }
+                                }
+                                if root.crash-log-available : SettingsGroup {
+                                    title: "Support";
+                                    SettingRow {
+                                        separator: false;
+                                        title: "Crash log"; detail: "Review it before sharing it in a bug report.";
+                                        LibraryButton { width: 112px; height: 32px; quiet: false; light-mode: root.light-mode; caption: "Show file"; label: "Show the crash log file in its folder. Review it before sharing it in a bug report."; clicked => { root.open-crash-log(); } }
+                                    }
+                                }
+                                SettingsGroup {
+                                    title: "Built with";
+                                    SettingRow {
+                                        separator: false;
+                                        title: "Slint";
+                                        detail: "Tide's interface is drawn with the Slint UI toolkit.";
+                                        AboutSlint { width: 150px; height: 96px; }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
