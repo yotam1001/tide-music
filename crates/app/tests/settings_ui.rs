@@ -71,7 +71,7 @@ fn settings_sheet_navigates_toggles_and_captures_shortcuts() {
     let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
     slint::platform::set_platform(Box::new(Platform(window.clone()))).unwrap();
     let ui = AppWindow::new().unwrap();
-    ui.set_app_version("0.4.35".into());
+    ui.set_app_version("1.2.3".into());
     ui.set_windows_theme_supported(true);
     ui.set_crash_log_available(true);
     ui.set_audio_device_names(slint::ModelRc::new(slint::VecModel::from(vec![
