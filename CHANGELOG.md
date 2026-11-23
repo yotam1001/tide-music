@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.4.34 - 2026-11-23
+
 - Browse playlists and Liked Songs beyond 2,000 entries. Shuffle draws from the entire collection and keeps up to 2,000 playable tracks in the queue.
 - Fixed crossfade edge cases (#150, #151):
   - Volume changes and muting during a crossfade now apply to the incoming track as well and persist after handoff.
