@@ -2,10 +2,16 @@
 
 ## Unreleased
 
+## 0.4.34 - 2026-11-23
+
 - Browse playlists and Liked Songs beyond 2,000 entries. Shuffle draws from the entire collection and keeps up to 2,000 playable tracks in the queue.
 - Fixed crossfade edge cases (#150, #151):
   - Volume changes and muting during a crossfade now apply to the incoming track as well and persist after handoff.
   - Clearing the queue or pressing Stop during a crossfade now stops and retires the incoming track immediately and restores normal gain for the next session.
+- Fixed an audio settings error when enabling bit-perfect playback with song fades enabled.
+- Start Radio keeps the existing queue when no usable recommendations are available.
+- Improved queue filtering, shuffle availability, and now-playing indicators.
+- Fixed Windows mini-player pinning so it preserves the main window stacking order.
 
 ## 0.4.33 - 2026-11-20
 
