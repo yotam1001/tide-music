@@ -12,6 +12,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tide_core::{PlaybackCommand, Queue, Track};
+mod about_links;
 mod app_prompts;
 mod artists;
 mod artwork;
@@ -3192,6 +3193,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (tx, rx) = mpsc::sync_channel(2);
     let (library_tx, library_rx) = mpsc::sync_channel::<LibraryResult>(2);
     music_feedback::install(&state, &ui, &library_tx);
+    about_links::install(&ui);
     app_prompts::install(
         &state,
         &ui,

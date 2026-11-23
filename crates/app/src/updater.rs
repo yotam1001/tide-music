@@ -731,6 +731,10 @@ impl Updater {
             ui.set_update_status("Download canceled. Music keeps playing.".into());
             return;
         }
+        if matches!(result, Completion::Checked(Err(_))) {
+            // A failed check says nothing about whether this copy is current.
+            ui.set_update_current(false);
+        }
         match result {
             Completion::Checked(Ok((candidate, cached))) => {
                 self.refresh_installability(ui);
@@ -743,6 +747,7 @@ impl Updater {
                     .unwrap_or_else(|| "No newer stable release is available".into());
                 self.available = candidate;
                 ui.set_update_available(self.available.is_some());
+                ui.set_update_current(self.available.is_none());
                 ui.set_update_status(status.into());
             }
             Completion::Checked(Err(error)) | Completion::Downloaded(Err(error)) => {

@@ -3,7 +3,7 @@ import { TrackRow, JamMemberRow, ArtistRow, PlaylistRow, RecommendationRow, Lyri
 import { ControlMotion, Theme, LayoutMetrics, TideSlider, LibraryButton, LibraryTab, NavigationButton, EqualizerBars } from "theme.slint";
 import { Cover, PlaylistTile, LoadingTracks, EmptyState, ArtistLink, SongRow, LibraryEntry, HomeCard, UpdateAction, SidebarCollection, QuickTile, BrowseTile, MoodChip, RatingButton } from "components.slint";
 import { QueueDrawer } from "queue.slint";
-import { SettingsPage, SettingsIcons, SettingsNavItem, SettingsAccountChip, SettingsPageFade, SettingsGroup, SettingRow, SettingBlock, SettingToggle, SegmentedControl, ThemeCard, EqualizerPreset, ShortcutSetting, StatusPill } from "settings.slint";
+import { SettingsPage, SettingsIcons, SettingsTheme, SettingsNavItem, SettingsRailFooter, SettingsAccountChip, SettingsPageFade, SettingsGroup, SettingRow, SettingBlock, SettingItem, SettingToggle, SegmentedControl, ThemeCard, MiniPlayerPreview, EqualizerPreset, ShortcutSetting, StatusPill, RowSeparator } from "settings.slint";
 import { PlayerBar } from "player.slint";
 import { LyricsPage } from "lyrics.slint";
 
@@ -211,6 +211,8 @@ export component AppWindow inherits Window {
     in property <string> update-status: "Check for a new version of Tide";
     in property <bool> update-busy: false;
     in property <bool> update-available: false;
+    // The last update check found nothing newer.
+    in property <bool> update-current: false;
     in property <bool> update-installable: false;
     in property <bool> auto-update-checks: true;
     callback check-updates();
@@ -259,6 +261,9 @@ export component AppWindow inherits Window {
     in property <bool> crash-log-available;
     callback app-prompt-answer(bool);
     callback open-crash-log();
+    // Settings > About links: 0 release notes, 1 report a problem, 2 source,
+    // 3 privacy, 4 third-party notices.
+    callback open-about-link(int);
     in property <bool> detail-editable: false;
     // The open playlist/album was saved to the library in this session.
     in property <bool> detail-saved: false;
@@ -606,13 +611,14 @@ export component AppWindow inherits Window {
     changed collapsed => { if root.collapsed { root.suggestions-open = false; root.update-panel-open = false; root.settings-open = false; root.account-open = false; root.cancel-shortcut(); } }
     changed settings-open => {
         root.settings-scroll-y = 0px;
-        if root.settings-open { root.suggestions-open = false; root.playlist-picker-open = false; root.account-open = false; root.jam-open = false; app-focus.focus(); }
-        else { root.cancel-shortcut(); }
+        // The sheet takes keyboard focus itself when it opens.
+        if root.settings-open { root.suggestions-open = false; root.playlist-picker-open = false; root.account-open = false; root.jam-open = false; }
+        else { root.cancel-shortcut(); if !root.account-open { app-focus.focus(); } }
     }
     changed account-open => {
-        if root.account-open { root.suggestions-open = false; root.playlist-picker-open = false; root.settings-open = false; root.jam-open = false; app-focus.focus(); }
+        if root.account-open { root.suggestions-open = false; root.playlist-picker-open = false; root.settings-open = false; root.jam-open = false; }
 
-        else { root.advanced-open = false; }
+        else { root.advanced-open = false; if !root.settings-open { app-focus.focus(); } }
     }
     changed jam-open => { if root.jam-open { root.suggestions-open = false; root.playlist-picker-open = false; root.settings-open = false; root.account-open = false; app-focus.focus(); } }
     changed playlist-picker-open => { if root.playlist-picker-open { root.settings-open = false; root.account-open = false; root.jam-open = false; root.artist-picker-open = false; app-focus.focus(); } }
@@ -2154,127 +2160,169 @@ export component AppWindow inherits Window {
         }
         // Settings: one centred sheet with a category rail. Account is the first
         // category, so the header's account and settings buttons open the same place.
+        // Narrow windows keep the rail, as icon tiles with small labels.
         if (root.settings-open || root.account-open) && !root.collapsed && !root.lyrics-open : Rectangle {
             width: root.width; height: root.height;
             background: #00000080;
             opacity: ControlMotion.enabled ? 0 : 1;
-            init => { self.opacity = 1; }
+            // Keyboard focus moves into the sheet, so Tab starts there and the
+            // controls behind the scrim stay out of reach.
+            init => { self.opacity = 1; sheet-scope.focus(); }
             animate opacity { duration: ControlMotion.enabled ? 200ms : 0ms; easing: ease-out; }
             TouchArea { clicked => { root.settings-open = false; root.account-open = false; } }
             settings-sheet := Rectangle {
                 property <bool> split: root.width >= 760px;
-                property <length> rail-width: self.split ? 212px : 0px;
-                property <length> tabs-height: self.split ? 0px : 56px;
+                property <length> rail-width: self.split ? 212px : 78px;
                 property <length> lift: ControlMotion.enabled ? 18px : 0px;
+                // Rail order: Account (hidden for Jam guests), then the five categories.
+                property <int> page-index: root.settings-shown-page == SettingsPage.account ? 0
+                    : root.settings-shown-page == SettingsPage.playback ? 1
+                    : root.settings-shown-page == SettingsPage.audio ? 2
+                    : root.settings-shown-page == SettingsPage.appearance ? 3
+                    : root.settings-shown-page == SettingsPage.controls ? 4 : 5;
+                property <string> update-summary: root.update-phase == 2 ? "Restart to update"
+                    : root.update-phase == 1 ? "Downloading update…"
+                    : root.update-available ? "Update available"
+                    : root.update-busy ? "Checking for updates…"
+                    : root.update-current ? "Up to date" : "Check for updates";
+                property <int> update-tone: root.update-phase == 2 || root.update-available ? 2 : root.update-current ? 1 : 0;
+                function open-page(index: int) {
+                    if index == 0 { root.account-open = true; }
+                    else if index == 1 { root.settings-page = SettingsPage.playback; root.settings-open = true; }
+                    else if index == 2 { root.settings-page = SettingsPage.audio; root.settings-open = true; }
+                    else if index == 3 { root.settings-page = SettingsPage.appearance; root.settings-open = true; }
+                    else if index == 4 { root.settings-page = SettingsPage.controls; root.settings-open = true; }
+                    else { root.settings-page = SettingsPage.about; root.settings-open = true; }
+                }
+                function focus-page(index: int) {
+                    if index == 0 { if self.split { rail-account-card.focus-item(); } else { rail-account.focus-item(); } }
+                    else if index == 1 { rail-playback.focus-item(); }
+                    else if index == 2 { rail-audio.focus-item(); }
+                    else if index == 3 { rail-appearance.focus-item(); }
+                    else if index == 4 { rail-controls.focus-item(); }
+                    else { rail-about.focus-item(); }
+                }
+                // The rail entry with keyboard focus, or else the page on show.
+                function focused-index() -> int {
+                    return rail-account-card.item-focused || rail-account.item-focused ? 0
+                        : rail-playback.item-focused ? 1 : rail-audio.item-focused ? 2
+                        : rail-appearance.item-focused ? 3 : rail-controls.item-focused ? 4
+                        : rail-about.item-focused ? 5 : self.page-index;
+                }
+                function go(index: int) { self.open-page(index); self.focus-page(index); }
+                function leave(after: int) {
+                    // Rail shortcuts that leave Settings for the app behind it.
+                    root.settings-open = false; root.account-open = false;
+                    if after == 1 { root.jam-open = false; root.playlist-picker-open = false; root.library-open = true; root.home-open = false; root.close-detail(); root.close-search(); root.forward-collection = false; }
+                    else if after == 2 { root.play-liked(); }
+                    else if after == 3 { root.jam-open = false; root.playlist-picker-open = false; root.library-open = false; root.home-open = true; root.close-detail(); root.close-search(); root.forward-collection = false; }
+                }
                 init => { self.lift = 0; }
                 animate lift { duration: ControlMotion.enabled ? 260ms : 0ms; easing: cubic-bezier(0.2, 0.9, 0.3, 1); }
                 width: min(940px, parent.width - (self.split ? 64px : 16px));
                 height: min(700px, parent.height - (self.split ? 56px : 16px));
                 x: (parent.width - self.width) / 2;
                 y: (parent.height - self.height) / 2 + self.lift;
-                background: root.surface; border-width: 1px; border-color: root.outline; border-radius: 18px;
+                background: SettingsTheme.pane; border-width: 1px; border-color: root.outline; border-radius: 18px;
                 drop-shadow-blur: 48px; drop-shadow-offset-y: 18px; drop-shadow-color: Theme.shadow;
                 clip: true;
                 TouchArea { }
-                // Category rail.
-                if settings-sheet.split : Rectangle {
-                    x: 1px; y: 1px; width: settings-sheet.rail-width - 1px; height: parent.height - 2px;
-                    border-top-left-radius: 17px; border-bottom-left-radius: 17px;
-                    background: Theme.chrome;
-                    Rectangle { x: parent.width - 1px; width: 1px; background: Theme.divider; }
-                    VerticalLayout {
-                        padding: 14px; padding-top: 20px; spacing: 2px;
-                        HorizontalLayout {
-                            height: 44px; padding-left: 6px; spacing: 10px; cross-axis-alignment: center;
-                            Image { width: 26px; height: 26px; source: @image-url("assets/tide-icon.png"); image-fit: contain; }
-                            Text { text: "Settings"; color: root.foreground; font-size: 18px; font-weight: 800; vertical-alignment: center; }
-                        }
-                        Rectangle { height: 10px; }
-                        if !root.jam-guest : SettingsAccountChip {
-                            name: root.account-name != "" ? root.account-name : "YouTube Music";
-                            status: root.account-busy ? "Connecting…" : root.account-verified ? "Connected" : root.account-connected ? "Needs verification" : "Not connected";
-                            connected: root.account-verified;
-                            tone: root.account-verified ? 1 : root.account-connected || root.account-busy ? 2 : 0;
-                            active: root.settings-shown-page == SettingsPage.account;
-                            select => { root.account-open = true; }
-                        }
-                        Rectangle { height: 14px; Rectangle { x: 8px; y: 6px; width: parent.width - 16px; height: 1px; background: Theme.divider; } }
-                        SettingsNavItem { title: "Playback"; tint: root.settings-tint-playback; icon-path: SettingsIcons.playback; active: root.settings-shown-page == SettingsPage.playback; select => { root.settings-page = SettingsPage.playback; root.settings-open = true; } }
-                        SettingsNavItem { title: "Audio"; tint: root.settings-tint-audio; icon-path: SettingsIcons.audio; active: root.settings-shown-page == SettingsPage.audio; select => { root.settings-page = SettingsPage.audio; root.settings-open = true; } }
-                        SettingsNavItem { title: "Appearance"; tint: root.settings-tint-appearance; icon-path: SettingsIcons.appearance; active: root.settings-shown-page == SettingsPage.appearance; select => { root.settings-page = SettingsPage.appearance; root.settings-open = true; } }
-                        SettingsNavItem { title: "Controls"; tint: root.settings-tint-controls; icon-path: SettingsIcons.controls; active: root.settings-shown-page == SettingsPage.controls; select => { root.settings-page = SettingsPage.controls; root.settings-open = true; app-focus.focus(); } }
-                        SettingsNavItem { title: "About"; tint: root.settings-tint-about; icon-path: SettingsIcons.about; active: root.settings-shown-page == SettingsPage.about; badge: root.update-available || root.update-phase == 2; select => { root.settings-page = SettingsPage.about; root.settings-open = true; } }
-                        Rectangle { vertical-stretch: 1; }
+                sheet-scope := FocusScope {
+                    // Shift+Tab from the first rail entry lands here: wrap to the end.
+                    focus-gained(reason) => { if reason == FocusReason.tab-navigation { close-button.focus(); } }
+                    key-pressed(event) => {
+                        if self.has-focus && (event.text == Key.Backtab || (event.text == Key.Tab && event.modifiers.shift)) { close-button.focus(); return accept; }
+                        return reject;
                     }
-                }
-                // Narrow windows: the categories become a scrolling tab strip.
-                if !settings-sheet.split : Flickable {
-                    x: 0px; y: 0px; width: parent.width; height: settings-sheet.tabs-height;
-                    viewport-width: max(self.width, settings-tabs.preferred-width);
-                    viewport-height: self.height;
-                    interactive: true;
-                    settings-tabs := HorizontalLayout {
-                        padding-left: 10px; padding-right: 10px; padding-top: 14px; padding-bottom: 10px; spacing: 4px;
-                        alignment: start;
-                        if !root.jam-guest : SettingsNavItem { compact: true; title: "Account"; tint: root.settings-tint-account; icon-path: SettingsIcons.account; active: root.settings-shown-page == SettingsPage.account; select => { root.account-open = true; } }
-                        SettingsNavItem { compact: true; title: "Playback"; tint: root.settings-tint-playback; icon-path: SettingsIcons.playback; active: root.settings-shown-page == SettingsPage.playback; select => { root.settings-page = SettingsPage.playback; root.settings-open = true; } }
-                        SettingsNavItem { compact: true; title: "Audio"; tint: root.settings-tint-audio; icon-path: SettingsIcons.audio; active: root.settings-shown-page == SettingsPage.audio; select => { root.settings-page = SettingsPage.audio; root.settings-open = true; } }
-                        SettingsNavItem { compact: true; title: "Appearance"; tint: root.settings-tint-appearance; icon-path: SettingsIcons.appearance; active: root.settings-shown-page == SettingsPage.appearance; select => { root.settings-page = SettingsPage.appearance; root.settings-open = true; } }
-                        SettingsNavItem { compact: true; title: "Controls"; tint: root.settings-tint-controls; icon-path: SettingsIcons.controls; active: root.settings-shown-page == SettingsPage.controls; select => { root.settings-page = SettingsPage.controls; root.settings-open = true; app-focus.focus(); } }
-                        SettingsNavItem { compact: true; title: "About"; tint: root.settings-tint-about; icon-path: SettingsIcons.about; active: root.settings-shown-page == SettingsPage.about; badge: root.update-available || root.update-phase == 2; select => { root.settings-page = SettingsPage.about; root.settings-open = true; } }
-                    }
-                }
-                if !settings-sheet.split : Rectangle { y: settings-sheet.tabs-height - 1px; height: 1px; background: Theme.divider; }
-                // Page header and scrolling content.
-                settings-content := Rectangle {
-                    x: settings-sheet.rail-width; y: settings-sheet.tabs-height;
-                    width: parent.width - self.x; height: parent.height - self.y;
-                    property <length> gutter: settings-sheet.split ? 32px : 18px;
-                    property <length> header-height: settings-sheet.split ? 80px : 56px;
-                    HorizontalLayout {
-                        y: 0px; height: parent.header-height;
-                        padding-left: parent.gutter; padding-right: settings-sheet.split ? 20px : 12px; spacing: 12px;
-                        cross-axis-alignment: center;
-                        VerticalLayout {
-                            horizontal-stretch: 1; min-width: 0px; spacing: 2px; alignment: center;
-                            Text {
-                                text: root.settings-shown-page == SettingsPage.account ? "Account"
-                                    : root.settings-shown-page == SettingsPage.audio ? "Audio"
-                                    : root.settings-shown-page == SettingsPage.appearance ? "Appearance"
-                                    : root.settings-shown-page == SettingsPage.controls ? "Controls"
-                                    : root.settings-shown-page == SettingsPage.about ? "About Tide" : "Playback";
-                                color: root.foreground; font-size: settings-sheet.split ? 24px : 20px; font-weight: 800; overflow: elide;
+                    // Category rail.
+                    Rectangle {
+                        x: 1px; y: 1px; width: settings-sheet.rail-width - 1px; height: parent.height - 2px;
+                        border-top-left-radius: 17px; border-bottom-left-radius: 17px;
+                        background: SettingsTheme.rail;
+                        Rectangle { x: parent.width - 1px; width: 1px; background: Theme.divider; }
+                        // Up and Down move between categories while the rail has focus.
+                        FocusScope {
+                            focus-on-click: false; focus-on-tab-navigation: false;
+                            key-pressed(event) => {
+                                if event.modifiers.control || event.modifiers.alt || event.modifiers.meta { return reject; }
+                                if event.text == Key.UpArrow || event.text == Key.DownArrow {
+                                    settings-sheet.go(clamp(settings-sheet.focused-index() + (event.text == Key.UpArrow ? -1 : 1), root.jam-guest ? 1 : 0, 5));
+                                    return accept;
+                                }
+                                return reject;
                             }
-                            if settings-sheet.split : Text {
-                                text: root.settings-shown-page == SettingsPage.account ? "Your YouTube Music connection"
-                                    : root.settings-shown-page == SettingsPage.audio ? "Output device, volume and sound"
-                                    : root.settings-shown-page == SettingsPage.appearance ? "Theme, motion and the mini player"
-                                    : root.settings-shown-page == SettingsPage.controls ? "Keyboard, media keys and gestures"
-                                    : root.settings-shown-page == SettingsPage.about ? "Version, updates and support" : "How songs start, end and follow each other";
-                                color: root.secondary; font-size: 13px; overflow: elide;
+                            VerticalLayout {
+                                padding-left: settings-sheet.split ? 14px : 5px; padding-right: settings-sheet.split ? 14px : 6px;
+                                padding-top: settings-sheet.split ? 20px : 10px; padding-bottom: settings-sheet.split ? 14px : 8px;
+                                spacing: 2px;
+                                if settings-sheet.split : HorizontalLayout {
+                                    height: 44px; padding-left: 6px; spacing: 10px; cross-axis-alignment: center;
+                                    Image { width: 26px; height: 26px; source: @image-url("assets/tide-icon.png"); image-fit: contain; }
+                                    Text { text: "Settings"; color: root.foreground; font-size: 18px; font-weight: 800; vertical-alignment: center; }
+                                }
+                                if settings-sheet.split : Rectangle { height: 10px; }
+                                rail-account-card := SettingsAccountChip {
+                                    visible: settings-sheet.split && !root.jam-guest;
+                                    height: self.visible ? 56px : 0px;
+                                    name: root.account-name != "" ? root.account-name : "YouTube Music";
+                                    status: root.account-busy ? "Connecting…" : root.account-verified ? "Connected" : root.account-connected ? "Needs verification" : "Not connected";
+                                    connected: root.account-verified;
+                                    tone: root.account-verified ? 1 : root.account-connected || root.account-busy ? 2 : 0;
+                                    active: root.settings-shown-page == SettingsPage.account;
+                                    select => { settings-sheet.open-page(0); }
+                                }
+                                rail-account := SettingsNavItem {
+                                    visible: !settings-sheet.split && !root.jam-guest;
+                                    height: self.visible ? 52px : 0px;
+                                    stacked: true; title: "Account"; tint: root.settings-tint-account; icon-path: SettingsIcons.account;
+                                    status-tone: root.account-verified ? 1 : root.account-connected || root.account-busy ? 2 : 0;
+                                    status-text: root.account-busy ? "connecting" : root.account-verified ? "connected" : root.account-connected ? "needs verification" : "not connected";
+                                    active: root.settings-shown-page == SettingsPage.account;
+                                    select => { settings-sheet.open-page(0); }
+                                }
+                                if settings-sheet.split && !root.jam-guest : Rectangle { height: 16px; Rectangle { x: 8px; y: 7px; width: parent.width - 16px; height: 1px; background: Theme.divider; } }
+                                if !settings-sheet.split && !root.jam-guest : Rectangle { height: 7px; Rectangle { x: 14px; y: 3px; width: parent.width - 28px; height: 1px; background: Theme.divider; } }
+                                rail-playback := SettingsNavItem { stacked: !settings-sheet.split; height: self.stacked ? 52px : 40px; title: "Playback"; tint: root.settings-tint-playback; icon-path: SettingsIcons.playback; active: root.settings-shown-page == SettingsPage.playback; select => { settings-sheet.open-page(1); } }
+                                rail-audio := SettingsNavItem { stacked: !settings-sheet.split; height: self.stacked ? 52px : 40px; title: "Audio"; tint: root.settings-tint-audio; icon-path: SettingsIcons.audio; active: root.settings-shown-page == SettingsPage.audio; select => { settings-sheet.open-page(2); } }
+                                rail-appearance := SettingsNavItem { stacked: !settings-sheet.split; height: self.stacked ? 52px : 40px; title: "Appearance"; tint: root.settings-tint-appearance; icon-path: SettingsIcons.appearance; active: root.settings-shown-page == SettingsPage.appearance; select => { settings-sheet.open-page(3); } }
+                                rail-controls := SettingsNavItem { stacked: !settings-sheet.split; height: self.stacked ? 52px : 40px; title: "Controls"; tint: root.settings-tint-controls; icon-path: SettingsIcons.controls; active: root.settings-shown-page == SettingsPage.controls; select => { settings-sheet.open-page(4); } }
+                                rail-about := SettingsNavItem { stacked: !settings-sheet.split; height: self.stacked ? 52px : 40px; title: "About"; tint: root.settings-tint-about; icon-path: SettingsIcons.about; active: root.settings-shown-page == SettingsPage.about; badge: root.update-available || root.update-phase == 2; select => { settings-sheet.open-page(5); } }
+                                Rectangle { vertical-stretch: 1; }
+                                SettingsRailFooter {
+                                    stacked: !settings-sheet.split;
+                                    version: root.app-version;
+                                    status: settings-sheet.update-summary;
+                                    tone: settings-sheet.update-tone;
+                                    select => { settings-sheet.open-page(5); }
+                                }
                             }
                         }
-                        LibraryButton {
-                            width: 34px; height: 34px; round: true; show-tooltip: true; light-mode: root.light-mode;
-                            icon-path: "M 6 6 L 18 18 M 18 6 L 6 18";
-                            label: root.account-open ? "Close account" : "Close settings";
-                            clicked => { root.settings-open = false; root.account-open = false; }
-                        }
                     }
-                    ScrollView {
-                        y: parent.header-height; width: parent.width; height: parent.height - self.y - 1px;
-                        content-y <=> root.settings-scroll-y;
-                        horizontal-scrollbar-policy: always-off;
-                        VerticalLayout {
-                            padding-left: settings-content.gutter; padding-right: settings-content.gutter;
-                            padding-top: 2px; padding-bottom: 28px; spacing: 24px; alignment: start;
+                    // Scrolling page content.
+                    settings-content := Rectangle {
+                        x: settings-sheet.rail-width; y: 0px;
+                        width: parent.width - self.x; height: parent.height;
+                        property <length> gutter: settings-sheet.split ? 32px : 18px;
+                        property <length> header-height: settings-sheet.split ? 84px : 58px;
+                        property <length> overflow: max(0px, settings-flick.content-height - settings-flick.height);
+                        property <bool> scrolled: settings-flick.content-y < -1px;
+                        property <bool> more-below: self.overflow > 1px && -settings-flick.content-y < self.overflow - 1px;
+                        settings-flick := Flickable {
+                            y: settings-content.header-height; width: parent.width; height: parent.height - self.y - 1px;
+                            content-y <=> root.settings-scroll-y;
+                            content-width: self.width;
+                            content-height: max(self.height, settings-pages.min-height, settings-pages.preferred-height);
+                            settings-pages := VerticalLayout {
+                                width: settings-flick.width;
+                                padding-left: settings-content.gutter; padding-right: settings-content.gutter;
+                                padding-top: 4px; padding-bottom: 32px; spacing: 24px; alignment: start;
 
                             // ── Account ──
                             if root.settings-shown-page == SettingsPage.account : SettingsPageFade {
                                 Rectangle {
                                     border-radius: 14px;
-                                    background: Theme.light ? #f2e2d9 : #261c24;
-                                    border-width: 1px; border-color: Theme.divider;
+                                    background: Theme.light ? #f3e3da : #2a1e27;
+                                    border-width: 1px; border-color: Theme.light ? #e6cfc3 : #3a2934;
                                     HorizontalLayout {
                                         padding: 18px; spacing: 16px; cross-axis-alignment: center;
                                         Rectangle {
@@ -2307,6 +2355,37 @@ export component AppWindow inherits Window {
                                     if !root.account-verified : Text { text: root.native-login-available ? "Sign in with Google, then choose the YouTube Music profile you listen with. Your playlists, likes and recommendations come with it." : "Import your signed-in YouTube Music tab with Tide’s browser companion to use your playlists and recommendations."; color: root.foreground; font-size: 13px; wrap: word-wrap; }
                                     if root.account-status != "" : Text { max-height: 72px; overflow: elide; text: root.account-status; color: root.secondary; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
                                     if root.native-login-status != "" : Text { text: root.native-login-status; color: root.secondary; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
+                                }
+                                // What the connection brings, from data the player already holds.
+                                if root.account-verified : SettingsGroup {
+                                    title: "From your account";
+                                    SettingItem {
+                                        separator: false; title: "Your playlists"; icon-path: SettingsIcons.playlist; tint: root.settings-tint-audio;
+                                        detail: "Saved and created playlists";
+                                        value: !root.library-loaded ? "Not loaded yet" : root.library-playlists.length == 1 ? "1 playlist" : root.library-playlists.length + " playlists";
+                                        interactive: !root.account-busy; label: "Open your library";
+                                        activate => { settings-sheet.leave(1); }
+                                    }
+                                    SettingItem {
+                                        title: "Liked songs"; icon-path: SettingsIcons.heart; tint: root.settings-tint-account;
+                                        detail: "Songs you gave a thumbs up";
+                                        interactive: !root.account-busy; label: "Open Liked Songs";
+                                        activate => { settings-sheet.leave(2); }
+                                    }
+                                    SettingItem {
+                                        title: "Recommendations"; icon-path: SettingsIcons.mix; tint: root.settings-tint-appearance;
+                                        detail: "Mixes and picks on Home";
+                                        value: root.recommendations.length == 0 ? "None yet" : root.recommendations.length + " on Home";
+                                        interactive: !root.account-busy; label: "Open Home";
+                                        activate => { settings-sheet.leave(3); }
+                                    }
+                                    SettingItem {
+                                        title: "Listening history"; icon-path: SettingsIcons.history; tint: root.settings-tint-controls;
+                                        detail: "Played songs tune your recommendations";
+                                        value: root.history-feedback-enabled ? "On" : "Off"; tone: root.history-feedback-enabled ? 1 : 0;
+                                        label: "Listening history is " + (root.history-feedback-enabled ? "on" : "off") + ". Open Playback settings";
+                                        activate => { settings-sheet.open-page(1); }
+                                    }
                                 }
                                 SettingsGroup {
                                     title: "Other ways to connect";
@@ -2452,7 +2531,7 @@ export component AppWindow inherits Window {
                                     SettingBlock {
                                         separator: false;
                                         HorizontalLayout {
-                                            spacing: 10px;
+                                            spacing: 12px;
                                             ThemeCard {
                                                 title: "Dark"; kind: 0; enabled: !root.artist-picker-open;
                                                 selected: !root.light-mode && !(root.windows-theme-supported && root.follow-windows-theme);
@@ -2464,7 +2543,7 @@ export component AppWindow inherits Window {
                                                 select => { if !root.light-mode { root.switch-mode(); } else if root.follow-windows-theme { root.toggle-follow-windows-theme(); if !root.light-mode { root.switch-mode(); } } }
                                             }
                                             if root.windows-theme-supported : ThemeCard {
-                                                title: "System"; kind: 2; enabled: !root.artist-picker-open;
+                                                title: root.mac-os ? "Match macOS" : "Match Windows"; kind: 2; enabled: !root.artist-picker-open;
                                                 selected: root.follow-windows-theme;
                                                 select => { if !root.follow-windows-theme { root.toggle-follow-windows-theme(); } }
                                             }
@@ -2477,11 +2556,22 @@ export component AppWindow inherits Window {
                                 }
                                 SettingsGroup {
                                     title: "Mini player";
-                                    SettingRow {
+                                    SettingBlock {
                                         separator: false;
-                                        title: "Opacity"; detail: "How see-through the floating mini player is.";
-                                        opacity-slider := TideSlider { property <float> preview: root.mini-opacity; width: 168px; height: 28px; light-mode: root.light-mode; minimum: 60; maximum: 100; value: root.mini-opacity; label: "Mini player opacity"; value-text: root.mini-opacity.to-fixed(0) + "%"; changed(value) => { self.preview = value; } released(value) => { self.preview = value; root.change-mini-opacity(value); } }
-                                        Text { width: 40px; text: opacity-slider.preview.to-fixed(0) + "%"; color: root.foreground; font-size: 13px; font-weight: 700; horizontal-alignment: right; vertical-alignment: center; }
+                                        title: "Opacity"; detail: "How see-through the floating mini player is over other windows.";
+                                        HorizontalLayout {
+                                            spacing: 16px; cross-axis-alignment: center;
+                                            MiniPlayerPreview { horizontal-stretch: 1; min-width: 150px; opacity-percent: opacity-slider.preview; }
+                                            VerticalLayout {
+                                                spacing: 6px; alignment: center;
+                                                opacity-slider := TideSlider { property <float> preview: root.mini-opacity; width: 168px; height: 28px; light-mode: root.light-mode; minimum: 60; maximum: 100; value: root.mini-opacity; label: "Mini player opacity"; value-text: root.mini-opacity.to-fixed(0) + "%"; changed(value) => { self.preview = value; } released(value) => { self.preview = value; root.change-mini-opacity(value); } }
+                                                HorizontalLayout {
+                                                    Text { horizontal-stretch: 1; text: "60%"; color: root.secondary; font-size: 11px; }
+                                                    Text { text: opacity-slider.preview.to-fixed(0) + "%"; color: root.foreground; font-size: 13px; font-weight: 700; horizontal-alignment: center; }
+                                                    Text { horizontal-stretch: 1; text: "100%"; color: root.secondary; font-size: 11px; horizontal-alignment: right; }
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -2492,11 +2582,15 @@ export component AppWindow inherits Window {
                                     title: "Keyboard shortcuts";
                                     note: (root.mac-os ? "Select a shortcut, then press a ⌘, ⌥ or ⌃ combination. Esc cancels. " : "Select a shortcut, then press a Ctrl or Alt combination. Esc cancels. ")
                                         + "Custom shortcuts and media keys work in the background; while Tide has focus, Space plays or pauses and J / L seek 10 seconds.";
-                                    ShortcutSetting { separator: false; action: "Play / pause"; binding: root.shortcut-toggle; recording: root.shortcut-recording-index == 0; record => { root.begin-shortcut(0); app-focus.focus(); } clear => { root.clear-shortcut(0); } cancel => { root.cancel-shortcut(); } }
-                                    ShortcutSetting { action: "Next song"; binding: root.shortcut-next; recording: root.shortcut-recording-index == 1; record => { root.begin-shortcut(1); app-focus.focus(); } clear => { root.clear-shortcut(1); } cancel => { root.cancel-shortcut(); } }
-                                    ShortcutSetting { action: "Previous song"; binding: root.shortcut-previous; recording: root.shortcut-recording-index == 2; record => { root.begin-shortcut(2); app-focus.focus(); } clear => { root.clear-shortcut(2); } cancel => { root.cancel-shortcut(); } }
-                                    if root.shortcut-status != "" : SettingRow {
-                                        title: root.shortcut-status;
+                                    ShortcutSetting { separator: false; mac: root.mac-os; action: "Play / pause"; binding: root.shortcut-toggle; recording: root.shortcut-recording-index == 0; record => { root.begin-shortcut(0); } clear => { root.clear-shortcut(0); } cancel => { root.cancel-shortcut(); } }
+                                    ShortcutSetting { mac: root.mac-os; action: "Next song"; binding: root.shortcut-next; recording: root.shortcut-recording-index == 1; record => { root.begin-shortcut(1); } clear => { root.clear-shortcut(1); } cancel => { root.cancel-shortcut(); } }
+                                    ShortcutSetting { mac: root.mac-os; action: "Previous song"; binding: root.shortcut-previous; recording: root.shortcut-recording-index == 2; record => { root.begin-shortcut(2); } clear => { root.clear-shortcut(2); } cancel => { root.cancel-shortcut(); } }
+                                    if root.shortcut-status != "" : Rectangle {
+                                        RowSeparator { width: parent.width - 32px; }
+                                        VerticalLayout {
+                                            padding-left: 16px; padding-right: 16px; padding-top: 11px; padding-bottom: 11px;
+                                            Text { text: root.shortcut-status; color: root.secondary; font-size: 12.5px; font-weight: 600; wrap: word-wrap; accessible-live-region: polite; }
+                                        }
                                     }
                                 }
                                 SettingsGroup {
@@ -2520,15 +2614,21 @@ export component AppWindow inherits Window {
                             if root.settings-shown-page == SettingsPage.about : SettingsPageFade {
                                 Rectangle {
                                     border-radius: 14px;
-                                    background: Theme.light ? #f2e2d9 : #261c24;
-                                    border-width: 1px; border-color: Theme.divider;
+                                    background: Theme.light ? #f3e3da : #2a1e27;
+                                    border-width: 1px; border-color: Theme.light ? #e6cfc3 : #3a2934;
                                     HorizontalLayout {
                                         padding: 18px; spacing: 16px; cross-axis-alignment: center;
                                         Image { width: 60px; height: 60px; source: @image-url("assets/tide-icon.png"); image-fit: contain; }
                                         VerticalLayout {
-                                            horizontal-stretch: 1; min-width: 0px; spacing: 4px; alignment: center;
-                                            Text { text: "Tide"; color: root.foreground; font-size: 20px; font-weight: 800; }
-                                            Text { text: "Version " + root.app-version + (root.update-phase == 2 ? " · update ready" : root.update-available ? " · update available" : ""); color: root.secondary; font-size: 12px; overflow: elide; }
+                                            horizontal-stretch: 1; min-width: 0px; spacing: 6px; alignment: center;
+                                            Text { text: "Tide " + root.app-version; color: root.foreground; font-size: 20px; font-weight: 800; overflow: elide; }
+                                            if root.update-current || root.update-busy || root.update-available || root.update-phase != 0 : HorizontalLayout {
+                                                alignment: start;
+                                                StatusPill { text: settings-sheet.update-summary; tone: settings-sheet.update-tone; }
+                                            }
+                                            if !(root.update-current || root.update-busy || root.update-available || root.update-phase != 0) : Text {
+                                                text: "Free and open source"; color: root.secondary; font-size: 12.5px;
+                                            }
                                         }
                                         LibraryButton {
                                             width: 148px; height: 36px; quiet: false; active: root.update-available || root.update-phase == 2;
@@ -2547,13 +2647,15 @@ export component AppWindow inherits Window {
                                     title: "Updates";
                                     SettingToggle { separator: false; title: "Check for updates on startup"; detail: "Tide asks GitHub for a newer stable release when it opens."; checked: root.auto-update-checks; toggled => { root.toggle-update-checks(); } }
                                 }
-                                if root.crash-log-available : SettingsGroup {
-                                    title: "Support";
-                                    SettingRow {
-                                        separator: false;
-                                        title: "Crash log"; detail: "Review it before sharing it in a bug report.";
-                                        LibraryButton { width: 112px; height: 32px; quiet: false; light-mode: root.light-mode; caption: "Show file"; label: "Show the crash log file in its folder. Review it before sharing it in a bug report."; clicked => { root.open-crash-log(); } }
-                                    }
+                                SettingsGroup {
+                                    title: "Help and information";
+                                    note: "Links open in your browser.";
+                                    SettingItem { separator: false; external: true; title: "What’s new in " + root.app-version; detail: "Release notes for this version"; icon-path: SettingsIcons.sparkle; tint: root.settings-tint-playback; label: "What’s new in Tide " + root.app-version + ". Opens the release notes in your browser"; activate => { root.open-about-link(0); } }
+                                    SettingItem { external: true; title: "Report a problem"; detail: "Open an issue on GitHub"; icon-path: SettingsIcons.bug; tint: root.settings-tint-account; label: "Report a problem. Opens GitHub issues in your browser"; activate => { root.open-about-link(1); } }
+                                    if root.crash-log-available : SettingItem { title: "Crash log"; detail: "Review it before sharing it in a bug report"; icon-path: SettingsIcons.log; tint: root.settings-tint-about; label: "Show the crash log file in its folder. Review it before sharing it in a bug report."; activate => { root.open-crash-log(); } }
+                                    SettingItem { external: true; title: "Source code"; detail: "Tide is free and open source"; icon-path: SettingsIcons.code; tint: root.settings-tint-audio; label: "Source code. Opens Tide's GitHub repository in your browser"; activate => { root.open-about-link(2); } }
+                                    SettingItem { external: true; title: "Privacy"; detail: "What Tide stores and sends"; icon-path: SettingsIcons.shield; tint: root.settings-tint-controls; label: "Privacy. Opens Tide's privacy notes in your browser"; activate => { root.open-about-link(3); } }
+                                    SettingItem { external: true; title: "Third-party notices"; detail: "Licences of the libraries Tide uses"; icon-path: SettingsIcons.document; tint: root.settings-tint-appearance; label: "Third-party notices. Opens the licence notices in your browser"; activate => { root.open-about-link(4); } }
                                 }
                                 SettingsGroup {
                                     title: "Built with";
@@ -2565,7 +2667,86 @@ export component AppWindow inherits Window {
                                     }
                                 }
                             }
+                            }
                         }
+                        // Soft fade at the bottom while more content is below.
+                        for step in 4 : Rectangle {
+                            x: 0px; width: parent.width;
+                            y: parent.height - self.height - 1px; height: 10px + step * 10px;
+                            border-bottom-right-radius: 17px;
+                            background: SettingsTheme.pane.with-alpha(0.24);
+                            opacity: settings-content.more-below ? 1 : 0;
+                            animate opacity { duration: ControlMotion.feedback; }
+                        }
+                        // Slim scrollbar: always visible while the page overflows.
+                        if settings-content.overflow > 1px : Rectangle {
+                            property <length> track: settings-flick.height - 16px;
+                            property <length> thumb: max(32px, self.track * settings-flick.height / max(1px, settings-flick.content-height));
+                            x: parent.width - 12px; y: settings-flick.y + 8px; width: 10px; height: self.track;
+                            Rectangle {
+                                x: scroll-touch.has-hover || scroll-touch.pressed ? 2px : 3px;
+                                y: (parent.track - parent.thumb) * clamp(-settings-flick.content-y / settings-content.overflow, 0, 1);
+                                width: scroll-touch.has-hover || scroll-touch.pressed ? 6px : 4px; height: parent.thumb;
+                                border-radius: self.width / 2;
+                                background: Theme.muted.with-alpha(scroll-touch.has-hover || scroll-touch.pressed ? 0.6 : 0.32);
+                            }
+                            scroll-touch := TouchArea {
+                                mouse-cursor: pointer;
+                                function scroll-to(pointer: length) {
+                                    root.settings-scroll-y = -settings-content.overflow * clamp((pointer - parent.thumb / 2) / max(1px, parent.track - parent.thumb), 0, 1);
+                                }
+                                pointer-event(event) => { if event.kind == PointerEventKind.down { scroll-touch.scroll-to(self.mouse-y); } }
+                                moved => { if self.pressed { scroll-touch.scroll-to(self.mouse-y); } }
+                            }
+                        }
+                        // Page header; a hairline and soft shadow appear once content scrolls under it.
+                        Rectangle {
+                            y: settings-content.header-height - 1px; height: 1px;
+                            background: SettingsTheme.card-border;
+                            opacity: settings-content.scrolled ? 1 : 0;
+                            animate opacity { duration: ControlMotion.feedback; }
+                        }
+                        for step in 3 : Rectangle {
+                            y: settings-content.header-height; height: 2px + step * 2px;
+                            background: (Theme.light ? #5a3a2a : #000000).with-alpha(Theme.light ? 0.035 : 0.12);
+                            opacity: settings-content.scrolled ? 1 : 0;
+                            animate opacity { duration: ControlMotion.feedback; }
+                        }
+                        HorizontalLayout {
+                            y: 0px; height: settings-content.header-height;
+                            padding-left: settings-content.gutter; padding-right: settings-sheet.split ? 20px : 12px; spacing: 12px;
+                            cross-axis-alignment: center;
+                            VerticalLayout {
+                                horizontal-stretch: 1; min-width: 0px; spacing: 2px; alignment: center;
+                                Text {
+                                    text: root.settings-shown-page == SettingsPage.account ? "Account"
+                                        : root.settings-shown-page == SettingsPage.audio ? "Audio"
+                                        : root.settings-shown-page == SettingsPage.appearance ? "Appearance"
+                                        : root.settings-shown-page == SettingsPage.controls ? "Controls"
+                                        : root.settings-shown-page == SettingsPage.about ? "About Tide" : "Playback";
+                                    color: root.foreground; font-size: settings-sheet.split ? 24px : 20px; font-weight: 800; overflow: elide;
+                                }
+                                if settings-sheet.split : Text {
+                                    text: root.settings-shown-page == SettingsPage.account ? "Your YouTube Music connection"
+                                        : root.settings-shown-page == SettingsPage.audio ? "Output device, volume and sound"
+                                        : root.settings-shown-page == SettingsPage.appearance ? "Theme, motion and the mini player"
+                                        : root.settings-shown-page == SettingsPage.controls ? "Keyboard, media keys and gestures"
+                                        : root.settings-shown-page == SettingsPage.about ? "Version, updates and support" : "How songs start, end and follow each other";
+                                    color: root.secondary; font-size: 13px; overflow: elide;
+                                }
+                            }
+                            close-button := LibraryButton {
+                                width: 34px; height: 34px; round: true; show-tooltip: true; light-mode: root.light-mode;
+                                icon-path: "M 6 6 L 18 18 M 18 6 L 6 18";
+                                label: root.account-open ? "Close account" : "Close settings";
+                                clicked => { root.settings-open = false; root.account-open = false; }
+                            }
+                        }
+                    }
+                    // Tab past the last control wraps to the first rail entry.
+                    FocusScope {
+                        x: 0px; y: 0px; width: 1px; height: 1px;
+                        focus-gained(reason) => { if reason == FocusReason.tab-navigation { settings-sheet.focus-page(root.jam-guest ? 1 : 0); } }
                     }
                 }
             }

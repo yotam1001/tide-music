@@ -1,4 +1,5 @@
-//! Synthetic Settings sheet: categories, switches and shortcut capture. No network,
+//! Synthetic Settings sheet: categories, switches, keycap shortcut capture, keyboard
+//! focus and About links. No network,
 //! account or installer is used.
 use slint::platform::{
     software_renderer::{MinimalSoftwareWindow, RepaintBufferType},
@@ -50,20 +51,44 @@ fn click(ui: &AppWindow, x: f32, y: f32) {
         button: PointerEventButton::Left,
     });
 }
+fn key(ui: &AppWindow, text: slint::SharedString) {
+    ui.window()
+        .dispatch_event(WindowEvent::KeyPressed { text: text.clone() });
+    ui.window()
+        .dispatch_event(WindowEvent::KeyReleased { text });
+}
 // The sheet is centred: at 1140x800 the rail starts at x=100 and the page
-// content at x=312, both from y=50. The account card heads the rail.
+// content at x=312, both from y=50. The account card heads the rail. Rail
+// entries have fixed heights, so they do not move with the platform font.
 const RAIL_X: f32 = 200.0;
 const SWITCH_X: f32 = 970.0;
 fn rail_y(page: SettingsPage) -> f32 {
     match page {
-        SettingsPage::Account => 151.0,
-        SettingsPage::Playback => 220.0,
-        SettingsPage::Audio => 264.0,
-        SettingsPage::Appearance => 308.0,
+        SettingsPage::Account => 157.0,
+        SettingsPage::Playback => 226.0,
+        SettingsPage::Audio => 268.0,
+        SettingsPage::Appearance => 310.0,
         SettingsPage::Controls => 352.0,
-        _ => 396.0,
+        _ => 394.0,
     }
 }
+// Narrow windows (650x420): a 78px icon rail from x=8, entries 52px tall.
+const NARROW_X: f32 = 47.0;
+fn narrow_y(page: SettingsPage) -> f32 {
+    match page {
+        SettingsPage::Account => 45.0,
+        SettingsPage::Playback => 108.0,
+        SettingsPage::Audio => 162.0,
+        SettingsPage::Appearance => 216.0,
+        SettingsPage::Controls => 270.0,
+        _ => 324.0,
+    }
+}
+// Shortcut rows: the keycap field, then Clear / Cancel beside it. The rows
+// have a fixed height; only the group title above them follows the font.
+const KEYS_X: f32 = 834.0;
+const CLEAR_X: f32 = 966.0;
+const SHORTCUT_Y: [f32; 3] = [193.0, 249.0, 305.0];
 
 #[test]
 fn settings_sheet_navigates_toggles_and_captures_shortcuts() {
@@ -81,8 +106,13 @@ fn settings_sheet_navigates_toggles_and_captures_shortcuts() {
     ui.set_audio_status("Applies only to Tide".into());
     let weak = ui.as_weak();
     ui.on_begin_shortcut(move |i| weak.upgrade().unwrap().set_shortcut_recording_index(i));
+    let cancels = Rc::new(RefCell::new(0));
+    let c = cancels.clone();
     let weak = ui.as_weak();
-    ui.on_cancel_shortcut(move || weak.upgrade().unwrap().set_shortcut_recording_index(-1));
+    ui.on_cancel_shortcut(move || {
+        *c.borrow_mut() += 1;
+        weak.upgrade().unwrap().set_shortcut_recording_index(-1)
+    });
     let captured = Rc::new(RefCell::new(Vec::new()));
     let c = captured.clone();
     let weak = ui.as_weak();
@@ -110,6 +140,12 @@ fn settings_sheet_navigates_toggles_and_captures_shortcuts() {
         let u = weak.upgrade().unwrap();
         u.set_history_feedback_enabled(!u.get_history_feedback_enabled());
     });
+    let links = Rc::new(RefCell::new(Vec::new()));
+    let c = links.clone();
+    ui.on_open_about_link(move |i| c.borrow_mut().push(i));
+    let crash_log = Rc::new(RefCell::new(0));
+    let c = crash_log.clone();
+    ui.on_open_crash_log(move || *c.borrow_mut() += 1);
     // Theme cards drive the existing theme callbacks to the chosen state.
     let weak = ui.as_weak();
     ui.on_switch_mode(move || {
@@ -153,7 +189,7 @@ fn settings_sheet_navigates_toggles_and_captures_shortcuts() {
         // Row heights follow the platform font (macOS differs from Windows),
         // so locate the Listening history switch by its effect first.
         let mut history_y = None;
-        for y in (380..470).step_by(4) {
+        for y in (360..540).step_by(4) {
             let before = *switches.borrow();
             click(&ui, SWITCH_X, y as f32);
             if *switches.borrow() > before {
@@ -170,10 +206,7 @@ fn settings_sheet_navigates_toggles_and_captures_shortcuts() {
             before + 1,
             "Switch target did not activate exactly once"
         );
-        ui.window()
-            .dispatch_event(WindowEvent::KeyPressed { text: " ".into() });
-        ui.window()
-            .dispatch_event(WindowEvent::KeyReleased { text: " ".into() });
+        key(&ui, " ".into());
         assert_eq!(
             *switches.borrow(),
             before + 2,
@@ -184,9 +217,9 @@ fn settings_sheet_navigates_toggles_and_captures_shortcuts() {
         assert_eq!(*switches.borrow(), before + 3);
         ui.set_history_feedback_enabled(false);
 
-        // Shortcuts sit inline on the Controls page.
+        // Shortcuts sit inline on the Controls page, as keycaps.
         click(&ui, RAIL_X, rail_y(SettingsPage::Controls));
-        click(&ui, 880.0, 188.0);
+        click(&ui, KEYS_X, SHORTCUT_Y[0]);
         assert_eq!(ui.get_shortcut_recording_index(), 0);
         draw(&window, 1140, 800, &format!("settings-recording-{theme}"));
         for text in [Key::Control.into(), Key::Alt.into(), "p".into()] {
@@ -201,7 +234,7 @@ fn settings_sheet_navigates_toggles_and_captures_shortcuts() {
             Some(&("p".into(), true, true, false, false))
         );
         assert_eq!(ui.get_shortcut_recording_index(), -1);
-        click(&ui, 880.0, 242.0);
+        click(&ui, KEYS_X, SHORTCUT_Y[1]);
         assert_eq!(ui.get_shortcut_recording_index(), 1);
         ui.window().dispatch_event(WindowEvent::KeyPressed {
             text: Key::Escape.into(),
@@ -215,10 +248,28 @@ fn settings_sheet_navigates_toggles_and_captures_shortcuts() {
             800,
             &format!("settings-shortcut-set-{theme}"),
         );
-        click(&ui, 977.0, 188.0);
+        // While recording, Cancel takes the place of Clear.
+        click(&ui, KEYS_X, SHORTCUT_Y[1]);
+        assert_eq!(ui.get_shortcut_recording_index(), 1);
+        draw(
+            &window,
+            1140,
+            800,
+            &format!("settings-recording-cancel-{theme}"),
+        );
+        let before = *cancels.borrow();
+        click(&ui, CLEAR_X, SHORTCUT_Y[1]);
+        assert_eq!(ui.get_shortcut_recording_index(), -1);
+        assert!(*cancels.borrow() > before, "Cancel did not cancel");
+        assert!(cleared.borrow().is_empty(), "Cancel cleared a shortcut");
+        // An unset shortcut has nothing to clear.
+        click(&ui, CLEAR_X, SHORTCUT_Y[2]);
+        assert!(cleared.borrow().is_empty());
+        click(&ui, CLEAR_X, SHORTCUT_Y[0]);
         assert_eq!(cleared.borrow().last(), Some(&0));
         assert!(ui.get_shortcut_toggle().is_empty());
-        click(&ui, 880.0, 296.0);
+        cleared.borrow_mut().clear();
+        click(&ui, KEYS_X, SHORTCUT_Y[2]);
         assert_eq!(ui.get_shortcut_recording_index(), 2);
         ui.window()
             .dispatch_event(WindowEvent::WindowActiveChanged(false));
@@ -230,13 +281,13 @@ fn settings_sheet_navigates_toggles_and_captures_shortcuts() {
         ui.window()
             .dispatch_event(WindowEvent::WindowActiveChanged(true));
         // Leaving the Controls page cancels a capture in progress.
-        click(&ui, 880.0, 296.0);
+        click(&ui, KEYS_X, SHORTCUT_Y[2]);
         assert_eq!(ui.get_shortcut_recording_index(), 2);
         click(&ui, RAIL_X, rail_y(SettingsPage::Audio));
         assert_eq!(ui.get_shortcut_recording_index(), -1);
         // Closing from the scrim cancels too.
         click(&ui, RAIL_X, rail_y(SettingsPage::Controls));
-        click(&ui, 880.0, 296.0);
+        click(&ui, KEYS_X, SHORTCUT_Y[2]);
         click(&ui, 40.0, 400.0);
         assert!(!ui.get_settings_open());
         assert_eq!(ui.get_shortcut_recording_index(), -1);
@@ -247,28 +298,180 @@ fn settings_sheet_navigates_toggles_and_captures_shortcuts() {
     ui.set_settings_page(SettingsPage::Appearance);
     ui.set_settings_open(true);
     draw(&window, 1140, 800, "settings-theme-before");
-    click(&ui, 462.0, 260.0);
+    click(&ui, 462.0, 250.0);
     assert!(
         !ui.get_light_mode() && !ui.get_follow_windows_theme(),
         "Dark card"
     );
-    click(&ui, 889.0, 260.0);
+    click(&ui, 889.0, 250.0);
     assert!(ui.get_follow_windows_theme(), "System card");
-    click(&ui, 675.0, 260.0);
+    click(&ui, 675.0, 250.0);
     assert!(
         ui.get_light_mode() && !ui.get_follow_windows_theme(),
         "Light card"
     );
     ui.set_light_mode(false);
-    // Narrow windows replace the rail with a tab strip.
+
+    // About: each link row opens its own page; the crash log has its own action.
+    ui.set_settings_page(SettingsPage::About);
+    draw(&window, 1140, 800, "settings-about-links");
+    for scroll in [0.0, -240.0] {
+        ui.set_settings_scroll_y(scroll);
+        draw(&window, 1140, 800, "settings-about-scrolled");
+        for y in (380..740).step_by(6) {
+            click(&ui, 700.0, y as f32);
+        }
+    }
+    let mut seen = Vec::new();
+    for link in links.borrow().iter() {
+        if !seen.contains(link) {
+            seen.push(*link);
+        }
+    }
+    assert_eq!(seen, [0, 1, 2, 3, 4], "About links in order");
+    assert!(*crash_log.borrow() > 0, "Crash log row");
+    assert!(ui.get_settings_open(), "A link closed Settings");
+    // The rail footer shows the version and update state, and opens About.
+    ui.set_settings_page(SettingsPage::Playback);
+    ui.set_update_current(true);
+    draw(&window, 1140, 800, "settings-footer-current");
+    click(&ui, 200.0, 712.0);
+    assert_eq!(ui.get_settings_page(), SettingsPage::About, "Rail footer");
+    ui.set_update_current(false);
+    ui.set_update_available(true);
+    draw(&window, 1140, 800, "settings-update-available");
+    ui.set_update_available(false);
+
+    // Keyboard: Tab starts in the rail and Up/Down switch categories.
+    ui.set_settings_open(false);
+    draw(&window, 1140, 800, "settings-keyboard-closed");
     ui.set_settings_page(SettingsPage::Audio);
+    ui.set_settings_open(true);
+    draw(&window, 1140, 800, "settings-keyboard-open");
+    key(&ui, Key::Tab.into());
+    key(&ui, Key::DownArrow.into());
+    assert_eq!(
+        ui.get_settings_page(),
+        SettingsPage::Playback,
+        "Tab did not focus the first rail entry (Account)"
+    );
+    key(&ui, Key::DownArrow.into());
+    key(&ui, Key::DownArrow.into());
+    assert_eq!(ui.get_settings_page(), SettingsPage::Appearance);
+    key(&ui, Key::UpArrow.into());
+    assert_eq!(ui.get_settings_page(), SettingsPage::Audio);
+    draw(&window, 1140, 800, "settings-keyboard-rail");
+    for _ in 0..3 {
+        key(&ui, Key::UpArrow.into());
+    }
+    assert!(ui.get_account_open(), "Up arrow did not reach Account");
+    draw(&window, 1140, 800, "settings-keyboard-account");
+    key(&ui, Key::DownArrow.into());
+    draw(&window, 1140, 800, "settings-keyboard-playback");
+    assert!(ui.get_settings_open() && !ui.get_account_open());
+    // Focus is trapped: Shift+Tab from the first entry wraps to the close
+    // button, and Tab from there wraps back to the rail.
+    key(&ui, Key::UpArrow.into());
+    draw(&window, 1140, 800, "settings-keyboard-account");
+    key(&ui, Key::Backtab.into());
+    key(&ui, Key::Tab.into());
+    key(&ui, Key::DownArrow.into());
+    draw(&window, 1140, 800, "settings-keyboard-wrapped");
+    assert!(
+        ui.get_settings_open() && ui.get_settings_page() == SettingsPage::Playback,
+        "Tab past the close button left the sheet"
+    );
+    // Many Tabs never reach the window behind.
+    for _ in 0..60 {
+        key(&ui, Key::Tab.into());
+    }
+    key(&ui, Key::Escape.into());
+    draw(&window, 1140, 800, "settings-keyboard-tabbed");
+    assert!(!ui.get_settings_open(), "Escape after tabbing");
+    // From a freshly opened sheet, Shift+Tab reaches the close button.
+    ui.set_settings_open(true);
+    draw(&window, 1140, 800, "settings-keyboard-reopened");
+    key(&ui, Key::Backtab.into());
+    key(&ui, " ".into());
+    assert!(!ui.get_settings_open(), "Shift+Tab did not reach Close");
+    draw(&window, 1140, 800, "settings-keyboard-closed");
+
+    // A connected account lists what the connection brings, from data the
+    // player already holds; Listening history leads to its setting.
+    ui.set_account_connected(true);
+    ui.set_account_verified(true);
+    ui.set_account_name("Sample listener".into());
+    ui.set_history_feedback_enabled(true);
+    for (light, theme) in [(false, "dark"), (true, "light")] {
+        ui.set_light_mode(light);
+        ui.set_account_open(true);
+        draw(
+            &window,
+            1140,
+            800,
+            &format!("settings-account-connected-{theme}"),
+        );
+    }
+    ui.set_light_mode(false);
+    // Rows above it leave Settings, so scan only where the last row can be.
+    let mut opened = false;
+    for y in (470..522).step_by(4) {
+        click(&ui, 700.0, y as f32);
+        if ui.get_settings_open() {
+            opened = true;
+            break;
+        }
+    }
+    assert!(opened, "Listening history row did not open Playback");
+    assert_eq!(ui.get_settings_page(), SettingsPage::Playback);
+    // Your playlists closes the sheet and opens the library behind it.
+    ui.set_account_open(true);
+    draw(&window, 1140, 800, "settings-account-connected-again");
+    click(&ui, 700.0, 318.0);
+    assert!(
+        !ui.get_settings_open() && !ui.get_account_open() && ui.get_library_open(),
+        "Your playlists row did not open the library"
+    );
+    ui.set_library_open(false);
+    ui.set_home_open(true);
+    ui.set_account_connected(false);
+    ui.set_account_verified(false);
+    ui.set_account_name("".into());
+    ui.set_settings_open(false);
+    draw(&window, 1140, 800, "settings-account-closed");
+
+    // Narrow windows keep a compact icon rail; all six entries fit at the
+    // minimum size without scrolling.
+    ui.set_settings_page(SettingsPage::Audio);
+    ui.set_settings_open(true);
     draw(&window, 650, 420, "settings-small-window");
-    click(&ui, 56.0, 30.0);
-    assert!(ui.get_account_open(), "Account tab at minimum width");
-    draw(&window, 650, 420, "settings-small-account");
-    click(&ui, 152.0, 30.0);
+    for (name, page) in [
+        ("account", SettingsPage::Account),
+        ("playback", SettingsPage::Playback),
+        ("audio", SettingsPage::Audio),
+        ("appearance", SettingsPage::Appearance),
+        ("controls", SettingsPage::Controls),
+        ("about", SettingsPage::About),
+    ] {
+        click(&ui, NARROW_X, narrow_y(page));
+        assert_eq!(
+            ui.get_settings_shown_page(),
+            page,
+            "narrow rail did not open {name}"
+        );
+        draw(&window, 650, 420, &format!("settings-small-{name}"));
+    }
+    click(&ui, NARROW_X, narrow_y(SettingsPage::Playback));
     assert!(ui.get_settings_open());
     assert_eq!(ui.get_settings_page(), SettingsPage::Playback);
+    // The compact footer also opens About.
+    click(&ui, NARROW_X, 395.0);
+    assert_eq!(
+        ui.get_settings_page(),
+        SettingsPage::About,
+        "compact footer"
+    );
+    ui.set_settings_page(SettingsPage::Playback);
     ui.set_settings_scroll_y(-180.0);
     ui.set_settings_open(false);
     draw(&window, 650, 420, "settings-small-closed");
@@ -282,7 +485,7 @@ fn settings_sheet_navigates_toggles_and_captures_shortcuts() {
     // Jam guests can't reach Account from Settings any more than from the header.
     ui.set_jam_guest(true);
     draw(&window, 650, 420, "settings-small-guest");
-    click(&ui, 56.0, 30.0);
+    click(&ui, NARROW_X, narrow_y(SettingsPage::Account));
     assert!(
         !ui.get_account_open(),
         "Jam guest opened Account from Settings"
@@ -313,4 +516,17 @@ fn settings_sheet_navigates_toggles_and_captures_shortcuts() {
         0.0,
         "A page inherited the previous scroll position"
     );
+    // Mid-size windows keep the full rail.
+    for (light, theme) in [(false, "dark"), (true, "light")] {
+        ui.set_light_mode(light);
+        ui.set_settings_page(SettingsPage::Audio);
+        draw(&window, 780, 720, &format!("settings-audio-780-{theme}"));
+        ui.set_settings_scroll_y(-160.0);
+        draw(
+            &window,
+            780,
+            720,
+            &format!("settings-audio-780-scrolled-{theme}"),
+        );
+    }
 }
