@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.4.35 - 2026-11-23
+
 - Redesigned Settings as one centred window in place of the separate Settings and Account drawers. A sidebar shows your account at the top, then Playback, Audio, Appearance, Controls and About, each with its own coloured icon. Narrow windows show the categories as tabs.
   - Settings are grouped into cards with clearer descriptions, and nothing is hidden under **Advanced** any more.
   - Choose Dark, Light or your system theme from preview cards, pick crossfade length and volume step with segmented controls, and see each equalizer preset's curve.
