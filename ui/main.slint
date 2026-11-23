@@ -265,7 +265,7 @@ export component AppWindow inherits Window {
     // 3 privacy, 4 third-party notices.
     callback open-about-link(int);
     // Why the last About link or crash log could not open; shown on About.
-    in property <string> about-link-status;
+    in-out property <string> about-link-status;
     in property <bool> detail-editable: false;
     // The open playlist/album was saved to the library in this session.
     in property <bool> detail-saved: false;
@@ -333,6 +333,8 @@ export component AppWindow inherits Window {
     changed settings-shown-page => {
         root.settings-scroll-y = 0px;
         if root.settings-shown-page != SettingsPage.controls { root.cancel-shortcut(); }
+        // A link error belongs to the visit it happened in.
+        if root.settings-shown-page != SettingsPage.about { root.about-link-status = ""; }
     }
     callback begin-shortcut(int);
     callback cancel-shortcut();
@@ -615,7 +617,7 @@ export component AppWindow inherits Window {
         root.settings-scroll-y = 0px;
         // The sheet takes keyboard focus itself when it opens.
         if root.settings-open { root.suggestions-open = false; root.playlist-picker-open = false; root.account-open = false; root.jam-open = false; }
-        else { root.cancel-shortcut(); if !root.account-open { app-focus.focus(); } }
+        else { root.cancel-shortcut(); root.about-link-status = ""; if !root.account-open { app-focus.focus(); } }
     }
     changed account-open => {
         if root.account-open { root.suggestions-open = false; root.playlist-picker-open = false; root.settings-open = false; root.jam-open = false; }
@@ -2572,7 +2574,7 @@ export component AppWindow inherits Window {
                                             MiniPlayerPreview { horizontal-stretch: 1; min-width: 150px; opacity-percent: opacity-slider.display-value; }
                                             VerticalLayout {
                                                 spacing: 6px; alignment: center;
-                                                opacity-slider := TideSlider { width: 168px; height: 28px; light-mode: root.light-mode; minimum: 60; maximum: 100; value: root.mini-opacity; label: "Mini player opacity"; value-text: root.mini-opacity.to-fixed(0) + "%"; released(value) => { root.change-mini-opacity(value); } }
+                                                opacity-slider := TideSlider { width: 168px; height: 28px; light-mode: root.light-mode; minimum: 60; maximum: 100; value: root.mini-opacity; label: "Mini player opacity"; value-text: self.display-value.to-fixed(0) + "%"; released(value) => { root.change-mini-opacity(value); } }
                                                 Text { text: opacity-slider.display-value.to-fixed(0) + "%"; color: root.foreground; font-size: 13px; font-weight: 700; horizontal-alignment: center; }
                                             }
                                         }
@@ -2651,9 +2653,11 @@ export component AppWindow inherits Window {
                                     title: "Updates";
                                     SettingToggle { separator: false; title: "Check for updates on startup"; detail: "Tide asks GitHub for a newer stable release when it opens."; checked: root.auto-update-checks; toggled => { root.toggle-update-checks(); } }
                                 }
+                                // Shown above the links so it is visible without scrolling.
+                                if root.about-link-status != "" : Text { text: root.about-link-status; color: SettingsTheme.danger; font-size: 12.5px; font-weight: 600; wrap: word-wrap; accessible-live-region: polite; }
                                 SettingsGroup {
                                     title: "Help and information";
-                                    note: root.about-link-status != "" ? root.about-link-status : "Links open in your browser.";
+                                    note: "Links open in your browser.";
                                     SettingItem { separator: false; external: true; title: "What’s new in " + root.app-version; detail: "Release notes for this version"; icon-path: SettingsIcons.sparkle; tint: root.settings-tint-playback; label: "What’s new in Tide " + root.app-version + ". Opens the release notes in your browser"; activate => { root.open-about-link(0); } }
                                     SettingItem { external: true; title: "Report a problem"; detail: "Open an issue on GitHub"; icon-path: SettingsIcons.bug; tint: root.settings-tint-account; label: "Report a problem. Opens GitHub issues in your browser"; activate => { root.open-about-link(1); } }
                                     if root.crash-log-available : SettingItem { title: "Crash log"; detail: "Review it before sharing it in a bug report"; icon-path: SettingsIcons.log; tint: root.settings-tint-about; label: "Show the crash log file in its folder. Review it before sharing it in a bug report."; activate => { root.open-crash-log(); } }

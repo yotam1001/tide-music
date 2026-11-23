@@ -72,7 +72,7 @@ fn rail_y(page: SettingsPage) -> f32 {
         _ => 394.0,
     }
 }
-// Narrow windows (650x420): a 78px icon rail from x=8, entries 52px tall.
+// Narrow windows (650x420): an 82px icon rail from x=8, entries 52px tall.
 const NARROW_X: f32 = 47.0;
 fn narrow_y(page: SettingsPage) -> f32 {
     match page {

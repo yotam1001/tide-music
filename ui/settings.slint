@@ -505,7 +505,7 @@ export component ThemeCard inherits Rectangle {
                 light: root.kind == 1 || (root.kind == 2 && half == 1);
             }
         }
-        // Keep the corners round over the square-cornered miniature.
+        // Keep the corners round over the miniature's edges.
         Rectangle { border-radius: 8px; border-width: 1px; border-color: Theme.light ? #00000014 : #ffffff14; }
     }
     Text {
@@ -677,7 +677,7 @@ export component ShortcutSetting inherits Rectangle {
                 if root.has-alt : KeyCap { text: root.mac ? "⌥" : "Alt"; }
                 if root.has-shift : KeyCap { text: root.mac ? "⇧" : "Shift"; }
                 if root.has-cmd : KeyCap { text: "⌘"; }
-                KeyCap { text: root.key; }
+                if root.key != "" : KeyCap { text: root.key; }
             }
             key-touch := TouchArea {
                 mouse-cursor: pointer;
