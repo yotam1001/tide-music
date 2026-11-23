@@ -99,6 +99,7 @@ fn menu_action(weak: &slint::Weak<AppWindow>, action: MenuAction) {
                 u.invoke_collapse_player();
             }
             u.set_settings_open(false);
+            u.set_account_open(false);
             u.invoke_focus_search();
         }
         MenuAction::Settings => {

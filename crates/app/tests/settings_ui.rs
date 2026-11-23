@@ -1,4 +1,5 @@
-//! Synthetic native updater controls. No network, account or installer is used.
+//! Synthetic Settings sheet: categories, switches and shortcut capture. No network,
+//! account or installer is used.
 use slint::platform::{
     software_renderer::{MinimalSoftwareWindow, RepaintBufferType},
     PointerEventButton, WindowEvent,
@@ -49,14 +50,35 @@ fn click(ui: &AppWindow, x: f32, y: f32) {
         button: PointerEventButton::Left,
     });
 }
+// The sheet is centred: at 1140x800 the rail starts at x=100 and the page
+// content at x=312, both from y=50. The account card heads the rail.
+const RAIL_X: f32 = 200.0;
+const SWITCH_X: f32 = 970.0;
+fn rail_y(page: SettingsPage) -> f32 {
+    match page {
+        SettingsPage::Account => 151.0,
+        SettingsPage::Playback => 220.0,
+        SettingsPage::Audio => 264.0,
+        SettingsPage::Appearance => 308.0,
+        SettingsPage::Controls => 352.0,
+        _ => 396.0,
+    }
+}
+
 #[test]
-fn shortcuts_capture_keys_cancel_and_clear_without_transport() {
+fn settings_sheet_navigates_toggles_and_captures_shortcuts() {
     use slint::platform::Key;
     let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
     slint::platform::set_platform(Box::new(Platform(window.clone()))).unwrap();
     let ui = AppWindow::new().unwrap();
-    ui.set_settings_open(true);
-    ui.set_app_version("test".into());
+    ui.set_app_version("0.4.34".into());
+    ui.set_windows_theme_supported(true);
+    ui.set_crash_log_available(true);
+    ui.set_audio_device_names(slint::ModelRc::new(slint::VecModel::from(vec![
+        "System default".into(),
+        "Headphones".into(),
+    ])));
+    ui.set_audio_status("Applies only to Tide".into());
     let weak = ui.as_weak();
     ui.on_begin_shortcut(move |i| weak.upgrade().unwrap().set_shortcut_recording_index(i));
     let weak = ui.as_weak();
@@ -88,24 +110,61 @@ fn shortcuts_capture_keys_cancel_and_clear_without_transport() {
         let u = weak.upgrade().unwrap();
         u.set_history_feedback_enabled(!u.get_history_feedback_enabled());
     });
+    // Theme cards drive the existing theme callbacks to the chosen state.
+    let weak = ui.as_weak();
+    ui.on_switch_mode(move || {
+        let u = weak.upgrade().unwrap();
+        u.set_follow_windows_theme(false);
+        u.set_light_mode(!u.get_light_mode());
+    });
+    let weak = ui.as_weak();
+    ui.on_toggle_follow_windows_theme(move || {
+        let u = weak.upgrade().unwrap();
+        u.set_follow_windows_theme(!u.get_follow_windows_theme());
+    });
     ui.show().unwrap();
     ui.window()
         .dispatch_event(WindowEvent::WindowActiveChanged(true));
     for light in [false, true] {
         ui.set_light_mode(light);
-        ui.set_settings_shortcuts_open(false);
-        draw(
-            &window,
-            1140,
-            800,
-            if light {
-                "settings-simple-light"
-            } else {
-                "settings-simple-dark"
-            },
-        );
+        let theme = if light { "light" } else { "dark" };
+        ui.set_settings_page(SettingsPage::Playback);
+        ui.set_settings_open(true);
+        for (name, page) in [
+            ("playback", SettingsPage::Playback),
+            ("audio", SettingsPage::Audio),
+            ("appearance", SettingsPage::Appearance),
+            ("controls", SettingsPage::Controls),
+            ("about", SettingsPage::About),
+        ] {
+            click(&ui, RAIL_X, rail_y(page));
+            assert_eq!(ui.get_settings_page(), page, "rail did not open {name}");
+            assert!(ui.get_settings_open() && !ui.get_account_open());
+            draw(&window, 1140, 800, &format!("settings-{name}-{theme}"));
+        }
+        // Account shares the sheet: the rail switches between them.
+        click(&ui, RAIL_X, rail_y(SettingsPage::Account));
+        assert!(ui.get_account_open() && !ui.get_settings_open());
+        assert_eq!(ui.get_settings_shown_page(), SettingsPage::Account);
+        draw(&window, 1140, 800, &format!("settings-account-{theme}"));
+        click(&ui, RAIL_X, rail_y(SettingsPage::Playback));
+        assert!(ui.get_settings_open() && !ui.get_account_open());
+
+        // Row heights follow the platform font (macOS differs from Windows),
+        // so locate the Listening history switch by its effect first.
+        let mut history_y = None;
+        for y in (380..470).step_by(4) {
+            let before = *switches.borrow();
+            click(&ui, SWITCH_X, y as f32);
+            if *switches.borrow() > before {
+                history_y = Some(y as f32);
+                break;
+            }
+        }
+        let history_y = history_y.expect("Listening history switch not found");
+        ui.set_history_feedback_enabled(false);
         let before = *switches.borrow();
-        click(&ui, 1100.0, 211.0);
+        click(&ui, SWITCH_X, history_y);
         assert_eq!(
             *switches.borrow(),
             before + 1,
@@ -120,15 +179,16 @@ fn shortcuts_capture_keys_cancel_and_clear_without_transport() {
             before + 2,
             "Visual switch lost native Space-key support"
         );
-        // The top-level panel opens shortcuts without revealing technical fields.
-        // (Appearance — Dark theme and Animations — sits above the Audio and
-        // Keyboard shortcuts links.)
-        click(&ui, 980.0, 592.0);
-        assert!(ui.get_settings_shortcuts_open());
-        draw(&window, 1140, 800, "settings-shortcuts");
-        click(&ui, 1000.0, 296.0);
+        // The label is part of the row's target, not just the switch.
+        click(&ui, 500.0, history_y);
+        assert_eq!(*switches.borrow(), before + 3);
+        ui.set_history_feedback_enabled(false);
+
+        // Shortcuts sit inline on the Controls page.
+        click(&ui, RAIL_X, rail_y(SettingsPage::Controls));
+        click(&ui, 880.0, 188.0);
         assert_eq!(ui.get_shortcut_recording_index(), 0);
-        draw(&window, 1140, 800, "settings-recording");
+        draw(&window, 1140, 800, &format!("settings-recording-{theme}"));
         for text in [Key::Control.into(), Key::Alt.into(), "p".into()] {
             ui.window().dispatch_event(WindowEvent::KeyPressed { text });
         }
@@ -141,7 +201,7 @@ fn shortcuts_capture_keys_cancel_and_clear_without_transport() {
             Some(&("p".into(), true, true, false, false))
         );
         assert_eq!(ui.get_shortcut_recording_index(), -1);
-        click(&ui, 1000.0, 352.0);
+        click(&ui, 880.0, 242.0);
         assert_eq!(ui.get_shortcut_recording_index(), 1);
         ui.window().dispatch_event(WindowEvent::KeyPressed {
             text: Key::Escape.into(),
@@ -149,10 +209,16 @@ fn shortcuts_capture_keys_cancel_and_clear_without_transport() {
         assert_eq!(ui.get_shortcut_recording_index(), -1);
         assert!(ui.get_settings_open());
         assert_eq!(ui.get_shortcut_toggle(), "Ctrl+Alt+P");
-        click(&ui, 1100.0, 296.0);
+        draw(
+            &window,
+            1140,
+            800,
+            &format!("settings-shortcut-set-{theme}"),
+        );
+        click(&ui, 977.0, 188.0);
         assert_eq!(cleared.borrow().last(), Some(&0));
         assert!(ui.get_shortcut_toggle().is_empty());
-        click(&ui, 1000.0, 408.0);
+        click(&ui, 880.0, 296.0);
         assert_eq!(ui.get_shortcut_recording_index(), 2);
         ui.window()
             .dispatch_event(WindowEvent::WindowActiveChanged(false));
@@ -163,15 +229,46 @@ fn shortcuts_capture_keys_cancel_and_clear_without_transport() {
         );
         ui.window()
             .dispatch_event(WindowEvent::WindowActiveChanged(true));
-        click(&ui, 1000.0, 408.0);
-        ui.set_settings_open(false);
-        draw(&window, 1140, 800, "settings-closed");
+        // Leaving the Controls page cancels a capture in progress.
+        click(&ui, 880.0, 296.0);
+        assert_eq!(ui.get_shortcut_recording_index(), 2);
+        click(&ui, RAIL_X, rail_y(SettingsPage::Audio));
         assert_eq!(ui.get_shortcut_recording_index(), -1);
-        ui.set_settings_open(true);
+        // Closing from the scrim cancels too.
+        click(&ui, RAIL_X, rail_y(SettingsPage::Controls));
+        click(&ui, 880.0, 296.0);
+        click(&ui, 40.0, 400.0);
+        assert!(!ui.get_settings_open());
+        assert_eq!(ui.get_shortcut_recording_index(), -1);
+        draw(&window, 1140, 800, &format!("settings-closed-{theme}"));
     }
-    ui.set_settings_shortcuts_open(false);
+    // Theme cards: Dark, the system, then Light.
+    ui.set_light_mode(true);
+    ui.set_settings_page(SettingsPage::Appearance);
+    ui.set_settings_open(true);
+    draw(&window, 1140, 800, "settings-theme-before");
+    click(&ui, 462.0, 260.0);
+    assert!(
+        !ui.get_light_mode() && !ui.get_follow_windows_theme(),
+        "Dark card"
+    );
+    click(&ui, 889.0, 260.0);
+    assert!(ui.get_follow_windows_theme(), "System card");
+    click(&ui, 675.0, 260.0);
+    assert!(
+        ui.get_light_mode() && !ui.get_follow_windows_theme(),
+        "Light card"
+    );
+    ui.set_light_mode(false);
+    // Narrow windows replace the rail with a tab strip.
+    ui.set_settings_page(SettingsPage::Audio);
     draw(&window, 650, 420, "settings-small-window");
-    ui.set_settings_more_open(true);
+    click(&ui, 56.0, 30.0);
+    assert!(ui.get_account_open(), "Account tab at minimum width");
+    draw(&window, 650, 420, "settings-small-account");
+    click(&ui, 152.0, 30.0);
+    assert!(ui.get_settings_open());
+    assert_eq!(ui.get_settings_page(), SettingsPage::Playback);
     ui.set_settings_scroll_y(-180.0);
     ui.set_settings_open(false);
     draw(&window, 650, 420, "settings-small-closed");
@@ -182,12 +279,38 @@ fn shortcuts_capture_keys_cancel_and_clear_without_transport() {
         0.0,
         "Reopened Settings must start at the top"
     );
+    // Jam guests can't reach Account from Settings any more than from the header.
+    ui.set_jam_guest(true);
+    draw(&window, 650, 420, "settings-small-guest");
+    click(&ui, 56.0, 30.0);
+    assert!(
+        !ui.get_account_open(),
+        "Jam guest opened Account from Settings"
+    );
+    ui.set_jam_guest(false);
+    ui.set_settings_page(SettingsPage::Playback);
+    ui.set_settings_open(true);
+    // Collapsing to the mini player closes Settings and any shortcut capture.
+    ui.set_settings_page(SettingsPage::Controls);
+    draw(&window, 650, 420, "settings-before-collapse");
+    ui.invoke_begin_shortcut(0);
+    assert_eq!(ui.get_shortcut_recording_index(), 0);
+    ui.set_collapsed(true);
+    draw(&window, 650, 132, "settings-collapsed");
+    assert!(!ui.get_settings_open() && !ui.get_account_open());
+    assert_eq!(ui.get_shortcut_recording_index(), -1);
+    ui.set_collapsed(false);
+    ui.set_settings_open(true);
+    draw(&window, 650, 420, "settings-after-collapse");
     ui.set_settings_scroll_y(-180.0);
-    ui.set_settings_shortcuts_open(true);
-    draw(&window, 650, 420, "settings-shortcuts-small-window");
+    ui.set_settings_page(SettingsPage::Audio);
+    draw(&window, 650, 420, "settings-audio-small");
+    ui.set_settings_scroll_y(-180.0);
+    ui.set_settings_page(SettingsPage::Controls);
+    draw(&window, 650, 420, "settings-controls-small-window");
     assert_eq!(
         ui.get_settings_scroll_y(),
         0.0,
-        "Shortcut page inherited the previous scroll position"
+        "A page inherited the previous scroll position"
     );
 }

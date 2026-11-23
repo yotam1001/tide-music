@@ -58,7 +58,7 @@ fn equalizer_chips_choose_each_preset() {
     slint::platform::set_platform(Box::new(Platform(window.clone()))).unwrap();
     let ui = AppWindow::new().unwrap();
     ui.set_settings_open(true);
-    ui.set_settings_audio_open(true);
+    ui.set_settings_page(SettingsPage::Audio);
     let chosen = Rc::new(RefCell::new(Vec::new()));
     let captured = chosen.clone();
     let weak = ui.as_weak();
@@ -68,15 +68,15 @@ fn equalizer_chips_choose_each_preset() {
     });
     ui.show().unwrap();
     draw(&window, 1140, 1000, "equalizer-off");
-    // Two rows of three chips: Off, Bass boost, Bass reducer / Treble boost,
+    // The sheet is centred (y=150 at this height). Two rows of three presets: Off, Bass boost, Bass reducer / Treble boost,
     // Vocal, Loudness.
     for (index, (x, y)) in [
-        (1, (944.0, 847.0)),
-        (2, (1056.0, 847.0)),
-        (3, (832.0, 891.0)),
-        (4, (944.0, 891.0)),
-        (5, (1056.0, 891.0)),
-        (0, (832.0, 847.0)),
+        (1, (675.0, 684.0)),
+        (2, (889.0, 684.0)),
+        (3, (462.0, 760.0)),
+        (4, (675.0, 760.0)),
+        (5, (889.0, 760.0)),
+        (0, (462.0, 684.0)),
     ] {
         click(&ui, x, y);
         draw(&window, 1140, 1000, &format!("equalizer-{index}"));
@@ -104,14 +104,10 @@ fn equalizer_chips_choose_each_preset() {
         captured.borrow_mut().push(seconds);
         weak.upgrade().unwrap().set_crossfade_seconds(seconds);
     });
-    for (seconds, x) in [
-        (3, 875.0),
-        (6, 939.0),
-        (9, 1003.0),
-        (12, 1067.0),
-        (0, 810.0),
-    ] {
-        click(&ui, x, 743.0);
+    // Crossfade and fades live on the Playback page.
+    ui.set_settings_page(SettingsPage::Playback);
+    for (seconds, x) in [(3, 551.0), (6, 676.0), (9, 801.0), (12, 927.0), (0, 425.0)] {
+        click(&ui, x, 340.0);
         draw(&window, 1140, 1000, &format!("crossfade-{seconds}"));
         assert_eq!(
             ui.get_crossfade_seconds(),
@@ -120,7 +116,7 @@ fn equalizer_chips_choose_each_preset() {
         );
     }
     assert_eq!(*lengths.borrow(), [3, 6, 9, 12, 0]);
-    click(&ui, 1095.0, 650.0);
+    click(&ui, 970.0, 405.0);
     draw(&window, 1140, 1000, "fade-on");
     assert_eq!(*fades.borrow(), 1, "Fade between songs switch");
     assert!(ui.get_fade_transitions());
@@ -134,13 +130,15 @@ fn equalizer_chips_choose_each_preset() {
         let ui = weak.upgrade().unwrap();
         ui.set_bit_perfect(!ui.get_bit_perfect());
     });
-    click(&ui, 1095.0, 361.0);
+    ui.set_settings_page(SettingsPage::Audio);
+    click(&ui, 970.0, 406.0);
     draw(&window, 1140, 1000, "bit-perfect-on");
     assert_eq!(*toggles.borrow(), 1, "Bit-perfect switch");
     assert!(ui.get_bit_perfect());
-    // Crossfade chips sit lower now that the explanation is shown.
+    ui.set_settings_page(SettingsPage::Playback);
+    draw(&window, 1140, 1000, "bit-perfect-playback");
     let before = lengths.borrow().len();
-    click(&ui, 875.0, 835.0);
+    click(&ui, 551.0, 340.0);
     assert_eq!(
         lengths.borrow().len(),
         before,
