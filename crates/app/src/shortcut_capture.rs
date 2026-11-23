@@ -69,6 +69,57 @@ fn encode(
     Ok(Some(value))
 }
 
+/// A saved binding in the canonical form Settings draws as keycaps:
+/// `Cmd+`, `Ctrl+`, `Alt+`/`Option+`, `Shift+`, then the key. Hand-edited
+/// settings may use aliases (`Control`, `Command`, `\u{2318}`) or any case;
+/// those keep working for registration and only change how they are shown.
+/// Text that is not a modifier chord is returned unchanged.
+pub(crate) fn display_shortcut(text: &str) -> String {
+    let text = text.trim();
+    if text.is_empty() {
+        return String::new();
+    }
+    let mut modifiers = [None; 4];
+    let mut key = None;
+    for part in text.split('+').map(str::trim) {
+        let slot = match part.to_uppercase().as_str() {
+            "CMD" | "COMMAND" | "\u{2318}" => Some((0, "Cmd")),
+            "CTRL" | "CONTROL" | "\u{2303}" => Some((1, "Ctrl")),
+            "ALT" => Some((2, "Alt")),
+            "OPTION" | "\u{2325}" => Some((2, "Option")),
+            "SHIFT" | "\u{21e7}" => Some((3, "Shift")),
+            _ => None,
+        };
+        match slot {
+            Some((index, name)) if key.is_none() && modifiers[index].is_none() => {
+                modifiers[index] = Some(name)
+            }
+            None if key.is_none() && !part.is_empty() => key = Some(part),
+            _ => return text.into(),
+        }
+    }
+    let Some(key) = key else {
+        return text.into();
+    };
+    let upper = key.to_ascii_uppercase();
+    let key = if upper == "SPACE" {
+        "Space".to_string()
+    } else if key.chars().count() == 1
+        || (upper.starts_with('F') && upper[1..].parse::<u32>().is_ok())
+    {
+        upper
+    } else {
+        key.to_string()
+    };
+    let mut value = String::new();
+    for name in modifiers.into_iter().flatten() {
+        value.push_str(name);
+        value.push('+');
+    }
+    value.push_str(&key);
+    value
+}
+
 #[cfg(native_shell)]
 mod recording {
     use super::super::{save, AppWindow, State};
@@ -109,9 +160,9 @@ mod recording {
         match apply(manager, &values) {
             Ok(()) => {
                 ui.set_shortcut_recording_index(-1);
-                ui.set_shortcut_toggle(values[0].clone().into());
-                ui.set_shortcut_next(values[1].clone().into());
-                ui.set_shortcut_previous(values[2].clone().into());
+                ui.set_shortcut_toggle(super::display_shortcut(&values[0]).into());
+                ui.set_shortcut_next(super::display_shortcut(&values[1]).into());
+                ui.set_shortcut_previous(super::display_shortcut(&values[2]).into());
                 let mut s = state.borrow_mut();
                 s.settings.shortcuts = values;
                 save(&s.settings);
@@ -175,6 +226,24 @@ pub(super) use recording::wire;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saved_shortcuts_are_shown_in_canonical_form() {
+        assert_eq!(display_shortcut("Ctrl+Alt+P"), "Ctrl+Alt+P");
+        assert_eq!(display_shortcut(" control + alt + p "), "Ctrl+Alt+P");
+        assert_eq!(
+            display_shortcut("shift+ctrl+alt+space"),
+            "Ctrl+Alt+Shift+Space"
+        );
+        assert_eq!(display_shortcut("Command+Option+P"), "Cmd+Option+P");
+        assert_eq!(display_shortcut("\u{2318}+\u{2325}+f5"), "Cmd+Option+F5");
+        assert_eq!(display_shortcut("Ctrl+Cmd+K"), "Cmd+Ctrl+K");
+        assert_eq!(display_shortcut(""), "");
+        // Not a chord: shown as written rather than guessed at.
+        assert_eq!(display_shortcut("Ctrl+Ctrl+P"), "Ctrl+Ctrl+P");
+        assert_eq!(display_shortcut("Ctrl+P+Q"), "Ctrl+P+Q");
+        assert_eq!(display_shortcut("Ctrl+"), "Ctrl+");
+    }
     #[cfg(not(target_os = "macos"))]
     #[test]
     fn captured_chords_match_supported_global_bindings() {

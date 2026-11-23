@@ -23,8 +23,10 @@ pub fn install(ui: &AppWindow) {
         let Some(url) = about_link(index, env!("CARGO_PKG_VERSION")) else {
             return;
         };
-        if let (Err(error), Some(u)) = (crate::platform::open_web_page(&url), weak.upgrade()) {
-            u.set_status_text(error.into());
+        let result = crate::platform::open_web_page(&url);
+        if let Some(u) = weak.upgrade() {
+            // Shown under the links on About, where the click happened.
+            u.set_about_link_status(result.err().unwrap_or_default().into());
         }
     });
 }

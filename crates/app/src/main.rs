@@ -3152,9 +3152,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ui.set_mini_opacity(state.borrow().settings.mini_opacity.clamp(60, 100) as f32);
     {
         let s = state.borrow();
-        ui.set_shortcut_toggle(s.settings.shortcuts[0].clone().into());
-        ui.set_shortcut_next(s.settings.shortcuts[1].clone().into());
-        ui.set_shortcut_previous(s.settings.shortcuts[2].clone().into());
+        ui.set_shortcut_toggle(shortcut_capture::display_shortcut(&s.settings.shortcuts[0]).into());
+        ui.set_shortcut_next(shortcut_capture::display_shortcut(&s.settings.shortcuts[1]).into());
+        ui.set_shortcut_previous(
+            shortcut_capture::display_shortcut(&s.settings.shortcuts[2]).into(),
+        );
     }
     ui.set_volume(state.borrow().settings.volume.unwrap_or(70.0) as f32);
     ui.set_volume_step_index(state.borrow().settings.volume_step_index);

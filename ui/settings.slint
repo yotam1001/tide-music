@@ -14,8 +14,8 @@ export global SettingsIcons {
     out property <string> controls: "M 2 6 L 22 6 L 22 18 L 2 18 Z M 6 10 L 7 10 M 10 10 L 11 10 M 14 10 L 15 10 M 18 10 L 18 10 M 7 14 L 17 14";
     out property <string> about: "M 12 2 A 10 10 0 1 0 12 22 A 10 10 0 1 0 12 2 Z M 12 11 L 12 17 M 12 7 L 12 7.5";
     // Row glyphs (About links, account status).
-    out property <string> sparkle: "M 12 3 L 13.8 10.2 L 21 12 L 13.8 13.8 L 12 21 L 10.2 13.8 L 3 12 L 10.2 10.2 Z";
-    out property <string> bug: "M 8 9 A 4 4 0 0 1 16 9 L 16 15 A 4 4 0 0 1 8 15 Z M 12 9 L 12 19 M 4 12 L 8 12 M 16 12 L 20 12 M 5 7 L 8 9 M 19 7 L 16 9 M 5 18 L 8 16 M 19 18 L 16 16";
+    out property <string> sparkle: "M 12 3 C 12.8 8.5 15.5 11.2 21 12 C 15.5 12.8 12.8 15.5 12 21 C 11.2 15.5 8.5 12.8 3 12 C 8.5 11.2 11.2 8.5 12 3 Z";
+    out property <string> bug: "M 8 10 A 4 4 0 0 1 16 10 L 16 15 A 4 4 0 0 1 8 15 Z M 10 6.5 L 9 4 M 14 6.5 L 15 4 M 4 12.5 L 8 12.5 M 16 12.5 L 20 12.5 M 5 18 L 8 16.5 M 19 18 L 16 16.5";
     out property <string> code: "M 8 7 L 3 12 L 8 17 M 16 7 L 21 12 L 16 17 M 14 4 L 10 20";
     out property <string> shield: "M 12 3 L 20 6 L 20 12 C 20 17 16 20 12 21 C 8 20 4 17 4 12 L 4 6 Z M 9 12 L 11 14 L 15 10";
     out property <string> document: "M 6 3 L 14 3 L 19 8 L 19 21 L 6 21 Z M 14 3 L 14 8 L 19 8 M 9 13 L 16 13 M 9 17 L 16 17";
@@ -65,7 +65,7 @@ export component SettingsNavItem inherits Rectangle {
     callback select();
     public function focus-item() { control.focus(); }
     out property <bool> item-focused: control.has-focus;
-    height: root.stacked ? 56px : 40px;
+    height: root.stacked ? 52px : 40px;
     border-radius: 10px;
     background: root.active ? Theme.selected : control.pressed ? SettingsTheme.row-pressed : touch.has-hover ? SettingsTheme.row-hover : transparent;
     animate background { duration: ControlMotion.feedback; easing: ease-out; }
@@ -82,7 +82,7 @@ export component SettingsNavItem inherits Rectangle {
     }
     tile := Rectangle {
         x: root.stacked ? (parent.width - self.width) / 2 : 8px;
-        y: root.stacked ? 7px : (parent.height - self.height) / 2;
+        y: root.stacked ? 5px : (parent.height - self.height) / 2;
         width: root.stacked ? 28px : 26px; height: self.width; border-radius: root.stacked ? 8px : 7px;
         background: root.tint;
         Path {
@@ -99,7 +99,7 @@ export component SettingsNavItem inherits Rectangle {
     }
     label := Text {
         x: root.stacked ? 2px : 44px;
-        y: root.stacked ? 38px : 0px;
+        y: root.stacked ? 34px : 0px;
         width: root.stacked ? parent.width - 4px : parent.width - self.x - (root.badge ? 22px : 10px);
         height: root.stacked ? 14px : parent.height;
         text: root.title; vertical-alignment: center; overflow: elide;
@@ -119,10 +119,11 @@ export component SettingsNavItem inherits Rectangle {
 export component SettingsRailFooter inherits Rectangle {
     in property <string> version;
     in property <string> status;
-    // 0 neutral, 1 good, 2 attention (an update is waiting).
+    // 0 neutral, 1 good, 3 an update is waiting (berry, like the About badge).
     in property <int> tone: 0;
     in property <bool> stacked: false;
     callback select();
+    out property <bool> item-focused: control.has-focus;
     height: root.stacked ? 34px : 46px;
     border-radius: 10px;
     background: control.pressed ? SettingsTheme.row-pressed : touch.has-hover ? SettingsTheme.row-hover : transparent;
@@ -132,14 +133,14 @@ export component SettingsRailFooter inherits Rectangle {
         mouse-cursor: pointer;
         control := Button { width: parent.width; height: parent.height; opacity: 0; text: ""; accessible-label: "Tide " + root.version + ", " + root.status + ". Open About"; clicked => { root.select(); } }
     }
-    private property <color> dot: root.tone == 1 ? SettingsTheme.good : root.tone == 2 ? Theme.accent : Theme.muted;
+    private property <color> dot: root.tone == 1 ? SettingsTheme.good : root.tone == 3 ? Theme.accent : Theme.muted;
     if !root.stacked : VerticalLayout {
         x: 12px; width: parent.width - 24px; alignment: center; spacing: 2px;
         Text { text: "Tide " + root.version; color: Theme.text; font-size: 12px; font-weight: 700; overflow: elide; }
         HorizontalLayout {
             spacing: 6px; alignment: start;
             Rectangle { width: 7px; Rectangle { y: (parent.height - 7px) / 2; width: 7px; height: 7px; border-radius: 3.5px; background: root.dot; } }
-            Text { text: root.status; color: root.tone == 2 ? Theme.selected-ink : Theme.muted; font-size: 11.5px; font-weight: root.tone == 2 ? 700 : 500; overflow: elide; vertical-alignment: center; }
+            Text { text: root.status; color: root.tone == 3 ? Theme.selected-ink : Theme.muted; font-size: 11.5px; font-weight: root.tone == 3 ? 700 : 500; overflow: elide; vertical-alignment: center; }
         }
     }
     if root.stacked : HorizontalLayout {
@@ -284,7 +285,7 @@ export component SettingItem inherits Rectangle {
             width: 28px; height: 28px; border-radius: 8px; background: root.tint;
             Path {
                 x: 6px; y: 6px; width: 16px; height: 16px; viewbox-width: 24; viewbox-height: 24;
-                fill: transparent; stroke: #ffffff; stroke-width: 2px; commands: root.icon-path;
+                fill: transparent; stroke: #ffffff; stroke-width: 1.75px; commands: root.icon-path;
             }
         }
         VerticalLayout {
@@ -414,12 +415,16 @@ export component SegmentedControl inherits Rectangle {
 
 // A miniature of Tide's window drawn with one palette: sidebar, header,
 // the raised content panel and the player bar.
+// The software renderer clips to rectangles, so every part that touches an
+// outer corner carries the preview's rounding itself.
 component WindowMiniature inherits Rectangle {
     in property <bool> light;
+    border-radius: 8px;
     background: Theme.window-for(root.light);
     // Sidebar with three entries, the first one selected.
     Rectangle {
         x: 0px; y: 0px; width: parent.width * 0.24; height: parent.height - 18px;
+        border-top-left-radius: 8px;
         background: Theme.chrome-for(root.light);
         Rectangle { x: 6px; y: 8px; width: 9px; height: 9px; border-radius: 3px; background: Theme.accent-for(root.light); }
         Rectangle {
@@ -448,6 +453,7 @@ component WindowMiniature inherits Rectangle {
     // Player bar.
     Rectangle {
         x: 0px; y: parent.height - 18px; width: parent.width; height: 18px;
+        border-bottom-left-radius: 8px; border-bottom-right-radius: 8px;
         background: Theme.chrome-for(root.light);
         Rectangle { x: 0px; y: 0px; width: parent.width; height: 1px; background: Theme.divider-for(root.light); }
         Rectangle { x: 6px; y: 4px; width: 10px; height: 10px; border-radius: 2px; background: Theme.accent-for(root.light).with-alpha(0.65); }
@@ -599,6 +605,24 @@ export component KeyCap inherits Rectangle {
     }
 }
 
+// A small text button inside a row (Clear, Cancel).
+component RowTextButton inherits Rectangle {
+    in property <string> text;
+    in property <string> label;
+    callback activate();
+    border-radius: 8px;
+    background: action.pressed ? SettingsTheme.row-pressed : touch.has-hover ? SettingsTheme.row-hover : transparent;
+    border-width: action.has-focus ? 2px : 0px; border-color: Theme.focus;
+    Text {
+        text: root.text; color: touch.has-hover ? Theme.text : Theme.muted;
+        font-size: 12.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center;
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        action := Button { width: parent.width; height: parent.height; opacity: 0; text: ""; accessible-label: root.label; clicked => { root.activate(); } }
+    }
+}
+
 // A keyboard shortcut inside a settings card. The binding ("Ctrl+Alt+P") is
 // shown as separate keycaps. Recording takes the focus into a private scope:
 // losing it (another click, another window) cancels the capture.
@@ -630,7 +654,8 @@ export component ShortcutSetting inherits Rectangle {
         padding-left: 16px; padding-right: 10px; padding-top: 9px; padding-bottom: 9px; spacing: 8px; cross-axis-alignment: center;
         Text { horizontal-stretch: 1; min-width: 0px; text: root.action; color: Theme.text; font-size: 14px; font-weight: 600; overflow: elide; vertical-alignment: center; }
         field := Rectangle {
-            width: 184px; height: 38px; border-radius: 9px;
+            // Grows for long chords such as Ctrl+Alt+Shift+Space.
+            width: max(184px, caps.preferred-width + 20px); height: 38px; border-radius: 9px;
             background: root.recording ? Theme.selected : key-action.pressed ? SettingsTheme.row-pressed : key-touch.has-hover ? SettingsTheme.row-hover : SettingsTheme.well;
             border-width: key-action.has-focus || root.recording ? 2px : 1px;
             border-color: key-action.has-focus ? Theme.focus : root.recording ? Theme.accent : SettingsTheme.well-border;
@@ -644,7 +669,8 @@ export component ShortcutSetting inherits Rectangle {
                 text: "Not set · click to record"; color: Theme.muted; font-size: 12px; font-weight: 500;
                 horizontal-alignment: center; vertical-alignment: center;
             }
-            if !root.recording && root.binding != "" : HorizontalLayout {
+            caps := HorizontalLayout {
+                visible: !root.recording && root.binding != "";
                 alignment: center; spacing: 4px; padding-top: 6px; padding-bottom: 6px;
                 // Modifier order follows each platform: Ctrl Alt Shift, or ⌃ ⌥ ⇧ ⌘.
                 if root.has-ctrl : KeyCap { text: root.mac ? "⌃" : "Ctrl"; }
@@ -662,24 +688,18 @@ export component ShortcutSetting inherits Rectangle {
                 }
             }
         }
-        // Clear when a shortcut is set; Cancel while recording.
-        end-button := Rectangle {
-            width: 64px; height: 30px; border-radius: 8px;
-            private property <bool> live: root.recording || root.binding != "";
-            opacity: self.live ? 1 : 0;
-            background: end-action.pressed ? SettingsTheme.row-pressed : end-touch.has-hover && self.live ? SettingsTheme.row-hover : transparent;
-            border-width: end-action.has-focus ? 2px : 0px; border-color: Theme.focus;
-            Text {
-                text: root.recording ? "Cancel" : "Clear"; color: end-touch.has-hover ? Theme.text : Theme.muted;
-                font-size: 12.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center;
+        // Cancel while recording, Clear when a shortcut is set. Two separate
+        // buttons: if a press ends the recording first, the Cancel button is
+        // gone before its release, so it can never clear a set shortcut.
+        Rectangle {
+            width: 64px; height: 30px;
+            if root.recording : RowTextButton {
+                text: "Cancel"; label: "Cancel recording the " + root.action + " shortcut";
+                activate => { root.cancel(); }
             }
-            end-touch := TouchArea {
-                enabled: parent.live; mouse-cursor: pointer;
-                end-action := Button {
-                    width: parent.width; height: parent.height; opacity: 0; text: ""; enabled: parent.enabled;
-                    accessible-label: (root.recording ? "Cancel recording the " : "Clear the ") + root.action + " shortcut";
-                    clicked => { if root.recording { root.cancel(); } else { root.clear(); } }
-                }
+            if !root.recording && root.binding != "" : RowTextButton {
+                text: "Clear"; label: "Clear the " + root.action + " shortcut";
+                activate => { root.clear(); }
             }
         }
     }
@@ -688,9 +708,9 @@ export component ShortcutSetting inherits Rectangle {
 // Small status chip: a coloured dot and a short label.
 export component StatusPill inherits Rectangle {
     in property <string> text;
-    // 0 neutral, 1 good, 2 attention.
+    // 0 neutral, 1 good, 2 attention, 3 an update is waiting (berry).
     in property <int> tone: 0;
-    private property <color> dot: root.tone == 1 ? SettingsTheme.good : root.tone == 2 ? SettingsTheme.attention : Theme.muted;
+    private property <color> dot: root.tone == 1 ? SettingsTheme.good : root.tone == 2 ? SettingsTheme.attention : root.tone == 3 ? Theme.accent : Theme.muted;
     height: 24px;
     width: pill-text.preferred-width + 30px;
     border-radius: 12px;

@@ -151,6 +151,8 @@ export component TideSlider inherits Rectangle {
     // Native input must never assign the externally owned value: doing so
     // breaks its binding to the live clock/volume. Keep a local drag preview.
     private property <float> input-value: root.value;
+    // The value on show, including a drag in progress.
+    out property <float> display-value: root.input-value;
     private property <bool> interacting: false;
     private property <bool> input-focused: native.has-focus;
     changed value => { if !root.interacting { root.input-value = root.value; } }

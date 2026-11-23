@@ -84,11 +84,11 @@ fn narrow_y(page: SettingsPage) -> f32 {
         _ => 324.0,
     }
 }
-// Shortcut rows: the keycap field, then Clear / Cancel beside it. The rows
-// have a fixed height; only the group title above them follows the font.
+// Shortcut rows: the keycap field, then Clear / Cancel beside it. Each row
+// is 56px tall; where the first starts follows the platform font.
 const KEYS_X: f32 = 834.0;
 const CLEAR_X: f32 = 966.0;
-const SHORTCUT_Y: [f32; 3] = [193.0, 249.0, 305.0];
+const SHORTCUT_ROW: f32 = 56.0;
 
 #[test]
 fn settings_sheet_navigates_toggles_and_captures_shortcuts() {
@@ -219,7 +219,16 @@ fn settings_sheet_navigates_toggles_and_captures_shortcuts() {
 
         // Shortcuts sit inline on the Controls page, as keycaps.
         click(&ui, RAIL_X, rail_y(SettingsPage::Controls));
-        click(&ui, KEYS_X, SHORTCUT_Y[0]);
+        // Find the first keycap field by its effect, then aim at its centre
+        // (the field is 38px tall).
+        let top = (130..280)
+            .step_by(2)
+            .find(|&y| {
+                click(&ui, KEYS_X, y as f32);
+                ui.get_shortcut_recording_index() == 0
+            })
+            .expect("Play / pause shortcut field not found") as f32;
+        let shortcut_y = [0.0, 1.0, 2.0].map(|row| top + 18.0 + row * SHORTCUT_ROW);
         assert_eq!(ui.get_shortcut_recording_index(), 0);
         draw(&window, 1140, 800, &format!("settings-recording-{theme}"));
         for text in [Key::Control.into(), Key::Alt.into(), "p".into()] {
@@ -234,7 +243,7 @@ fn settings_sheet_navigates_toggles_and_captures_shortcuts() {
             Some(&("p".into(), true, true, false, false))
         );
         assert_eq!(ui.get_shortcut_recording_index(), -1);
-        click(&ui, KEYS_X, SHORTCUT_Y[1]);
+        click(&ui, KEYS_X, shortcut_y[1]);
         assert_eq!(ui.get_shortcut_recording_index(), 1);
         ui.window().dispatch_event(WindowEvent::KeyPressed {
             text: Key::Escape.into(),
@@ -248,8 +257,17 @@ fn settings_sheet_navigates_toggles_and_captures_shortcuts() {
             800,
             &format!("settings-shortcut-set-{theme}"),
         );
+        // A four-key chord widens its field instead of overflowing it.
+        ui.set_shortcut_previous("Ctrl+Alt+Shift+Space".into());
+        draw(
+            &window,
+            1140,
+            800,
+            &format!("settings-shortcut-chord-{theme}"),
+        );
+        ui.set_shortcut_previous("".into());
         // While recording, Cancel takes the place of Clear.
-        click(&ui, KEYS_X, SHORTCUT_Y[1]);
+        click(&ui, KEYS_X, shortcut_y[1]);
         assert_eq!(ui.get_shortcut_recording_index(), 1);
         draw(
             &window,
@@ -258,18 +276,18 @@ fn settings_sheet_navigates_toggles_and_captures_shortcuts() {
             &format!("settings-recording-cancel-{theme}"),
         );
         let before = *cancels.borrow();
-        click(&ui, CLEAR_X, SHORTCUT_Y[1]);
+        click(&ui, CLEAR_X, shortcut_y[1]);
         assert_eq!(ui.get_shortcut_recording_index(), -1);
         assert!(*cancels.borrow() > before, "Cancel did not cancel");
         assert!(cleared.borrow().is_empty(), "Cancel cleared a shortcut");
         // An unset shortcut has nothing to clear.
-        click(&ui, CLEAR_X, SHORTCUT_Y[2]);
+        click(&ui, CLEAR_X, shortcut_y[2]);
         assert!(cleared.borrow().is_empty());
-        click(&ui, CLEAR_X, SHORTCUT_Y[0]);
+        click(&ui, CLEAR_X, shortcut_y[0]);
         assert_eq!(cleared.borrow().last(), Some(&0));
         assert!(ui.get_shortcut_toggle().is_empty());
         cleared.borrow_mut().clear();
-        click(&ui, KEYS_X, SHORTCUT_Y[2]);
+        click(&ui, KEYS_X, shortcut_y[2]);
         assert_eq!(ui.get_shortcut_recording_index(), 2);
         ui.window()
             .dispatch_event(WindowEvent::WindowActiveChanged(false));
@@ -281,13 +299,13 @@ fn settings_sheet_navigates_toggles_and_captures_shortcuts() {
         ui.window()
             .dispatch_event(WindowEvent::WindowActiveChanged(true));
         // Leaving the Controls page cancels a capture in progress.
-        click(&ui, KEYS_X, SHORTCUT_Y[2]);
+        click(&ui, KEYS_X, shortcut_y[2]);
         assert_eq!(ui.get_shortcut_recording_index(), 2);
         click(&ui, RAIL_X, rail_y(SettingsPage::Audio));
         assert_eq!(ui.get_shortcut_recording_index(), -1);
         // Closing from the scrim cancels too.
         click(&ui, RAIL_X, rail_y(SettingsPage::Controls));
-        click(&ui, KEYS_X, SHORTCUT_Y[2]);
+        click(&ui, KEYS_X, shortcut_y[2]);
         click(&ui, 40.0, 400.0);
         assert!(!ui.get_settings_open());
         assert_eq!(ui.get_shortcut_recording_index(), -1);
@@ -381,6 +399,19 @@ fn settings_sheet_navigates_toggles_and_captures_shortcuts() {
         ui.get_settings_open() && ui.get_settings_page() == SettingsPage::Playback,
         "Tab past the close button left the sheet"
     );
+    // Tab on through the rail to its footer: Up from there returns to the
+    // last category, whichever page is on show.
+    for _ in 0..5 {
+        key(&ui, Key::Tab.into());
+    }
+    ui.set_settings_page(SettingsPage::Audio);
+    draw(&window, 1140, 800, "settings-keyboard-footer");
+    key(&ui, Key::UpArrow.into());
+    assert_eq!(
+        ui.get_settings_page(),
+        SettingsPage::About,
+        "Up from the rail footer"
+    );
     // Many Tabs never reach the window behind.
     for _ in 0..60 {
         key(&ui, Key::Tab.into());
@@ -414,8 +445,9 @@ fn settings_sheet_navigates_toggles_and_captures_shortcuts() {
     }
     ui.set_light_mode(false);
     // Rows above it leave Settings, so scan only where the last row can be.
+    // Scan bottom-up: below that row there is nothing to click at this x.
     let mut opened = false;
-    for y in (470..522).step_by(4) {
+    for y in (440..560).step_by(4).rev() {
         click(&ui, 700.0, y as f32);
         if ui.get_settings_open() {
             opened = true;
@@ -427,7 +459,12 @@ fn settings_sheet_navigates_toggles_and_captures_shortcuts() {
     // Your playlists closes the sheet and opens the library behind it.
     ui.set_account_open(true);
     draw(&window, 1140, 800, "settings-account-connected-again");
-    click(&ui, 700.0, 318.0);
+    for y in (260..380).step_by(4) {
+        click(&ui, 700.0, y as f32);
+        if !ui.get_account_open() {
+            break;
+        }
+    }
     assert!(
         !ui.get_settings_open() && !ui.get_account_open() && ui.get_library_open(),
         "Your playlists row did not open the library"
@@ -509,6 +546,7 @@ fn settings_sheet_navigates_toggles_and_captures_shortcuts() {
     ui.set_settings_page(SettingsPage::Audio);
     draw(&window, 650, 420, "settings-audio-small");
     ui.set_settings_scroll_y(-180.0);
+    ui.set_shortcut_toggle("Ctrl+Alt+Shift+Space".into());
     ui.set_settings_page(SettingsPage::Controls);
     draw(&window, 650, 420, "settings-controls-small-window");
     assert_eq!(
@@ -520,6 +558,7 @@ fn settings_sheet_navigates_toggles_and_captures_shortcuts() {
     for (light, theme) in [(false, "dark"), (true, "light")] {
         ui.set_light_mode(light);
         ui.set_settings_page(SettingsPage::Audio);
+        ui.set_settings_scroll_y(0.0);
         draw(&window, 780, 720, &format!("settings-audio-780-{theme}"));
         ui.set_settings_scroll_y(-160.0);
         draw(

@@ -546,6 +546,11 @@ fn cached_installer(release: &Release, base: &Path) -> Option<PathBuf> {
     Some(path)
 }
 
+/// Whether a finished check showed this copy is the newest stable release.
+/// A failed check says nothing either way, so it does not count as current.
+fn up_to_date<R>(checked: &Result<(Option<R>, Option<PathBuf>), String>) -> bool {
+    matches!(checked, Ok((None, _)))
+}
 enum Completion {
     Checked(Result<(Option<Release>, Option<PathBuf>), String>),
     Downloaded(Result<PathBuf, String>),
@@ -731,9 +736,8 @@ impl Updater {
             ui.set_update_status("Download canceled. Music keeps playing.".into());
             return;
         }
-        if matches!(result, Completion::Checked(Err(_))) {
-            // A failed check says nothing about whether this copy is current.
-            ui.set_update_current(false);
+        if let Completion::Checked(checked) = &result {
+            ui.set_update_current(up_to_date(checked));
         }
         match result {
             Completion::Checked(Ok((candidate, cached))) => {
@@ -747,7 +751,6 @@ impl Updater {
                     .unwrap_or_else(|| "No newer stable release is available".into());
                 self.available = candidate;
                 ui.set_update_available(self.available.is_some());
-                ui.set_update_current(self.available.is_none());
                 ui.set_update_status(status.into());
             }
             Completion::Checked(Err(error)) | Completion::Downloaded(Err(error)) => {
@@ -945,6 +948,13 @@ pub(super) fn verify_installed_updates() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_successful_check_without_a_release_is_up_to_date() {
+        assert!(up_to_date::<()>(&Ok((None, None))));
+        assert!(!up_to_date(&Ok((Some(()), None))));
+        assert!(!up_to_date::<()>(&Err("offline".into())));
+    }
     #[cfg(windows)]
     use serde_json::json;
 
