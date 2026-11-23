@@ -106,13 +106,7 @@ fn equalizer_chips_choose_each_preset() {
     });
     // Crossfade and fades live on the Playback page.
     ui.set_settings_page(SettingsPage::Playback);
-    for (seconds, x) in [
-        (3, 551.0),
-        (6, 676.0),
-        (9, 801.0),
-        (12, 927.0),
-        (0, 425.0),
-    ] {
+    for (seconds, x) in [(3, 551.0), (6, 676.0), (9, 801.0), (12, 927.0), (0, 425.0)] {
         click(&ui, x, 340.0);
         draw(&window, 1140, 1000, &format!("crossfade-{seconds}"));
         assert_eq!(

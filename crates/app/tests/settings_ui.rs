@@ -196,7 +196,12 @@ fn settings_sheet_navigates_toggles_and_captures_shortcuts() {
         assert_eq!(ui.get_shortcut_recording_index(), -1);
         assert!(ui.get_settings_open());
         assert_eq!(ui.get_shortcut_toggle(), "Ctrl+Alt+P");
-        draw(&window, 1140, 800, &format!("settings-shortcut-set-{theme}"));
+        draw(
+            &window,
+            1140,
+            800,
+            &format!("settings-shortcut-set-{theme}"),
+        );
         click(&ui, 977.0, 188.0);
         assert_eq!(cleared.borrow().last(), Some(&0));
         assert!(ui.get_shortcut_toggle().is_empty());
@@ -230,11 +235,17 @@ fn settings_sheet_navigates_toggles_and_captures_shortcuts() {
     ui.set_settings_open(true);
     draw(&window, 1140, 800, "settings-theme-before");
     click(&ui, 462.0, 260.0);
-    assert!(!ui.get_light_mode() && !ui.get_follow_windows_theme(), "Dark card");
+    assert!(
+        !ui.get_light_mode() && !ui.get_follow_windows_theme(),
+        "Dark card"
+    );
     click(&ui, 889.0, 260.0);
     assert!(ui.get_follow_windows_theme(), "System card");
     click(&ui, 675.0, 260.0);
-    assert!(ui.get_light_mode() && !ui.get_follow_windows_theme(), "Light card");
+    assert!(
+        ui.get_light_mode() && !ui.get_follow_windows_theme(),
+        "Light card"
+    );
     ui.set_light_mode(false);
     // Narrow windows replace the rail with a tab strip.
     ui.set_settings_page(SettingsPage::Audio);

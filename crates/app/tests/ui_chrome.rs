@@ -59,7 +59,10 @@ fn appearance_targets(width: u32, height: u32) -> ((f32, f32), (f32, f32)) {
     let card = (sheet_width - 212.0 - 64.0 - 32.0 - 10.0) / 2.0;
     (
         (x + 100.0, y + 258.0),
-        (x + 212.0 + 32.0 + 16.0 + card + 10.0 + card / 2.0, y + 210.0),
+        (
+            x + 212.0 + 32.0 + 16.0 + card + 10.0 + card / 2.0,
+            y + 210.0,
+        ),
     )
 }
 fn click(ui: &AppWindow, x: f32, y: f32) {
