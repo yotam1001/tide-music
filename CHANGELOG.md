@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.4.36 - 2026-11-23
+
 - Refined the Settings window:
   - Narrow windows show the categories as a compact icon rail on the left, like the main window, instead of a scrolling tab strip. All six fit at the smallest window size.
   - Setting groups stand out more clearly from the page in both themes, rows highlight under the pointer, and long pages show a slim scrollbar, a soft fade while more is below and a line under the title once you scroll.
