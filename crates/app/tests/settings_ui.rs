@@ -250,10 +250,10 @@ fn settings_sheet_navigates_toggles_and_captures_shortcuts() {
     // Narrow windows replace the rail with a tab strip.
     ui.set_settings_page(SettingsPage::Audio);
     draw(&window, 650, 420, "settings-small-window");
-    click(&ui, 70.0, 38.0);
+    click(&ui, 56.0, 30.0);
     assert!(ui.get_account_open(), "Account tab at minimum width");
     draw(&window, 650, 420, "settings-small-account");
-    click(&ui, 186.0, 38.0);
+    click(&ui, 152.0, 30.0);
     assert!(ui.get_settings_open());
     assert_eq!(ui.get_settings_page(), SettingsPage::Playback);
     ui.set_settings_scroll_y(-180.0);
@@ -266,6 +266,32 @@ fn settings_sheet_navigates_toggles_and_captures_shortcuts() {
         0.0,
         "Reopened Settings must start at the top"
     );
+    // Jam guests can't reach Account from Settings any more than from the header.
+    ui.set_jam_guest(true);
+    draw(&window, 650, 420, "settings-small-guest");
+    click(&ui, 56.0, 30.0);
+    assert!(
+        !ui.get_account_open(),
+        "Jam guest opened Account from Settings"
+    );
+    ui.set_jam_guest(false);
+    ui.set_settings_page(SettingsPage::Playback);
+    ui.set_settings_open(true);
+    // Collapsing to the mini player closes Settings and any shortcut capture.
+    ui.set_settings_page(SettingsPage::Controls);
+    draw(&window, 650, 420, "settings-before-collapse");
+    ui.invoke_begin_shortcut(0);
+    assert_eq!(ui.get_shortcut_recording_index(), 0);
+    ui.set_collapsed(true);
+    draw(&window, 650, 132, "settings-collapsed");
+    assert!(!ui.get_settings_open() && !ui.get_account_open());
+    assert_eq!(ui.get_shortcut_recording_index(), -1);
+    ui.set_collapsed(false);
+    ui.set_settings_open(true);
+    draw(&window, 650, 420, "settings-after-collapse");
+    ui.set_settings_scroll_y(-180.0);
+    ui.set_settings_page(SettingsPage::Audio);
+    draw(&window, 650, 420, "settings-audio-small");
     ui.set_settings_scroll_y(-180.0);
     ui.set_settings_page(SettingsPage::Controls);
     draw(&window, 650, 420, "settings-controls-small-window");

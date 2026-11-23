@@ -317,6 +317,12 @@ export component AppWindow inherits Window {
     private property <color> settings-tint-appearance: Theme.light ? #8358bd : #7b55b3;
     private property <color> settings-tint-controls: Theme.light ? #2b8a7c : #2a8577;
     private property <color> settings-tint-about: Theme.light ? #7c7378 : #5f6570;
+    changed settings-page => {
+        if root.settings-page == SettingsPage.account {
+            root.settings-page = SettingsPage.playback;
+            if root.settings-open && !root.jam-guest { root.account-open = true; }
+        }
+    }
     changed settings-shown-page => {
         root.settings-scroll-y = 0px;
         if root.settings-shown-page != SettingsPage.controls { root.cancel-shortcut(); }
@@ -597,7 +603,7 @@ export component AppWindow inherits Window {
     changed height => { root.sidebar-profile = root.height >= 650px; }
     init => { root.sidebar-profile = root.height >= 650px; Palette.color-scheme = root.light-mode ? light : dark; root.wide = root.width >= 1050px; root.narrow-navigation = root.width < 900px; root.header-branding = root.width >= 780px; }
     changed width => { root.wide = root.width >= 1050px; root.narrow-navigation = root.width < 900px; root.header-branding = root.width >= 780px; }
-    changed collapsed => { if root.collapsed { root.suggestions-open = false; root.update-panel-open = false; } }
+    changed collapsed => { if root.collapsed { root.suggestions-open = false; root.update-panel-open = false; root.settings-open = false; root.account-open = false; root.cancel-shortcut(); } }
     changed settings-open => {
         root.settings-scroll-y = 0px;
         if root.settings-open { root.suggestions-open = false; root.playlist-picker-open = false; root.account-open = false; root.jam-open = false; app-focus.focus(); }
@@ -2172,7 +2178,8 @@ export component AppWindow inherits Window {
                 TouchArea { }
                 // Category rail.
                 if settings-sheet.split : Rectangle {
-                    x: 0px; y: 0px; width: settings-sheet.rail-width; height: parent.height;
+                    x: 1px; y: 1px; width: settings-sheet.rail-width - 1px; height: parent.height - 2px;
+                    border-top-left-radius: 17px; border-bottom-left-radius: 17px;
                     background: Theme.chrome;
                     Rectangle { x: parent.width - 1px; width: 1px; background: Theme.divider; }
                     VerticalLayout {
@@ -2183,10 +2190,11 @@ export component AppWindow inherits Window {
                             Text { text: "Settings"; color: root.foreground; font-size: 18px; font-weight: 800; vertical-alignment: center; }
                         }
                         Rectangle { height: 10px; }
-                        SettingsAccountChip {
+                        if !root.jam-guest : SettingsAccountChip {
                             name: root.account-name != "" ? root.account-name : "YouTube Music";
                             status: root.account-busy ? "Connecting…" : root.account-verified ? "Connected" : root.account-connected ? "Needs verification" : "Not connected";
                             connected: root.account-verified;
+                            tone: root.account-verified ? 1 : root.account-connected || root.account-busy ? 2 : 0;
                             active: root.settings-shown-page == SettingsPage.account;
                             select => { root.account-open = true; }
                         }
@@ -2195,7 +2203,7 @@ export component AppWindow inherits Window {
                         SettingsNavItem { title: "Audio"; tint: root.settings-tint-audio; icon-path: SettingsIcons.audio; active: root.settings-shown-page == SettingsPage.audio; select => { root.settings-page = SettingsPage.audio; root.settings-open = true; } }
                         SettingsNavItem { title: "Appearance"; tint: root.settings-tint-appearance; icon-path: SettingsIcons.appearance; active: root.settings-shown-page == SettingsPage.appearance; select => { root.settings-page = SettingsPage.appearance; root.settings-open = true; } }
                         SettingsNavItem { title: "Controls"; tint: root.settings-tint-controls; icon-path: SettingsIcons.controls; active: root.settings-shown-page == SettingsPage.controls; select => { root.settings-page = SettingsPage.controls; root.settings-open = true; app-focus.focus(); } }
-                        SettingsNavItem { title: "About"; tint: root.settings-tint-about; icon-path: SettingsIcons.about; active: root.settings-shown-page == SettingsPage.about; badge: root.update-available; select => { root.settings-page = SettingsPage.about; root.settings-open = true; } }
+                        SettingsNavItem { title: "About"; tint: root.settings-tint-about; icon-path: SettingsIcons.about; active: root.settings-shown-page == SettingsPage.about; badge: root.update-available || root.update-phase == 2; select => { root.settings-page = SettingsPage.about; root.settings-open = true; } }
                         Rectangle { vertical-stretch: 1; }
                     }
                 }
@@ -2206,14 +2214,14 @@ export component AppWindow inherits Window {
                     viewport-height: self.height;
                     interactive: true;
                     settings-tabs := HorizontalLayout {
-                        padding-left: 12px; padding-right: 12px; padding-top: 12px; padding-bottom: 8px; spacing: 6px;
+                        padding-left: 10px; padding-right: 10px; padding-top: 14px; padding-bottom: 10px; spacing: 4px;
                         alignment: start;
-                        SettingsNavItem { compact: true; title: "Account"; tint: root.settings-tint-account; icon-path: SettingsIcons.account; active: root.settings-shown-page == SettingsPage.account; select => { root.account-open = true; } }
+                        if !root.jam-guest : SettingsNavItem { compact: true; title: "Account"; tint: root.settings-tint-account; icon-path: SettingsIcons.account; active: root.settings-shown-page == SettingsPage.account; select => { root.account-open = true; } }
                         SettingsNavItem { compact: true; title: "Playback"; tint: root.settings-tint-playback; icon-path: SettingsIcons.playback; active: root.settings-shown-page == SettingsPage.playback; select => { root.settings-page = SettingsPage.playback; root.settings-open = true; } }
                         SettingsNavItem { compact: true; title: "Audio"; tint: root.settings-tint-audio; icon-path: SettingsIcons.audio; active: root.settings-shown-page == SettingsPage.audio; select => { root.settings-page = SettingsPage.audio; root.settings-open = true; } }
                         SettingsNavItem { compact: true; title: "Appearance"; tint: root.settings-tint-appearance; icon-path: SettingsIcons.appearance; active: root.settings-shown-page == SettingsPage.appearance; select => { root.settings-page = SettingsPage.appearance; root.settings-open = true; } }
                         SettingsNavItem { compact: true; title: "Controls"; tint: root.settings-tint-controls; icon-path: SettingsIcons.controls; active: root.settings-shown-page == SettingsPage.controls; select => { root.settings-page = SettingsPage.controls; root.settings-open = true; app-focus.focus(); } }
-                        SettingsNavItem { compact: true; title: "About"; tint: root.settings-tint-about; icon-path: SettingsIcons.about; active: root.settings-shown-page == SettingsPage.about; badge: root.update-available; select => { root.settings-page = SettingsPage.about; root.settings-open = true; } }
+                        SettingsNavItem { compact: true; title: "About"; tint: root.settings-tint-about; icon-path: SettingsIcons.about; active: root.settings-shown-page == SettingsPage.about; badge: root.update-available || root.update-phase == 2; select => { root.settings-page = SettingsPage.about; root.settings-open = true; } }
                     }
                 }
                 if !settings-sheet.split : Rectangle { y: settings-sheet.tabs-height - 1px; height: 1px; background: Theme.divider; }
@@ -2222,7 +2230,7 @@ export component AppWindow inherits Window {
                     x: settings-sheet.rail-width; y: settings-sheet.tabs-height;
                     width: parent.width - self.x; height: parent.height - self.y;
                     property <length> gutter: settings-sheet.split ? 32px : 18px;
-                    property <length> header-height: settings-sheet.split ? 84px : 56px;
+                    property <length> header-height: settings-sheet.split ? 80px : 56px;
                     HorizontalLayout {
                         y: 0px; height: parent.header-height;
                         padding-left: parent.gutter; padding-right: settings-sheet.split ? 20px : 12px; spacing: 12px;
@@ -2254,7 +2262,7 @@ export component AppWindow inherits Window {
                         }
                     }
                     ScrollView {
-                        y: parent.header-height; width: parent.width; height: parent.height - self.y;
+                        y: parent.header-height; width: parent.width; height: parent.height - self.y - 1px;
                         content-y <=> root.settings-scroll-y;
                         horizontal-scrollbar-policy: always-off;
                         VerticalLayout {
@@ -2286,7 +2294,7 @@ export component AppWindow inherits Window {
                                             }
                                         }
                                         VerticalLayout {
-                                            width: settings-sheet.split ? 196px : 172px; spacing: 6px; alignment: center;
+                                            width: settings-content.width >= 620px ? 196px : 150px; spacing: 6px; alignment: center;
                                             if root.native-login-available : LibraryButton { height: 38px; quiet: false; light-mode: root.light-mode; caption-size: 13px; caption: root.native-login-busy ? "Sign-in window open…" : root.account-verified ? "Reconnect" : "Sign in with Google"; label: "Open the temporary Google sign-in window"; enabled: !root.account-busy && !root.native-login-busy; active: !root.account-verified; clicked => { root.native-sign-in(); } }
                                             if !root.native-login-available : LibraryButton { height: 38px; quiet: false; light-mode: root.light-mode; caption-size: 13px; caption: root.account-verified ? "Manage connection" : "Connect YouTube Music"; label: "Open browser companion setup or connection guide"; enabled: !root.account-busy && !root.native-login-busy; active: !root.account-verified; clicked => { if root.companion-setup-available { root.companion-setup-open = !root.companion-setup-open; } else { root.open-account-help(); } } }
                                             if root.native-login-busy : LibraryButton { height: 32px; light-mode: root.light-mode; caption: "Close sign-in window"; label: "Close the owned temporary sign-in window"; clicked => { root.cancel-native-sign-in(); } }
@@ -2302,7 +2310,6 @@ export component AppWindow inherits Window {
                                 }
                                 SettingsGroup {
                                     title: "Other ways to connect";
-                                    note: root.companion-setup-open ? root.companion-setup-status : "";
                                     if root.native-login-available : SettingRow {
                                         separator: false;
                                         title: "Browser companion";
@@ -2338,6 +2345,7 @@ export component AppWindow inherits Window {
                                             LibraryButton { horizontal-stretch: 1; light-mode: root.light-mode; caption: "Open YT Music"; label: "Open YouTube Music in your default browser"; clicked => { root.open-ytmusic-browser(); } }
                                             LibraryButton { horizontal-stretch: 1; light-mode: root.light-mode; caption: "Setup guide"; label: "Open browser companion connection guide"; clicked => { root.open-account-help(); } }
                                         }
+                                        if root.companion-setup-status != "" : Text { text: root.companion-setup-status; color: root.secondary; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
                                     }
                                     SettingRow {
                                         separator: root.native-login-available || (root.companion-setup-available && root.companion-setup-open);
@@ -2348,7 +2356,7 @@ export component AppWindow inherits Window {
                                     if root.advanced-open : SettingBlock {
                                         title: "Google account slot";
                                         detail: "Use this only if the imported session opened the wrong Google account. Select your YouTube profile in the browser before importing.";
-                                        HorizontalLayout { height: 36px; spacing: 8px; ComboBox { horizontal-stretch: 1; model: ["Account 1", "Account 2", "Account 3", "Account 4", "Account 5", "Account 6", "Account 7", "Account 8", "Account 9", "Account 10"]; current-index <=> root.account-index; enabled: root.account-connected && !root.account-busy && !root.native-login-busy; } LibraryButton { width: 84px; quiet: false; active: true; light-mode: root.light-mode; caption: "Switch"; label: "Connect selected Google account"; enabled: root.account-connected && !root.account-busy && !root.native-login-busy; clicked => { root.switch-account(root.account-index); } } }
+                                        HorizontalLayout { height: 36px; spacing: 8px; ComboBox { horizontal-stretch: 1; model: ["Account 1", "Account 2", "Account 3", "Account 4", "Account 5", "Account 6", "Account 7", "Account 8", "Account 9", "Account 10"]; current-index <=> root.account-index; accessible-label: "Google account slot"; enabled: root.account-connected && !root.account-busy && !root.native-login-busy; } LibraryButton { width: 84px; quiet: false; active: true; light-mode: root.light-mode; caption: "Switch"; label: "Connect selected Google account"; enabled: root.account-connected && !root.account-busy && !root.native-login-busy; clicked => { root.switch-account(root.account-index); } } }
                                     }
                                     if root.advanced-open : SettingRow {
                                         title: "Zen profile";
@@ -2375,8 +2383,9 @@ export component AppWindow inherits Window {
                             if root.settings-shown-page == SettingsPage.playback : SettingsPageFade {
                                 SettingsGroup {
                                     title: "Transitions";
+                                    note: root.bit-perfect ? "Off while Bit-perfect output is on (Audio)." : "";
                                     SettingBlock {
-                                        separator: false; enabled: !root.bit-perfect;
+                                        separator: false;
                                         title: "Crossfade";
                                         detail: root.crossfade-seconds == 0 ? "Overlap the end of each song with the start of the next." : "The next song starts under the end of this one, using a second, short-lived player while songs overlap.";
                                         SegmentedControl {
@@ -2422,7 +2431,8 @@ export component AppWindow inherits Window {
                                     note: "Shapes Tide's sound only. Presets that raise a band lower the overall level first, so loud songs don't distort.";
                                     SettingToggle { separator: false; title: "Even volume"; detail: "Smooth out loud and quiet songs locally. Adds a small processing delay; off keeps the original dynamics."; checked: root.normalize-volume && !root.bit-perfect; enabled: !root.bit-perfect; toggled => { root.toggle-normalization(); } }
                                     SettingBlock {
-                                        title: "Equalizer"; enabled: !root.bit-perfect;
+                                        title: "Equalizer";
+                                        detail: root.bit-perfect ? "Off while Bit-perfect output is on." : "";
                                         for row in 2 : HorizontalLayout {
                                             spacing: 8px;
                                             for name[column] in (row == 0 ? ["Off", "Bass boost", "Bass reducer"] : ["Treble boost", "Vocal", "Loudness"]) : EqualizerPreset {
@@ -2440,21 +2450,21 @@ export component AppWindow inherits Window {
                                 SettingsGroup {
                                     title: "Theme";
                                     SettingBlock {
-                                        separator: false; enabled: !root.artist-picker-open;
+                                        separator: false;
                                         HorizontalLayout {
                                             spacing: 10px;
                                             ThemeCard {
-                                                title: "Dark"; kind: 0;
+                                                title: "Dark"; kind: 0; enabled: !root.artist-picker-open;
                                                 selected: !root.light-mode && !(root.windows-theme-supported && root.follow-windows-theme);
-                                                select => { if root.follow-windows-theme { root.toggle-follow-windows-theme(); } if root.light-mode { root.switch-mode(); } }
+                                                select => { if root.light-mode { root.switch-mode(); } else if root.follow-windows-theme { root.toggle-follow-windows-theme(); if root.light-mode { root.switch-mode(); } } }
                                             }
                                             ThemeCard {
-                                                title: "Light"; kind: 1;
+                                                title: "Light"; kind: 1; enabled: !root.artist-picker-open;
                                                 selected: root.light-mode && !(root.windows-theme-supported && root.follow-windows-theme);
-                                                select => { if root.follow-windows-theme { root.toggle-follow-windows-theme(); } if !root.light-mode { root.switch-mode(); } }
+                                                select => { if !root.light-mode { root.switch-mode(); } else if root.follow-windows-theme { root.toggle-follow-windows-theme(); if !root.light-mode { root.switch-mode(); } } }
                                             }
                                             if root.windows-theme-supported : ThemeCard {
-                                                title: root.mac-os ? "Match system" : "Match Windows"; kind: 2;
+                                                title: "System"; kind: 2; enabled: !root.artist-picker-open;
                                                 selected: root.follow-windows-theme;
                                                 select => { if !root.follow-windows-theme { root.toggle-follow-windows-theme(); } }
                                             }
@@ -2470,8 +2480,8 @@ export component AppWindow inherits Window {
                                     SettingRow {
                                         separator: false;
                                         title: "Opacity"; detail: "How see-through the floating mini player is.";
-                                        TideSlider { width: 168px; height: 28px; light-mode: root.light-mode; minimum: 60; maximum: 100; value: root.mini-opacity; label: "Mini player opacity"; value-text: root.mini-opacity.to-fixed(0) + "%"; released(value) => { root.change-mini-opacity(value); } }
-                                        Text { width: 40px; text: root.mini-opacity.to-fixed(0) + "%"; color: root.foreground; font-size: 13px; font-weight: 700; horizontal-alignment: right; vertical-alignment: center; }
+                                        opacity-slider := TideSlider { property <float> preview: root.mini-opacity; width: 168px; height: 28px; light-mode: root.light-mode; minimum: 60; maximum: 100; value: root.mini-opacity; label: "Mini player opacity"; value-text: root.mini-opacity.to-fixed(0) + "%"; changed(value) => { self.preview = value; } released(value) => { self.preview = value; root.change-mini-opacity(value); } }
+                                        Text { width: 40px; text: opacity-slider.preview.to-fixed(0) + "%"; color: root.foreground; font-size: 13px; font-weight: 700; horizontal-alignment: right; vertical-alignment: center; }
                                     }
                                 }
                             }
@@ -2480,12 +2490,14 @@ export component AppWindow inherits Window {
                             if root.settings-shown-page == SettingsPage.controls : SettingsPageFade {
                                 SettingsGroup {
                                     title: "Keyboard shortcuts";
-                                    note: root.shortcut-status != "" ? root.shortcut-status
-                                        : (root.mac-os ? "Select a shortcut, then press a ⌘, ⌥ or ⌃ combination. Esc cancels. " : "Select a shortcut, then press a Ctrl or Alt combination. Esc cancels. ")
+                                    note: (root.mac-os ? "Select a shortcut, then press a ⌘, ⌥ or ⌃ combination. Esc cancels. " : "Select a shortcut, then press a Ctrl or Alt combination. Esc cancels. ")
                                         + "Custom shortcuts and media keys work in the background; while Tide has focus, Space plays or pauses and J / L seek 10 seconds.";
-                                    ShortcutSetting { separator: false; action: "Play / pause"; binding: root.shortcut-toggle; recording: root.shortcut-recording-index == 0; record => { root.begin-shortcut(0); app-focus.focus(); } clear => { root.clear-shortcut(0); } }
-                                    ShortcutSetting { action: "Next song"; binding: root.shortcut-next; recording: root.shortcut-recording-index == 1; record => { root.begin-shortcut(1); app-focus.focus(); } clear => { root.clear-shortcut(1); } }
-                                    ShortcutSetting { action: "Previous song"; binding: root.shortcut-previous; recording: root.shortcut-recording-index == 2; record => { root.begin-shortcut(2); app-focus.focus(); } clear => { root.clear-shortcut(2); } }
+                                    ShortcutSetting { separator: false; action: "Play / pause"; binding: root.shortcut-toggle; recording: root.shortcut-recording-index == 0; record => { root.begin-shortcut(0); app-focus.focus(); } clear => { root.clear-shortcut(0); } cancel => { root.cancel-shortcut(); } }
+                                    ShortcutSetting { action: "Next song"; binding: root.shortcut-next; recording: root.shortcut-recording-index == 1; record => { root.begin-shortcut(1); app-focus.focus(); } clear => { root.clear-shortcut(1); } cancel => { root.cancel-shortcut(); } }
+                                    ShortcutSetting { action: "Previous song"; binding: root.shortcut-previous; recording: root.shortcut-recording-index == 2; record => { root.begin-shortcut(2); app-focus.focus(); } clear => { root.clear-shortcut(2); } cancel => { root.cancel-shortcut(); } }
+                                    if root.shortcut-status != "" : SettingRow {
+                                        title: root.shortcut-status;
+                                    }
                                 }
                                 SettingsGroup {
                                     title: root.mac-os ? "System" : "Windows";
@@ -2521,9 +2533,13 @@ export component AppWindow inherits Window {
                                         LibraryButton {
                                             width: 148px; height: 36px; quiet: false; active: root.update-available || root.update-phase == 2;
                                             notification: false; light-mode: root.light-mode; caption-size: 13px;
-                                            caption: root.update-phase == 2 ? "Restart to update" : root.update-available ? "View update" : root.update-busy ? "Checking…" : "Check for updates";
-                                            label: "Open Tide updates";
-                                            clicked => { root.suggestions-open = false; root.update-panel-open = true; app-focus.focus(); }
+                                            caption: root.update-phase == 2 ? "Restart to update" : root.update-available || root.update-phase != 0 ? "View update" : root.update-busy ? "Checking…" : "Check for updates";
+                                            label: root.update-available || root.update-phase != 0 ? "Open the Tide update" : "Check GitHub for a newer stable Tide release";
+                                            enabled: root.update-available || root.update-phase != 0 || !root.update-busy;
+                                            clicked => {
+                                                if !root.update-available && root.update-phase == 0 { root.check-updates(); }
+                                                root.settings-open = false; root.suggestions-open = false; root.update-panel-open = true; app-focus.focus();
+                                            }
                                         }
                                     }
                                 }

@@ -26,8 +26,8 @@ export component SettingsNavItem inherits Rectangle {
     // Each category has its own icon tile colour, as in system settings apps.
     in property <color> tint: Theme.accent;
     callback select();
-    height: root.compact ? 36px : 42px;
-    min-width: root.compact ? label.preferred-width + 56px : 0px;
+    height: root.compact ? 32px : 42px;
+    min-width: root.compact ? label.preferred-width + (root.badge ? 52px : 40px) : 0px;
     border-radius: root.compact ? self.height / 2 : 10px;
     background: root.active ? Theme.selected : touch.has-hover ? Theme.hover : transparent;
     animate background { duration: ControlMotion.feedback; easing: ease-out; }
@@ -35,27 +35,27 @@ export component SettingsNavItem inherits Rectangle {
     border-color: Theme.focus;
     touch := TouchArea {
         mouse-cursor: pointer;
-        control := Button { width: parent.width; height: parent.height; opacity: 0; text: ""; accessible-label: root.title + " settings"; clicked => { root.select(); } }
+        control := Button { width: parent.width; height: parent.height; opacity: 0; text: ""; accessible-label: root.title + (root.badge ? ", update available" : ""); accessible-checked: root.active; clicked => { root.select(); } }
     }
     Rectangle {
         x: root.compact ? 6px : 8px; y: (parent.height - self.height) / 2;
-        width: root.compact ? 24px : 26px; height: self.width; border-radius: 7px;
+        width: root.compact ? 20px : 26px; height: self.width; border-radius: root.compact ? 6px : 7px;
         background: root.tint;
         Path {
             x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
-            width: 16px; height: 16px; viewbox-width: 24; viewbox-height: 24;
+            width: root.compact ? 13px : 16px; height: self.width; viewbox-width: 24; viewbox-height: 24;
             fill: transparent; stroke: #ffffff; stroke-width: 2.1px;
             commands: root.icon-path;
         }
     }
     label := Text {
-        x: root.compact ? 38px : 44px; width: parent.width - self.x - (root.badge ? 26px : 10px); height: parent.height;
+        x: root.compact ? 30px : 44px; width: parent.width - self.x - (root.badge ? 22px : 10px); height: parent.height;
         text: root.title; vertical-alignment: center; overflow: elide;
         color: root.active ? Theme.selected-ink : Theme.text;
-        font-size: 13.5px; font-weight: root.active ? 700 : 500;
+        font-size: root.compact ? 12.5px : 13.5px; font-weight: root.active ? 700 : 500;
     }
     if root.badge : Rectangle {
-        x: parent.width - 18px; y: (parent.height - 7px) / 2;
+        x: parent.width - (root.compact ? 15px : 18px); y: (parent.height - 7px) / 2;
         width: 7px; height: 7px; border-radius: 3.5px; background: Theme.accent;
     }
 }
@@ -95,6 +95,7 @@ export component SettingsGroup inherits VerticalLayout {
     }
     if root.note != "" : Text {
         text: root.note; color: Theme.muted; font-size: 12px; wrap: word-wrap;
+        accessible-live-region: polite;
     }
 }
 
@@ -132,7 +133,7 @@ export component SettingBlock inherits Rectangle {
         if root.title != "" || root.detail != "" : VerticalLayout {
             spacing: 3px;
             if root.title != "" : Text { text: root.title; color: Theme.text; font-size: 14px; font-weight: 600; overflow: elide; }
-            if root.detail != "" : Text { text: root.detail; color: Theme.muted; font-size: 12px; wrap: word-wrap; }
+            if root.detail != "" : Text { text: root.detail; color: Theme.muted; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
         }
         @children
     }
@@ -146,10 +147,10 @@ export component SettingSwitch inherits Rectangle {
     in property <string> label;
     callback toggled();
     width: 44px; height: 26px; border-radius: 13px;
-    background: root.checked ? Theme.accent : (Theme.light ? #d9cbc0 : #363b46);
+    background: root.checked ? Theme.accent : (Theme.light ? #cbb8aa : #363b46);
     animate background { duration: ControlMotion.selection; easing: ease-out; }
-    border-width: toggle.has-focus ? 2px : 0px;
-    border-color: Theme.focus;
+    border-width: toggle.has-focus ? 2px : root.checked ? 0px : 1px;
+    border-color: toggle.has-focus ? Theme.focus : (Theme.light ? #b9a294 : #4a505d);
     Rectangle {
         x: root.checked ? 21px : 3px; y: 3px; width: 20px; height: 20px; border-radius: 10px;
         background: #fff8f6;
@@ -231,6 +232,7 @@ export component SegmentedControl inherits Rectangle {
             action := Button {
                 width: parent.width; height: parent.height; opacity: 0; text: ""; enabled: root.enabled;
                 accessible-label: root.label + ": " + option;
+                accessible-checked: index == root.selected;
                 clicked => { root.select(index); }
             }
         }
@@ -243,8 +245,10 @@ export component ThemeCard inherits Rectangle {
     // 0 dark, 1 light, 2 follows the system.
     in property <int> kind;
     in property <bool> selected;
+    in property <bool> enabled: true;
     callback select();
     height: 118px;
+    opacity: root.enabled ? 1 : 0.45;
     min-width: 96px;
     horizontal-stretch: 1;
     border-radius: 12px;
@@ -253,8 +257,8 @@ export component ThemeCard inherits Rectangle {
     border-color: action.has-focus ? Theme.focus : root.selected ? Theme.accent : Theme.outline;
     animate background { duration: ControlMotion.feedback; easing: ease-out; }
     touch := TouchArea {
-        mouse-cursor: pointer;
-        action := Button { width: parent.width; height: parent.height; opacity: 0; text: ""; accessible-label: root.title + " theme"; accessible-checked: root.selected; clicked => { root.select(); } }
+        enabled: root.enabled; mouse-cursor: pointer;
+        action := Button { width: parent.width; height: parent.height; opacity: 0; text: ""; enabled: root.enabled; accessible-label: root.title + " theme"; accessible-checked: root.selected; clicked => { root.select(); } }
     }
     preview := Rectangle {
         x: 8px; y: 8px; width: parent.width - 16px; height: 72px;
@@ -264,6 +268,11 @@ export component ThemeCard inherits Rectangle {
             x: root.kind == 2 ? half * parent.width / 2 : 0px;
             width: root.kind == 2 ? parent.width / 2 : parent.width;
             height: parent.height; clip: true;
+            // The software renderer clips to rectangles, so round the halves.
+            border-top-left-radius: root.kind != 2 || half == 0 ? 8px : 0px;
+            border-bottom-left-radius: root.kind != 2 || half == 0 ? 8px : 0px;
+            border-top-right-radius: root.kind != 2 || half == 1 ? 8px : 0px;
+            border-bottom-right-radius: root.kind != 2 || half == 1 ? 8px : 0px;
             background: self.light ? #eee5db : #13161b;
             // The miniature is drawn at full card width; the split crops it.
             Rectangle {
@@ -282,6 +291,7 @@ export component ThemeCard inherits Rectangle {
                 }
                 Rectangle {
                     x: 0px; y: parent.height - 13px; width: parent.width; height: 13px;
+                    border-bottom-left-radius: 8px; border-bottom-right-radius: 8px;
                     background: half-art.light ? #e7ddd2 : #0e1014;
                     Rectangle { x: (parent.width - 8px) / 2; y: 3px; width: 8px; height: 8px; border-radius: 4px; background: half-art.light ? #b45448 : #c43f68; }
                 }
@@ -289,7 +299,7 @@ export component ThemeCard inherits Rectangle {
         }
     }
     Text {
-        x: 12px; y: 86px; width: parent.width - 40px; height: 24px;
+        x: 12px; y: 86px; width: parent.width - (root.selected ? 42px : 20px); height: 24px;
         text: root.title; vertical-alignment: center; overflow: elide;
         color: Theme.text; font-size: 13px; font-weight: root.selected ? 700 : 600;
     }
@@ -348,6 +358,7 @@ export component ShortcutSetting inherits Rectangle {
     in property <bool> separator: true;
     callback record();
     callback clear();
+    callback cancel();
     if root.separator : Rectangle { y: 0px; height: 1px; background: Theme.divider; }
     HorizontalLayout {
         padding-top: 10px; padding-bottom: 10px; spacing: 8px; cross-axis-alignment: center;
@@ -377,7 +388,7 @@ export component ShortcutSetting inherits Rectangle {
             Path { x: 9px; y: 9px; width: 12px; height: 12px; viewbox-width: 24; viewbox-height: 24; fill: transparent; stroke: Theme.muted; stroke-width: 2.4px; commands: "M 5 5 L 19 19 M 19 5 L 5 19"; }
             clear-touch := TouchArea {
                 enabled: root.binding != "" || root.recording; mouse-cursor: pointer;
-                clear-action := Button { width: parent.width; height: parent.height; opacity: 0; text: ""; enabled: parent.enabled; accessible-label: "Clear " + root.action + " shortcut"; clicked => { root.clear(); } }
+                clear-action := Button { width: parent.width; height: parent.height; opacity: 0; text: ""; enabled: parent.enabled; accessible-label: (root.binding == "" ? "Cancel recording " : "Clear ") + root.action + " shortcut"; clicked => { if root.binding == "" { root.cancel(); } else { root.clear(); } } }
             }
         }
     }
@@ -397,11 +408,13 @@ export component StatusPill inherits Rectangle {
     pill-text := Text { x: 22px; height: parent.height; text: root.text; vertical-alignment: center; color: Theme.text; font-size: 11.5px; font-weight: 600; }
 }
 
-// The signed-in account at the foot of the rail; opens the Account page.
+// The account at the top of the rail; opens the Account page.
 export component SettingsAccountChip inherits Rectangle {
     in property <string> name;
     in property <string> status;
     in property <bool> connected;
+    // Same tones as StatusPill: 0 neutral, 1 good, 2 attention.
+    in property <int> tone: 0;
     in property <bool> active;
     callback select();
     height: 52px;
@@ -411,7 +424,7 @@ export component SettingsAccountChip inherits Rectangle {
     border-width: control.has-focus ? 2px : 0px; border-color: Theme.focus;
     touch := TouchArea {
         mouse-cursor: pointer;
-        control := Button { width: parent.width; height: parent.height; opacity: 0; text: ""; accessible-label: "Account: " + root.name + ", " + root.status; clicked => { root.select(); } }
+        control := Button { width: parent.width; height: parent.height; opacity: 0; text: ""; accessible-label: "Account: " + root.name + ", " + root.status; accessible-checked: root.active; clicked => { root.select(); } }
     }
     Rectangle {
         x: 8px; y: (parent.height - self.height) / 2; width: 34px; height: 34px; border-radius: 17px;
@@ -419,7 +432,7 @@ export component SettingsAccountChip inherits Rectangle {
         Path { x: 9px; y: 8px; width: 16px; height: 18px; viewbox-width: 24; viewbox-height: 28; fill: transparent; stroke: root.connected ? #fff8f6 : Theme.cover-ink; stroke-width: 2.2px; commands: "M 17 7 A 5 5 0 1 0 7 7 A 5 5 0 1 0 17 7 Z M 3 25 L 3 22 C 3 12 21 12 21 22 L 21 25"; }
         Rectangle {
             x: parent.width - 10px; y: parent.height - 10px; width: 11px; height: 11px; border-radius: 5.5px;
-            background: root.connected ? #3fb37f : #e0a03a; border-width: 2px; border-color: Theme.chrome;
+            background: root.tone == 1 ? #3fb37f : root.tone == 2 ? #e0a03a : Theme.muted; border-width: 2px; border-color: Theme.chrome;
         }
     }
     VerticalLayout {
