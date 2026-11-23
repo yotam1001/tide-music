@@ -150,8 +150,21 @@ fn settings_sheet_navigates_toggles_and_captures_shortcuts() {
         click(&ui, RAIL_X, rail_y(SettingsPage::Playback));
         assert!(ui.get_settings_open() && !ui.get_account_open());
 
+        // Row heights follow the platform font (macOS differs from Windows),
+        // so locate the Listening history switch by its effect first.
+        let mut history_y = None;
+        for y in (380..470).step_by(4) {
+            let before = *switches.borrow();
+            click(&ui, SWITCH_X, y as f32);
+            if *switches.borrow() > before {
+                history_y = Some(y as f32);
+                break;
+            }
+        }
+        let history_y = history_y.expect("Listening history switch not found");
+        ui.set_history_feedback_enabled(false);
         let before = *switches.borrow();
-        click(&ui, SWITCH_X, 415.0);
+        click(&ui, SWITCH_X, history_y);
         assert_eq!(
             *switches.borrow(),
             before + 1,
@@ -167,7 +180,7 @@ fn settings_sheet_navigates_toggles_and_captures_shortcuts() {
             "Visual switch lost native Space-key support"
         );
         // The label is part of the row's target, not just the switch.
-        click(&ui, 500.0, 415.0);
+        click(&ui, 500.0, history_y);
         assert_eq!(*switches.borrow(), before + 3);
         ui.set_history_feedback_enabled(false);
 

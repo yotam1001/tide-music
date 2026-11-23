@@ -134,7 +134,13 @@ fn native_ratings_remain_reachable_and_do_not_take_over_transport() {
     draw(&window, 1140, 1400, "history-settings-off");
     assert!(!ui.get_history_feedback_enabled());
     // Settings is centred: its sheet starts at y=350 in this tall window.
-    click(&ui, 970.0, 715.0);
+    // Row heights follow the platform font, so scan the switch column.
+    for y in (680..780).step_by(4) {
+        click(&ui, 970.0, y as f32);
+        if *consent.borrow() {
+            break;
+        }
+    }
     assert!(
         *consent.borrow(),
         "History consent is not reachable in Settings"
