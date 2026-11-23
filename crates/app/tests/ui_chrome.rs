@@ -573,10 +573,16 @@ fn settings_theme_account_and_song_menu_remain_independent() {
         ui.set_media_controls_enabled(!ui.get_media_controls_enabled());
     });
     // Media keys sit on the Controls page, under the shortcuts. The sheet is
-    // centred, so it starts at y=250 in this tall window.
+    // centred, so it starts at y=250 in this tall window. Rows follow the
+    // platform font, so find the switch by its effect.
     ui.set_settings_page(SettingsPage::Controls);
     draw(&window, 1140, 1200);
-    click(&ui, 970.0, 641.0);
+    for y in (600..720).step_by(4) {
+        click(&ui, 970.0, y as f32);
+        if !ui.get_media_controls_enabled() {
+            break;
+        }
+    }
     assert!(!ui.get_media_controls_enabled());
     assert_eq!(ui.get_shortcut_toggle(), "Ctrl+Alt+P");
     assert_eq!(ui.get_shortcut_next(), "Ctrl+Alt+N");

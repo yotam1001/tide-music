@@ -14,28 +14,41 @@ export global ControlMotion {
 // terracotta identity.
 export global Theme {
     in-out property <bool> light: false;
-    out property <color> window: self.light ? #f4eee6 : #0e1014;
-    out property <color> chrome: self.light ? #eee5db : #13161b;
-    out property <color> surface: self.light ? #f9f4ee : #191c22;
-    out property <color> raised: self.light ? #f4ede5 : #1d2128;
+    out property <color> window: self.window-for(self.light);
+    out property <color> chrome: self.chrome-for(self.light);
+    out property <color> surface: self.surface-for(self.light);
+    out property <color> raised: self.raised-for(self.light);
     out property <color> hover: self.light ? #e9e0d6 : #232832;
     out property <color> pressed: self.light ? #dbc9c2 : #2c2730;
-    out property <color> outline: self.light ? #ded0c4 : #2a2f38;
-    out property <color> divider: self.light ? #e1d7ce : #22262e;
-    out property <color> text: self.light ? #392e33 : #f2f0f1;
-    out property <color> muted: self.light ? #716773 : #a3a7b0;
-    out property <color> accent: self.light ? #b45448 : #c43f68;
+    out property <color> outline: self.outline-for(self.light);
+    out property <color> divider: self.divider-for(self.light);
+    out property <color> text: self.text-for(self.light);
+    out property <color> muted: self.muted-for(self.light);
+    out property <color> accent: self.accent-for(self.light);
     out property <color> accent-hover: self.light ? #a44a3f : #d24f77;
     out property <color> accent-ink: self.light ? #985955 : #ec9ab4;
     out property <color> on-accent: #fff8f6;
-    out property <color> selected: self.light ? #e8d5cb : #2e2029;
-    out property <color> selected-ink: self.light ? #88463e : #f2b7c8;
+    out property <color> selected: self.selected-for(self.light);
+    out property <color> selected-ink: self.selected-ink-for(self.light);
     out property <color> focus: self.light ? #68465d : #e88aa6;
     out property <color> cover: self.light ? #e0d1c9 : #262329;
     out property <color> cover-ink: self.light ? #956a61 : #c4879a;
     out property <color> rail: self.light ? #b7a599 : #3d414a;
     out property <color> rail-disabled: self.light ? #c1b3aa : #33363e;
     out property <color> shadow: self.light ? #2f252930 : #00000090;
+    // Both palettes, so previews (Settings > Appearance) can draw the theme
+    // that is not active with the exact same tokens.
+    pure public function window-for(light: bool) -> color { return light ? #f4eee6 : #0e1014; }
+    pure public function chrome-for(light: bool) -> color { return light ? #eee5db : #13161b; }
+    pure public function surface-for(light: bool) -> color { return light ? #f9f4ee : #191c22; }
+    pure public function raised-for(light: bool) -> color { return light ? #f4ede5 : #1d2128; }
+    pure public function outline-for(light: bool) -> color { return light ? #ded0c4 : #2a2f38; }
+    pure public function divider-for(light: bool) -> color { return light ? #e1d7ce : #22262e; }
+    pure public function text-for(light: bool) -> color { return light ? #392e33 : #f2f0f1; }
+    pure public function muted-for(light: bool) -> color { return light ? #716773 : #a3a7b0; }
+    pure public function accent-for(light: bool) -> color { return light ? #b45448 : #c43f68; }
+    pure public function selected-for(light: bool) -> color { return light ? #e8d5cb : #2e2029; }
+    pure public function selected-ink-for(light: bool) -> color { return light ? #88463e : #f2b7c8; }
     // Placeholder art: a stable gradient per title instead of a grey square.
     public pure function art(seed: int) -> brush {
         return seed == 0 ? @linear-gradient(140deg, #c43f68 0%, #6a3fb5 100%)
@@ -138,6 +151,8 @@ export component TideSlider inherits Rectangle {
     // Native input must never assign the externally owned value: doing so
     // breaks its binding to the live clock/volume. Keep a local drag preview.
     private property <float> input-value: root.value;
+    // The value on show, including a drag in progress.
+    out property <float> display-value: root.input-value;
     private property <bool> interacting: false;
     private property <bool> input-focused: native.has-focus;
     changed value => { if !root.interacting { root.input-value = root.value; } }

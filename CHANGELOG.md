@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Refined the Settings window:
+  - Narrow windows show the categories as a compact icon rail on the left, like the main window, instead of a scrolling tab strip. All six fit at the smallest window size.
+  - Setting groups stand out more clearly from the page in both themes, rows highlight under the pointer, and long pages show a slim scrollbar, a soft fade while more is below and a line under the title once you scroll.
+  - Keyboard shortcuts appear as separate keys (Ctrl, Alt, P). Recording shows a clear prompt with a Cancel button, and a set shortcut has a Clear button.
+  - About lists what's new in your version, Report a problem, Source code, Privacy and Third-party notices. They open in your browser only when you click them.
+  - Theme previews are larger and drawn with Tide's real colours, and the mini player opacity setting shows a live preview.
+  - A connected account shows your playlists, Liked Songs, recommendations and listening history, each a click away.
+  - The sidebar shows your Tide version and whether an update is waiting; clicking it opens About.
+  - Keyboard: Tab stays inside Settings while it is open, and the Up and Down arrows move between categories.
+
 ## 0.4.35 - 2026-11-23
 
 - Redesigned Settings as one centred window in place of the separate Settings and Account drawers. A sidebar shows your account at the top, then Playback, Audio, Appearance, Controls and About, each with its own coloured icon. Narrow windows show the categories as tabs.

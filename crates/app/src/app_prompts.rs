@@ -65,9 +65,11 @@ pub fn install(state: &Rc<RefCell<State>>, ui: &AppWindow, enabled: bool) {
     ui.set_crash_log_available(crash_log_stamp().is_some());
     {
         let weak = ui.as_weak();
+        // Only Settings > About opens it; show a failure there.
         ui.on_open_crash_log(move || {
-            if let (Err(error), Some(u)) = (reveal_crash_log(), weak.upgrade()) {
-                u.set_status_text(error.into());
+            let result = reveal_crash_log();
+            if let Some(u) = weak.upgrade() {
+                u.set_about_link_status(result.err().unwrap_or_default().into());
             }
         });
     }

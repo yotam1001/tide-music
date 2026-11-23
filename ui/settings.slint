@@ -13,50 +13,140 @@ export global SettingsIcons {
     out property <string> appearance: "M 12 3 A 9 9 0 1 0 12 21 A 9 9 0 1 0 12 3 Z M 12 3 L 12 21 M 12 7 L 17 7 M 12 11 L 20 11 M 12 15 L 19 15";
     out property <string> controls: "M 2 6 L 22 6 L 22 18 L 2 18 Z M 6 10 L 7 10 M 10 10 L 11 10 M 14 10 L 15 10 M 18 10 L 18 10 M 7 14 L 17 14";
     out property <string> about: "M 12 2 A 10 10 0 1 0 12 22 A 10 10 0 1 0 12 2 Z M 12 11 L 12 17 M 12 7 L 12 7.5";
+    // Row glyphs (About links, account status).
+    out property <string> sparkle: "M 12 3 C 12.8 8.5 15.5 11.2 21 12 C 15.5 12.8 12.8 15.5 12 21 C 11.2 15.5 8.5 12.8 3 12 C 8.5 11.2 11.2 8.5 12 3 Z";
+    out property <string> bug: "M 8 10 A 4 4 0 0 1 16 10 L 16 15 A 4 4 0 0 1 8 15 Z M 10 6.5 L 9 4 M 14 6.5 L 15 4 M 4 12.5 L 8 12.5 M 16 12.5 L 20 12.5 M 5 18 L 8 16.5 M 19 18 L 16 16.5";
+    out property <string> code: "M 8 7 L 3 12 L 8 17 M 16 7 L 21 12 L 16 17 M 14 4 L 10 20";
+    out property <string> shield: "M 12 3 L 20 6 L 20 12 C 20 17 16 20 12 21 C 8 20 4 17 4 12 L 4 6 Z M 9 12 L 11 14 L 15 10";
+    out property <string> document: "M 6 3 L 14 3 L 19 8 L 19 21 L 6 21 Z M 14 3 L 14 8 L 19 8 M 9 13 L 16 13 M 9 17 L 16 17";
+    out property <string> log: "M 5 4 L 19 4 L 19 20 L 5 20 Z M 8 8 L 16 8 M 8 12 L 16 12 M 8 16 L 12 16";
+    out property <string> playlist: "M 3 6 L 15 6 M 3 11 L 15 11 M 3 16 L 10 16 M 17 9 L 17 19 M 17 9 L 21 8 M 17 19 A 2 2 0 1 1 13 19 A 2 2 0 1 1 17 19";
+    out property <string> heart: "M 12 20 L 4.5 12.5 C 1 9 3.5 4 8 4.5 C 10 4.8 11.2 6 12 7.5 C 12.8 6 14 4.8 16 4.5 C 20.5 4 23 9 19.5 12.5 Z";
+    out property <string> mix: "M 4 9 L 4 15 M 8 5 L 8 19 M 12 8 L 12 16 M 16 4 L 16 20 M 20 9 L 20 15";
+    out property <string> history: "M 4 12 A 8 8 0 1 0 6.5 6.2 M 3.5 3.5 L 6.5 6.2 L 3.5 8.5 M 12 8 L 12 12 L 15 14";
+    out property <string> external: "M 9 5 L 19 5 L 19 15 M 19 5 L 6 18";
+    out property <string> chevron: "M 9 5 L 16 12 L 9 19";
 }
 
-// One category in the rail. `compact` is the horizontal tab used when the
-// window is too narrow for a side rail.
+// Surfaces and ink used only inside the Settings sheet. Cards sit a step
+// above the page so groups read as distinct, in both themes.
+export global SettingsTheme {
+    out property <color> pane: Theme.light ? #f6f0e9 : #181b21;
+    out property <color> rail: Theme.light ? #efe7dd : #121419;
+    out property <color> card: Theme.light ? #fffcf8 : #20242b;
+    out property <color> card-border: Theme.light ? #e4d8cc : #2d323b;
+    out property <color> card-shadow: Theme.light ? #5a3a2a14 : #00000040;
+    out property <color> row-hover: Theme.light ? #f3ebe2 : #282d36;
+    out property <color> row-pressed: Theme.light ? #ebe0d5 : #2f3540;
+    out property <color> separator: Theme.light ? #ece3d9 : #2a2f37;
+    out property <color> well: Theme.light ? #f2eae1 : #16191e;
+    out property <color> well-border: Theme.light ? #dfd2c6 : #2b3039;
+    out property <color> keycap: Theme.light ? #ffffff : #2b3039;
+    out property <color> keycap-edge: Theme.light ? #d3c4b7 : #0f1115;
+    out property <color> keycap-border: Theme.light ? #ddd0c4 : #3a404b;
+    out property <color> good: Theme.light ? #2f8a5f : #4cc38a;
+    out property <color> attention: Theme.light ? #b7791f : #e0a03a;
+    out property <color> danger: Theme.light ? #b3362f : #ff8a80;
+}
+
+// One category in the rail. `stacked` is the narrow-window rail: the icon
+// tile sits above a small label, like the app's own narrow navigation.
 export component SettingsNavItem inherits Rectangle {
     in property <string> title;
     in property <string> icon-path;
     in property <bool> active;
-    in property <bool> compact: false;
+    in property <bool> stacked: false;
     in property <bool> badge: false;
+    // -1 hides the status dot; otherwise 0 neutral, 1 good, 2 attention.
+    in property <int> status-tone: -1;
+    in property <string> status-text;
     // Each category has its own icon tile colour, as in system settings apps.
     in property <color> tint: Theme.accent;
     callback select();
-    height: root.compact ? 32px : 42px;
-    min-width: root.compact ? label.preferred-width + (root.badge ? 52px : 40px) : 0px;
-    border-radius: root.compact ? self.height / 2 : 10px;
-    background: root.active ? Theme.selected : touch.has-hover ? Theme.hover : transparent;
+    public function focus-item() { control.focus(); }
+    out property <bool> item-focused: control.has-focus;
+    height: root.stacked ? 52px : 40px;
+    border-radius: 10px;
+    background: root.active ? Theme.selected : control.pressed ? SettingsTheme.row-pressed : touch.has-hover ? SettingsTheme.row-hover : transparent;
     animate background { duration: ControlMotion.feedback; easing: ease-out; }
     border-width: control.has-focus ? 2px : 0px;
     border-color: Theme.focus;
     touch := TouchArea {
         mouse-cursor: pointer;
-        control := Button { width: parent.width; height: parent.height; opacity: 0; text: ""; accessible-label: root.title + (root.badge ? ", update available" : ""); accessible-checked: root.active; clicked => { root.select(); } }
+        control := Button {
+            width: parent.width; height: parent.height; opacity: 0; text: "";
+            accessible-label: root.title + (root.status-text != "" ? ", " + root.status-text : "") + (root.badge ? ", update available" : "");
+            accessible-checked: root.active;
+            clicked => { root.select(); }
+        }
     }
-    Rectangle {
-        x: root.compact ? 6px : 8px; y: (parent.height - self.height) / 2;
-        width: root.compact ? 20px : 26px; height: self.width; border-radius: root.compact ? 6px : 7px;
+    tile := Rectangle {
+        x: root.stacked ? (parent.width - self.width) / 2 : 8px;
+        y: root.stacked ? 5px : (parent.height - self.height) / 2;
+        width: root.stacked ? 28px : 26px; height: self.width; border-radius: root.stacked ? 8px : 7px;
         background: root.tint;
         Path {
             x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
-            width: root.compact ? 13px : 16px; height: self.width; viewbox-width: 24; viewbox-height: 24;
+            width: root.stacked ? 17px : 16px; height: self.width; viewbox-width: 24; viewbox-height: 24;
             fill: transparent; stroke: #ffffff; stroke-width: 2.1px;
             commands: root.icon-path;
         }
+        if root.status-tone >= 0 : Rectangle {
+            x: parent.width - 8px; y: parent.height - 8px; width: 11px; height: 11px; border-radius: 5.5px;
+            background: root.status-tone == 1 ? SettingsTheme.good : root.status-tone == 2 ? SettingsTheme.attention : Theme.muted;
+            border-width: 2px; border-color: root.active ? Theme.selected : SettingsTheme.rail;
+        }
     }
     label := Text {
-        x: root.compact ? 30px : 44px; width: parent.width - self.x - (root.badge ? 22px : 10px); height: parent.height;
+        x: root.stacked ? 2px : 44px;
+        y: root.stacked ? 34px : 0px;
+        width: root.stacked ? parent.width - 4px : parent.width - self.x - (root.badge ? 22px : 10px);
+        height: root.stacked ? 14px : parent.height;
         text: root.title; vertical-alignment: center; overflow: elide;
-        color: root.active ? Theme.selected-ink : Theme.text;
-        font-size: root.compact ? 12.5px : 13.5px; font-weight: root.active ? 700 : 500;
+        horizontal-alignment: root.stacked ? center : left;
+        color: root.active ? Theme.selected-ink : root.stacked ? Theme.muted : Theme.text;
+        font-size: root.stacked ? 10.5px : 13.5px; font-weight: root.active ? 700 : root.stacked ? 600 : 500;
     }
     if root.badge : Rectangle {
-        x: parent.width - (root.compact ? 15px : 18px); y: (parent.height - 7px) / 2;
-        width: 7px; height: 7px; border-radius: 3.5px; background: Theme.accent;
+        x: root.stacked ? tile.x + tile.width - 4px : parent.width - 18px;
+        y: root.stacked ? tile.y - 3px : (parent.height - 7px) / 2;
+        width: root.stacked ? 9px : 7px; height: self.width; border-radius: self.width / 2; background: Theme.accent;
+        border-width: root.stacked ? 2px : 0px; border-color: SettingsTheme.rail;
+    }
+}
+
+// Rail footer: the running version and its update state; opens About.
+export component SettingsRailFooter inherits Rectangle {
+    in property <string> version;
+    in property <string> status;
+    // 0 neutral, 1 good, 3 an update is waiting (berry, like the About badge).
+    in property <int> tone: 0;
+    in property <bool> stacked: false;
+    callback select();
+    out property <bool> item-focused: control.has-focus;
+    height: root.stacked ? 34px : 46px;
+    border-radius: 10px;
+    background: control.pressed ? SettingsTheme.row-pressed : touch.has-hover ? SettingsTheme.row-hover : transparent;
+    animate background { duration: ControlMotion.feedback; easing: ease-out; }
+    border-width: control.has-focus ? 2px : 0px; border-color: Theme.focus;
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        control := Button { width: parent.width; height: parent.height; opacity: 0; text: ""; accessible-label: "Tide " + root.version + ", " + root.status + ". Open About"; clicked => { root.select(); } }
+    }
+    private property <color> dot: root.tone == 1 ? SettingsTheme.good : root.tone == 3 ? Theme.accent : Theme.muted;
+    if !root.stacked : VerticalLayout {
+        x: 12px; width: parent.width - 24px; alignment: center; spacing: 2px;
+        Text { text: "Tide " + root.version; color: Theme.text; font-size: 12px; font-weight: 700; overflow: elide; }
+        HorizontalLayout {
+            spacing: 6px; alignment: start;
+            Rectangle { width: 7px; Rectangle { y: (parent.height - 7px) / 2; width: 7px; height: 7px; border-radius: 3.5px; background: root.dot; } }
+            Text { text: root.status; color: root.tone == 3 ? Theme.selected-ink : Theme.muted; font-size: 11.5px; font-weight: root.tone == 3 ? 700 : 500; overflow: elide; vertical-alignment: center; }
+        }
+    }
+    if root.stacked : HorizontalLayout {
+        alignment: center; spacing: 5px;
+        Rectangle { width: 7px; Rectangle { y: (parent.height - 7px) / 2; width: 7px; height: 7px; border-radius: 3.5px; background: root.dot; } }
+        Text { text: root.version; color: Theme.muted; font-size: 10.5px; font-weight: 600; vertical-alignment: center; overflow: elide; }
     }
 }
 
@@ -67,14 +157,18 @@ export component SettingsPageFade inherits Rectangle {
     init => { self.opacity = 1; self.shift = 0px; }
     animate opacity { duration: ControlMotion.enabled ? 180ms : 0ms; easing: ease-out; }
     animate shift { duration: ControlMotion.enabled ? 240ms : 0ms; easing: cubic-bezier(0.2, 0.9, 0.3, 1); }
-    VerticalLayout {
+    // The page slides inside its own box, so report the content's size.
+    min-height: page.min-height;
+    preferred-height: page.preferred-height;
+    page := VerticalLayout {
         y: root.shift;
         spacing: 24px; alignment: start;
         @children
     }
 }
 
-// A titled card of related settings. Rows inside draw their own dividers.
+// A titled card of related settings. Rows inside pad themselves and draw
+// their own dividers, so hover highlights can span the card.
 export component SettingsGroup inherits VerticalLayout {
     in property <string> title;
     in property <string> note;
@@ -84,12 +178,13 @@ export component SettingsGroup inherits VerticalLayout {
         font-size: 12px; font-weight: 700; letter-spacing: 0.3px;
     }
     Rectangle {
-        background: Theme.raised;
+        background: SettingsTheme.card;
         border-radius: 12px;
         border-width: 1px;
-        border-color: Theme.divider;
+        border-color: SettingsTheme.card-border;
+        drop-shadow-blur: Theme.light ? 6px : 4px; drop-shadow-offset-y: 1px; drop-shadow-color: SettingsTheme.card-shadow;
         VerticalLayout {
-            padding-left: 16px; padding-right: 16px;
+            padding-top: 2px; padding-bottom: 2px;
             @children
         }
     }
@@ -97,6 +192,20 @@ export component SettingsGroup inherits VerticalLayout {
         text: root.note; color: Theme.muted; font-size: 12px; wrap: word-wrap;
         accessible-live-region: polite;
     }
+}
+
+// Divider between rows, inset to the row's text.
+export component RowSeparator inherits Rectangle {
+    x: 16px; y: 0px; height: 1px; background: SettingsTheme.separator;
+}
+
+// The inset highlight behind a clickable row.
+component RowHighlight inherits Rectangle {
+    in property <bool> hovered;
+    in property <bool> pressed;
+    x: 6px; y: 3px; border-radius: 8px;
+    background: root.pressed ? SettingsTheme.row-pressed : root.hovered ? SettingsTheme.row-hover : transparent;
+    animate background { duration: ControlMotion.feedback; easing: ease-out; }
 }
 
 // Label and description on the left, any control on the right.
@@ -107,13 +216,13 @@ export component SettingRow inherits Rectangle {
     in property <bool> enabled: true;
     in property <bool> danger: false;
     opacity: root.enabled ? 1 : 0.45;
-    if root.separator : Rectangle { y: 0px; height: 1px; background: Theme.divider; }
+    if root.separator : RowSeparator { width: parent.width - 32px; }
     HorizontalLayout {
-        padding-top: 12px; padding-bottom: 12px; spacing: 16px;
+        padding-left: 16px; padding-right: 16px; padding-top: 12px; padding-bottom: 12px; spacing: 16px;
         cross-axis-alignment: center;
         VerticalLayout {
             horizontal-stretch: 1; min-width: 0px; spacing: 3px; alignment: center;
-            Text { text: root.title; color: root.danger ? (Theme.light ? #b3362f : #ff8a80) : Theme.text; font-size: 14px; font-weight: 600; overflow: elide; }
+            Text { text: root.title; color: root.danger ? SettingsTheme.danger : Theme.text; font-size: 14px; font-weight: 600; overflow: elide; }
             if root.detail != "" : Text { text: root.detail; color: Theme.muted; font-size: 12px; wrap: word-wrap; }
         }
         @children
@@ -127,15 +236,79 @@ export component SettingBlock inherits Rectangle {
     in property <bool> separator: true;
     in property <bool> enabled: true;
     opacity: root.enabled ? 1 : 0.45;
-    if root.separator : Rectangle { y: 0px; height: 1px; background: Theme.divider; }
+    if root.separator : RowSeparator { width: parent.width - 32px; }
     VerticalLayout {
-        padding-top: 14px; padding-bottom: 16px; spacing: 10px;
+        padding-left: 16px; padding-right: 16px; padding-top: 14px; padding-bottom: 16px; spacing: 10px;
         if root.title != "" || root.detail != "" : VerticalLayout {
             spacing: 3px;
             if root.title != "" : Text { text: root.title; color: Theme.text; font-size: 14px; font-weight: 600; overflow: elide; }
             if root.detail != "" : Text { text: root.detail; color: Theme.muted; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
         }
         @children
+    }
+}
+
+// A row with a leading icon tile. Interactive rows open something (a page,
+// a link) and show a trailing chevron or external-link arrow; status rows
+// show a value instead.
+export component SettingItem inherits Rectangle {
+    in property <string> title;
+    in property <string> detail;
+    in property <string> icon-path;
+    in property <color> tint: Theme.accent;
+    in property <string> value;
+    // 0 neutral, 1 good, 2 attention; -1 shows the value without a dot.
+    in property <int> tone: -1;
+    in property <bool> interactive: true;
+    in property <bool> external: false;
+    in property <bool> separator: true;
+    in property <string> label;
+    callback activate();
+    if root.separator : RowSeparator { width: parent.width - 32px; }
+    if root.interactive : RowHighlight { width: parent.width - 12px; height: parent.height - 6px; hovered: touch.has-hover; pressed: action.pressed; }
+    if root.interactive : Rectangle {
+        x: 6px; y: 3px; width: parent.width - 12px; height: parent.height - 6px; border-radius: 8px;
+        border-width: action.has-focus ? 2px : 0px; border-color: Theme.focus;
+    }
+    touch := TouchArea {
+        enabled: root.interactive; mouse-cursor: root.interactive ? pointer : default;
+        action := Button {
+            width: parent.width; height: parent.height; opacity: 0; text: ""; enabled: root.interactive;
+            accessible-label: root.label != "" ? root.label : root.title + (root.value != "" ? ", " + root.value : "");
+            clicked => { root.activate(); }
+        }
+    }
+    HorizontalLayout {
+        padding-left: 16px; padding-right: 16px; padding-top: 10px; padding-bottom: 10px; spacing: 12px;
+        cross-axis-alignment: center;
+        Rectangle {
+            width: 28px; height: 28px; border-radius: 8px; background: root.tint;
+            Path {
+                x: 6px; y: 6px; width: 16px; height: 16px; viewbox-width: 24; viewbox-height: 24;
+                fill: transparent; stroke: #ffffff; stroke-width: 1.75px; commands: root.icon-path;
+            }
+        }
+        VerticalLayout {
+            horizontal-stretch: 1; min-width: 0px; spacing: 2px; alignment: center;
+            Text { text: root.title; color: Theme.text; font-size: 14px; font-weight: 600; overflow: elide; }
+            if root.detail != "" : Text { text: root.detail; color: Theme.muted; font-size: 12px; overflow: elide; }
+        }
+        if root.value != "" : HorizontalLayout {
+            spacing: 6px; alignment: end;
+            if root.tone >= 0 : Rectangle {
+                width: 7px;
+                Rectangle {
+                    y: (parent.height - 7px) / 2; width: 7px; height: 7px; border-radius: 3.5px;
+                    background: root.tone == 1 ? SettingsTheme.good : root.tone == 2 ? SettingsTheme.attention : Theme.muted;
+                }
+            }
+            Text { text: root.value; color: Theme.muted; font-size: 12.5px; font-weight: 600; vertical-alignment: center; horizontal-alignment: right; overflow: elide; }
+        }
+        if root.interactive : Path {
+            width: 14px; height: 14px; viewbox-width: 24; viewbox-height: 24;
+            fill: transparent; stroke: touch.has-hover ? Theme.text : Theme.muted; stroke-width: 2.2px;
+            commands: root.external ? SettingsIcons.external : SettingsIcons.chevron;
+        }
     }
 }
 
@@ -147,7 +320,7 @@ export component SettingSwitch inherits Rectangle {
     in property <string> label;
     callback toggled();
     width: 44px; height: 26px; border-radius: 13px;
-    background: root.checked ? Theme.accent : (Theme.light ? #cbb8aa : #363b46);
+    background: root.checked ? Theme.accent : (Theme.light ? #cbb8aa : #3a404b);
     animate background { duration: ControlMotion.selection; easing: ease-out; }
     border-width: toggle.has-focus ? 2px : root.checked ? 0px : 1px;
     border-color: toggle.has-focus ? Theme.focus : (Theme.light ? #b9a294 : #4a505d);
@@ -174,13 +347,14 @@ export component SettingToggle inherits Rectangle {
     in property <bool> separator: true;
     callback toggled();
     opacity: root.enabled ? 1 : 0.45;
-    if root.separator : Rectangle { y: 0px; height: 1px; background: Theme.divider; }
-    TouchArea {
+    if root.separator : RowSeparator { width: parent.width - 32px; }
+    RowHighlight { width: parent.width - 12px; height: parent.height - 6px; hovered: touch.has-hover && root.enabled; pressed: touch.pressed && root.enabled; }
+    touch := TouchArea {
         enabled: root.enabled; mouse-cursor: pointer;
         clicked => { switch.focus-switch(); root.toggled(); }
     }
     HorizontalLayout {
-        padding-top: 12px; padding-bottom: 12px; spacing: 16px;
+        padding-left: 16px; padding-right: 16px; padding-top: 12px; padding-bottom: 12px; spacing: 16px;
         cross-axis-alignment: center;
         VerticalLayout {
             horizontal-stretch: 1; min-width: 0px; spacing: 3px; alignment: center;
@@ -205,14 +379,14 @@ export component SegmentedControl inherits Rectangle {
     height: 36px;
     min-width: root.options.length * 52px;
     border-radius: 10px;
-    background: Theme.light ? #ebe2d8 : #121419;
-    border-width: 1px; border-color: Theme.divider;
+    background: SettingsTheme.well;
+    border-width: 1px; border-color: SettingsTheme.well-border;
     opacity: root.enabled ? 1 : 0.45;
     if root.selected >= 0 : Rectangle {
         x: 3px + root.segment * root.selected; y: 3px;
         width: root.segment; height: parent.height - 6px;
         border-radius: 8px;
-        background: Theme.light ? #fffcf8 : #2b303a;
+        background: Theme.light ? #ffffff : #323844;
         drop-shadow-blur: 4px; drop-shadow-offset-y: 1px; drop-shadow-color: Theme.light ? #5a3a2a22 : #00000060;
         animate x { duration: ControlMotion.enabled ? 180ms : 0ms; easing: cubic-bezier(0.2, 0.9, 0.3, 1); }
     }
@@ -239,6 +413,57 @@ export component SegmentedControl inherits Rectangle {
     }
 }
 
+// A miniature of Tide's window drawn with one palette: sidebar, header,
+// the raised content panel and the player bar.
+// The software renderer clips to rectangles, so every part that touches an
+// outer corner carries the preview's rounding itself.
+component WindowMiniature inherits Rectangle {
+    in property <bool> light;
+    border-radius: 8px;
+    background: Theme.window-for(root.light);
+    // Sidebar with three entries, the first one selected.
+    Rectangle {
+        x: 0px; y: 0px; width: parent.width * 0.24; height: parent.height - 18px;
+        border-top-left-radius: 8px;
+        background: Theme.chrome-for(root.light);
+        Rectangle { x: 6px; y: 8px; width: 9px; height: 9px; border-radius: 3px; background: Theme.accent-for(root.light); }
+        Rectangle {
+            x: 4px; y: 24px; width: parent.width - 8px; height: 10px; border-radius: 3px; background: Theme.selected-for(root.light);
+            Rectangle { x: 4px; y: 3.5px; width: parent.width - 14px; height: 3px; border-radius: 1.5px; background: Theme.selected-ink-for(root.light); }
+        }
+        for row in 3 : Rectangle {
+            x: 8px; y: 40px + row * 10px; width: (parent.width - 18px) * (row == 1 ? 0.7 : 1); height: 3px; border-radius: 1.5px;
+            background: Theme.muted-for(root.light).with-alpha(0.55);
+        }
+    }
+    // Content panel.
+    Rectangle {
+        x: parent.width * 0.24 + 5px; y: 6px; width: parent.width - self.x - 6px; height: parent.height - 30px;
+        border-radius: 5px; background: Theme.surface-for(root.light);
+        border-width: 1px; border-color: Theme.outline-for(root.light);
+        Rectangle { x: 7px; y: 7px; width: min(parent.width * 0.42, 52px); height: 4px; border-radius: 2px; background: Theme.text-for(root.light); }
+        for card[index] in 3 : Rectangle {
+            x: 7px + index * (parent.width - 14px + 5px) / 3; y: 17px;
+            width: (parent.width - 14px - 10px) / 3; height: max(10px, parent.height - 40px); border-radius: 4px;
+            background: index == 0 ? Theme.accent-for(root.light) : index == 1 ? (root.light ? #d98b5f : #6a3fb5) : (root.light ? #8f7b6e : #3a5d7c);
+        }
+        Rectangle { x: 7px; y: parent.height - 16px; width: parent.width * 0.5; height: 3px; border-radius: 1.5px; background: Theme.text-for(root.light).with-alpha(0.55); }
+        Rectangle { x: 7px; y: parent.height - 9px; width: parent.width * 0.32; height: 3px; border-radius: 1.5px; background: Theme.muted-for(root.light).with-alpha(0.5); }
+    }
+    // Player bar.
+    Rectangle {
+        x: 0px; y: parent.height - 18px; width: parent.width; height: 18px;
+        border-bottom-left-radius: 8px; border-bottom-right-radius: 8px;
+        background: Theme.chrome-for(root.light);
+        Rectangle { x: 0px; y: 0px; width: parent.width; height: 1px; background: Theme.divider-for(root.light); }
+        Rectangle { x: 6px; y: 4px; width: 10px; height: 10px; border-radius: 2px; background: Theme.accent-for(root.light).with-alpha(0.65); }
+        Rectangle { x: 20px; y: 6px; width: min(28px, parent.width * 0.2); height: 3px; border-radius: 1.5px; background: Theme.text-for(root.light).with-alpha(0.7); }
+        Rectangle { x: 20px; y: 11px; width: min(18px, parent.width * 0.14); height: 2px; border-radius: 1px; background: Theme.muted-for(root.light).with-alpha(0.6); }
+        Rectangle { x: (parent.width - 12px) / 2; y: 3px; width: 12px; height: 12px; border-radius: 6px; background: Theme.accent-for(root.light); }
+        Rectangle { x: parent.width * 0.68; y: 8px; width: parent.width * 0.26; height: 2px; border-radius: 1px; background: Theme.muted-for(root.light).with-alpha(0.45); }
+    }
+}
+
 // Theme choice with a miniature of the window in that palette.
 export component ThemeCard inherits Rectangle {
     in property <string> title;
@@ -247,66 +472,78 @@ export component ThemeCard inherits Rectangle {
     in property <bool> selected;
     in property <bool> enabled: true;
     callback select();
-    height: 118px;
+    height: 148px;
     opacity: root.enabled ? 1 : 0.45;
-    min-width: 96px;
+    min-width: 108px;
     horizontal-stretch: 1;
     border-radius: 12px;
-    background: touch.has-hover && !root.selected ? Theme.hover : transparent;
+    background: touch.has-hover && !root.selected ? SettingsTheme.row-hover : transparent;
     border-width: action.has-focus ? 2px : root.selected ? 2px : 1px;
-    border-color: action.has-focus ? Theme.focus : root.selected ? Theme.accent : Theme.outline;
+    border-color: action.has-focus ? Theme.focus : root.selected ? Theme.accent : SettingsTheme.card-border;
     animate background { duration: ControlMotion.feedback; easing: ease-out; }
     touch := TouchArea {
         enabled: root.enabled; mouse-cursor: pointer;
         action := Button { width: parent.width; height: parent.height; opacity: 0; text: ""; enabled: root.enabled; accessible-label: root.title + " theme"; accessible-checked: root.selected; clicked => { root.select(); } }
     }
     preview := Rectangle {
-        x: 8px; y: 8px; width: parent.width - 16px; height: 72px;
+        x: 8px; y: 8px; width: parent.width - 16px; height: 98px;
         border-radius: 8px; clip: true;
-        for half in (root.kind == 2 ? 2 : 1) : half-art := Rectangle {
-            property <bool> light: root.kind == 1 || (root.kind == 2 && half == 1);
+        for half in (root.kind == 2 ? 2 : 1) : Rectangle {
             x: root.kind == 2 ? half * parent.width / 2 : 0px;
             width: root.kind == 2 ? parent.width / 2 : parent.width;
             height: parent.height; clip: true;
-            // The software renderer clips to rectangles, so round the halves.
+            // The software renderer clips to rectangles, so the miniature is
+            // drawn at full width and each half carries its own rounding.
             border-top-left-radius: root.kind != 2 || half == 0 ? 8px : 0px;
             border-bottom-left-radius: root.kind != 2 || half == 0 ? 8px : 0px;
             border-top-right-radius: root.kind != 2 || half == 1 ? 8px : 0px;
             border-bottom-right-radius: root.kind != 2 || half == 1 ? 8px : 0px;
-            background: self.light ? #eee5db : #13161b;
-            // The miniature is drawn at full card width; the split crops it.
-            Rectangle {
+            background: Theme.window-for(root.kind == 1 || (root.kind == 2 && half == 1));
+            WindowMiniature {
                 x: root.kind == 2 ? -half * preview.width / 2 : 0px;
                 width: preview.width; height: preview.height;
-                Rectangle { x: 7px; y: 9px; width: 16px; height: 4px; border-radius: 2px; background: half-art.light ? #c9b6a9 : #3a3f4a; }
-                Rectangle { x: 7px; y: 17px; width: 12px; height: 4px; border-radius: 2px; background: half-art.light ? #d6c6bb : #2c313a; }
-                Rectangle { x: 7px; y: 25px; width: 14px; height: 4px; border-radius: 2px; background: half-art.light ? #d6c6bb : #2c313a; }
-                Rectangle {
-                    x: 30px; y: 7px; width: parent.width - 37px; height: 46px; border-radius: 5px;
-                    background: half-art.light ? #f9f4ee : #191c22;
-                    Rectangle { x: 6px; y: 6px; width: 18px; height: 18px; border-radius: 4px; background: half-art.light ? @linear-gradient(140deg, #f0904a 0%, #b45448 100%) : @linear-gradient(140deg, #c43f68 0%, #6a3fb5 100%); }
-                    Rectangle { x: 29px; y: 8px; width: max(0px, parent.width - 40px); height: 4px; border-radius: 2px; background: half-art.light ? #392e3360 : #f2f0f160; }
-                    Rectangle { x: 29px; y: 16px; width: max(0px, parent.width - 56px); height: 4px; border-radius: 2px; background: half-art.light ? #392e3330 : #f2f0f130; }
-                    Rectangle { x: 6px; y: 31px; width: max(0px, parent.width - 12px); height: 4px; border-radius: 2px; background: half-art.light ? #392e3320 : #f2f0f120; }
-                }
-                Rectangle {
-                    x: 0px; y: parent.height - 13px; width: parent.width; height: 13px;
-                    border-bottom-left-radius: 8px; border-bottom-right-radius: 8px;
-                    background: half-art.light ? #e7ddd2 : #0e1014;
-                    Rectangle { x: (parent.width - 8px) / 2; y: 3px; width: 8px; height: 8px; border-radius: 4px; background: half-art.light ? #b45448 : #c43f68; }
-                }
+                light: root.kind == 1 || (root.kind == 2 && half == 1);
             }
         }
+        // Keep the corners round over the miniature's edges.
+        Rectangle { border-radius: 8px; border-width: 1px; border-color: Theme.light ? #00000014 : #ffffff14; }
     }
     Text {
-        x: 12px; y: 86px; width: parent.width - (root.selected ? 42px : 20px); height: 24px;
+        x: 12px; y: 112px; width: parent.width - (root.selected ? 44px : 20px); height: 26px;
         text: root.title; vertical-alignment: center; overflow: elide;
         color: Theme.text; font-size: 13px; font-weight: root.selected ? 700 : 600;
     }
     if root.selected : Rectangle {
-        x: parent.width - 30px; y: 88px; width: 20px; height: 20px; border-radius: 10px;
+        x: parent.width - 32px; y: 115px; width: 20px; height: 20px; border-radius: 10px;
         background: Theme.accent;
         Path { x: 4px; y: 4px; width: 12px; height: 12px; viewbox-width: 24; viewbox-height: 24; fill: transparent; stroke: Theme.on-accent; stroke-width: 3px; commands: "M 4 12 L 10 18 L 20 6"; }
+    }
+}
+
+// The floating mini player over a busy backdrop, at the chosen opacity.
+export component MiniPlayerPreview inherits Rectangle {
+    in property <float> opacity-percent: 100;
+    height: 76px;
+    border-radius: 10px;
+    background: Theme.light ? #d8cfc6 : #2a2f38;
+    clip: true;
+    // A desktop with a window behind the mini player, so see-through shows.
+    Rectangle { x: 10px; y: 10px; width: parent.width * 0.55; height: 46px; border-radius: 6px; background: Theme.light ? #6f8fb8 : #3a5d7c; }
+    Rectangle { x: parent.width * 0.38; y: 30px; width: parent.width * 0.5; height: 40px; border-radius: 6px; background: Theme.light ? #d98b5f : #7b55b3; }
+    for line in 3 : Rectangle { x: 18px; y: 18px + line * 9px; width: parent.width * (line == 1 ? 0.3 : 0.42); height: 4px; border-radius: 2px; background: #ffffff70; }
+    Rectangle {
+        x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+        width: min(parent.width - 28px, 190px); height: 44px; border-radius: 10px;
+        opacity: clamp(root.opacity-percent / 100, 0.6, 1);
+        background: Theme.surface; border-width: 1px; border-color: Theme.outline;
+        drop-shadow-blur: 8px; drop-shadow-offset-y: 2px; drop-shadow-color: #00000050;
+        Rectangle { x: 7px; y: 7px; width: 30px; height: 30px; border-radius: 6px; background: Theme.accent; }
+        Rectangle { x: 44px; y: 13px; width: max(0px, parent.width - 96px); height: 5px; border-radius: 2.5px; background: Theme.text.with-alpha(0.8); }
+        Rectangle { x: 44px; y: 24px; width: max(0px, (parent.width - 96px) * 0.6); height: 4px; border-radius: 2px; background: Theme.muted.with-alpha(0.7); }
+        Rectangle {
+            x: parent.width - 36px; y: 9px; width: 26px; height: 26px; border-radius: 13px; background: Theme.text;
+            Path { x: 8px; y: 7px; width: 12px; height: 12px; viewbox-width: 24; viewbox-height: 24; fill: Theme.surface; stroke: transparent; commands: "M 6 3 L 20 12 L 6 21 Z"; }
+        }
     }
 }
 
@@ -321,16 +558,16 @@ export component EqualizerPreset inherits Rectangle {
     min-width: 92px;
     horizontal-stretch: 1;
     border-radius: 10px;
-    background: root.selected ? Theme.selected : touch.has-hover ? Theme.hover : (Theme.light ? #efe6dc : #171a20);
+    background: root.selected ? Theme.selected : touch.has-hover ? SettingsTheme.row-hover : SettingsTheme.well;
     animate background { duration: ControlMotion.feedback; easing: ease-out; }
     border-width: action.has-focus ? 2px : 1px;
-    border-color: action.has-focus ? Theme.focus : root.selected ? Theme.accent : Theme.divider;
+    border-color: action.has-focus ? Theme.focus : root.selected ? Theme.accent : SettingsTheme.well-border;
     opacity: root.enabled ? 1 : 0.45;
     touch := TouchArea {
         enabled: root.enabled; mouse-cursor: pointer;
         action := Button { width: parent.width; height: parent.height; opacity: 0; text: ""; enabled: root.enabled; accessible-label: root.title + " equalizer preset"; accessible-checked: root.selected; clicked => { root.select(); } }
     }
-    Rectangle { x: 12px; y: 27px; width: parent.width - 24px; height: 1px; background: Theme.divider; }
+    Rectangle { x: 12px; y: 27px; width: parent.width - 24px; height: 1px; background: SettingsTheme.separator; }
     Path {
         x: 12px; y: 12px; width: parent.width - 24px; height: 30px;
         viewbox-width: 120; viewbox-height: 24;
@@ -350,45 +587,119 @@ export component EqualizerPreset inherits Rectangle {
     }
 }
 
-// A keyboard shortcut inside a settings card.
+// One key of a shortcut, drawn as a keycap with a little depth.
+export component KeyCap inherits Rectangle {
+    in property <string> text;
+    height: 26px;
+    width: max(26px, cap-text.preferred-width + 16px);
+    border-radius: 6px;
+    background: SettingsTheme.keycap-edge;
+    Rectangle {
+        x: 0px; y: 0px; width: parent.width; height: parent.height - 2px; border-radius: 6px;
+        background: SettingsTheme.keycap;
+        border-width: 1px; border-color: SettingsTheme.keycap-border;
+        cap-text := Text {
+            text: root.text; color: Theme.text; font-size: 12px; font-weight: 700;
+            horizontal-alignment: center; vertical-alignment: center;
+        }
+    }
+}
+
+// A small text button inside a row (Clear, Cancel).
+component RowTextButton inherits Rectangle {
+    in property <string> text;
+    in property <string> label;
+    callback activate();
+    border-radius: 8px;
+    background: action.pressed ? SettingsTheme.row-pressed : touch.has-hover ? SettingsTheme.row-hover : transparent;
+    border-width: action.has-focus ? 2px : 0px; border-color: Theme.focus;
+    Text {
+        text: root.text; color: touch.has-hover ? Theme.text : Theme.muted;
+        font-size: 12.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center;
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        action := Button { width: parent.width; height: parent.height; opacity: 0; text: ""; accessible-label: root.label; clicked => { root.activate(); } }
+    }
+}
+
+// A keyboard shortcut inside a settings card. The binding ("Ctrl+Alt+P") is
+// shown as separate keycaps. Recording takes the focus into a private scope:
+// losing it (another click, another window) cancels the capture.
 export component ShortcutSetting inherits Rectangle {
     in property <string> action;
     in property <string> binding;
     in property <bool> recording;
     in property <bool> separator: true;
+    // macOS names its modifiers with symbols.
+    in property <bool> mac: false;
     callback record();
     callback clear();
     callback cancel();
-    if root.separator : Rectangle { y: 0px; height: 1px; background: Theme.divider; }
+    out property <bool> capturing: capture.has-focus;
+    private property <bool> has-cmd: root.binding.replace-all("Cmd+", "") != root.binding;
+    private property <bool> has-ctrl: root.binding.replace-all("Ctrl+", "") != root.binding;
+    private property <bool> has-alt: root.binding.replace-all("Alt+", "") != root.binding || root.binding.replace-all("Option+", "") != root.binding;
+    private property <bool> has-shift: root.binding.replace-all("Shift+", "") != root.binding;
+    private property <string> key: root.binding.replace-all("Cmd+", "").replace-all("Ctrl+", "").replace-all("Option+", "").replace-all("Alt+", "").replace-all("Shift+", "");
+    private property <string> spoken: root.binding == "" ? "not set" : root.binding.replace-all("+", " ");
+    changed recording => { if !root.recording && capture.has-focus { key-action.focus(); } }
+    capture := FocusScope {
+        width: 0px; height: 0px;
+        focus-on-click: false; focus-on-tab-navigation: false;
+        focus-lost(reason) => { if root.recording { root.cancel(); } }
+    }
+    if root.separator : RowSeparator { width: parent.width - 32px; }
     HorizontalLayout {
-        padding-top: 10px; padding-bottom: 10px; spacing: 8px; cross-axis-alignment: center;
-        Text { horizontal-stretch: 1; text: root.action; color: Theme.text; font-size: 14px; font-weight: 600; overflow: elide; }
-        key := Rectangle {
-            width: 148px; height: 34px; border-radius: 8px;
-            background: root.recording ? Theme.selected : key-touch.has-hover ? Theme.hover : (Theme.light ? #efe6dc : #14171c);
+        padding-left: 16px; padding-right: 10px; padding-top: 9px; padding-bottom: 9px; spacing: 8px; cross-axis-alignment: center;
+        Text { horizontal-stretch: 1; min-width: 0px; text: root.action; color: Theme.text; font-size: 14px; font-weight: 600; overflow: elide; vertical-alignment: center; }
+        field := Rectangle {
+            // Grows for long chords such as Ctrl+Alt+Shift+Space.
+            width: max(184px, caps.preferred-width + 20px); height: 38px; border-radius: 9px;
+            background: root.recording ? Theme.selected : key-action.pressed ? SettingsTheme.row-pressed : key-touch.has-hover ? SettingsTheme.row-hover : SettingsTheme.well;
             border-width: key-action.has-focus || root.recording ? 2px : 1px;
-            border-color: key-action.has-focus ? Theme.focus : root.recording ? Theme.accent : Theme.outline;
+            border-color: key-action.has-focus ? Theme.focus : root.recording ? Theme.accent : SettingsTheme.well-border;
             animate background { duration: ControlMotion.feedback; easing: ease-out; }
-            Text {
-                text: root.recording ? "Press keys…" : root.binding == "" ? "Not set" : root.binding;
-                color: root.recording ? Theme.selected-ink : root.binding == "" ? Theme.muted : Theme.text;
-                font-size: 12.5px; font-weight: root.binding == "" ? 500 : 700;
+            if root.recording : HorizontalLayout {
+                alignment: center; spacing: 8px;
+                Rectangle { width: 8px; Rectangle { y: (parent.height - 8px) / 2; width: 8px; height: 8px; border-radius: 4px; background: Theme.accent; } }
+                Text { text: "Press a shortcut…"; color: Theme.selected-ink; font-size: 12.5px; font-weight: 700; vertical-alignment: center; }
+            }
+            if !root.recording && root.binding == "" : Text {
+                text: "Not set · click to record"; color: Theme.muted; font-size: 12px; font-weight: 500;
                 horizontal-alignment: center; vertical-alignment: center;
+            }
+            caps := HorizontalLayout {
+                visible: !root.recording && root.binding != "";
+                alignment: center; spacing: 4px; padding-top: 6px; padding-bottom: 6px;
+                // Modifier order follows each platform: Ctrl Alt Shift, or ⌃ ⌥ ⇧ ⌘.
+                if root.has-ctrl : KeyCap { text: root.mac ? "⌃" : "Ctrl"; }
+                if root.has-alt : KeyCap { text: root.mac ? "⌥" : "Alt"; }
+                if root.has-shift : KeyCap { text: root.mac ? "⇧" : "Shift"; }
+                if root.has-cmd : KeyCap { text: "⌘"; }
+                if root.key != "" : KeyCap { text: root.key; }
             }
             key-touch := TouchArea {
                 mouse-cursor: pointer;
-                key-action := Button { width: parent.width; height: parent.height; opacity: 0; text: ""; accessible-label: "Record " + root.action + " shortcut"; clicked => { root.record(); } }
+                key-action := Button {
+                    width: parent.width; height: parent.height; opacity: 0; text: "";
+                    accessible-label: root.action + " shortcut, " + (root.recording ? "recording, press keys" : root.spoken) + ". Record a new shortcut";
+                    clicked => { capture.focus(); root.record(); }
+                }
             }
         }
-        clear-button := Rectangle {
-            width: 30px; height: 30px; border-radius: 15px;
-            opacity: root.binding != "" || root.recording ? 1 : 0.35;
-            background: clear-touch.has-hover && clear-touch.enabled ? Theme.hover : transparent;
-            border-width: clear-action.has-focus ? 2px : 0px; border-color: Theme.focus;
-            Path { x: 9px; y: 9px; width: 12px; height: 12px; viewbox-width: 24; viewbox-height: 24; fill: transparent; stroke: Theme.muted; stroke-width: 2.4px; commands: "M 5 5 L 19 19 M 19 5 L 5 19"; }
-            clear-touch := TouchArea {
-                enabled: root.binding != "" || root.recording; mouse-cursor: pointer;
-                clear-action := Button { width: parent.width; height: parent.height; opacity: 0; text: ""; enabled: parent.enabled; accessible-label: (root.binding == "" ? "Cancel recording " : "Clear ") + root.action + " shortcut"; clicked => { if root.binding == "" { root.cancel(); } else { root.clear(); } } }
+        // Cancel while recording, Clear when a shortcut is set. Two separate
+        // buttons: if a press ends the recording first, the Cancel button is
+        // gone before its release, so it can never clear a set shortcut.
+        Rectangle {
+            width: 64px; height: 30px;
+            if root.recording : RowTextButton {
+                text: "Cancel"; label: "Cancel recording the " + root.action + " shortcut";
+                activate => { root.cancel(); }
+            }
+            if !root.recording && root.binding != "" : RowTextButton {
+                text: "Clear"; label: "Clear the " + root.action + " shortcut";
+                activate => { root.clear(); }
             }
         }
     }
@@ -397,9 +708,9 @@ export component ShortcutSetting inherits Rectangle {
 // Small status chip: a coloured dot and a short label.
 export component StatusPill inherits Rectangle {
     in property <string> text;
-    // 0 neutral, 1 good, 2 attention.
+    // 0 neutral, 1 good, 2 attention, 3 an update is waiting (berry).
     in property <int> tone: 0;
-    private property <color> dot: root.tone == 1 ? #3fb37f : root.tone == 2 ? #e0a03a : Theme.muted;
+    private property <color> dot: root.tone == 1 ? SettingsTheme.good : root.tone == 2 ? SettingsTheme.attention : root.tone == 3 ? Theme.accent : Theme.muted;
     height: 24px;
     width: pill-text.preferred-width + 30px;
     border-radius: 12px;
@@ -417,28 +728,37 @@ export component SettingsAccountChip inherits Rectangle {
     in property <int> tone: 0;
     in property <bool> active;
     callback select();
-    height: 52px;
+    public function focus-item() { control.focus(); }
+    out property <bool> item-focused: control.has-focus;
+    height: 56px;
     border-radius: 12px;
-    background: root.active ? Theme.selected : touch.has-hover ? Theme.hover : transparent;
+    background: root.active ? Theme.selected : control.pressed ? SettingsTheme.row-pressed : touch.has-hover ? SettingsTheme.row-hover : SettingsTheme.card;
+    border-width: control.has-focus ? 2px : 1px;
+    border-color: control.has-focus ? Theme.focus : root.active ? Theme.selected : SettingsTheme.card-border;
     animate background { duration: ControlMotion.feedback; easing: ease-out; }
-    border-width: control.has-focus ? 2px : 0px; border-color: Theme.focus;
     touch := TouchArea {
         mouse-cursor: pointer;
         control := Button { width: parent.width; height: parent.height; opacity: 0; text: ""; accessible-label: "Account: " + root.name + ", " + root.status; accessible-checked: root.active; clicked => { root.select(); } }
     }
     Rectangle {
-        x: 8px; y: (parent.height - self.height) / 2; width: 34px; height: 34px; border-radius: 17px;
+        x: 9px; y: (parent.height - self.height) / 2; width: 36px; height: 36px; border-radius: 18px;
         background: root.connected ? Theme.accent : Theme.cover;
-        Path { x: 9px; y: 8px; width: 16px; height: 18px; viewbox-width: 24; viewbox-height: 28; fill: transparent; stroke: root.connected ? #fff8f6 : Theme.cover-ink; stroke-width: 2.2px; commands: "M 17 7 A 5 5 0 1 0 7 7 A 5 5 0 1 0 17 7 Z M 3 25 L 3 22 C 3 12 21 12 21 22 L 21 25"; }
+        Path { x: 10px; y: 9px; width: 16px; height: 18px; viewbox-width: 24; viewbox-height: 28; fill: transparent; stroke: root.connected ? #fff8f6 : Theme.cover-ink; stroke-width: 2.2px; commands: "M 17 7 A 5 5 0 1 0 7 7 A 5 5 0 1 0 17 7 Z M 3 25 L 3 22 C 3 12 21 12 21 22 L 21 25"; }
         Rectangle {
-            x: parent.width - 10px; y: parent.height - 10px; width: 11px; height: 11px; border-radius: 5.5px;
-            background: root.tone == 1 ? #3fb37f : root.tone == 2 ? #e0a03a : Theme.muted; border-width: 2px; border-color: Theme.chrome;
+            x: parent.width - 10px; y: parent.height - 10px; width: 12px; height: 12px; border-radius: 6px;
+            background: root.tone == 1 ? SettingsTheme.good : root.tone == 2 ? SettingsTheme.attention : Theme.muted;
+            border-width: 2px; border-color: root.active ? Theme.selected : SettingsTheme.card;
         }
     }
     VerticalLayout {
-        x: 52px; width: parent.width - self.x - 8px; height: parent.height;
+        x: 54px; width: parent.width - self.x - 22px; height: parent.height;
         alignment: center; spacing: 1px;
-        Text { text: root.name; color: Theme.text; font-size: 13px; font-weight: 700; overflow: elide; }
+        Text { text: root.name; color: root.active ? Theme.selected-ink : Theme.text; font-size: 13px; font-weight: 700; overflow: elide; }
         Text { text: root.status; color: Theme.muted; font-size: 11px; overflow: elide; }
+    }
+    Path {
+        x: parent.width - 20px; y: (parent.height - self.height) / 2; width: 12px; height: 12px;
+        viewbox-width: 24; viewbox-height: 24; fill: transparent; stroke: Theme.muted; stroke-width: 2.4px;
+        commands: SettingsIcons.chevron;
     }
 }
