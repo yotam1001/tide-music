@@ -103,33 +103,38 @@ fn mac_image_identity(version: &Version) -> Result<Option<(String, String, u64)>
     let client = agent(15);
     let url = mac_download_url(version, MAC_DMG);
     // Follow release redirects to GitHub's asset hosts only.
-    let follow = |start: &str, head: bool| -> Result<Option<ureq::http::Response<ureq::Body>>, String> {
-        let mut url = start.to_owned();
-        for _ in 0..4 {
-            if !allowed_download(&url) {
-                return Err(FAILED.into());
-            }
-            let request = if head { client.head(&url) } else { client.get(&url) };
-            let response = request
-                .header("User-Agent", "Tide-Updater")
-                .call()
-                .map_err(|_| FAILED)?;
-            match response.status().as_u16() {
-                200 => return Ok(Some(response)),
-                404 => return Ok(None),
-                301 | 302 | 303 | 307 | 308 => {
-                    url = response
-                        .headers()
-                        .get("location")
-                        .and_then(|header| header.to_str().ok())
-                        .ok_or(FAILED)?
-                        .to_owned();
+    let follow =
+        |start: &str, head: bool| -> Result<Option<ureq::http::Response<ureq::Body>>, String> {
+            let mut url = start.to_owned();
+            for _ in 0..4 {
+                if !allowed_download(&url) {
+                    return Err(FAILED.into());
                 }
-                _ => return Err(FAILED.into()),
+                let request = if head {
+                    client.head(&url)
+                } else {
+                    client.get(&url)
+                };
+                let response = request
+                    .header("User-Agent", "Tide-Updater")
+                    .call()
+                    .map_err(|_| FAILED)?;
+                match response.status().as_u16() {
+                    200 => return Ok(Some(response)),
+                    404 => return Ok(None),
+                    301 | 302 | 303 | 307 | 308 => {
+                        url = response
+                            .headers()
+                            .get("location")
+                            .and_then(|header| header.to_str().ok())
+                            .ok_or(FAILED)?
+                            .to_owned();
+                    }
+                    _ => return Err(FAILED.into()),
+                }
             }
-        }
-        Err(FAILED.into())
-    };
+            Err(FAILED.into())
+        };
     let Some(image) = follow(&url, true)? else {
         return Ok(None);
     };

@@ -8,6 +8,23 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 class MacOSPlistTests(unittest.TestCase):
+    def test_ad_hoc_signatures_keep_one_identity_across_releases(self):
+        import sys
+        sys.path.insert(0, str(ROOT / 'scripts'))
+        from package_macos import stable_identity
+        app = Path('/build/Tide.app')
+        macos = app / 'Contents/MacOS'
+        self.assertEqual(stable_identity(app, app, '-'), [
+            '--identifier', 'com.tidemusic.Tide',
+            '-r=designated => identifier "com.tidemusic.Tide"'])
+        self.assertEqual(stable_identity(app, macos / 'tide-login', '-'), [
+            '--identifier', 'com.tidemusic.Tide.login',
+            '-r=designated => identifier "com.tidemusic.Tide.login"'])
+        for path in [macos / 'tide-music', app / 'Contents/Resources/bin/mpv',
+                     app / 'Contents/Resources/mpv.app/Contents/MacOS/mpv']:
+            self.assertEqual(stable_identity(app, path, '-'), [], path)
+        self.assertEqual(stable_identity(app, app, 'Developer ID Application: Fixture'), [])
+
     def test_runtime_lock(self):
         lock = json.loads((ROOT / 'packaging/macos/runtime.lock.json').read_text())
         self.assertEqual(lock['schema_version'], 1)

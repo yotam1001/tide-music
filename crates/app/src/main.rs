@@ -3405,7 +3405,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
             let mut s = state.borrow_mut();
             if s.library_worker.is_some() {
-                u.set_account_status("A request is still in progress. Try connecting again.".into());
+                u.set_account_status(
+                    "A request is still in progress. Try connecting again.".into(),
+                );
                 return;
             }
             let index = u.get_account_index().clamp(0, 9) as u32;

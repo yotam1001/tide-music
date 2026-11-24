@@ -61,7 +61,9 @@ pub(super) fn check_bundle(app: &Path, version: &str) -> Result<(), String> {
     if plist_value(app, "CFBundleIdentifier").as_deref() != Some(BUNDLE_ID)
         || plist_value(app, "CFBundleShortVersionString").as_deref() != Some(version)
     {
-        return Err("The downloaded Tide is not the offered release. Nothing was installed.".into());
+        return Err(
+            "The downloaded Tide is not the offered release. Nothing was installed.".into(),
+        );
     }
     run(
         Command::new("/usr/bin/codesign")
@@ -109,7 +111,14 @@ pub(super) fn stage(image: &Path, version: &str) -> Result<PathBuf, String> {
     std::fs::create_dir(&mount).map_err(|_| "Could not prepare the update")?;
     run(
         Command::new("/usr/bin/hdiutil")
-            .args(["attach", "-nobrowse", "-readonly", "-noautoopen", "-quiet", "-mountpoint"])
+            .args([
+                "attach",
+                "-nobrowse",
+                "-readonly",
+                "-noautoopen",
+                "-quiet",
+                "-mountpoint",
+            ])
             .arg(&mount)
             .arg(image),
         "macOS could not open the downloaded disk image. Try the download again.",
@@ -166,7 +175,9 @@ open "$target""#;
         .process_group(0)
         .spawn()
         .map(drop)
-        .map_err(|_| "macOS could not start the update. Your music continues; retry Restart.".into())
+        .map_err(|_| {
+            "macOS could not start the update. Your music continues; retry Restart.".into()
+        })
 }
 
 #[cfg(test)]
@@ -187,7 +198,9 @@ mod tests {
         );
         assert_eq!(current_bundle(&canonical.join("tide-music")), None);
         assert_eq!(
-            current_bundle(Path::new("/Volumes/Tide/Tide.app/Contents/MacOS/tide-music")),
+            current_bundle(Path::new(
+                "/Volumes/Tide/Tide.app/Contents/MacOS/tide-music"
+            )),
             None
         );
         let other = canonical.join("Tide/Contents/MacOS/tide-music");
@@ -196,22 +209,65 @@ mod tests {
         std::fs::remove_dir_all(&root).unwrap();
     }
 
+    /// Stages a real release image: TIDE_UPDATE_TEST_DMG=<Tide.dmg> and
+    /// TIDE_UPDATE_TEST_VERSION=<its version>.
+    #[test]
+    #[ignore]
+    fn real_release_image_stages_without_quarantine() {
+        let image = std::path::PathBuf::from(std::env::var_os("TIDE_UPDATE_TEST_DMG").unwrap());
+        let version = std::env::var("TIDE_UPDATE_TEST_VERSION").unwrap();
+        let root = std::fs::canonicalize(std::env::temp_dir())
+            .unwrap()
+            .join(format!("tide-mac-stage-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let copy = root.join("Tide.dmg");
+        std::fs::copy(&image, &copy).unwrap();
+        let staged = stage(&copy, &version).unwrap();
+        assert_eq!(staged, root.join("staged/Tide.app"));
+        assert!(!root.join("mount").exists(), "image must be detached");
+        let quarantine = Command::new("/usr/bin/xattr")
+            .args(["-r", "-p", "com.apple.quarantine"])
+            .arg(&staged)
+            .output()
+            .unwrap();
+        assert!(
+            quarantine.stdout.is_empty(),
+            "staged copy must not be quarantined"
+        );
+        assert!(check_bundle(&staged, "0.0.1").is_err());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
     #[test]
     fn staged_bundle_must_be_the_offered_tide_release() {
-        let root = std::env::temp_dir().join(format!("tide-mac-check-{}", std::process::id()));
+        // The temporary folder is reached through /var -> /private/var.
+        let root = std::fs::canonicalize(std::env::temp_dir())
+            .unwrap()
+            .join(format!("tide-mac-check-{}", std::process::id()));
         let app = root.join("Tide.app");
         std::fs::create_dir_all(app.join("Contents")).unwrap();
         let plist = |id: &str, version: &str| {
-            format!(r#"<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>{id}</string><key>CFBundleShortVersionString</key><string>{version}</string></dict></plist>"#)
+            format!(
+                r#"<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>{id}</string><key>CFBundleShortVersionString</key><string>{version}</string></dict></plist>"#
+            )
         };
-        std::fs::write(app.join("Contents/Info.plist"), plist("com.example.Other", "9.9.9"))
-            .unwrap();
-        assert!(check_bundle(&app, "9.9.9").unwrap_err().contains("not the offered"));
+        std::fs::write(
+            app.join("Contents/Info.plist"),
+            plist("com.example.Other", "9.9.9"),
+        )
+        .unwrap();
+        assert!(check_bundle(&app, "9.9.9")
+            .unwrap_err()
+            .contains("not the offered"));
         std::fs::write(app.join("Contents/Info.plist"), plist(BUNDLE_ID, "9.9.8")).unwrap();
-        assert!(check_bundle(&app, "9.9.9").unwrap_err().contains("not the offered"));
+        assert!(check_bundle(&app, "9.9.9")
+            .unwrap_err()
+            .contains("not the offered"));
         // Right identity, but an unsigned bundle never passes.
         std::fs::write(app.join("Contents/Info.plist"), plist(BUNDLE_ID, "9.9.9")).unwrap();
-        assert!(check_bundle(&app, "9.9.9").unwrap_err().contains("code-signature"));
+        assert!(check_bundle(&app, "9.9.9")
+            .unwrap_err()
+            .contains("code-signature"));
         std::fs::remove_dir_all(&root).unwrap();
     }
 }

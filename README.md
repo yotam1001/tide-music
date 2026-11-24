@@ -77,9 +77,16 @@ A fast, native player that stays light on RAM, even while you game.
 If native sign-in isn't available, choose **Use browser companion instead**
 ([Chrome companion](https://github.com/yotam1001/tide-music/releases/latest/download/tide-browser-chromium.zip)).
 
-**macOS (Sonoma 14 or later, preview)**
+**macOS (Sonoma 14 or later)**
 
-Download for [Apple Silicon](https://github.com/yotam1001/tide-music/releases/latest/download/Tide.dmg)
+Paste this into Terminal. It installs the right build for your Mac, verifies it
+and opens Tide without a Gatekeeper block:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/yotam1001/tide-music/main/scripts/install-tide-macos.sh | sh
+```
+
+Or download for [Apple Silicon](https://github.com/yotam1001/tide-music/releases/latest/download/Tide.dmg)
 or [Intel](https://github.com/yotam1001/tide-music/releases/latest/download/Tide-Intel.dmg), then follow the
 [Mac install guide](docs/INSTALLATION_MACOS.md).
 

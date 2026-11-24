@@ -49,22 +49,22 @@ fn allowed(raw: &str) -> bool {
     secure_url(raw).is_some_and(|u| {
         regional_session_sync(&u)
             || matches!(
-            u.host_str(),
-            Some(
-                "music.youtube.com"
-                    | "accounts.google.com"
-                    | "consent.google.com"
-                    | "youtube.com"
-                    | "www.youtube.com"
-                    | "consent.youtube.com"
-                    | "accounts.youtube.com"
-                    | "families.google.com"
-                    | "familylink.google.com"
-                    | "myaccount.google.com"
-                    | "gds.google.com"
-                    | "ogs.google.com"
+                u.host_str(),
+                Some(
+                    "music.youtube.com"
+                        | "accounts.google.com"
+                        | "consent.google.com"
+                        | "youtube.com"
+                        | "www.youtube.com"
+                        | "consent.youtube.com"
+                        | "accounts.youtube.com"
+                        | "families.google.com"
+                        | "familylink.google.com"
+                        | "myaccount.google.com"
+                        | "gds.google.com"
+                        | "ogs.google.com"
+                )
             )
-        )
     })
 }
 pub fn subframe_allowed(raw: &str) -> bool {
@@ -681,11 +681,26 @@ mod native {
             return;
         };
         let place = url::Url::parse(raw)
-            .map(|u| format!("{}://{}{}", u.scheme(), u.host_str().unwrap_or(""), u.path()))
+            .map(|u| {
+                format!(
+                    "{}://{}{}",
+                    u.scheme(),
+                    u.host_str().unwrap_or(""),
+                    u.path()
+                )
+            })
             .unwrap_or_else(|_| raw.chars().take(32).collect());
-        if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+        {
             use std::io::Write;
-            let _ = writeln!(file, "{kind} {} {place}", if permitted { "allow" } else { "BLOCK" });
+            let _ = writeln!(
+                file,
+                "{kind} {} {place}",
+                if permitted { "allow" } else { "BLOCK" }
+            );
         }
     }
 
@@ -816,8 +831,10 @@ mod native {
                 let _: () = msg_send![&*window, center];
                 if let Some(visible) = visible {
                     let mut placed: NSRect = msg_send![&*window, frame];
-                    placed.origin.x = visible.origin.x + ((visible.size.width - placed.size.width) / 2.).max(0.);
-                    placed.origin.y = visible.origin.y + ((visible.size.height - placed.size.height) / 2.).max(0.);
+                    placed.origin.x =
+                        visible.origin.x + ((visible.size.width - placed.size.width) / 2.).max(0.);
+                    placed.origin.y = visible.origin.y
+                        + ((visible.size.height - placed.size.height) / 2.).max(0.);
                     let _: () = msg_send![&*window, setFrame: placed, display: true];
                 }
                 let _: () =

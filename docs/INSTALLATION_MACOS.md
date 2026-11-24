@@ -7,7 +7,21 @@ You need macOS 14 Sonoma or later on Apple Silicon or Intel. The disk image
 bundles its playback tools (mpv and yt-dlp), so Homebrew, Rust and Python are
 not needed.
 
-## Install and open
+## Install with one Terminal command (recommended)
+
+Open **Terminal** and paste:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/yotam1001/tide-music/main/scripts/install-tide-macos.sh | sh
+```
+
+It downloads the disk image for your processor, checks it against the SHA-256
+published with the release, verifies Tide's signature, copies Tide into
+Applications and opens it. Because the download does not come from a browser,
+macOS does not block the first launch. Run the same command again to reinstall.
+After that, Tide updates itself from **Settings → About**.
+
+## Install from the disk image
 
 1. Open **Apple menu → About This Mac**. If you see **Chip** with an Apple M
    series chip, download [Tide.dmg](https://github.com/yotam1001/tide-music/releases/latest/download/Tide.dmg).
@@ -35,7 +49,9 @@ the links above and replace Tide in Applications.
 
 Open the profile icon → **Sign in with Google**. A separate sign-in window
 opens. Sign in, choose the profile you use for YouTube Music, open Library,
-then select **Connect this profile**. The window closes and its browsing data
+then select **Connect this profile** (or press Return). Family Link accounts
+work too. Already signed in to YouTube Music in Zen? Choose **Zen browser →
+Connect** in the same sheet to use that session in one click. The window closes and its browsing data
 is discarded. A Zen profile's `cookies.sqlite` also works.
 
 Your session is encrypted in
@@ -75,9 +91,16 @@ Windows. See the [Jam guide](../experiments/jam/README.md) for relay self-hostin
 ## Updates
 
 With automatic checks enabled, Tide looks for a newer stable release with a
-disk image for your processor. Choose **Download Mac update** to open the
-download in your browser. Quit Tide, open the disk image, and drag Tide into
-Applications to replace the old copy. Your settings and session are kept.
+disk image for your processor. Choose **Update**: Tide downloads the image,
+checks it against the release's SHA-256, verifies the new Tide's signature,
+bundle ID and version, and stages it while your music keeps playing. Choose
+**Restart to update** and Tide quits, replaces itself and reopens. The update
+is not quarantined, so macOS does not ask you to approve Tide again, and its
+stable signing identity keeps Keychain access without a password prompt.
+Your settings and session are kept.
+
+If Tide runs from the disk image or from a folder you cannot write to,
+**Download Mac update** opens the download in your browser instead.
 
 ## Uninstall
 
