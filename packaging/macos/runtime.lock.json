@@ -26,13 +26,13 @@
     }
   },
   "yt-dlp": {
-    "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.10.26/yt-dlp_macos",
-    "sha256": "0f922c15ccc0b83eefa1c8bc9104e434318c4bf16e408e1ee93b7745a6efe0aa",
-    "version": "2026.10.26",
+    "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.11.23/yt-dlp_macos",
+    "sha256": "57654854886d0398a798895aadf5173e2749fbb5e249b9f3728022ab376e11fb",
+    "version": "2026.11.23",
     "license": "Unlicense (source); GPL-3.0-or-later (PyInstaller executable and dependencies)",
     "checksums": {
-      "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.10.26/SHA2-256SUMS",
-      "sha256": "0d7ec4303a02bcbe66154d478852cdf2e07688d39dc4597316e4424ac4e74356",
+      "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.11.23/SHA2-256SUMS",
+      "sha256": "40cbeef6bd7c0377479fe87e41add10488a511a1001519b7d4ba2ff67fba618c",
       "license": "Unlicense"
     }
   },

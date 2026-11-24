@@ -32,7 +32,7 @@ foreach ($taskFile in Get-ChildItem -LiteralPath $taskMpv[0].DirectoryName -File
 }
 # The official unpacked (onedir) build: the single-file EXE unpacks itself to
 # %TEMP% on every run, adding about 0.7 s to each song's stream lookup.
-Get-VerifiedAsset 'yt-dlp/yt-dlp' '2026.10.26' 'yt-dlp_win.zip' (Join-Path $taskDownloads 'yt-dlp.zip') 'fd51b212cf8380c7a52ee08c0d6be7f3c59b2f2c832eaf7b45acfae6eab57419'
+Get-VerifiedAsset 'yt-dlp/yt-dlp' '2026.11.23' 'yt-dlp_win.zip' (Join-Path $taskDownloads 'yt-dlp.zip') '824860984b96ca01de09f98f7bfd74ed7bbdce72a3340b51af8b9dc5ee037a5f'
 Expand-TideArchive (Join-Path $taskDownloads 'yt-dlp.zip') $Destination
 if (!(Test-Path -LiteralPath (Join-Path $Destination 'yt-dlp.exe') -PathType Leaf)) { throw 'yt-dlp archive did not contain yt-dlp.exe.' }
 Get-VerifiedAsset 'denoland/deno' 'v2.9.7' 'deno-x86_64-pc-windows-msvc.zip' (Join-Path $taskDownloads 'deno.zip') 'a0c3101b4158d1dfb7d6a78a7bf0f3de80c96bb423c152beec8beb22786f2238'

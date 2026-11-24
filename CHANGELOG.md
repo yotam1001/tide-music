@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Songs play again. YouTube changed its player on 2026-11-24 and the bundled
+  yt-dlp could no longer solve its stream challenges, so Tide now ships
+  yt-dlp 2026.11.23.
+- Starting a Jam right after opening Tide works again. Tide now resumes the
+  song it restored and shares it, instead of asking you to press play first.
+
 ## 0.4.37 - 2026-11-24
 
 - Polished Jams, song menus, Add to playlist, the updater, the queue, the mini player and error messages:

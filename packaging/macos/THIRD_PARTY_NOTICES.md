@@ -16,13 +16,13 @@ selections are recorded in `runtime.lock.json`, also copied into the bundle.
   GPL and LGPL texts and upstream mpv/FFmpeg notices are in `licenses/`.
 * yt-dlp source is Unlicense; its official macOS PyInstaller executable contains
   GPLv3+ components. See `licenses/yt-dlp-LICENSE.txt` and
-  https://github.com/yt-dlp/yt-dlp/tree/2026.10.26#license.
+  https://github.com/yt-dlp/yt-dlp/tree/2026.11.23#license.
 
 Source references: https://github.com/mpv-player/mpv/tree/v0.41.0,
 https://github.com/mpv-player/mpv/tree/v0.39.0,
 https://github.com/FFmpeg/FFmpeg/tree/n8.0.1,
 https://github.com/FFmpeg/FFmpeg/tree/n6.1.2,
-https://github.com/yt-dlp/yt-dlp/tree/2026.10.26.
+https://github.com/yt-dlp/yt-dlp/tree/2026.11.23.
 The preserved upstream mpv.app carries its original dependent libraries,
 frameworks and resources. Redistribution of these binaries must retain their
 applicable notices and provide corresponding source as required by their
