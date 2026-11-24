@@ -42,6 +42,10 @@ tempfile = "3"
 [target.'cfg(target_os = "macos")'.dependencies]
 tide-macos = { path = "../macos" }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+tide-linux = { path = "../linux" }
+libc = "0.2"
+
 [build-dependencies]
 slint-build = "=1.18.1"
 winresource = "0.1.31"

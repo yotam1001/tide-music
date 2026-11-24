@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Tide Music
+GenericName=Music Player
+Comment=A lightweight YouTube Music player
+Exec=tide-music
+Icon=tide-music
+Terminal=false
+Categories=AudioVideo;Audio;Player;
+Keywords=music;youtube;player;
+StartupWMClass=tide-music
+X-AppImage-Version=@VERSION@

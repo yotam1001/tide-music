@@ -613,18 +613,173 @@ impl SessionKeyStore for KeychainKeyStore {
     }
 }
 
+/// Linux: the session key lives in the desktop keyring through the Secret
+/// Service API (GNOME Keyring, KWallet, KeePassXC), like Keychain on macOS.
+/// Desktops without a keyring fall back to a 0600 key file in the private
+/// account folder, the same trade-off browsers make on such systems.
 #[cfg(all(unix, not(target_os = "macos")))]
-struct UnsupportedKeyStore;
+struct LinuxKeyStore;
 
 #[cfg(all(unix, not(target_os = "macos")))]
-impl SessionKeyStore for UnsupportedKeyStore {
+const SECRET_ATTRIBUTES: [(&str, &str); 2] =
+    [("application", "tide-music"), ("purpose", "session-key")];
+
+#[cfg(all(unix, not(target_os = "macos")))]
+const KEY_FILE_NAME: &str = "session.key";
+
+#[cfg(all(unix, not(target_os = "macos")))]
+impl LinuxKeyStore {
+    fn key_from(mut bytes: Vec<u8>) -> Result<zeroize::Zeroizing<[u8; 32]>, &'static str> {
+        if bytes.len() != 32 {
+            bytes.zeroize();
+            return Err("Account session key is invalid");
+        }
+        let mut key = zeroize::Zeroizing::new([0u8; 32]);
+        key.copy_from_slice(&bytes);
+        bytes.zeroize();
+        Ok(key)
+    }
+
+    /// Run against the default keyring collection, or None without a keyring.
+    fn with_keyring<T>(
+        run: impl FnOnce(&secret_service::blocking::Collection<'_>) -> Result<T, &'static str>,
+    ) -> Option<Result<T, &'static str>> {
+        use secret_service::{blocking::SecretService, EncryptionType};
+        let service = SecretService::connect(EncryptionType::Dh).ok()?;
+        let collection = service.get_default_collection().ok()?;
+        if collection.is_locked().unwrap_or(true) && collection.unlock().is_err() {
+            return Some(Err("Unlock your desktop keyring to use your saved account"));
+        }
+        Some(run(&collection))
+    }
+
+    fn keyring_item(
+        collection: &secret_service::blocking::Collection<'_>,
+    ) -> Result<Option<Vec<u8>>, &'static str> {
+        let items = collection
+            .search_items(std::collections::HashMap::from(SECRET_ATTRIBUTES))
+            .map_err(|_| "Could not read the account session key from your keyring")?;
+        match items.first() {
+            Some(item) => item
+                .get_secret()
+                .map(Some)
+                .map_err(|_| "Could not read the account session key from your keyring"),
+            None => Ok(None),
+        }
+    }
+
+    fn key_file() -> Option<PathBuf> {
+        let base = std::env::var_os("XDG_DATA_HOME")
+            .filter(|dir| !dir.is_empty())
+            .map(PathBuf::from)
+            .or_else(|| {
+                std::env::var_os("HOME")
+                    .filter(|home| !home.is_empty())
+                    .map(|home| PathBuf::from(home).join(".local/share"))
+            })?;
+        Some(base.join("TideMusic/account").join(KEY_FILE_NAME))
+    }
+
+    fn read_key_file() -> Result<Option<zeroize::Zeroizing<[u8; 32]>>, &'static str> {
+        use std::os::unix::fs::MetadataExt;
+        let Some(path) = Self::key_file() else {
+            return Ok(None);
+        };
+        let meta = match fs::symlink_metadata(&path) {
+            Ok(meta) => meta,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(_) => return Err("Could not read the account session key"),
+        };
+        if !meta.is_file() || meta.mode() & 0o077 != 0 || meta.uid() != unsafe { libc::getuid() } {
+            return Err("Account session key file is not private");
+        }
+        let bytes = fs::read(&path).map_err(|_| "Could not read the account session key")?;
+        Self::key_from(bytes).map(Some)
+    }
+
+    fn write_key_file(key: &[u8; 32]) -> Result<(), &'static str> {
+        use std::io::Write as _;
+        use std::os::unix::fs::OpenOptionsExt;
+        let path = Self::key_file().ok_or("User data directory is unavailable")?;
+        let parent = path.parent().ok_or("User data directory is unavailable")?;
+        private_directory(parent).map_err(|_| "Could not prepare account storage")?;
+        let temporary = parent.join(format!("{KEY_FILE_NAME}.{}", std::process::id()));
+        let _ = fs::remove_file(&temporary);
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&temporary)
+            .map_err(|_| "Could not store the account session key")?;
+        let written = file.write_all(key).and_then(|()| file.sync_all());
+        drop(file);
+        if written.is_err() || fs::rename(&temporary, &path).is_err() {
+            let _ = fs::remove_file(&temporary);
+            return Err("Could not store the account session key");
+        }
+        Ok(())
+    }
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+impl SessionKeyStore for LinuxKeyStore {
     fn load_key(&self) -> Result<Option<zeroize::Zeroizing<[u8; 32]>>, &'static str> {
-        Err("Keychain session storage is only available on macOS")
+        if let Some(found) = Self::with_keyring(Self::keyring_item) {
+            if let Some(bytes) = found? {
+                return Self::key_from(bytes).map(Some);
+            }
+        }
+        Self::read_key_file()
     }
+
     fn load_or_create_key(&self) -> Result<zeroize::Zeroizing<[u8; 32]>, &'static str> {
-        Err("Keychain session storage is only available on macOS")
+        if let Some(key) = self.load_key()? {
+            return Ok(key);
+        }
+        use ring::rand::{SecureRandom, SystemRandom};
+        let mut key = zeroize::Zeroizing::new([0u8; 32]);
+        SystemRandom::new()
+            .fill(&mut *key)
+            .map_err(|_| "Could not generate account session key")?;
+        let stored = Self::with_keyring(|collection| {
+            collection
+                .create_item(
+                    "Tide Music account session key",
+                    std::collections::HashMap::from(SECRET_ATTRIBUTES),
+                    &*key,
+                    true,
+                    "application/octet-stream",
+                )
+                .map(drop)
+                .map_err(|_| "Could not store the account session key in your keyring")
+        });
+        match stored {
+            Some(result) => result?,
+            None => Self::write_key_file(&key)?,
+        }
+        Ok(key)
     }
+
     fn delete_key(&self) -> Result<(), &'static str> {
+        if let Some(result) = Self::with_keyring(|collection| {
+            let items = collection
+                .search_items(std::collections::HashMap::from(SECRET_ATTRIBUTES))
+                .map_err(|_| "Could not remove the account session key from your keyring")?;
+            for item in items {
+                item.delete()
+                    .map_err(|_| "Could not remove the account session key from your keyring")?;
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        if let Some(path) = Self::key_file() {
+            match fs::remove_file(path) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(_) => return Err("Could not remove the account session key"),
+            }
+        }
         Ok(())
     }
 }
@@ -637,7 +792,7 @@ fn default_key_store() -> Arc<dyn SessionKeyStore> {
     }
     #[cfg(not(target_os = "macos"))]
     {
-        Arc::new(UnsupportedKeyStore)
+        Arc::new(LinuxKeyStore)
     }
 }
 
@@ -834,7 +989,7 @@ impl Provider {
                     .is_ok_and(|meta| meta.is_file())
         }
     }
-    #[cfg(any(windows, target_os = "macos"))]
+    #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
     pub fn owns_login_directory(&self, path: &Path) -> bool {
         if directory_is_linked(path) || directory_is_linked(&self.directory) {
             return false;
@@ -854,13 +1009,13 @@ impl Provider {
                     pid.parse::<u32>().is_ok_and(|pid| pid != 0) && counter.parse::<u64>().is_ok()
                 })
     }
-    #[cfg(not(any(windows, target_os = "macos")))]
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     pub fn owns_login_directory(&self, _path: &Path) -> bool {
         false
     }
     /// Allocate a fresh profile underneath the existing private account store.
     /// The caller owns its lifetime, never a user-selected browser directory.
-    #[cfg(any(windows, target_os = "macos"))]
+    #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
     pub fn new_login_directory(&self) -> Result<LoginDirectory, String> {
         if directory_is_linked(&self.directory) {
             return Err("Login profile storage must be an ordinary private directory".into());
@@ -873,7 +1028,7 @@ impl Provider {
             ));
             #[cfg(windows)]
             let created = fs::create_dir(&path);
-            #[cfg(target_os = "macos")]
+            #[cfg(unix)]
             let created = {
                 use std::os::unix::fs::DirBuilderExt;
                 fs::DirBuilder::new().mode(0o700).create(&path)
@@ -893,12 +1048,9 @@ impl Provider {
         }
         Err("Could not create an isolated login profile".into())
     }
-    #[cfg(not(any(windows, target_os = "macos")))]
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     pub fn new_login_directory(&self) -> Result<LoginDirectory, String> {
-        Err(
-            "Native sign-in is only available on Windows; use the browser companion on macOS"
-                .into(),
-        )
+        Err("Native sign-in is unavailable on this system; use the browser companion".into())
     }
     pub fn account_index(&self) -> u32 {
         let Ok(mut headers) = self.headers() else {
@@ -2548,6 +2700,8 @@ fn execute_helper(
         "TIDE_PROVIDER_PYTHON",
         &[
             "Resources/python/bin/python3",
+            // Linux AppImage: usr/lib/tide-music beside usr/bin.
+            "lib/tide-music/python/bin/python3",
             ".tools/provider-venv/bin/python3",
         ],
         "python3",
@@ -2556,6 +2710,7 @@ fn execute_helper(
         "TIDE_PROVIDER_HELPER",
         &[
             "Resources/helpers/youtube_music.py",
+            "lib/tide-music/helpers/youtube_music.py",
             "helpers/youtube_music.py",
         ],
         "tools/youtube_music.py",
@@ -3913,6 +4068,46 @@ mod tests {
         }
     }
 
+    /// Live check of the Linux keyring path. Run inside a private session:
+    /// `dbus-run-session` with an unlocked gnome-keyring (or without one, to
+    /// exercise the 0600 key-file fallback) and XDG_DATA_HOME in a temp dir.
+    #[cfg(all(unix, not(target_os = "macos")))]
+    #[test]
+    #[ignore = "needs a D-Bus session; uses the session's keyring or the key-file fallback"]
+    fn linux_key_store_round_trip() {
+        use std::os::unix::fs::PermissionsExt;
+        let data = std::env::var_os("XDG_DATA_HOME").expect("isolated XDG_DATA_HOME");
+        assert!(
+            std::path::Path::new(&data).starts_with("/tmp"),
+            "Run with XDG_DATA_HOME in a temp dir"
+        );
+        let store = LinuxKeyStore;
+        store.delete_key().unwrap();
+        assert!(store.load_key().unwrap().is_none());
+        let key = store.load_or_create_key().unwrap();
+        assert_eq!(*store.load_key().unwrap().unwrap(), *key);
+        assert_eq!(*store.load_or_create_key().unwrap(), *key);
+        let file = LinuxKeyStore::key_file().unwrap();
+        let keyring = LinuxKeyStore::with_keyring(LinuxKeyStore::keyring_item).is_some();
+        if keyring {
+            assert!(!file.exists(), "With a keyring the key never touches disk");
+        } else {
+            let mode = fs::metadata(&file).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+        println!(
+            "PASS key store via {}",
+            if keyring {
+                "Secret Service keyring"
+            } else {
+                "0600 key file"
+            }
+        );
+        store.delete_key().unwrap();
+        assert!(store.load_key().unwrap().is_none());
+        assert!(!file.exists());
+    }
+
     #[cfg(unix)]
     impl SessionKeyStore for InMemoryKeyStore {
         fn load_key(&self) -> Result<Option<zeroize::Zeroizing<[u8; 32]>>, &'static str> {
@@ -4203,7 +4398,7 @@ mod tests {
         fs::remove_dir_all(&directory).unwrap();
     }
 
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(all(unix, not(any(target_os = "macos", target_os = "linux"))))]
     #[test]
     fn unix_native_login_points_to_browser_companion() {
         let directory = std::env::temp_dir().join(format!(
@@ -4216,18 +4411,18 @@ mod tests {
             Provider::with_key_store(directory.clone(), Arc::new(InMemoryKeyStore::new()));
         assert!(!provider.owns_login_directory(&directory.join("login-1-1")));
         let error = match provider.new_login_directory() {
-            Ok(_) => panic!("expected non-Windows new_login_directory to fail"),
+            Ok(_) => panic!("expected unsupported new_login_directory to fail"),
             Err(error) => error,
         };
-        assert!(error.contains("browser companion on macOS"));
+        assert!(error.contains("browser companion"));
         fs::remove_dir_all(&directory).unwrap();
     }
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     #[test]
-    fn mac_login_directory_is_private_owned_and_rejects_links() {
+    fn unix_login_directory_is_private_owned_and_rejects_links() {
         use std::os::unix::fs::{symlink, PermissionsExt};
         let directory = std::env::temp_dir().join(format!(
-            "tide-mac-login-{}-{}",
+            "tide-unix-login-{}-{}",
             std::process::id(),
             LEASE_COUNTER.fetch_add(1, Ordering::Relaxed)
         ));

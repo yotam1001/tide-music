@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-native-login = ["dep:tide-windows", "dep:tide-macos"]
+native-login = ["dep:tide-windows", "dep:tide-macos", "dep:tide-linux"]
 native-login-probe = ["native-login"]
 
 [dependencies]
@@ -24,6 +24,12 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Securit
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 ring = "=0.17.14"
+
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+secret-service = { version = "5", default-features = false, features = ["rt-async-io-crypto-rust"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+tide-linux = { path = "../linux", optional = true, features = ["native-login"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = "3"

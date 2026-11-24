@@ -610,6 +610,9 @@ fn runtime_directories(
             #[cfg(unix)]
             directories.push(exe_dir.join("../Resources/bin"));
             directories.push(exe_dir.to_path_buf());
+            // Linux AppImage: usr/bin/tide-music -> usr/lib/tide-music/bin.
+            #[cfg(target_os = "linux")]
+            directories.push(exe_dir.join("../lib/tide-music/bin"));
             add_runtime_ancestors(exe_dir, &mut directories);
         }
     }
@@ -2085,7 +2088,11 @@ fn default_audio_output() -> &'static str {
     } else if cfg!(target_os = "macos") {
         "--ao=coreaudio"
     } else {
-        "--ao=auto"
+        // An explicit list, not `auto`: the bundled mpv's automatic choice
+        // stops at PipeWire on PulseAudio-only systems (Ubuntu 22.04, WSLg)
+        // and fails the file with "audio output initialization failed",
+        // while the list falls back to PulseAudio and then ALSA.
+        "--ao=pipewire,pulse,alsa"
     }
 }
 #[cfg(any(windows, unix))]

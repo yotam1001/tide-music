@@ -1,0 +1,44 @@
+[package]
+name = "tide-linux"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# MPRIS, StatusNotifierItem, X11 and XDG portal integrations. Off Linux this
+# crate builds as documented stubs so Windows and macOS checks stay green.
+[features]
+native-login = [
+    "dep:zeroize",
+    "dep:serde_json",
+    "dep:url",
+    "dep:gtk",
+    "dep:glib",
+    "dep:webkit2gtk",
+    "dep:soup3",
+    "dep:javascriptcore-rs",
+]
+
+[dependencies]
+zeroize = { version = "1", optional = true }
+serde_json = { version = "1", optional = true }
+url = { version = "2", optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+serde = "1"
+x11rb = { version = "0.13", features = ["randr"] }
+zbus ={ version = "5", default-features = false, features = ["async-io", "blocking-api"] }
+ksni = { version = "0.3.7", default-features = false, features = ["async-io", "blocking"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+# Native sign-in helper only (tide-login): WebKitGTK 4.1 on GTK 3.
+gtk = { version = "0.18", optional = true }
+glib = { version = "0.18", optional = true }
+webkit2gtk = { version = "2", features = ["v2_40"], optional = true }
+soup3 = { version = "0.5", optional = true }
+javascriptcore-rs = { version = "1", optional = true }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+# Desktop tests press keys through XTEST rather than xdotool, which remaps
+# keys onto spare keycodes and so never matches a registered grab.
+x11rb = { version = "0.13", features = ["randr", "xtest"] }
