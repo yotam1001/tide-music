@@ -116,6 +116,10 @@ mod stubs {
         Err(UNSUPPORTED.into())
     }
 
+    pub fn fill_work_area(_view: *mut c_void) -> Result<(), String> {
+        Err(UNSUPPORTED.into())
+    }
+
     pub struct OutputWatcher;
 
     impl OutputWatcher {

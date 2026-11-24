@@ -397,6 +397,20 @@ fn resize_after_unmaximize(u: &AppWindow, size: slint::LogicalSize) {
     });
 }
 
+/// Fill the screen. On a Mac this is a plain frame over the usable area,
+/// not a native zoom (see `fill_work_area`). Returns whether it took effect.
+fn maximize(u: &AppWindow) -> bool {
+    #[cfg(all(native_shell, target_os = "macos"))]
+    {
+        platform::native_view(u.window()).is_some_and(|view| platform::fill_work_area(view).is_ok())
+    }
+    #[cfg(not(all(native_shell, target_os = "macos")))]
+    {
+        u.window().set_maximized(true);
+        false
+    }
+}
+
 /// Maximize once the native window exists. A request made before the window
 /// is created is dropped, so retry briefly until Windows reports it.
 fn maximize_when_ready(u: &AppWindow) {
@@ -406,7 +420,9 @@ fn maximize_when_ready(u: &AppWindow) {
             if u.get_collapsed() || u.get_compact_mode() || u.window().is_maximized() {
                 return;
             }
-            u.window().set_maximized(true);
+            if maximize(&u) {
+                return;
+            }
             if left > 0 {
                 attempt(u.as_weak(), left - 1);
             }
@@ -419,7 +435,9 @@ fn maximize_when_ready(u: &AppWindow) {
 fn restore_window(u: &AppWindow, previous: Option<(bool, slint::LogicalSize)>) {
     match previous {
         Some((false, size)) => u.window().set_size(size),
-        _ => u.window().set_maximized(true),
+        _ => {
+            maximize(u);
+        }
     }
 }
 
@@ -4816,7 +4834,44 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             EventResult, WinitWindowAccessor,
         };
         let weak = ui.as_weak();
-        ui.window().on_winit_window_event(move |_, event| {
+        // Opt-in window diagnostics (TIDE_WINDOW_TRACE=<file>): geometry,
+        // focus and visibility events only, no content or input.
+        let trace = std::env::var_os("TIDE_WINDOW_TRACE");
+        let started = std::time::Instant::now();
+        ui.window().on_winit_window_event(move |window, event| {
+            if let Some(path) = &trace {
+                let line = match event {
+                    WindowEvent::Resized(size) => {
+                        Some(format!("resized {}x{}", size.width, size.height))
+                    }
+                    WindowEvent::Moved(at) => Some(format!("moved {},{}", at.x, at.y)),
+                    WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                        Some(format!("scale {scale_factor}"))
+                    }
+                    WindowEvent::Focused(focused) => Some(format!("focused {focused}")),
+                    WindowEvent::Occluded(occluded) => Some(format!("occluded {occluded}")),
+                    _ => None,
+                };
+                if let Some(line) = line {
+                    let size = window.size();
+                    if let Ok(mut file) = std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(path)
+                    {
+                        use std::io::Write;
+                        let _ = writeln!(
+                            file,
+                            "{:>8} {line} (logical {}x{}, compact {}, mini {})",
+                            started.elapsed().as_millis(),
+                            size.width as f32 / window.scale_factor(),
+                            size.height as f32 / window.scale_factor(),
+                            weak.upgrade().is_some_and(|u| u.get_compact_mode()),
+                            weak.upgrade().is_some_and(|u| u.get_collapsed()),
+                        );
+                    }
+                }
+            }
             let WindowEvent::MouseInput {
                 state: ElementState::Released,
                 button,
@@ -4945,7 +5000,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Play/Pause action even when the user presses a media key twice quickly.
     // Metadata and timeline writes are cached inside MediaSession.
     let window_fit_timer = slint::Timer::default();
-    #[cfg(native_shell)]
+    // macOS keeps windows on screen across display changes itself; polling
+    // the usable area would also react to the temporary areas a Space swipe
+    // reports.
+    #[cfg(all(native_shell, not(target_os = "macos")))]
     if !test_mode && listening_seconds.is_none() && !smoke_autoplay_depletion {
         let weak = ui.as_weak();
         let mut fitted = None;

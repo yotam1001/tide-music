@@ -132,6 +132,23 @@ pub fn window_work_area(view: *mut c_void) -> Result<[i32; 4], String> {
         ])
     }
 }
+/// "Maximize" on a Mac: an ordinary frame covering the screen's usable area
+/// (below the menu bar, beside the Dock). A native zoom is avoided because
+/// macOS re-fits zoomed windows whenever the usable area changes, including
+/// mid-way through a four-finger Space swipe, which flashed a black strip.
+pub fn fill_work_area(view: *mut c_void) -> Result<(), String> {
+    unsafe {
+        let w = window(view)?;
+        let zoomed: Bool = msg_send![&*w, isZoomed];
+        if zoomed.as_bool() {
+            let _: () = msg_send![&*w, zoom: std::ptr::null::<AnyObject>()];
+        }
+        let (screen, _, _) = screen_geometry(&w)?;
+        let frame: NSRect = msg_send![&*screen, visibleFrame];
+        let _: () = msg_send![&*w, setFrame: frame, display: Bool::YES];
+        Ok(())
+    }
+}
 pub fn fit_window_to_work_area(view: *mut c_void, work: [i32; 4]) -> Result<(), String> {
     unsafe {
         let w = window(view)?;
