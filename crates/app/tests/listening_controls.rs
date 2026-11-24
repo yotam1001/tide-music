@@ -180,8 +180,15 @@ fn filtered_playlist_and_queue_keep_absolute_indices_and_audio_has_its_own_page(
             draw(&window, width, "audio-settings");
             ui.set_settings_open(false);
             draw(&window, width, "audio-settings-closed");
+            // A failed song keeps its title in the player, as in the app.
+            ui.set_source_input("".into());
+            ui.set_track_title("Synthetic failed song".into());
+            ui.set_track_artist("Fixture artist".into());
+            ui.set_paused(true);
+            ui.set_position(0.0);
+            // The app's message when no specific cause is known.
             ui.set_error_message(
-                "This song could not play. Retry or skip to the next song.".into(),
+                "Couldn't play this song. Retry it, or skip to the next song.".into(),
             );
             ui.set_error_retryable(true);
             ui.set_playback_error_action("Retry song".into());

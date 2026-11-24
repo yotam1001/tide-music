@@ -77,6 +77,9 @@ struct Picker {
     expected: SavedConnection,
     choices: Vec<tide_provider::Playlist>,
     refreshing: bool,
+    /// The user asked to create a playlist from this picker; once YouTube
+    /// Music confirms it, the song is saved there.
+    create_then_add: bool,
     /// A choice made while a background account sync was running.
     pending: Option<usize>,
 }
@@ -92,6 +95,10 @@ pub struct Music {
     playlist: Option<PlaylistDetails>,
     detail_revision: u64,
     picker: Option<Picker>,
+    /// The rating to restore if the user presses Undo on the confirmation,
+    /// and the one recorded when the request was sent.
+    undo: Option<(String, Rating)>,
+    undo_candidate: Option<(String, Rating)>,
 }
 impl Music {
     pub fn new(synthetic: bool) -> Self {
@@ -107,6 +114,8 @@ impl Music {
             playlist: None,
             detail_revision: 0,
             picker: None,
+            undo: None,
+            undo_candidate: None,
         }
     }
     pub fn skips(&self, source: &str, identity: Option<&SavedConnection>) -> bool {
@@ -232,31 +241,24 @@ pub fn install(
     let create_state = state.clone();
     let weak = ui.as_weak();
     ui.on_create_playlist(move |title| {
+        if let Some(u) = weak.upgrade() {
+            create_playlist(&mut create_state.borrow_mut(), &u, &title);
+        }
+    });
+    let picker_create_state = state.clone();
+    let weak = ui.as_weak();
+    ui.on_create_picker_playlist(move |title| {
         let Some(u) = weak.upgrade() else {
             return;
         };
-        let mut s = create_state.borrow_mut();
-        let request = FeedbackRequest::PlaylistCreate {
-            title: title.trim().into(),
-        };
-        if !request.valid() {
-            notice(
-                &mut s,
-                &u,
-                "Enter a playlist name of up to 100 characters without < or >.",
-            );
-        } else if begin(&mut s, request) {
-            u.set_playlist_create_open(false);
-            u.set_playlist_create_title("".into());
-            u.set_collection_busy(true);
-            u.set_rating_busy(true);
-            notice(&mut s, &u, "Creating private playlist…");
-        } else {
-            notice(
-                &mut s,
-                &u,
-                "Wait for the current account action, then try again.",
-            );
+        let mut s = picker_create_state.borrow_mut();
+        if s.music_feedback.picker.is_none() {
+            return;
+        }
+        if create_playlist(&mut s, &u, &title) {
+            if let Some(picker) = s.music_feedback.picker.as_mut() {
+                picker.create_then_add = true;
+            }
         }
     });
     let save_state = state.clone();
@@ -375,7 +377,14 @@ pub fn install(
         let Some(video_id) = current_video_id(&s) else {
             return;
         };
+        let previous = match u.get_current_rating() {
+            1 => Rating::Like,
+            -1 => Rating::Dislike,
+            _ => Rating::Indifferent,
+        };
+        let candidate = (video_id.clone(), previous);
         if begin(&mut s, FeedbackRequest::Rate { video_id, rating }) {
+            s.music_feedback.undo_candidate = Some(candidate);
             u.set_rating_busy(true);
             u.set_collection_busy(true);
             notice(&mut s, &u, "Saving your rating…");
@@ -387,12 +396,53 @@ pub fn install(
             );
         }
     });
+    let copy_state = state.clone();
+    let weak = ui.as_weak();
+    ui.global::<SongActions>().on_copy_link(move |key| {
+        let Some(u) = weak.upgrade() else {
+            return;
+        };
+        let mut s = copy_state.borrow_mut();
+        let text = match song_link(&key) {
+            None => "Only YouTube Music songs have a link to copy.",
+            Some(link) => match arboard::Clipboard::new().and_then(|mut c| c.set_text(link)) {
+                Ok(()) => "Song link copied",
+                Err(_) => "Couldn't copy the link. Try again.",
+            },
+        };
+        notice(&mut s, &u, text);
+    });
     let dismiss_state = state.clone();
     let weak = ui.as_weak();
     ui.on_dismiss_feedback(move || {
         if let Some(u) = weak.upgrade() {
-            dismiss_state.borrow_mut().music_feedback.notice_until = None;
+            let mut s = dismiss_state.borrow_mut();
+            s.music_feedback.notice_until = None;
+            s.music_feedback.undo = None;
             u.set_feedback_notice("".into());
+            u.set_feedback_undo(false);
+        }
+    });
+    let undo_state = state.clone();
+    let weak = ui.as_weak();
+    ui.on_undo_feedback(move || {
+        let Some(u) = weak.upgrade() else {
+            return;
+        };
+        let mut s = undo_state.borrow_mut();
+        let Some((video_id, rating)) = s.music_feedback.undo.take() else {
+            return;
+        };
+        if begin(&mut s, FeedbackRequest::Rate { video_id, rating }) {
+            u.set_rating_busy(true);
+            u.set_collection_busy(true);
+            notice(&mut s, &u, "Restoring your rating…");
+        } else {
+            notice(
+                &mut s,
+                &u,
+                "Wait for the current account action, then try again.",
+            );
         }
     });
     let picker_state = state.clone();
@@ -430,6 +480,11 @@ pub fn install(
             .clone()
             .filter(|_| s.account_verified && !s.music_feedback.synthetic)
         else {
+            notice(
+                &mut s,
+                &u,
+                "Connect YouTube Music in Account to save songs to playlists.",
+            );
             return;
         };
         if user_busy(&s) {
@@ -452,6 +507,7 @@ pub fn install(
             expected,
             choices,
             refreshing: false,
+            create_then_add: false,
             pending: None,
         });
         u.set_playlist_picker_artwork_y(0.0);
@@ -618,7 +674,44 @@ pub fn update_choices(s: &State, u: &AppWindow) {
     );
 }
 
+/// A public YouTube Music link for a song row key, which is the video id for
+/// YouTube songs. Anything else (local files, odd keys) has no shareable link.
+fn song_link(key: &str) -> Option<String> {
+    (key.len() == 11
+        && key
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'))
+    .then(|| format!("https://music.youtube.com/watch?v={key}"))
+}
+
+fn create_playlist(s: &mut State, u: &AppWindow, title: &str) -> bool {
+    let request = FeedbackRequest::PlaylistCreate {
+        title: title.trim().into(),
+    };
+    if !request.valid() {
+        notice(
+            s,
+            u,
+            "Enter a playlist name of up to 100 characters without < or >.",
+        );
+        false
+    } else if begin(s, request) {
+        u.set_playlist_create_open(false);
+        u.set_playlist_create_title("".into());
+        u.set_collection_busy(true);
+        u.set_rating_busy(true);
+        notice(s, u, "Creating private playlist…");
+        true
+    } else {
+        notice(s, u, "Wait for the current account action, then try again.");
+        false
+    }
+}
+
+/// Every new message replaces the last one, and with it any Undo.
 fn notice(s: &mut State, u: &AppWindow, text: &str) {
+    s.music_feedback.undo = None;
+    u.set_feedback_undo(false);
     u.set_feedback_notice(text.into());
     s.music_feedback.notice_until = Some(Instant::now() + Duration::from_secs(5));
 }
@@ -778,7 +871,12 @@ pub fn tick(s: &mut State, u: &AppWindow) {
                     });
                 }
             }
-            if let FeedbackRequest::Rate { rating, .. } = work.request {
+            if let FeedbackRequest::Rate {
+                ref video_id,
+                rating,
+            } = work.request
+            {
+                let candidate = s.music_feedback.undo_candidate.take();
                 notice(
                     s,
                     u,
@@ -792,6 +890,11 @@ pub fn tick(s: &mut State, u: &AppWindow) {
                         }
                     },
                 );
+                // Undo restores the rating the song had before this change.
+                if let Some(undo) = candidate.filter(|(id, _)| confirmed && id == video_id) {
+                    s.music_feedback.undo = Some(undo);
+                    u.set_feedback_undo(true);
+                }
             }
             if let FeedbackRequest::PlaylistCreate { title } = &work.request {
                 if let Some(id) = result.and_then(|reply| reply.playlist_id.as_ref()) {
@@ -809,7 +912,23 @@ pub fn tick(s: &mut State, u: &AppWindow) {
                     s.library_playlists.truncate(tide_core::MAX_LIBRARY_ITEMS);
                     refresh_library_models(s, u);
                     notice(s, u, "Private playlist created.");
+                    if let Some(picker) = s
+                        .music_feedback
+                        .picker
+                        .as_mut()
+                        .filter(|p| p.create_then_add)
+                    {
+                        picker.create_then_add = false;
+                        picker.choices.retain(|playlist| &playlist.id != id);
+                        picker.choices.insert(0, s.library_playlists[0].clone());
+                        // Saved by tick once the create request has finished.
+                        picker.pending = Some(0);
+                        update_choices(s, u);
+                    }
                 } else {
+                    if let Some(picker) = s.music_feedback.picker.as_mut() {
+                        picker.create_then_add = false;
+                    }
                     notice(
                         s,
                         u,
@@ -977,7 +1096,9 @@ pub fn tick(s: &mut State, u: &AppWindow) {
         .is_some_and(|until| Instant::now() >= until)
     {
         s.music_feedback.notice_until = None;
+        s.music_feedback.undo = None;
         u.set_feedback_notice("".into());
+        u.set_feedback_undo(false);
     }
     let current = current_video_id(s);
     if current != s.music_feedback.current_video {
@@ -1116,6 +1237,17 @@ pub fn read_probe() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn song_links_only_for_youtube_video_ids() {
+        assert_eq!(
+            song_link("dQw4w9WgXcQ").as_deref(),
+            Some("https://music.youtube.com/watch?v=dQw4w9WgXcQ")
+        );
+        assert_eq!(song_link("C:/music/song.mp3"), None);
+        assert_eq!(song_link("abc"), None);
+        assert_eq!(song_link("dQw4w9WgXc&"), None);
+    }
 
     #[test]
     fn only_user_actions_lock_collection_actions() {

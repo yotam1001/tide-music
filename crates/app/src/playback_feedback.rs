@@ -81,7 +81,7 @@ pub(crate) fn failure(p: &PlaybackSnapshot) -> (&'static str, &'static str) {
                     "YouTube refused this song after two retries. Check your connection and for a Tide update, then retry. [extractor]"
                 }
                 None => {
-                    "This song could not play after two retries. Retry the song or choose another track."
+                    "Couldn't play this song. Retry it, or skip to the next song."
                 }
             },
             "Retry song",

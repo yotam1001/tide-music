@@ -126,7 +126,7 @@ fn guest_mini_keeps_leave_and_volume_reachable_and_blocks_transport() {
             if guest {
                 "Following host · volume stays local"
             } else if active {
-                "Hosting · 2 guests · private invite saved"
+                "Hosting · 2 listeners · room locked"
             } else {
                 "Start a Jam or paste an invite"
             }

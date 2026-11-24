@@ -1,7 +1,7 @@
 import { AboutSlint, Button, ComboBox, LineEdit, ListView, Palette, ScrollView } from "std-widgets.slint";
 import { TrackRow, JamMemberRow, ArtistRow, PlaylistRow, RecommendationRow, LyricRow, HomeBrowseRow } from "model.slint";
-import { ControlMotion, Theme, LayoutMetrics, TideSlider, LibraryButton, LibraryTab, NavigationButton, EqualizerBars } from "theme.slint";
-import { Cover, PlaylistTile, LoadingTracks, EmptyState, ArtistLink, SongRow, LibraryEntry, HomeCard, UpdateAction, SidebarCollection, QuickTile, BrowseTile, MoodChip, RatingButton } from "components.slint";
+import { ControlMotion, Theme, LayoutMetrics, TideSlider, LibraryButton, LibraryTab, NavigationButton, EqualizerBars, PreferenceRow } from "theme.slint";
+import { Cover, PlaylistTile, LoadingTracks, EmptyState, ArtistLink, SongRow, LibraryEntry, HomeCard, UpdateAction, SidebarCollection, QuickTile, BrowseTile, MoodChip, RatingButton, SongActions } from "components.slint";
 import { QueueDrawer } from "queue.slint";
 import { SettingsPage, SettingsIcons, SettingsTheme, SettingsNavItem, SettingsRailFooter, SettingsAccountChip, SettingsPageFade, SettingsGroup, SettingRow, SettingBlock, SettingItem, SettingToggle, SegmentedControl, ThemeCard, MiniPlayerPreview, EqualizerPreset, ShortcutSetting, StatusPill, RowSeparator } from "settings.slint";
 import { PlayerBar } from "player.slint";
@@ -10,6 +10,7 @@ import { LyricsPage } from "lyrics.slint";
 export { TrackRow, JamMemberRow, ArtistRow, PlaylistRow, RecommendationRow, LyricRow, HomeBrowseRow, MenuAction } from "model.slint";
 export { ControlMotion, Theme, LayoutMetrics } from "theme.slint";
 export { SettingsPage } from "settings.slint";
+export { SongActions } from "components.slint";
 
 export component AppWindow inherits Window {
     in property <bool> jam-available: false;
@@ -213,6 +214,9 @@ export component AppWindow inherits Window {
     in property <bool> update-available: false;
     // The last update check found nothing newer.
     in property <bool> update-current: false;
+    // The version on offer, for the dialog's "0.1.1 → 0.4.36" line.
+    in property <string> update-version;
+    callback open-update-notes();
     in property <bool> update-installable: false;
     in property <bool> auto-update-checks: true;
     callback check-updates();
@@ -254,6 +258,8 @@ export component AppWindow inherits Window {
     in property <bool> rating-enabled: false;
     in property <bool> rating-busy: false;
     in property <string> feedback-notice;
+    in property <bool> feedback-undo: false;
+    callback undo-feedback();
     callback rate-song(int);
     callback dismiss-feedback();
     // One-time corner notice: 0 none, 1 star on GitHub, 2 crash log.
@@ -290,6 +296,17 @@ export component AppWindow inherits Window {
     callback pick-playlist(int);
     callback cancel-playlist-picker();
     callback refresh-playlist-choices();
+    callback create-picker-playlist(string);
+    private property <bool> picker-new-open: false;
+    // The listener whose Remove is waiting for confirmation (-1: none).
+    private property <int> jam-confirm-remove: -1;
+    pure function jam-time(seconds: float) -> string {
+        let total: int = max(0, seconds);
+        let minutes: int = total / 60;
+        let remainder: int = total - (minutes * 60);
+        return minutes + ":" + (remainder < 10 ? "0" + remainder : remainder);
+    }
+    private property <string> picker-new-title;
     callback remove-playlist-song(int);
     callback refresh-detail-playlist();
     in-out property <int> shortcut-recording-index: -1;
@@ -609,8 +626,8 @@ export component AppWindow inherits Window {
     min-height: root.collapsed ? (root.mini-small ? 80px : 112px) + (root.jam-active ? 34px : 0px) : 420px;
     background: Theme.window;
     forward-focus: app-focus;
-    changed height => { root.sidebar-profile = root.height >= 650px; }
-    init => { root.sidebar-profile = root.height >= 650px; Palette.color-scheme = root.light-mode ? light : dark; root.wide = root.width >= 1050px; root.narrow-navigation = root.width < 900px; root.header-branding = root.width >= 780px; }
+    changed height => { root.sidebar-profile = root.height >= 650px; SongActions.menu-bottom = root.height - (root.jam-active ? 134px : 100px); }
+    init => { SongActions.menu-bottom = root.height - (root.jam-active ? 134px : 100px); root.sidebar-profile = root.height >= 650px; Palette.color-scheme = root.light-mode ? light : dark; root.wide = root.width >= 1050px; root.narrow-navigation = root.width < 900px; root.header-branding = root.width >= 780px; }
     changed width => { root.wide = root.width >= 1050px; root.narrow-navigation = root.width < 900px; root.header-branding = root.width >= 780px; }
     changed collapsed => { if root.collapsed { root.suggestions-open = false; root.update-panel-open = false; root.settings-open = false; root.account-open = false; root.cancel-shortcut(); } }
     changed settings-open => {
@@ -624,11 +641,14 @@ export component AppWindow inherits Window {
 
         else { root.advanced-open = false; if !root.settings-open { app-focus.focus(); } }
     }
-    changed jam-open => { if root.jam-open { root.suggestions-open = false; root.playlist-picker-open = false; root.settings-open = false; root.account-open = false; app-focus.focus(); } }
-    changed playlist-picker-open => { if root.playlist-picker-open { root.settings-open = false; root.account-open = false; root.jam-open = false; root.artist-picker-open = false; app-focus.focus(); } }
+    changed jam-open => { root.jam-confirm-remove = -1; if root.jam-open { root.suggestions-open = false; root.playlist-picker-open = false; root.settings-open = false; root.account-open = false; app-focus.focus(); } }
+    // Each time the chooser opens or closes it starts from the list, not a stale name field.
+    changed playlist-picker-open => { root.picker-new-open = false; root.picker-new-title = ""; if root.playlist-picker-open { root.settings-open = false; root.account-open = false; root.jam-open = false; root.artist-picker-open = false; app-focus.focus(); } }
     changed queue-open => { if !root.queue-open { root.related-open = false; } if root.queue-open { root.lyrics-open = false; if !root.wide { app-focus.focus(); } } }
     changed lyrics-open => { if root.lyrics-open { root.now-playing-open = false; root.suggestions-open = false; root.update-panel-open = false; root.queue-open = false; root.settings-open = false; root.account-open = false; root.jam-open = false; root.artist-picker-open = false; root.playlist-picker-open = false; app-focus.focus(); } }
     changed wide => { if !root.wide && (root.queue-open || root.lyrics-open) { app-focus.focus(); } }
+    // Song menus flip upward instead of running under the player bar.
+    changed jam-active => { SongActions.menu-bottom = root.height - (root.jam-active ? 134px : 100px); }
     changed light-mode => { Palette.color-scheme = root.light-mode ? light : dark; }
 
     // Windows may discard the software-rendered window contents on minimize
@@ -854,11 +874,11 @@ export component AppWindow inherits Window {
                                     width: root.full-sidebar ? parent.width : 48px; height: 40px;
                                     caption-start: root.full-sidebar; caption-size: root.full-sidebar ? 14px : 12px;
                                     show-tooltip: true; quiet: !root.update-available && root.update-phase == 0;
-                                    light-mode: root.light-mode; active: root.update-panel-open || root.update-phase == 2;
+                                    light-mode: root.light-mode;
                                     notification: root.update-available && root.update-phase == 0;
-                                    caption: root.update-phase == 1 ? root.update-progress.to-fixed(0) + "%"
+                                    caption: root.update-phase == 1 ? (root.full-sidebar ? "Downloading " : "") + root.update-progress.to-fixed(0) + "%"
                                         : root.full-sidebar ? (root.update-phase == 2 ? "Restart to update" : root.update-available ? "Update available" : "Updates") : "";
-                                    leading-icon: root.full-sidebar && root.update-phase != 1 ? (root.update-phase == 2 ? "M5 12 L10 17 L19 7" : "M12 3 V15 M7 10 L12 15 L17 10 M5 17 V21 H19 V17") : "";
+                                    leading-icon: root.full-sidebar ? (root.update-phase == 2 ? "M5 12 L10 17 L19 7" : "M12 3 V15 M7 10 L12 15 L17 10 M5 17 V21 H19 V17") : "";
                                     icon-path: root.full-sidebar || root.update-phase == 1 ? "" : root.update-phase == 2 ? "M5 12 L10 17 L19 7" : "M12 3 V15 M7 10 L12 15 L17 10 M5 17 V21 H19 V17";
                                     label: root.update-phase == 2 ? "Tide update ready" : (root.update-available ? "Tide update available" : "Tide updates");
                                     clicked => {
@@ -894,15 +914,22 @@ export component AppWindow inherits Window {
                             spacing: 12px;
                             if root.error-message != "" : Rectangle {
                                 height: root.narrow-navigation ? 92px : 58px;
-                                border-radius: 8px;
-                                background: root.light-mode ? #ecd7cc : #39252a;
+                                border-radius: 10px; clip: true;
+                                background: Theme.raised;
+                                border-width: 1px; border-color: Theme.accent.with-alpha(0.55);
+                                Rectangle { x: 0px; width: 4px; height: parent.height; border-radius: 2px; background: Theme.accent; }
                                 HorizontalLayout {
-                                    padding: 10px;
+                                    padding: 10px; padding-left: 16px;
                                     spacing: 10px;
                                     cross-axis-alignment: center;
+                                    Path {
+                                        width: 20px; height: 20px; viewbox-width: 24; viewbox-height: 24;
+                                        fill: transparent; stroke: Theme.accent; stroke-width: 2px;
+                                        commands: "M 12 3 L 22 20 L 2 20 Z M 12 9 L 12 14 M 12 16.5 L 12 17.5";
+                                    }
                                     Text { horizontal-stretch: 1; text: root.error-message; color: root.foreground; font-size: 12px; wrap: word-wrap; overflow: elide; accessible-live-region: assertive; }
-                                    LibraryButton { width: root.error-is-account || root.playback-error-action != "" ? 128px : 70px; light-mode: root.light-mode; caption: root.error-is-account ? "Account settings" : root.error-retryable ? (root.playback-error-action != "" ? root.playback-error-action : "Retry") : "Dismiss"; enabled: root.browsing-enabled; label: root.error-is-account ? "Open account settings to resolve the connection problem" : root.error-retryable ? "Retry interrupted playback or recommendations" : "Dismiss this error"; clicked => { root.retry-error(); } }
-                                    if root.playback-error-action != "" && !root.jam-guest : LibraryButton { width: 56px; caption: "Skip"; label: "Skip this failed song"; light-mode: root.light-mode; enabled: root.browsing-enabled && root.can-skip; clicked => { root.skip-error(); } }
+                                    if root.error-is-account || root.error-retryable : LibraryButton { width: root.error-is-account || root.playback-error-action != "" ? 128px : 70px; quiet: false; active: true; light-mode: root.light-mode; caption: root.error-is-account ? "Account settings" : root.error-retryable ? (root.playback-error-action != "" ? root.playback-error-action : "Retry") : "Dismiss"; enabled: root.browsing-enabled; label: root.error-is-account ? "Open account settings to resolve the connection problem" : root.error-retryable ? "Retry interrupted playback or recommendations" : "Dismiss this error"; clicked => { root.retry-error(); } }
+                                    if root.playback-error-action != "" && !root.jam-guest : LibraryButton { width: 56px; quiet: false; caption: "Skip"; label: "Skip this failed song"; light-mode: root.light-mode; enabled: root.browsing-enabled && root.can-skip; clicked => { root.skip-error(); } }
                                     LibraryButton { width: 28px; caption: "×"; label: "Dismiss error"; light-mode: root.light-mode; clicked => { root.dismiss-error(); } }
                                 }
                             }
@@ -1844,7 +1871,7 @@ export component AppWindow inherits Window {
                 if root.queue-open && !root.wide : Rectangle {
                     width: parent.width;
                     height: parent.height;
-                    Rectangle { x: 0px; y: 0px; width: max(0px, parent.width - 340px); height: parent.height; background: #00000060; TouchArea { clicked => { root.queue-open = false; } } }
+                    Rectangle { x: 0px; y: 0px; width: max(0px, parent.width - 340px); height: parent.height; background: Theme.scrim; TouchArea { clicked => { root.queue-open = false; } } }
                     // Opaque sheet: the page must never show through the drawer.
                     Rectangle {
                         x: max(0px, parent.width - 340px); width: 340px; height: parent.height;
@@ -1893,7 +1920,7 @@ export component AppWindow inherits Window {
                     }
                 }
                 if root.artist-picker-open : Rectangle {
-                    width: parent.width; height: parent.height; background: #00000060;
+                    width: parent.width; height: parent.height; background: Theme.scrim;
                     TouchArea { clicked => { root.back-detail(); } }
                     Rectangle {
                         width: min(360px, parent.width - 24px); height: min(parent.height - 24px, 94px + root.artist-choices.length * 48px);
@@ -1912,7 +1939,12 @@ export component AppWindow inherits Window {
                     }
                 }
                 if root.jam-available && root.jam-open : Rectangle {
-                    x: LayoutMetrics.navigation-wide; width: max(0px, parent.width - self.x);
+                    x: root.full-sidebar ? LayoutMetrics.navigation-wide : LayoutMetrics.navigation-narrow; width: max(0px, parent.width - self.x);
+                    height: parent.height; background: Theme.window;
+                }
+                if root.jam-available && root.jam-open : jam-sheet := Rectangle {
+                    // Start at the visible rail's edge so no page peeks out beside the sheet.
+                    x: root.full-sidebar ? LayoutMetrics.navigation-wide : LayoutMetrics.navigation-narrow; width: max(0px, parent.width - self.x);
                     height: parent.height;
                     // Same raised panel as the other pages.
                     background: Theme.surface;
@@ -1922,9 +1954,10 @@ export component AppWindow inherits Window {
                         background: transparent;
                         TouchArea { }
                         ScrollView {
-                            width: parent.width; height: parent.height; horizontal-scrollbar-policy: always-off;
+                            // Inset so the scrollbar never draws on the queue column's divider.
+                            width: parent.width - (root.jam-queue-visible ? 8px : 0px); height: parent.height; horizontal-scrollbar-policy: always-off;
                             VerticalLayout {
-                                padding: root.sidebar-profile ? 28px : 18px; spacing: root.sidebar-profile ? 16px : 10px; alignment: start;
+                                padding: root.sidebar-profile ? 28px : 18px; padding-bottom: 32px; spacing: root.sidebar-profile ? 16px : 10px; alignment: start;
                                 HorizontalLayout {
                                     height: root.sidebar-profile ? 42px : 36px; spacing: 8px; cross-axis-alignment: center;
                                     Text { horizontal-stretch: 1; text: root.jam-active ? "Listening together" : "Jams"; color: root.foreground; font-size: 28px; font-weight: 650; overflow: elide; }
@@ -1936,50 +1969,98 @@ export component AppWindow inherits Window {
                                     }
                                     LibraryButton { width: 30px; height: 30px; light-mode: root.light-mode; caption: "×"; label: "Close Jam controls"; clicked => { root.jam-open = false; } }
                                 }
-                                Text { height: 32px; text: root.jam-status; color: root.foreground; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
+                                if !root.jam-active && root.height >= 460px : Text { height: 24px; text: root.jam-status; color: root.secondary; font-size: 13px; wrap: word-wrap; accessible-live-region: polite; }
+                                // One line on how this Jam works, under the title instead of below the fold.
+                                if root.jam-active : Text { text: root.jam-guest ? "The host controls playback. Press Next to ask everyone to skip." : "Friends paste your invite under Join friends and listen on their own account."; color: root.secondary; font-size: 13px; wrap: word-wrap; }
                                 if root.jam-active && root.jam-queue-notice != "" : Text { height: 48px; text: root.jam-queue-notice; color: root.foreground; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
                                 if root.jam-active && root.track-title != "" : HorizontalLayout {
-                                    height: root.jam-queue-visible ? 210px : 82px;
+                                    height: root.jam-queue-visible ? 160px : 104px;
                                     spacing: 18px; cross-axis-alignment: center;
                                     Cover {
-                                        width: root.jam-queue-visible ? 198px : 64px; height: self.width;
-                                        artwork: root.current-artwork; light-mode: root.light-mode;
+                                        width: root.jam-queue-visible ? 148px : 64px; height: self.width;
+                                        artwork: root.current-artwork; light-mode: root.light-mode; seed: root.track-title;
                                     }
                                     VerticalLayout {
                                         min-width: 0px; horizontal-stretch: 1; alignment: center; spacing: 6px;
                                         Text { text: "NOW PLAYING TOGETHER"; font-size: 11px; font-weight: 650; color: root.secondary; }
                                         Text { text: root.track-title; color: root.foreground; font-size: root.jam-queue-visible ? 30px : 16px; font-weight: 650; overflow: elide; }
-                                        Text { text: root.track-artist; color: root.secondary; font-size: 13px; overflow: elide; }
+                                        if root.track-artist != "" : Text { text: root.track-artist; color: root.secondary; font-size: 13px; overflow: elide; }
                                         Rectangle {
                                             height: 4px; border-radius: 2px; background: root.outline;
-                                            Rectangle { x: 0px; height: parent.height; width: parent.width * min(1, max(0, root.position / max(1, root.duration))); border-radius: 2px; background: root.light-mode ? #a94d46 : #b33d60; }
+                                            Rectangle { x: 0px; height: parent.height; width: parent.width * min(1, max(0, root.position / max(1, root.duration))); border-radius: 2px; background: Theme.accent; }
+                                        }
+                                        if root.duration > 0 : HorizontalLayout {
+                                            Text { horizontal-stretch: 1; text: root.jam-time(root.position); color: root.secondary; font-size: 11px; }
+                                            Text { text: root.jam-time(root.duration); color: root.secondary; font-size: 11px; }
                                         }
                                     }
                                 }
                                 if root.jam-active : Rectangle { height: 1px; background: root.outline; }
-                                if root.jam-active && !root.jam-guest && root.jam-members.length > 0 : Text { text: "Listeners (" + root.jam-members.length + ")"; color: root.foreground; font-size: 18px; font-weight: 600; }
+                                if root.jam-active && !root.jam-guest && root.jam-members.length > 0 : Text { text: "In this Jam (" + (root.jam-members.length + 1) + ")"; color: root.foreground; font-size: 18px; font-weight: 600; }
                                 if root.jam-active && !root.jam-guest : VerticalLayout {
                                     spacing: 6px;
-                                    for member in root.jam-members : HorizontalLayout {
+                                    HorizontalLayout {
                                         height: 38px; spacing: 10px; cross-axis-alignment: center;
+                                        Rectangle {
+                                            width: 28px; height: 28px; border-radius: 14px; background: Theme.accent;
+                                            Path { x: 7px; y: 7px; width: 14px; height: 14px; viewbox-width: 24; viewbox-height: 24; fill: transparent; stroke: Theme.on-accent; stroke-width: 2.2px; commands: "M 12 3 A 4 4 0 1 0 12 11 A 4 4 0 1 0 12 3 Z M 4 21 C 4 14 20 14 20 21"; }
+                                        }
+                                        Text { horizontal-stretch: 1; text: "You"; color: root.foreground; vertical-alignment: center; }
+                                        Rectangle { width: 46px; height: 22px; border-radius: 11px; background: Theme.selected;
+                                            Text { width: parent.width; height: parent.height; text: "Host"; color: Theme.selected-ink; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; } }
+                                    }
+                                    for member in root.jam-members : HorizontalLayout {
+                                        height: root.jam-confirm-remove == member.id ? 52px : 38px; spacing: 10px; cross-axis-alignment: center;
                                         Rectangle {
                                             width: 28px; height: 28px; border-radius: 14px;
                                             background: Theme.selected;
                                             Text { text: "" + member.id; color: root.foreground; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; }
                                         }
-                                        Text { horizontal-stretch: 1; text: member.name; color: root.foreground; vertical-alignment: center; overflow: elide; }
-                                        LibraryButton { width: 80px; light-mode: root.light-mode; caption: "Remove"; label: "Remove " + member.name + " and replace the invite"; clicked => { root.jam-remove-member(member.id); } }
+                                        Text { horizontal-stretch: 1; text: root.jam-confirm-remove == member.id ? "Remove " + member.name + "? Their invite stops working." : member.name; color: root.foreground; font-size: root.jam-confirm-remove == member.id ? 12px : 14px; vertical-alignment: center; wrap: word-wrap; overflow: elide; }
+                                        if root.jam-confirm-remove != member.id : LibraryButton { width: 84px; height: 30px; quiet: false; text-color: Theme.light ? #b42318 : #ff8a80; light-mode: root.light-mode; caption: "Remove"; label: "Remove " + member.name + " and replace the invite"; clicked => { root.jam-confirm-remove = member.id; } }
+                                        if root.jam-confirm-remove == member.id : LibraryButton { width: 70px; height: 30px; quiet: false; light-mode: root.light-mode; caption: "Keep"; label: "Keep " + member.name + " in the Jam"; clicked => { root.jam-confirm-remove = -1; } }
+                                        if root.jam-confirm-remove == member.id : LibraryButton { width: 84px; height: 30px; active: true; light-mode: root.light-mode; caption: "Remove"; label: "Confirm removing " + member.name; clicked => { root.jam-confirm-remove = -1; root.jam-remove-member(member.id); } }
                                     }
                                 }
                                 if root.jam-active && root.jam-guest && root.jam-listener-id > 0 : Text { text: "You are Listener " + root.jam-listener-id; color: root.foreground; font-weight: 600; }
+                                // Narrow windows have no queue column, so guests see the shared queue here.
+                                if root.jam-active && !root.jam-queue-visible : HorizontalLayout {
+                                    height: 32px; spacing: 8px; cross-axis-alignment: center;
+                                    Text { horizontal-stretch: 1; text: "Shared queue (" + root.rows.length + ")"; color: root.foreground; font-size: 16px; font-weight: 600; }
+                                    LibraryButton { width: 96px; height: 30px; quiet: false; light-mode: root.light-mode; caption: "Add tracks"; label: "Browse music to add to the shared queue"; clicked => { root.jam-open = false; root.search-focus-revision += 1; } }
+                                }
+                                if root.jam-active && !root.jam-queue-visible && root.rows.length == 0 : VerticalLayout {
+                                    height: 120px; alignment: center; spacing: 6px;
+                                    Text { text: "Nothing queued yet"; color: root.foreground; font-size: 16px; font-weight: 600; horizontal-alignment: center; }
+                                    Text { text: "Use Add tracks to choose songs. Everyone hears them next."; color: root.secondary; font-size: 12px; wrap: word-wrap; horizontal-alignment: center; }
+                                }
+                                if root.jam-active && !root.jam-queue-visible && root.rows.length > 0 : VerticalLayout {
+                                    spacing: 2px;
+                                    // A preview, not the full list: long Jam queues stay cheap to draw.
+                                    for track[index] in root.rows : Rectangle {
+                                        height: index < 25 ? 52px : 0px; border-radius: 7px;
+                                        background: index == root.current-index ? Theme.selected : transparent;
+                                        if index < 25 : HorizontalLayout {
+                                            padding-left: 8px; padding-right: 8px; spacing: 10px; cross-axis-alignment: center;
+                                            Cover { width: 40px; height: 40px; artwork: track.artwork; light-mode: root.light-mode; seed: track.title; }
+                                            VerticalLayout {
+                                                horizontal-stretch: 1; min-width: 0px; alignment: center; spacing: 2px;
+                                                Text { text: track.title; color: root.foreground; font-size: 14px; font-weight: 600; overflow: elide; }
+                                                Text { text: track.artist; color: root.secondary; font-size: 12px; overflow: elide; }
+                                            }
+                                            Text { width: 40px; text: track.duration; color: root.secondary; font-size: 11px; horizontal-alignment: right; }
+                                        }
+                                    }
+                                }
+                                if root.jam-active && !root.jam-queue-visible && root.rows.length > 25 : Text { text: "+ " + (root.rows.length - 25) + " more in the shared queue"; color: root.secondary; font-size: 12px; }
+                                if root.jam-active && !root.jam-guest : Rectangle { height: 1px; background: root.outline; }
+                                if root.jam-active && !root.jam-guest : PreferenceRow { title: "New listeners can join"; checked: !root.jam-locked; light-mode: root.light-mode; toggled => { root.jam-toggle-lock(); } }
                                 if root.jam-active && !root.jam-guest : HorizontalLayout {
                                     height: 34px; spacing: 8px; alignment: start;
-                                    LibraryButton { width: 144px; light-mode: root.light-mode; quiet: true; leading-icon: root.jam-locked ? "M 5 10 L 19 10 L 19 21 L 5 21 Z M 8 10 L 8 6 A 4 4 0 0 1 16 6 L 16 10" : "M 5 10 L 19 10 L 19 21 L 5 21 Z M 8 10 L 8 6 A 4 4 0 0 1 16 6"; caption: root.jam-locked ? "Allow joining" : "Lock room"; label: root.jam-locked ? "Allow new listeners to join" : "Prevent new listeners from joining"; clicked => { root.jam-toggle-lock(); } }
-                                    LibraryButton { width: 144px; light-mode: root.light-mode; quiet: true; leading-icon: "M 18 3 L 21 7 L 17 10 M 21 7 L 8 7 C 2 7 2 17 8 17 L 19 17"; caption: "Replace invite"; label: "Replace the invite and invalidate the previous code"; clicked => { root.jam-rotate-invite(); } }
+                                    LibraryButton { width: 150px; light-mode: root.light-mode; quiet: false; leading-icon: "M 18 3 L 21 7 L 17 10 M 21 7 L 8 7 C 2 7 2 17 8 17 L 19 17"; caption: "Replace invite"; label: "Replace the invite and invalidate the previous code"; clicked => { root.jam-rotate-invite(); } }
                                 }
-                                if root.jam-active : Text { height: 42px; text: root.jam-guest ? "Browse your music and select a song to add it to the shared queue. Press Next to request a skip for everyone. Your volume stays local." : "Send the invite code to friends. They paste it into Join a Jam. Each person plays using their own account."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
 
-                                if !root.jam-active : HorizontalLayout {
+                                if !root.jam-active && jam-sheet.width >= 640px : HorizontalLayout {
                                     height: root.sidebar-profile ? 194px : 154px; spacing: 28px;
                                     VerticalLayout {
                                         horizontal-stretch: 1; min-width: 0px; spacing: 12px; alignment: start;
@@ -1991,18 +2072,33 @@ export component AppWindow inherits Window {
                                     VerticalLayout {
                                         horizontal-stretch: 1; min-width: 0px; spacing: 12px; alignment: start;
                                         Text { text: "Join friends"; font-size: 20px; font-weight: 600; color: root.foreground; }
-                                        LineEdit { height: 38px; text <=> root.jam-code-input; placeholder-text: "Enter a room code or paste an invite"; accessible-label: "Guest Jam invite code"; }
-                                        LibraryButton { height: 38px; light-mode: root.light-mode; caption: "Join Jam"; label: "Join using the pasted private invite code"; clicked => { root.jam-join-code(); } }
+                                        LineEdit { height: 38px; text <=> root.jam-code-input; placeholder-text: "Room code or invite"; accessible-label: "Guest Jam invite code"; }
+                                        LibraryButton { height: 38px; quiet: false; light-mode: root.light-mode; caption: "Join Jam"; label: "Join using the pasted private invite code"; clicked => { root.jam-join-code(); } }
                                     }
                                 }
-                                if !root.jam-active : LibraryButton { height: 32px; light-mode: root.light-mode; caption: root.jam-advanced ? "Hide advanced setup" : "Advanced setup"; label: "Show or hide private server file setup"; clicked => { root.jam-advanced = !root.jam-advanced; } }
+                                // Narrow windows: the same two actions, stacked, so nothing clips.
+                                if !root.jam-active && jam-sheet.width < 640px : VerticalLayout {
+                                    spacing: 10px; alignment: start;
+                                    Text { text: "Start a Jam"; font-size: 17px; font-weight: 600; color: root.foreground; }
+                                    HorizontalLayout { height: 38px; spacing: 12px; cross-axis-alignment: center;
+                                        Text { horizontal-stretch: 1; min-width: 0px; text: "Invite friends to your shared queue."; color: root.secondary; font-size: 12px; overflow: elide; }
+                                        LibraryButton { width: 120px; height: 38px; light-mode: root.light-mode; caption: "Start Jam"; label: "Host the current YouTube queue with an invite code"; active: true; clicked => { root.jam-host-code(); } }
+                                    }
+                                    Rectangle { height: 1px; background: root.outline; }
+                                    Text { text: "Join friends"; font-size: 17px; font-weight: 600; color: root.foreground; }
+                                    HorizontalLayout { height: 38px; spacing: 8px;
+                                        LineEdit { horizontal-stretch: 1; min-width: 0px; text <=> root.jam-code-input; placeholder-text: "Room code or invite"; accessible-label: "Guest Jam invite code"; }
+                                        LibraryButton { width: 96px; height: 38px; quiet: false; light-mode: root.light-mode; caption: "Join Jam"; label: "Join using the pasted private invite code"; clicked => { root.jam-join-code(); } }
+                                    }
+                                }
+                                if !root.jam-active : LibraryButton { height: 32px; width: 170px; quiet: false; light-mode: root.light-mode; caption: root.jam-advanced ? "Hide advanced setup" : "Advanced setup"; label: "Show or hide private server file setup"; clicked => { root.jam-advanced = !root.jam-advanced; } }
                                 if !root.jam-active && root.jam-advanced : Text { text: "Jam server"; color: root.foreground; font-weight: 600; }
                                 if !root.jam-active && root.jam-advanced : LineEdit { text <=> root.jam-endpoint; placeholder-text: "https://your-jam-server.example"; accessible-label: "Trusted Jam relay endpoint"; }
                                 if !root.jam-active && root.jam-advanced : Text { height: 48px; text: "Private servers can require an operator key. Use the file flow for those servers or older invitations."; color: root.secondary; font-size: 11px; wrap: word-wrap; }
                                 if !root.jam-active && root.jam-advanced : LibraryButton { height: 36px; light-mode: root.light-mode; caption: "Host with operator key…"; label: "Host the current YouTube queue and save a new private guest invite"; clicked => { root.jam-host(); } }
                                 if !root.jam-active && root.jam-advanced : LibraryButton { height: 36px; light-mode: root.light-mode; caption: "Open invite file…"; label: "Select a private Jam invite and follow its host"; clicked => { root.jam-join(); } }
                                 Rectangle { height: 12px; }
-                                Text { height: 58px; text: "The free shared server currently allows two rooms. Use Advanced setup for your own server. Accounts and audio stay on each PC."; color: root.secondary; font-size: 11px; wrap: word-wrap; }
+                                if !root.jam-active : Text { height: 58px; text: "The free shared server currently allows two rooms. Use Advanced setup for your own server. Accounts and audio stay on each PC."; color: root.secondary; font-size: 11px; wrap: word-wrap; }
                             }
                         }
                     }
@@ -2024,13 +2120,18 @@ export component AppWindow inherits Window {
                             HorizontalLayout {
                                 spacing: 8px; height: 28px; cross-axis-alignment: center;
                                 Text { horizontal-stretch: 1; text: "Songs everyone is listening to"; font-size: 12px; color: root.secondary; overflow: elide; }
-                                if !root.jam-guest : LibraryButton {
-                                    width: 84px; height: 28px; light-mode: root.light-mode; caption: "Edit queue";
+                                if !root.jam-guest && root.rows.length > 0 : LibraryButton {
+                                    width: 84px; height: 28px; quiet: false; light-mode: root.light-mode; caption: "Edit queue";
                                     label: "Open shared queue editing controls";
                                     clicked => { root.jam-open = false; root.queue-open = true; }
                                 }
                             }
-                            ListView {
+                            if root.rows.length == 0 : VerticalLayout {
+                                vertical-stretch: 1; alignment: center; spacing: 8px;
+                                Text { text: "Nothing queued yet"; color: root.foreground; font-size: 16px; font-weight: 600; horizontal-alignment: center; }
+                                Text { text: root.jam-guest ? "Search for a song and press + to add it. Everyone hears it next." : "Search for a song, or use Add tracks. Everyone hears it next."; color: root.secondary; font-size: 12px; wrap: word-wrap; horizontal-alignment: center; }
+                            }
+                            if root.rows.length > 0 : ListView {
                                 vertical-stretch: 1; content-y <=> root.jam-queue-y;
                                 changed visible-height => { root.jam-queue-height = self.visible-height; }
                                 accessible-label: "Shared Jam queue";
@@ -2055,12 +2156,15 @@ export component AppWindow inherits Window {
             }
             if root.jam-active : Rectangle {
                 height: 34px; background: root.surface;
+                Rectangle { y: 0px; height: 1px; background: root.outline; }
                 HorizontalLayout { padding-left: 18px; padding-right: 18px; spacing: 10px; cross-axis-alignment: center;
+                    Rectangle { width: 8px; height: 8px; border-radius: 4px; background: Theme.accent; }
                     Text { horizontal-stretch: 1; text: root.jam-queue-notice != "" ? root.jam-queue-notice : root.jam-status; color: root.foreground; font-size: 11px; overflow: elide; }
-                    LibraryButton { width: 90px; height: 28px; light-mode: root.light-mode; caption: root.jam-guest ? "Leave Jam" : "End Jam"; label: "Stop participating in this Jam"; clicked => { root.jam-leave(); } }
+                    LibraryButton { width: 90px; height: 26px; quiet: false; text-color: Theme.light ? #b42318 : #ff8a80; light-mode: root.light-mode; caption: root.jam-guest ? "Leave Jam" : "End Jam"; label: "Stop participating in this Jam"; clicked => { root.jam-leave(); } }
                 }
             }
             PlayerBar {
+                failed: root.playback-error-action != "";
                 swipe-enabled: root.trackpad-swipe;
                 swipe-reversed: root.swipe-reversed;
                 // The song's listed length, shown before playback reports one.
@@ -2762,7 +2866,8 @@ export component AppWindow inherits Window {
         // Updates: a centred dialog over a dimmed window.
         if root.update-panel-open && !root.collapsed && !root.lyrics-open : Rectangle {
             width: root.width; height: root.height;
-            background: #00000080;
+            // A neutral dim in light mode; the warm UI turns muddy under heavy black.
+            background: Theme.scrim;
             opacity: ControlMotion.enabled ? 0 : 1;
             init => { self.opacity = 1; }
             animate opacity { duration: ControlMotion.enabled ? 200ms : 0ms; easing: ease-out; }
@@ -2782,20 +2887,17 @@ export component AppWindow inherits Window {
                     padding: root.height < 520px ? 16px : 24px; spacing: root.height < 520px ? 10px : 14px; alignment: start;
                     HorizontalLayout {
                         spacing: 14px; cross-axis-alignment: center;
-                        Rectangle {
-                            width: 52px; height: 52px; border-radius: 14px;
-                            background: @linear-gradient(135deg, Theme.accent 0%, #6a3fb5 100%);
-                            Image { x: 8px; y: 8px; width: 36px; height: 36px; source: @image-url("assets/tide-icon.png"); image-fit: contain; }
-                        }
+                        Image { width: 52px; height: 52px; source: @image-url("assets/tide-icon.png"); image-fit: contain; }
                         VerticalLayout {
                             horizontal-stretch: 1; min-width: 0px; spacing: 2px; alignment: center;
                             Text {
-                                text: root.update-phase == 2 ? "Restart to finish updating" : root.update-phase == 1 ? "Downloading the update" : root.update-available ? "A new version of Tide is out" : "Tide updates";
+                                text: root.update-phase == 2 ? "Ready to install" : root.update-phase == 1 ? "Downloading update" : root.update-available ? "Update available" : "Tide updates";
                                 color: root.foreground; font-size: 19px; font-weight: 800; wrap: word-wrap;
                             }
-                            Text { text: "You're on Tide " + root.app-version; color: root.secondary; font-size: 12px; }
+                            Text { text: root.update-version != "" ? "Tide " + root.app-version + " → " + root.update-version : "You're on Tide " + root.app-version; color: root.secondary; font-size: 12px; }
                         }
-                        LibraryButton { width: 32px; height: 32px; round: true; light-mode: root.light-mode; show-tooltip: true; icon-path: "M 6 6 L 18 18 M 18 6 L 6 18"; label: "Close updates and keep listening"; clicked => { root.update-panel-open = false; } }
+                        // While Later or Hide is offered, it is the one way out.
+                        if !root.update-available && root.update-phase == 0 : LibraryButton { width: 32px; height: 32px; round: true; light-mode: root.light-mode; show-tooltip: true; icon-path: "M 6 6 L 18 18 M 18 6 L 6 18"; label: "Close updates and keep listening"; clicked => { root.update-panel-open = false; } }
                     }
                     Text { min-height: 36px; text: root.update-available && !root.update-installable && !root.mac-os ? root.update-status + ". Use TideSetup.exe from GitHub to update this copy." : root.update-status; color: root.secondary; font-size: 13px; wrap: word-wrap; accessible-live-region: polite; }
                     HorizontalLayout {
@@ -2805,9 +2907,10 @@ export component AppWindow inherits Window {
                         if !root.update-installable || (!root.update-available && root.update-phase == 0) : LibraryButton { horizontal-stretch: 1; height: 44px; quiet: false; active: true; caption: root.update-busy ? "Checking…" : "Check for updates"; label: "Check GitHub for a newer stable Tide release"; light-mode: root.light-mode; enabled: !root.update-busy; clicked => { root.check-updates(); } }
                     }
                     HorizontalLayout {
-                        height: 32px; spacing: 8px; cross-axis-alignment: center;
-                        Text { horizontal-stretch: 1; text: "Music keeps playing while Tide downloads. The update installs when you restart."; color: root.secondary; font-size: 11px; wrap: word-wrap; }
-                        LibraryButton { width: 70px; height: 32px; light-mode: root.light-mode; caption: "Later"; label: "Close updates and keep listening"; clicked => { root.update-panel-open = false; } }
+                        min-height: 32px; spacing: 8px; cross-axis-alignment: center;
+                        Text { horizontal-stretch: 1; text: root.update-phase == 2 ? "Tide reopens right where you left off." : root.update-available || root.update-phase == 1 ? "Music keeps playing." : "Tide checks GitHub for stable releases only."; color: root.secondary; font-size: 11px; wrap: word-wrap; }
+                        if root.update-version != "" : LibraryButton { width: 92px; height: 32px; light-mode: root.light-mode; caption: "What's new"; label: "Open the release notes for Tide " + root.update-version + " in your browser"; clicked => { root.open-update-notes(); } }
+                        LibraryButton { width: 70px; height: 32px; quiet: false; light-mode: root.light-mode; caption: root.update-phase == 1 ? "Hide" : "Later"; label: root.update-phase == 1 ? "Hide this window; the download continues" : "Close updates and keep listening"; clicked => { root.update-panel-open = false; } }
                     }
                 }
             }
@@ -2816,24 +2919,70 @@ export component AppWindow inherits Window {
             min-width: 0px; preferred-width: 0px; max-width: 10000px;
             min-height: 0px; preferred-height: 0px; max-height: 10000px;
             background: Colors.transparent;
-            y: 64px; width: root.width; height: max(0px, root.height - (root.jam-active ? 208px : 174px));
-            Rectangle { width: max(0px, parent.width - 420px); height: parent.height; background: Colors.transparent; TouchArea { clicked => { root.cancel-playlist-picker(); } } }
-            Rectangle {
-                x: max(0px, parent.width - 420px); width: min(420px, parent.width); height: parent.height;
-                background: root.surface; border-width: 1px; border-color: root.outline;
+            y: 0px; width: root.width; height: max(0px, root.height - (root.jam-active ? 126px : 92px));
+            // Dim the page so the chooser reads as a sheet, not a cut-off page.
+            Rectangle { width: parent.width; height: parent.height; background: Theme.scrim; TouchArea { clicked => { root.cancel-playlist-picker(); } } }
+            picker-card := Rectangle {
+                x: max(0px, parent.width - self.width - 12px); y: 72px; width: min(400px, parent.width - 24px);
+                // Fit the rows (72px each) under the header, never past the player bar.
+                // Short windows show whole rows only: 119px of header and padding, then rows.
+                property <length> room: parent.height - 84px;
+                property <length> full: 198px + max(1, root.playlist-choices.length) * 72px + 8px;
+                // Below 300px: no Adding line, New playlist row or footnote (93px of chrome).
+                property <bool> compact: self.full > self.room && self.room < 300px;
+                height: max(0px, !self.compact ? min(self.full, self.room)
+                    : min(self.room, 93px + max(1, min(root.playlist-choices.length, floor((self.room - 93px) / 72px))) * 72px));
+                background: root.surface; border-width: 1px; border-color: root.outline; border-radius: 14px;
+                drop-shadow-blur: 28px; drop-shadow-offset-y: 10px; drop-shadow-color: Theme.shadow;
+                TouchArea { }
                 VerticalLayout {
-                    padding: 12px; spacing: 8px;
-                    HorizontalLayout { height: 36px;
-                        Text { horizontal-stretch: 1; text: "Add to playlist"; color: root.foreground; font-size: 22px; font-weight: 650; }
+                    padding: 18px; padding-right: 12px; spacing: 8px;
+                    HorizontalLayout { height: picker-card.compact ? 40px : 36px; spacing: 4px; cross-axis-alignment: center;
+                        // Short windows fold the song into the title so two rows still fit.
+                        if picker-card.compact : VerticalLayout { horizontal-stretch: 1; min-width: 0px; alignment: center; spacing: 1px;
+                            Text { text: "Add to playlist"; color: root.foreground; font-size: 16px; font-weight: 700; overflow: elide; }
+                            Text { text: "Adding · " + root.playlist-picker-song; color: root.foreground; font-size: 12px; overflow: elide; }
+                        }
+                        if !picker-card.compact : Text { horizontal-stretch: 1; text: "Add to playlist"; color: root.foreground; font-size: 20px; font-weight: 700; overflow: elide; }
+                        if picker-card.compact && !root.picker-new-open : LibraryButton { width: 52px; height: 30px; quiet: false; light-mode: root.light-mode; caption: "New"; label: "New playlist"; enabled: root.collection-enabled && !root.collection-busy && !root.playlist-choices-busy; clicked => { root.picker-new-open = true; root.picker-new-title = ""; } }
+                        LibraryButton { width: 32px; height: 32px; show-tooltip: true; light-mode: root.light-mode; icon-path: "M 20 7 L 20 3 M 20 7 L 16 7 M 20 7 A 9 9 0 1 0 21 14"; enabled: !root.playlist-choices-busy; label: "Refresh editable playlists from your selected account"; clicked => { root.refresh-playlist-choices(); } }
                         LibraryButton { width: 32px; height: 32px; light-mode: root.light-mode; caption: "×"; label: "Close playlist chooser"; clicked => { root.cancel-playlist-picker(); } }
                     }
-                    Text { height: 20px; text: root.playlist-picker-song; color: root.secondary; font-size: 12px; overflow: elide; }
+                    if !picker-card.compact : HorizontalLayout { height: 22px; spacing: 6px; padding-right: 6px;
+                        Text { text: "Adding"; color: root.secondary; font-size: 12px; vertical-alignment: center; }
+                        Text { horizontal-stretch: 1; min-width: 0px; text: root.playlist-picker-song; color: root.foreground; font-size: 13px; font-weight: 600; vertical-alignment: center; overflow: elide; }
+                    }
+                    Rectangle { height: 1px; background: root.outline; }
+                    if !root.picker-new-open && !picker-card.compact : LibraryButton {
+                        height: 40px; caption-start: true; caption-size: 14px; light-mode: root.light-mode;
+                        leading-icon: "M 12 5 L 12 19 M 5 12 L 19 12"; caption: "New playlist";
+                        label: "Create a private playlist and save this song to it";
+                        enabled: root.collection-enabled && !root.collection-busy && !root.playlist-choices-busy;
+                        clicked => { root.picker-new-open = true; root.picker-new-title = ""; }
+                    }
+                    if root.picker-new-open : HorizontalLayout {
+                        height: 40px; spacing: 6px; padding-right: 6px; cross-axis-alignment: center;
+                        LineEdit {
+                            init => { self.focus(); }
+                            horizontal-stretch: 1; text <=> root.picker-new-title;
+                            placeholder-text: "Name your playlist"; accessible-label: "New playlist name";
+                            accepted(value) => { if value != "" { root.picker-new-open = false; root.create-picker-playlist(value); } }
+                        }
+                        LibraryButton {
+                            width: 74px; height: 36px; active: true; light-mode: root.light-mode; caption: "Create";
+                            label: "Create the playlist and save this song to it";
+                            enabled: root.picker-new-title != "" && root.collection-enabled && !root.collection-busy;
+                            clicked => { root.picker-new-open = false; root.create-picker-playlist(root.picker-new-title); }
+                        }
+                        LibraryButton { width: 32px; height: 32px; light-mode: root.light-mode; caption: "×"; label: "Cancel the new playlist"; clicked => { root.picker-new-open = false; root.picker-new-title = ""; } }
+                    }
                     if root.playlist-choices.length > 0 : ListView {
                         vertical-stretch: 1; min-height: 40px;
                         content-y <=> root.playlist-picker-artwork-y;
                         changed visible-height => { root.playlist-picker-artwork-height = self.visible-height; }
                         horizontal-scrollbar-policy: always-off;
                         for row[index] in root.playlist-choices : LibraryEntry {
+                            width: parent.width - 12px;
                             cover-variant: row.cover-variant;
                             light-mode: root.light-mode; add-target: true;
                             title: row.title; subtitle: row.subtitle; artwork: row.artwork;
@@ -2841,9 +2990,11 @@ export component AppWindow inherits Window {
                             open => { root.pick-playlist(index); }
                         }
                     }
-                    if root.playlist-choices.length == 0 : Text { vertical-stretch: 1; min-height: 40px; text: root.playlist-choices-busy ? "Refreshing your playlists…" : "No editable playlists loaded. Refresh your playlists, or create one in YouTube Music."; color: root.secondary; font-size: 12px; wrap: word-wrap; }
-                    LibraryButton { height: 32px; light-mode: root.light-mode; caption: root.playlist-choices-busy ? "Refreshing…" : "Refresh playlists"; enabled: !root.playlist-choices-busy; label: "Refresh editable playlists from your selected account"; clicked => { root.refresh-playlist-choices(); } }
-                    Text { height: 28px; text: "Saved to your selected YouTube Music account. Your playback queue stays separate."; color: root.secondary; font-size: 11px; wrap: word-wrap; }
+                    if root.playlist-choices.length == 0 : VerticalLayout { vertical-stretch: 1; min-height: 40px; alignment: center; spacing: 6px;
+                        Text { text: root.playlist-choices-busy ? "Refreshing your playlists…" : "No editable playlists yet"; color: root.foreground; font-size: 14px; font-weight: 600; horizontal-alignment: center; }
+                        if !root.playlist-choices-busy : Text { text: "Create one above, or refresh to load your playlists."; color: root.secondary; font-size: 12px; wrap: word-wrap; horizontal-alignment: center; }
+                    }
+                    if !picker-card.compact : Text { height: 18px; text: "Saves to your YouTube Music account, not the queue."; color: root.secondary; font-size: 11px; overflow: elide; }
                 }
             }
         }
@@ -2886,11 +3037,14 @@ export component AppWindow inherits Window {
             }
         }
         if !root.collapsed && root.feedback-notice != "" : Rectangle {
-            x: root.width - self.width - 18px; y: root.height - self.height - 122px;
-            width: min(360px, root.width - 36px); height: 76px;
-            background: root.surface; border-width: 1px; border-color: root.outline; border-radius: 8px;
-            HorizontalLayout { padding: 12px; spacing: 10px;
-                Text { horizontal-stretch: 1; text: root.feedback-notice; color: root.foreground; font-size: 12px; wrap: word-wrap; overflow: elide; accessible-live-region: polite; }
+            x: root.width - self.width - 18px - (root.queue-open && root.width >= 1050px ? 340px : 0px); y: root.height - self.height - 110px - (root.jam-active ? 34px : 0px);
+            width: min(360px, root.width - 36px); height: 64px;
+            background: Theme.raised; border-width: 1px; border-color: root.outline; border-radius: 12px;
+            drop-shadow-blur: 24px; drop-shadow-offset-y: 8px; drop-shadow-color: Theme.shadow;
+            HorizontalLayout { padding: 12px; spacing: 10px; cross-axis-alignment: center;
+                Rectangle { width: 4px; height: 32px; border-radius: 2px; background: Theme.accent; }
+                Text { horizontal-stretch: 1; vertical-alignment: center; text: root.feedback-notice; color: root.foreground; font-size: 12px; wrap: word-wrap; overflow: elide; accessible-live-region: polite; }
+                if root.feedback-undo : LibraryButton { width: 60px; height: 28px; quiet: false; light-mode: root.light-mode; caption: "Undo"; label: "Undo this rating"; clicked => { root.undo-feedback(); } }
                 LibraryButton { width: 28px; height: 28px; light-mode: root.light-mode; caption: "×"; label: "Dismiss feedback message"; clicked => { root.dismiss-feedback(); } }
             }
         }

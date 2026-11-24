@@ -318,25 +318,26 @@ fn settings_theme_account_and_song_menu_remain_independent() {
     export("song-menu-dark", 1140, 800, &menu);
     assert_ne!(menu, before, "song action did not display a menu");
     assert_eq!(
-        menu[456 * 1140 + 900],
+        // Six items no longer fit below this row, so the menu opens upward.
+        menu[300 * 1140 + 900],
         Rgb8Pixel {
-            r: 25,
-            g: 28,
-            b: 34
+            r: 29,
+            g: 33,
+            b: 40
         },
-        "dark popup must use Tide's surface, not an OS menu theme"
+        "dark popup must use Tide's raised surface, not an OS menu theme"
     );
     ui.set_light_mode(true);
     let light_menu = draw(&window, 1140, 800);
     export("song-menu-light", 1140, 800, &light_menu);
     assert_eq!(
-        light_menu[456 * 1140 + 900],
+        light_menu[300 * 1140 + 900],
         Rgb8Pixel {
-            r: 249,
-            g: 244,
-            b: 238
+            r: 244,
+            g: 237,
+            b: 229
         },
-        "open popup must follow Tide's light surface"
+        "open popup must follow Tide's light raised surface"
     );
     ui.set_light_mode(false);
     draw(&window, 1140, 800);
