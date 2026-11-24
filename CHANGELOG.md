@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.4.37 - 2026-11-24
+
 - Polished Jams, song menus, Add to playlist, the updater, the queue, the mini player and error messages:
   - Jams: the screen lines up with the narrow sidebar and stacks Start and Join in small windows. It shows song times, marks you as Host, asks before removing a listener, and has a "New listeners can join" switch. Guests in small windows now see the shared queue.
   - Song menus have their own icon per action, keep Remove apart in red, and add **Go to artist** and **Copy song link**. They open upward when they would run under the player bar.
