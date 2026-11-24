@@ -988,8 +988,8 @@ mod tests {
     #[test]
     fn release_notes_open_the_offered_version() {
         assert_eq!(
-            release_notes_url(Some(&Version::parse("0.4.36").unwrap())),
-            "https://github.com/yotam1001/tide-music/releases/tag/v0.4.36"
+            release_notes_url(Some(&Version::parse("0.4.37").unwrap())),
+            "https://github.com/yotam1001/tide-music/releases/tag/v0.4.37"
         );
         assert_eq!(
             release_notes_url(None),
