@@ -1,6 +1,20 @@
 //! Published stable releases only. No Google sessions or browser state enter this module.
+#[cfg(target_os = "linux")]
+#[path = "updater/appimage.rs"]
+mod handoff;
+#[cfg(not(target_os = "linux"))]
 mod handoff;
 mod publisher;
+
+/// Linux: whether this AppImage can replace itself in place.
+#[cfg(target_os = "linux")]
+fn appimage_replaceable() -> bool {
+    handoff::replaceable_appimage().is_some()
+}
+#[cfg(not(target_os = "linux"))]
+fn appimage_replaceable() -> bool {
+    false
+}
 
 use semver::Version;
 use sha2::{Digest, Sha256};
@@ -20,7 +34,25 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-const MAX_INSTALLER: u64 = 96 * 1024 * 1024;
+/// The AppImage carries its own mpv and yt-dlp, so it is larger than setup.
+const MAX_INSTALLER: u64 = if cfg!(target_os = "linux") {
+    192 * 1024 * 1024
+} else {
+    96 * 1024 * 1024
+};
+/// The signed package this build installs: setup on Windows, the AppImage
+/// itself on Linux. macOS reads the Windows manifest only for its version.
+pub(super) const PACKAGE: &str = if cfg!(target_os = "linux") {
+    "Tide-x86_64.AppImage"
+} else {
+    "TideSetup.exe"
+};
+/// Name of the verified package inside the private update cache.
+const STAGED: &str = if cfg!(target_os = "linux") {
+    "Tide.AppImage"
+} else {
+    "TideSetup.exe"
+};
 const CACHE_MARKER: &str = "Tide updater cache v1\n";
 
 #[derive(Clone, Debug)]
@@ -35,8 +67,11 @@ pub(super) struct Release {
 /// without the API's 60-requests-an-hour limit per network, and the manifest
 /// already names the version, installer size and SHA-256, all covered by the
 /// publisher signature. No GitHub API call is made.
-const LATEST_MANIFEST: &str =
-    "https://github.com/yotam1001/tide-music/releases/latest/download/TideUpdate.json";
+const LATEST_MANIFEST: &str = if cfg!(target_os = "linux") {
+    "https://github.com/yotam1001/tide-music/releases/latest/download/TideUpdate-linux.json"
+} else {
+    "https://github.com/yotam1001/tide-music/releases/latest/download/TideUpdate.json"
+};
 
 /// A stable version newer than `current`, or None. Rejects malformed text.
 fn offered_version(text: &str, current: &str) -> Result<Option<Version>, String> {
@@ -62,7 +97,7 @@ fn release_for(version: Version, digest: &str, size: u64) -> Result<Release, Str
     }
     Ok(Release {
         url: format!(
-            "https://github.com/yotam1001/tide-music/releases/download/v{version}/TideSetup.exe"
+            "https://github.com/yotam1001/tide-music/releases/download/v{version}/{PACKAGE}"
         ),
         version,
         digest: digest.to_lowercase(),
@@ -449,8 +484,8 @@ fn stage_installer_controlled(
 ) -> Result<PathBuf, String> {
     transfer.check()?;
     let directory = cache_directory(base)?;
-    let partial = directory.join("TideSetup.part");
-    let destination = directory.join("TideSetup.exe");
+    let partial = directory.join(format!("{STAGED}.part"));
+    let destination = directory.join(STAGED);
     let lock = directory.join(".update-lock");
     for path in [&partial, &destination, &lock] {
         plain(path)?;
@@ -548,7 +583,7 @@ fn launch(path: &Path, release: &Release) -> Result<handoff::Pending, LaunchFail
 }
 fn cached_installer(release: &Release, base: &Path) -> Option<PathBuf> {
     require_authorization(release).ok()?;
-    let path = cache_directory(base).ok()?.join("TideSetup.exe");
+    let path = cache_directory(base).ok()?.join(STAGED);
     verified_installer(&path, release).ok()?;
     Some(path)
 }
@@ -592,6 +627,9 @@ pub(super) struct Updater {
 }
 impl Updater {
     fn installable(&self) -> bool {
+        if cfg!(target_os = "linux") {
+            return appimage_replaceable();
+        }
         cfg!(windows)
             && self
                 .base
@@ -636,7 +674,7 @@ impl Updater {
                     ))
                 } else {
                     Completion::Checked(check().map(|candidate| {
-                        let cached = if cfg!(windows) {
+                        let cached = if cfg!(any(windows, target_os = "linux")) {
                             candidate
                                 .as_ref()
                                 .zip(base.as_ref())
@@ -698,7 +736,14 @@ impl Updater {
                     ui.set_update_phase(2);
                     match result {
                         Ok(()) => {
-                            ui.set_update_status("Setup is ready. Restarting Tide…".into());
+                            ui.set_update_status(
+                                if cfg!(target_os = "linux") {
+                                    "Update installed. Restarting Tide…"
+                                } else {
+                                    "Setup is ready. Restarting Tide…"
+                                }
+                                .into(),
+                            );
                             let _ = slint::quit_event_loop();
                         }
                         Err(message) => self.restart_failed(
@@ -784,21 +829,35 @@ impl Updater {
 
 pub(super) fn wire(ui: &super::AppWindow, enabled: bool) -> Rc<RefCell<Updater>> {
     ui.set_app_version(env!("CARGO_PKG_VERSION").into());
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(windows)]
     let base = std::env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
         .filter(|p| p.is_absolute());
+    #[cfg(not(any(windows, target_os = "macos")))]
+    let base = std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .map(PathBuf::from)
+                .filter(|p| p.is_absolute())
+                .map(|home| home.join(".cache"))
+        });
     #[cfg(target_os = "macos")]
     let base = std::env::var_os("HOME")
         .map(PathBuf::from)
         .filter(|p| p.is_absolute())
         .map(|home| home.join("Library/Caches/TideMusic"));
     let executable = std::env::current_exe().ok();
-    let installable = cfg!(windows)
-        && base
-            .as_deref()
-            .zip(executable.as_deref())
-            .is_some_and(|(base, exe)| installed_player(base, exe));
+    let installable = if cfg!(target_os = "linux") {
+        appimage_replaceable()
+    } else {
+        cfg!(windows)
+            && base
+                .as_deref()
+                .zip(executable.as_deref())
+                .is_some_and(|(base, exe)| installed_player(base, exe))
+    };
     ui.set_update_installable(installable);
     let owner = Rc::new(RefCell::new(Updater {
         timer: slint::Timer::default(),
@@ -852,7 +911,12 @@ pub(super) fn wire(ui: &super::AppWindow, enabled: bool) -> Rc<RefCell<Updater>>
                     ui.set_update_status(status.into());
                     return;
                 }
-                #[cfg(not(target_os = "macos"))]
+                #[cfg(target_os = "linux")]
+                {
+                    ui.set_update_status("Automatic update works for the Tide AppImage in a folder you can write to. Download Tide-x86_64.AppImage from the latest release.".into());
+                    return;
+                }
+                #[cfg(not(any(target_os = "macos", target_os = "linux")))]
                 {
                     ui.set_update_status("Automatic update is unavailable for this copy. Install TideSetup.exe from the latest release.".into());
                     return;
@@ -867,7 +931,14 @@ pub(super) fn wire(ui: &super::AppWindow, enabled: bool) -> Rc<RefCell<Updater>>
                         updater.task = Task::Preparing(pending);
                         ui.set_update_busy(true);
                         ui.set_update_phase(4);
-                        ui.set_update_status("Preparing setup. Your music continues…".into());
+                        ui.set_update_status(
+                            if cfg!(target_os = "linux") {
+                                "Installing the update. Your music continues…"
+                            } else {
+                                "Preparing setup. Your music continues…"
+                            }
+                            .into(),
+                        );
                         let owner = Rc::downgrade(&state);
                         let weak = ui.as_weak();
                         updater.timer.start(
@@ -920,7 +991,10 @@ pub(super) fn wire(ui: &super::AppWindow, enabled: bool) -> Rc<RefCell<Updater>>
             }
         }
     });
-    if enabled && (cfg!(windows) || cfg!(target_os = "macos")) && ui.get_auto_update_checks() {
+    if enabled
+        && (cfg!(windows) || cfg!(target_os = "macos") || cfg!(target_os = "linux"))
+        && ui.get_auto_update_checks()
+    {
         let state = Rc::downgrade(&owner);
         let weak = ui.as_weak();
         slint::Timer::single_shot(Duration::from_secs(15), move || {
@@ -1069,7 +1143,7 @@ mod tests {
         }
         assert!(offered_version("0.1.2", "0.1.2").unwrap().is_none());
         assert!(offered_version("0.1.2", "0.1.3").unwrap().is_none());
-        assert!(parse("0.1.2").url.ends_with("/v0.1.2/TideSetup.exe"));
+        assert!(parse("0.1.2").url.ends_with(&format!("/v0.1.2/{PACKAGE}")));
     }
     #[test]
     fn only_strictly_newer_stable_versions_are_offered() {

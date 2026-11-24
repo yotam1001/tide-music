@@ -454,6 +454,8 @@ export component AppWindow inherits Window {
     in property <bool> windows-theme-supported: false;
     // macOS wording and Mac-only preferences.
     in property <bool> mac-os: false;
+    // Linux wording; behaviour otherwise follows Windows.
+    in property <bool> linux: false;
     in property <bool> notify-song-change: false;
     callback toggle-notify-song-change();
     public function focus-search() {
@@ -2515,7 +2517,7 @@ export component AppWindow inherits Window {
                                         if root.companion-registered-summary != "" : Text { text: root.companion-registered-summary; color: root.secondary; font-size: 12px; wrap: word-wrap; }
                                         ComboBox {
                                             height: 36px;
-                                            model: ["Chrome", "Edge", "Brave", "Arc", "Firefox / Zen"];
+                                            model: root.linux ? ["Chrome", "Edge", "Brave", "Chromium", "Firefox / Zen"] : ["Chrome", "Edge", "Brave", "Arc", "Firefox / Zen"];
                                             current-index <=> root.companion-browser-index;
                                             enabled: !root.account-busy && !root.native-login-busy;
                                             accessible-label: "Browser for Tide companion";
@@ -2657,7 +2659,7 @@ export component AppWindow inherits Window {
                                                 select => { if !root.light-mode { root.switch-mode(); } else if root.follow-windows-theme { root.toggle-follow-windows-theme(); if !root.light-mode { root.switch-mode(); } } }
                                             }
                                             if root.windows-theme-supported : ThemeCard {
-                                                title: root.mac-os ? "Match macOS" : "Match Windows"; kind: 2; enabled: !root.artist-picker-open;
+                                                title: root.mac-os ? "Match macOS" : root.linux ? "Match system" : "Match Windows"; kind: 2; enabled: !root.artist-picker-open;
                                                 selected: root.follow-windows-theme;
                                                 select => { if !root.follow-windows-theme { root.toggle-follow-windows-theme(); } }
                                             }
@@ -2704,8 +2706,8 @@ export component AppWindow inherits Window {
                                     }
                                 }
                                 SettingsGroup {
-                                    title: root.mac-os ? "System" : "Windows";
-                                    SettingToggle { separator: false; title: root.mac-os ? "Media keys and Control Center" : "Windows media keys"; detail: root.mac-os ? "Play, pause and skip from your keyboard and Control Center." : "Play, pause and skip with your keyboard's media keys."; checked: root.media-controls-enabled; toggled => { root.toggle-media-controls(); } }
+                                    title: root.mac-os || root.linux ? "System" : "Windows";
+                                    SettingToggle { separator: false; title: root.mac-os ? "Media keys and Control Center" : root.linux ? "Media keys and desktop controls" : "Windows media keys"; detail: root.mac-os ? "Play, pause and skip from your keyboard and Control Center." : root.linux ? "Play, pause and skip from your keyboard and your desktop's media controls." : "Play, pause and skip with your keyboard's media keys."; checked: root.media-controls-enabled; toggled => { root.toggle-media-controls(); } }
                                     if root.media-controls-enabled : SettingToggle { title: root.mac-os ? "Show Tide in the menu bar" : "Keep playing when I close Tide"; detail: root.mac-os ? "" : "Closing the window keeps Tide in the system tray."; checked: root.close-to-tray; toggled => { root.toggle-close-to-tray(); } }
                                     if root.mac-os : SettingToggle { title: "Notify when the song changes"; checked: root.notify-song-change; toggled => { root.toggle-notify-song-change(); } }
                                 }
@@ -2713,7 +2715,7 @@ export component AppWindow inherits Window {
                                     title: "Trackpad";
                                     SettingToggle { separator: false; title: "Swipe the player to change songs"; detail: "Two-finger swipe over the player bar: right for next, left for previous."; checked: root.trackpad-swipe; toggled => { root.toggle-trackpad-swipe(); } }
                                     if root.trackpad-swipe : SettingToggle { title: "Reverse swipe direction"; checked: root.swipe-reversed; toggled => { root.toggle-swipe-reversed(); } }
-                                    if root.windows-theme-supported && !root.mac-os : SettingRow {
+                                    if root.windows-theme-supported && !root.mac-os && !root.linux : SettingRow {
                                         title: "Four-finger swipes"; detail: "Skip songs from anywhere: under Four-finger gestures, choose Change audio and volume.";
                                         LibraryButton { width: 112px; height: 32px; quiet: false; light-mode: root.light-mode; caption: "Set up…"; label: "Open Windows touchpad settings. Under Four-finger gestures, choose Change audio and volume to skip songs from anywhere."; clicked => { root.open-touchpad-settings(); } }
                                     }
@@ -2899,7 +2901,7 @@ export component AppWindow inherits Window {
                         // While Later or Hide is offered, it is the one way out.
                         if !root.update-available && root.update-phase == 0 : LibraryButton { width: 32px; height: 32px; round: true; light-mode: root.light-mode; show-tooltip: true; icon-path: "M 6 6 L 18 18 M 18 6 L 6 18"; label: "Close updates and keep listening"; clicked => { root.update-panel-open = false; } }
                     }
-                    Text { min-height: 36px; text: root.update-available && !root.update-installable && !root.mac-os ? root.update-status + ". Use TideSetup.exe from GitHub to update this copy." : root.update-status; color: root.secondary; font-size: 13px; wrap: word-wrap; accessible-live-region: polite; }
+                    Text { min-height: 36px; text: root.update-available && !root.update-installable && !root.mac-os ? root.update-status + (root.linux ? ". Download the new Tide AppImage from GitHub to update this copy." : ". Use TideSetup.exe from GitHub to update this copy.") : root.update-status; color: root.secondary; font-size: 13px; wrap: word-wrap; accessible-live-region: polite; }
                     HorizontalLayout {
                         height: 44px; spacing: 8px; cross-axis-alignment: center;
                         if root.update-installable && (root.update-available || root.update-phase > 0) : UpdateAction { horizontal-stretch: 1; height: 44px; light-mode: root.light-mode; busy: root.update-busy; phase: root.update-phase; progress: root.update-progress; activate => { root.install-update(); } cancel => { root.cancel-update(); } }

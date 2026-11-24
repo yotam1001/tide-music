@@ -6,6 +6,12 @@ const DOMAIN: &[u8] = b"Tide update manifest v1\n";
 pub(super) const MAX_MANIFEST: usize = 16 * 1024;
 const MAX_VALIDITY: u64 = 90 * 24 * 60 * 60;
 const PUBLIC_KEY: &str = include_str!("../../update-public-key.hex");
+/// The signed platform identity this build accepts.
+const PLATFORM: &str = if cfg!(target_os = "linux") {
+    "linux-x86_64"
+} else {
+    "windows-x86_64"
+};
 
 #[derive(Clone, Debug)]
 pub(super) struct Authorization {
@@ -99,8 +105,8 @@ fn verify(
         serde_json::from_str(&envelope.payload).map_err(|_| "Invalid signed installer identity")?;
     if manifest.schema != 1
         || manifest.version != version
-        || manifest.platform != "windows-x86_64"
-        || manifest.filename != "TideSetup.exe"
+        || manifest.platform != PLATFORM
+        || manifest.filename != super::PACKAGE
         || manifest.size != size
         || !(1..=super::MAX_INSTALLER).contains(&manifest.size)
         || manifest.sha256 != digest
@@ -164,8 +170,8 @@ mod tests {
 
     const NOW: u64 = 1_800_000_000;
     fn manifest() -> serde_json::Value {
-        json!({"schema":1,"version":"0.4.1","platform":"windows-x86_64",
-            "filename":"TideSetup.exe","size":4,"sha256":"fixture",
+        json!({"schema":1,"version":"0.4.1","platform":PLATFORM,
+            "filename":super::super::PACKAGE,"size":4,"sha256":"fixture",
             "issued_at":NOW,"expires_at":NOW+3600})
     }
     fn key() -> Ed25519KeyPair {
@@ -197,6 +203,8 @@ mod tests {
             &key.public_key().as_ref().try_into().unwrap(),
         )
     }
+    // The checked-in Python fixture signs the Windows package identity.
+    #[cfg(not(target_os = "linux"))]
     #[test]
     fn python_signer_and_rust_verifier_agree_on_exact_bytes() {
         let bytes = include_bytes!("fixtures/python-envelope.json");
@@ -230,6 +238,20 @@ mod tests {
             .replace("fixture", "changed"));
         assert!(check(&serde_json::to_vec(&edited).unwrap(), &publisher).is_err());
         assert!(authenticate(&bytes, "0.4.1", "fixture", 4, NOW).is_err());
+    }
+    #[test]
+    fn a_manifest_for_another_platform_never_authorizes_this_one() {
+        let key = key();
+        let mut other = manifest();
+        let (platform, filename) = if cfg!(target_os = "linux") {
+            ("windows-x86_64", "TideSetup.exe")
+        } else {
+            ("linux-x86_64", "Tide-x86_64.AppImage")
+        };
+        other["platform"] = json!(platform);
+        other["filename"] = json!(filename);
+        assert!(check(&signed(&key, &other), &key).is_err());
+        assert!(check(&signed(&key, &manifest()), &key).is_ok());
     }
     #[test]
     fn even_correct_signatures_cannot_authorize_wrong_expired_or_malformed_releases() {

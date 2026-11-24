@@ -30,12 +30,15 @@ MANIFEST = "TideUpdate.json"
 SUMS = "SHA256SUMS.txt"
 COMPANIONS = ("tide-browser-chromium.zip", "tide-browser-firefox.zip")
 MACS = {"arm64": "Tide.dmg", "x86_64": "Tide-Intel.dmg"}
+LINUX = "Tide-x86_64.AppImage"
+LINUX_MANIFEST = "TideUpdate-linux.json"
 WINDOWS_FILES = (SETUP, PREVIEW, *COMPANIONS)
 PR_JOBS = {
     "Scripts, privacy and browser checks", "Pull request compile and formatting",
     "Audit currently published Mac downloads", "macOS Rust checks", "playback-smoke",
     "bundle (arm64)", "jam-lab", "private-proxy-config",
     "render-container", "shared-relay-linux",
+    "Linux Rust checks", "Linux playback smoke", "AppImage (x86_64)",
 }
 DEVELOPER_JOB = "macOS developer build with Homebrew runtimes"
 STAGES = ("prepare", "merge", "windows", "sign", "draft", "tag", "macos", "publish", "verify")
@@ -174,6 +177,10 @@ class Release:
         self.mac_pairs = {stable: f"Tide-{self.version}-{arch}.dmg" for arch, stable in MACS.items()}
         self.mac_images = tuple(self.mac_pairs) + tuple(self.mac_pairs.values())
         self.mac_files = self.mac_images + tuple(f"{name}.sha256" for name in self.mac_images)
+        self.linux_pair = (LINUX, f"Tide-{self.version}-x86_64.AppImage")
+        self.linux_files = self.linux_pair + tuple(f"{name}.sha256" for name in self.linux_pair)
+        # Platform assets CI attaches after the tag, plus the locally signed Linux manifest.
+        self.platform_files = (*self.mac_files, *self.linux_files, LINUX_MANIFEST)
 
     def check_origin(self):
         origin = git("remote", "get-url", "origin").removesuffix(".git")
@@ -421,7 +428,7 @@ try {
             print(gh("release", "upload", self.tag_name, *(path / name for name in sorted(missing))))
         release = self.release()
         require(self.remote_digests(release, names) == digests, "Windows upload digests differ.")
-        if not set(self.mac_files) & {asset["name"] for asset in release["assets"]}:
+        if not set(self.platform_files) & {asset["name"] for asset in release["assets"]}:
             require(self.remote_digests(release, (SUMS,))[SUMS] == sha256(path / SUMS),
                     "Draft checksum file differs.")
 
@@ -443,7 +450,47 @@ try {
         python("check_public_files.py")
         command("git", "push", "origin", f"{sha}:refs/tags/{self.tag_name}")
 
+    def linux(self, path, release):
+        """Verify the tagged Linux CI AppImage and sign its update manifest locally."""
+        sha = self.merge_sha()
+        run = matching_ci_run("linux-release.yml", sha, self.tag_name)
+        details = api(f"actions/runs/{run['databaseId']}/jobs?per_page=100")
+        jobs = [job for job in details["jobs"] if job["name"] == "AppImage (x86_64)"]
+        require(len(jobs) == 1 and jobs[0]["conclusion"] == "success"
+                and any(step["name"] == "Build, verify and package stable Tide"
+                        and step["conclusion"] == "success" for step in jobs[0]["steps"]),
+                "Missing successful Linux AppImage packaging gate.")
+        print(f"AppImage packaging gate passed. {jobs[0]['html_url']}")
+        digests = self.remote_digests(release, self.linux_files)
+        require(digests[self.linux_pair[0]] == digests[self.linux_pair[1]],
+                "Stable and versioned AppImages differ.")
+        manifest = path / LINUX_MANIFEST
+        with tempfile.TemporaryDirectory(dir=path) as temp:
+            temp = Path(temp)
+            print(gh("run", "download", str(run["databaseId"]), "--dir", temp,
+                     "--name", "linux-release-x86_64"))
+            for name in self.linux_files:
+                matches = list(temp.rglob(name))
+                require(len(matches) == 1 and sha256(matches[0]) == digests[name],
+                        f"GitHub release asset differs from the Linux CI artifact: {name}.")
+            for name in self.linux_pair:
+                checksum = next(temp.rglob(f"{name}.sha256"))
+                require(checksum.read_text("ascii").split() == [digests[name], name],
+                        f"AppImage checksum mismatch for {name}.")
+            image = next(temp.rglob(LINUX))
+            if not manifest.exists():
+                output = temp / LINUX_MANIFEST
+                python("sign-update.py", "--installer", image, "--version", self.version, "--output", output)
+                python("sign-update.py", "--installer", image, "--version", self.version, "--verify", output)
+                output.rename(manifest)
+            python("sign-update.py", "--installer", image, "--version", self.version, "--verify", manifest)
+        uploaded = {asset["name"]: asset["digest"] for asset in release["assets"]}
+        if uploaded.get(LINUX_MANIFEST) != f"sha256:{sha256(manifest)}":
+            require(release["isDraft"], "Cannot replace the Linux update manifest on a published release.")
+            print(gh("release", "upload", self.tag_name, manifest, "--clobber"))
+
     def macos(self):
+        """macOS and Linux: verify CI platform assets, sign the Linux manifest, sum everything."""
         sha = self.merge_sha()
         run = matching_ci_run("macos-release.yml", sha, self.tag_name)
         packaging = git("show", f"{sha}:scripts/package_macos.py")
@@ -462,8 +509,9 @@ try {
             print(f"DMG signature gate passed for {arch}. {jobs[0]['html_url']}")
 
         path = self.windows_dir()
+        self.linux(path, self.release())
         release = self.release()
-        digests = self.remote_digests(release, (*WINDOWS_FILES, MANIFEST, *self.mac_files))
+        digests = self.remote_digests(release, (*WINDOWS_FILES, MANIFEST, *self.platform_files))
         for name in (*WINDOWS_FILES, MANIFEST):
             require(digests[name] == sha256(path / name), f"Remote Windows digest differs for {name}.")
         require(all(digests[stable] == digests[versioned] for stable, versioned in self.mac_pairs.items()),
@@ -493,7 +541,7 @@ try {
 
     def verify_release_assets(self):
         path = self.windows_dir()
-        names = (*WINDOWS_FILES, MANIFEST, *self.mac_files, SUMS)
+        names = (*WINDOWS_FILES, MANIFEST, *self.platform_files, SUMS)
         release = self.release()
         digests = self.remote_digests(release, names, exact=True)
         expected = checksum_lines({name: digests[name] for name in names if name != SUMS})
@@ -509,7 +557,7 @@ try {
         path = self.windows_dir()
         evidence = path / "verified-release-digests.json"
         require(evidence.is_file() and json.loads(evidence.read_text("ascii")) == digests,
-                "Missing macOS CI digest verification. Resume from macos.")
+                "Missing macOS and Linux CI digest verification. Resume from macos.")
         remote = git("ls-remote", "--tags", "origin", f"refs/tags/{self.tag_name}", f"refs/tags/{self.tag_name}^{{}}")
         require(remote and remote.splitlines()[-1].split()[0] == self.merge_sha(),
                 "Release tag must already point to the release merge commit.")
@@ -525,7 +573,7 @@ try {
             require(json.load(reply)["tag_name"] == self.tag_name, f"GitHub Latest is not {self.tag_name}.")
         with tempfile.TemporaryDirectory(dir=self.work) as temp:
             temp = Path(temp)
-            for name in (MANIFEST, SETUP, *MACS.values()):
+            for name in (MANIFEST, SETUP, *MACS.values(), LINUX, LINUX_MANIFEST):
                 request = urllib.request.Request(f"{GITHUB}/releases/latest/download/{name}",
                                                  headers={"User-Agent": "Tide release verification"})
                 with urllib.request.urlopen(request, timeout=60) as reply, (temp / name).open("wb") as stream:
@@ -533,6 +581,8 @@ try {
                 require(sha256(temp / name) == digests[name], f"Anonymous Latest download differs for {name}.")
                 print(f"Verified anonymous Latest download: {name}")
             self.verify_windows(self.windows_dir(), temp / MANIFEST, temp / SETUP)
+            python("sign-update.py", "--installer", temp / LINUX, "--version", self.version,
+                   "--verify", temp / LINUX_MANIFEST)
         print(f"Verified public release: {release['url']}")
 
 

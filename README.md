@@ -10,6 +10,7 @@ A fast, native player that stays light on RAM, even while you game.
 [![Download for Windows](https://img.shields.io/badge/Download-Windows-c2185b?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/yotam1001/tide-music/releases/latest/download/TideSetup.exe)
 [![macOS Apple Silicon](https://img.shields.io/badge/macOS-Apple%20Silicon-8e2449?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/yotam1001/tide-music/releases/latest/download/Tide.dmg)
 [![macOS Intel](https://img.shields.io/badge/macOS-Intel-8e2449?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/yotam1001/tide-music/releases/latest/download/Tide-Intel.dmg)
+[![Linux AppImage](https://img.shields.io/badge/Linux-AppImage-8e2449?style=for-the-badge&logo=linux&logoColor=white)](https://github.com/yotam1001/tide-music/releases/latest/download/Tide-x86_64.AppImage)
 
 [![Website](https://img.shields.io/badge/website-tide--music--links.netlify.app-1a1a2e?style=flat)](https://tide-music-links.netlify.app)
 [![Latest release](https://img.shields.io/github/v/release/yotam1001/tide-music?label=latest&color=c2185b)](https://github.com/yotam1001/tide-music/releases/latest)
@@ -63,7 +64,7 @@ A fast, native player that stays light on RAM, even while you game.
 | 👍 **Like & save** | Like or dislike songs and edit your own playlists |
 | 🔊 **Audio control** | Output device picker, bit-perfect exclusive mode, crossfade, equalizer, sleep timer and even volume |
 | 🪟 **Mini player** | Compact one-row player that stays on top with adjustable opacity |
-| ⌨️ **System integration** | Media keys, global shortcuts, trackpad swipes, macOS Control Center / menu bar and Discord status |
+| ⌨️ **System integration** | Media keys, global shortcuts, trackpad swipes, macOS Control Center / menu bar, Linux desktop media controls / tray and Discord status |
 | 🔄 **In-app updates** | Updates download in the background; restart whenever you're ready |
 
 ## Get started
@@ -83,6 +84,12 @@ Download for [Apple Silicon](https://github.com/yotam1001/tide-music/releases/la
 or [Intel](https://github.com/yotam1001/tide-music/releases/latest/download/Tide-Intel.dmg), then follow the
 [Mac install guide](docs/INSTALLATION_MACOS.md).
 
+**Linux (x86_64, preview)**
+
+Download **[Tide-x86_64.AppImage](https://github.com/yotam1001/tide-music/releases/latest/download/Tide-x86_64.AppImage)**,
+make it executable and open it. It carries its own playback tools and updates
+itself like the Windows app. See the [Linux install guide](docs/INSTALLATION_LINUX.md).
+
 📖 [Account setup](docs/ACCOUNT_SETUP.md) · [Installation](docs/INSTALLATION.md) · [Using Tide](docs/USING_TIDE.md)
 
 ## Listen together with Jams
@@ -98,7 +105,7 @@ shared relay by default, and **Advanced setup** lets you
 
 ## Privacy
 
-- Sign-in data is encrypted with Windows DPAPI or your Mac login Keychain.
+- Sign-in data is encrypted with Windows DPAPI, your Mac login Keychain or your Linux desktop keyring.
 - Tide has no account server, no analytics and no automatic crash uploads.
 - Jams contact a relay only when you host or join one.
 - Never share your cookies or session files with anyone.
@@ -109,8 +116,9 @@ shared relay by default, and **Advanced setup** lets you
 
 On Windows, open **Settings → Check for updates**. Music keeps playing while the
 update downloads, and you click **Restart to update** when you're ready. Your
-accounts and preferences carry over. On Mac, replace Tide in Applications with
-the new disk image ([details](docs/INSTALLATION_MACOS.md#updates)).
+accounts and preferences carry over. The Linux AppImage updates the same way.
+On Mac, replace Tide in Applications with the new disk image
+([details](docs/INSTALLATION_MACOS.md#updates)).
 
 [Troubleshooting](docs/TROUBLESHOOTING.md) ·
 [Report a bug](https://github.com/yotam1001/tide-music/issues/new) ·

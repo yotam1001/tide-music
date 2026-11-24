@@ -16,6 +16,11 @@ import time
 
 DOMAIN = b"Tide update manifest v1\n"
 MAX_INSTALLER = 96 * 1024 * 1024
+# The Linux AppImage is self-contained (mpv, yt-dlp, Python), so it is larger.
+PACKAGES = {
+    "TideSetup.exe": ("windows-x86_64", MAX_INSTALLER),
+    "Tide-x86_64.AppImage": ("linux-x86_64", 192 * 1024 * 1024),
+}
 MAX_VALIDITY = 90 * 24 * 60 * 60
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -98,12 +103,13 @@ def make_envelope(installer, version, key, now=None):
         raise ValueError("A stable numeric version is required")
     installer = Path(installer)
     size = installer.stat().st_size
-    if not 0 < size <= MAX_INSTALLER or installer.name != "TideSetup.exe":
+    if installer.name not in PACKAGES or not 0 < size <= PACKAGES[installer.name][1]:
         raise ValueError("Invalid installer name or size")
+    platform = PACKAGES[installer.name][0]
     now = int(time.time()) if now is None else now
     with installer.open("rb") as input_file:
         digest = hashlib.file_digest(input_file, "sha256").hexdigest()
-    manifest = dict(schema=1, version=version, platform="windows-x86_64", filename="TideSetup.exe",
+    manifest = dict(schema=1, version=version, platform=platform, filename=installer.name,
                     size=size, sha256=digest,
                     issued_at=now, expires_at=now + MAX_VALIDITY)
     payload = json.dumps(manifest, separators=(",", ":"), sort_keys=True)
@@ -124,9 +130,13 @@ def verify_envelope(envelope, installer, version, key=None, now=None):
     now = int(time.time()) if now is None else now
     with Path(installer).open("rb") as input_file:
         digest = hashlib.file_digest(input_file, "sha256").hexdigest()
-    if (value["schema"] != 1 or value["version"] != version or value["platform"] != "windows-x86_64"
-            or value["filename"] != "TideSetup.exe" or value["size"] != Path(installer).stat().st_size
-            or not 0 < value["size"] <= MAX_INSTALLER or value["sha256"] != digest
+    name = Path(installer).name
+    if name not in PACKAGES:
+        raise ValueError("Unknown installer package")
+    platform, limit = PACKAGES[name]
+    if (value["schema"] != 1 or value["version"] != version or value["platform"] != platform
+            or value["filename"] != name or value["size"] != Path(installer).stat().st_size
+            or not 0 < value["size"] <= limit or value["sha256"] != digest
             or value["issued_at"] > now + 300 or value["expires_at"] <= now
             or not 0 < value["expires_at"] - value["issued_at"] <= MAX_VALIDITY):
         raise ValueError("Manifest does not authorize this installer")

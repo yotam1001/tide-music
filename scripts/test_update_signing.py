@@ -57,6 +57,22 @@ class SignedUpdateTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.verify(b" " * (16 * 1024 + 1))
 
+    def test_linux_appimage_manifest_names_its_own_platform(self):
+        image = Path(self.directory.name) / "Tide-x86_64.AppImage"
+        image.write_bytes(b"Synthetic AppImage fixture, never executed")
+        envelope = signing.make_envelope(image, "0.4.1", self.key, self.now)
+        payload = json.loads(json.loads(envelope)["payload"])
+        self.assertEqual(payload["platform"], "linux-x86_64")
+        self.assertEqual(payload["filename"], "Tide-x86_64.AppImage")
+        signing.verify_envelope(envelope, image, "0.4.1", self.public, self.now)
+        # A Windows manifest never authorizes the AppImage, or the reverse.
+        with self.assertRaises(ValueError):
+            signing.verify_envelope(self.envelope, image, "0.4.1", self.public, self.now)
+        renamed = Path(self.directory.name) / "Tide.AppImage"
+        image.rename(renamed)
+        with self.assertRaises(ValueError):
+            signing.make_envelope(renamed, "0.4.1", self.key, self.now)
+
     @unittest.skipUnless(os.name == "nt", "Windows DPAPI integration")
     def test_dpapi_roundtrip_and_tampering_fail_closed(self):
         data = b"Disposable test material, not the publisher's signing key"

@@ -442,7 +442,9 @@ async fn select_zen_session(index: i32) -> Option<tide_provider::Request> {
     #[cfg(target_os = "macos")]
     let profiles = std::env::var_os("HOME")
         .map(|home| PathBuf::from(home).join("Library/Application Support/zen/Profiles"));
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    let profiles = std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".zen"));
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     let profiles =
         std::env::var_os("APPDATA").map(|appdata| PathBuf::from(appdata).join("zen/Profiles"));
     if let Some(profiles) = profiles.filter(|path| path.is_dir()) {
@@ -2671,6 +2673,14 @@ fn executable(name: &str) -> PathBuf {
                     return p;
                 }
             }
+            // AppImage: usr/bin/tide-music -> usr/lib/tide-music/bin
+            #[cfg(target_os = "linux")]
+            {
+                let p = dir.join("../lib/tide-music/bin").join(name);
+                if p.is_file() {
+                    return p;
+                }
+            }
             let p = dir.join("tools").join(name);
             if p.is_file() {
                 return p;
@@ -2868,6 +2878,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
         }
     }
+    #[cfg(target_os = "linux")]
+    platform::select_display_backend();
     let ui = AppWindow::new()?;
     // Animations follow Tide's own setting (on by default) rather than only the
     // Windows animation preference, which is off on many PCs.
@@ -3120,6 +3132,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ui.set_light_mode(preferred_light_mode(&state.borrow().settings));
     ui.set_windows_theme_supported(cfg!(native_shell) && !test_mode);
     ui.set_mac_os(cfg!(target_os = "macos"));
+    ui.set_linux(cfg!(target_os = "linux"));
     ui.set_notify_song_change(state.borrow().settings.notify_song_change);
     ui.set_follow_windows_theme(state.borrow().settings.follow_windows_theme);
     ui.set_recent_searches(recent_model(&state.borrow().settings));
@@ -4077,7 +4090,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
             let status = tide_provider::browser_companion::status(&exe);
             u.set_companion_setup_available(
-                cfg!(target_os = "macos") && status.host_path.is_some(),
+                cfg!(any(target_os = "macos", target_os = "linux")) && status.host_path.is_some(),
             );
             u.set_companion_extension_bundled(status.extension_dir.is_some());
             let summary = if status.registered_browsers.is_empty() {
@@ -6713,6 +6726,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // waits for the event loop so the native window exists.
     if !test_mode && !state.borrow().settings.compact_mode {
         maximize_when_ready(&ui);
+    }
+    // Linux: the close button hides Tide to the tray when "Keep playing when
+    // I close Tide" is on, matching the Windows notification-area behaviour.
+    #[cfg(target_os = "linux")]
+    if !test_mode && listening_seconds.is_none() && !state.borrow().settings.transient {
+        let _ = platform::integrate_desktop_entry();
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let media = media.clone();
+        ui.window().on_close_requested(move || {
+            if media
+                .borrow()
+                .as_ref()
+                .is_some_and(|session| session.hide_to_tray())
+            {
+                slint::CloseRequestResponse::KeepWindowShown
+            } else {
+                slint::CloseRequestResponse::HideWindow
+            }
+        });
     }
     #[cfg(target_os = "macos")]
     let _mac_shell = (!test_mode && listening_seconds.is_none() && !smoke_autoplay_depletion)

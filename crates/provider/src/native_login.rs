@@ -1,23 +1,23 @@
 //! Explicit opt-in native login prototype. Never part of normal player startup.
 //! --probe is offline; no credentials or request headers are printed.
-#[cfg(any(windows, target_os = "macos"))]
+#[cfg(any(windows, target_os = "macos", target_os = "linux"))]
 pub fn main() {
     std::process::exit(run().unwrap_or(1));
 }
-#[cfg(not(any(windows, target_os = "macos")))]
+#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
 pub fn main() {
-    eprintln!("Native login currently requires Windows.");
+    eprintln!("Native login currently requires Windows, macOS or Linux.");
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 static TERMINATED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 extern "C" fn handle_termination_signal(_: libc::c_int) {
     TERMINATED.store(true, std::sync::atomic::Ordering::Release);
 }
 
-#[cfg(any(windows, target_os = "macos"))]
+#[cfg(any(windows, target_os = "macos", target_os = "linux"))]
 fn run() -> Result<i32, ()> {
     use std::{
         path::Path,
@@ -25,6 +25,8 @@ fn run() -> Result<i32, ()> {
         sync::{atomic::AtomicBool, Arc},
         time::{Duration, Instant},
     };
+    #[cfg(target_os = "linux")]
+    use tide_linux::login::{self, Outcome};
     #[cfg(target_os = "macos")]
     use tide_macos::login::{self, Outcome};
     #[cfg(windows)]
@@ -53,7 +55,7 @@ fn run() -> Result<i32, ()> {
         })? {
             Outcome::Cancelled => Ok(if probe { 0 } else { 2 }),
             Outcome::TimedOut => Ok(7),
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             Outcome::Blocked => Ok(8),
             Outcome::Candidate(candidate) if !probe => {
                 use crate::SessionImportError;
@@ -84,10 +86,10 @@ fn run() -> Result<i32, ()> {
     if args.len() > 1 || args.first().is_some_and(|arg| arg != "--probe") {
         return Err(());
     }
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     unsafe {
         // When Tide cancels the outer helper via SIGTERM, forward shutdown to
-        // the inner WKWebView child process group and clean up the profile dir.
+        // the inner WebKit child process group and clean up the profile dir.
         libc::signal(
             libc::SIGTERM,
             handle_termination_signal as *const () as libc::sighandler_t,
@@ -119,7 +121,7 @@ fn run() -> Result<i32, ()> {
     let mut child = tide_playback::OwnedProcess::spawn(&mut command).map_err(|_| ())?;
     let deadline = Instant::now() + Duration::from_secs(if probe { 90 } else { 10 * 60 });
     let code = loop {
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         if TERMINATED.load(std::sync::atomic::Ordering::Acquire) {
             break 2;
         }

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Tide now runs on Linux (x86_64) as a preview AppImage with the same player, Library, Mini player, lyrics, Jams, Discord status and in-app updates as Windows:
+  - Media keys and your desktop's media controls (MPRIS) show the song and artwork and control playback.
+  - The tray icon has the same menu as on Windows, and **Keep playing when I close Tide** hides Tide to it.
+  - The Mini player stays on top with adjustable opacity, and global shortcuts work on X11 and through the desktop's shortcut portal on Wayland.
+  - Sign-in keys are stored in your desktop keyring. **Sign in with Google** uses WebKitGTK, and the browser companion works with Chrome, Edge, Brave, Chromium and Firefox.
+  - **Check for updates** downloads the new AppImage, checks its publisher signature and replaces this copy, then restarts Tide.
+
 ## 0.4.37 - 2026-11-24
 
 - Polished Jams, song menus, Add to playlist, the updater, the queue, the mini player and error messages:

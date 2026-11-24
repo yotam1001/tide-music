@@ -136,12 +136,18 @@ fn read_policy(path: &Path) -> io::Result<Policy> {
     serde_json::from_slice(&data).map_err(|_| invalid())
 }
 
-#[cfg(target_os = "macos")]
+/// The per-user policy written by Tide's companion setup (macOS and Linux),
+/// falling back to a policy beside the host only when none exists.
+#[cfg(unix)]
 fn macos_policy(home: &Path, exe_dir: &Path) -> io::Result<Policy> {
     if !home.is_absolute() {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid home"));
     }
-    let user_dir = home.join("Library/Application Support/TideMusic");
+    let user_dir = if cfg!(target_os = "macos") {
+        home.join("Library/Application Support/TideMusic")
+    } else {
+        home.join(".local/share/TideMusic")
+    };
     for dir in user_dir.ancestors() {
         match std::fs::symlink_metadata(dir) {
             Ok(info) if !info.is_dir() => {
@@ -165,9 +171,9 @@ fn macos_policy(home: &Path, exe_dir: &Path) -> io::Result<Policy> {
 fn caller_policy() -> Option<Policy> {
     let exe = std::env::current_exe().ok()?;
     let exe_dir = exe.parent()?;
-    #[cfg(target_os = "macos")]
+    #[cfg(unix)]
     return macos_policy(Path::new(&std::env::var_os("HOME")?), exe_dir).ok();
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(unix))]
     read_policy(&exe_dir.join(POLICY_FILE)).ok()
 }
 

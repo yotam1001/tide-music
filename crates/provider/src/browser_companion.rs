@@ -1,5 +1,6 @@
-//! macOS Browser Companion native-messaging host registration and status.
-//! Keeps all mutable registration and policy state outside the signed Tide.app bundle.
+//! macOS and Linux Browser Companion native-messaging host registration and status.
+//! Keeps all mutable registration and policy state outside the signed Tide.app
+//! bundle and the read-only Linux AppImage.
 use std::path::{Path, PathBuf};
 
 pub const HOST_NAME: &str = "org.tidemusic.session";
@@ -38,6 +39,8 @@ impl MacBrowser {
             Self::Chrome => "Chrome",
             Self::Edge => "Edge",
             Self::Brave => "Brave",
+            // Arc has no Linux build; that slot registers Chromium there.
+            Self::Arc if cfg!(target_os = "linux") => "Chromium",
             Self::Arc => "Arc",
             Self::Firefox => "Firefox / Zen",
         }
@@ -52,7 +55,7 @@ impl MacBrowser {
             "chrome" => Some(Self::Chrome),
             "edge" => Some(Self::Edge),
             "brave" => Some(Self::Brave),
-            "arc" => Some(Self::Arc),
+            "arc" | "chromium" => Some(Self::Arc),
             "firefox" | "zen" => Some(Self::Firefox),
             _ => None,
         }
@@ -102,13 +105,15 @@ pub fn host_executable_beside(app_exe: &Path) -> Option<PathBuf> {
 }
 
 pub fn bundled_extension_dir(app_exe: &Path) -> Option<PathBuf> {
-    let macos_dir = app_exe.parent()?;
-    // Inside Tide.app/Contents/MacOS -> ../Resources/browser-companion
-    let bundled = macos_dir.parent()?.join("Resources/browser-companion");
-    if is_valid_extension_root(&bundled) {
-        return Some(bundled);
-    }
-    None
+    let exe_dir = app_exe.parent()?;
+    // Tide.app/Contents/MacOS -> ../Resources/browser-companion, and the
+    // AppImage's usr/bin -> ../share/tide-music/browser-companion.
+    [
+        exe_dir.parent()?.join("Resources/browser-companion"),
+        exe_dir.parent()?.join("share/tide-music/browser-companion"),
+    ]
+    .into_iter()
+    .find(|dir| is_valid_extension_root(dir))
 }
 
 fn is_valid_extension_root(dir: &Path) -> bool {
@@ -121,7 +126,7 @@ fn is_valid_extension_root(dir: &Path) -> bool {
     dir.join("chromium/manifest.json").is_file() || dir.join("firefox/manifest.json").is_file()
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(unix))]
 pub fn status(app_exe: &Path) -> CompanionHostStatus {
     CompanionHostStatus {
         host_path: host_executable_beside(app_exe),
@@ -131,24 +136,25 @@ pub fn status(app_exe: &Path) -> CompanionHostStatus {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(unix))]
 pub fn register_macos_browser(
     _app_exe: &Path,
     _browser: MacBrowser,
     _chromium_extension_id: Option<&str>,
 ) -> Result<String, String> {
-    Err("In-app browser companion registration is available on macOS.".into())
+    Err("In-app browser companion registration is available on macOS and Linux.".into())
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(unix))]
 pub fn unregister_macos_browser(_browser: MacBrowser) -> Result<bool, String> {
-    Err("In-app browser companion removal is available on macOS.".into())
+    Err("In-app browser companion removal is available on macOS and Linux.".into())
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(unix)]
 pub use macos_impl::{register_macos_browser, status, unregister_macos_browser};
 
-#[cfg(target_os = "macos")]
+/// Shared by macOS and Linux; only the folders differ.
+#[cfg(unix)]
 mod macos_impl {
     use super::*;
     use serde::{Deserialize, Serialize};
@@ -192,25 +198,63 @@ mod macos_impl {
         std::env::var_os("HOME")
             .map(PathBuf::from)
             .filter(|p| p.is_absolute())
-            .ok_or_else(|| "Could not determine your macOS home folder.".into())
+            .ok_or_else(|| "Could not determine your home folder.".into())
+    }
+
+    /// Per-user Tide folder that holds the host policy (and on Linux a stable
+    /// copy of the host, since the AppImage mount path changes every launch).
+    fn user_dir(home: &Path) -> PathBuf {
+        if cfg!(target_os = "macos") {
+            home.join("Library/Application Support/TideMusic")
+        } else {
+            home.join(".local/share/TideMusic")
+        }
     }
 
     fn policy_path(home: &Path) -> PathBuf {
-        home.join("Library/Application Support/TideMusic")
-            .join(POLICY_FILE)
+        user_dir(home).join(POLICY_FILE)
     }
 
     fn manifest_path(home: &Path, browser: MacBrowser) -> PathBuf {
-        let rel = match browser {
-            MacBrowser::Chrome => "Library/Application Support/Google/Chrome/NativeMessagingHosts",
-            MacBrowser::Edge => "Library/Application Support/Microsoft Edge/NativeMessagingHosts",
-            MacBrowser::Brave => {
-                "Library/Application Support/BraveSoftware/Brave-Browser/NativeMessagingHosts"
+        let folder = if cfg!(target_os = "macos") {
+            match browser {
+                MacBrowser::Chrome => {
+                    "Library/Application Support/Google/Chrome/NativeMessagingHosts"
+                }
+                MacBrowser::Edge => {
+                    "Library/Application Support/Microsoft Edge/NativeMessagingHosts"
+                }
+                MacBrowser::Brave => {
+                    "Library/Application Support/BraveSoftware/Brave-Browser/NativeMessagingHosts"
+                }
+                MacBrowser::Arc => "Library/Application Support/Arc/User Data/NativeMessagingHosts",
+                MacBrowser::Firefox => "Library/Application Support/Mozilla/NativeMessagingHosts",
             }
-            MacBrowser::Arc => "Library/Application Support/Arc/User Data/NativeMessagingHosts",
-            MacBrowser::Firefox => "Library/Application Support/Mozilla/NativeMessagingHosts",
+        } else {
+            match browser {
+                MacBrowser::Chrome => ".config/google-chrome/NativeMessagingHosts",
+                MacBrowser::Edge => ".config/microsoft-edge/NativeMessagingHosts",
+                MacBrowser::Brave => ".config/BraveSoftware/Brave-Browser/NativeMessagingHosts",
+                MacBrowser::Arc => ".config/chromium/NativeMessagingHosts",
+                MacBrowser::Firefox => ".mozilla/native-messaging-hosts",
+            }
         };
-        home.join(rel).join(format!("{HOST_NAME}.json"))
+        home.join(folder).join(format!("{HOST_NAME}.json"))
+    }
+
+    /// Linux: copy the host out of the AppImage to a stable per-user path that
+    /// browser manifests can keep pointing at across launches and updates.
+    #[cfg(not(target_os = "macos"))]
+    fn stable_host(home: &Path, bundled: &Path) -> Result<PathBuf, String> {
+        let bin = user_dir(home).join("bin");
+        reject_symlink_in_ancestors(&bin, home)?;
+        fs::create_dir_all(&bin).map_err(|_| "Could not create Tide's helper folder.")?;
+        let target = bin.join("tide-session-host");
+        let bytes = fs::read(bundled).map_err(|_| "Could not read tide-session-host.")?;
+        if fs::read(&target).ok().as_deref() != Some(bytes.as_slice()) {
+            atomic_write(&target, &bytes, 0o755)?;
+        }
+        Ok(target)
     }
 
     fn reject_symlink_in_ancestors(target: &Path, stop_at: &Path) -> Result<(), String> {
@@ -333,6 +377,13 @@ mod macos_impl {
                 registered_browsers.push(browser);
             }
         }
+        // Keep the stable Linux host copy current after Tide updates.
+        #[cfg(not(target_os = "macos"))]
+        if !registered_browsers.is_empty() {
+            if let Some(bundled) = &host_path {
+                let _ = stable_host(home, bundled);
+            }
+        }
         CompanionHostStatus {
             host_path,
             extension_dir,
@@ -350,6 +401,8 @@ mod macos_impl {
         let host = host_executable_beside(app_exe).ok_or_else(|| {
             "Browser companion host (tide-session-host) was not found beside Tide.".to_owned()
         })?;
+        #[cfg(not(target_os = "macos"))]
+        let host = stable_host(home, &host)?;
         let host = host
             .canonicalize()
             .map_err(|_| "Could not resolve tide-session-host executable path.")?;

@@ -1,4 +1,4 @@
-"""Attach rebuilt Mac disk images to a draft release, never to a published one.
+"""Attach rebuilt Mac disk images or Linux AppImages to a draft release, never to a published one.
 
 A published release's SHA256SUMS.txt records the digests people already
 downloaded. Rebuilt DMGs are not byte-identical, so replacing them on a public
@@ -57,9 +57,10 @@ def main():
     if not args.tag.startswith("v"):
         print("Expected v-prefixed release tag", file=sys.stderr)
         return 1
-    files = sorted([*args.dist.glob("*.dmg"), *args.dist.glob("*.dmg.sha256")])
-    if not any(path.suffix == ".dmg" for path in files):
-        print("No disk images to attach", file=sys.stderr)
+    files = sorted([*args.dist.glob("*.dmg"), *args.dist.glob("*.dmg.sha256"),
+                    *args.dist.glob("*.AppImage"), *args.dist.glob("*.AppImage.sha256")])
+    if not any(path.suffix in (".dmg", ".AppImage") for path in files):
+        print("No disk images or AppImages to attach", file=sys.stderr)
         return 1
     try:
         view = gh("release", "view", args.tag, "--json", "isDraft,assets", capture=True)
@@ -72,7 +73,7 @@ def main():
         print(error, file=sys.stderr)
         return 1
     if not uploads:
-        print(f"{args.tag} is published; verified its Mac assets and left them unchanged.")
+        print(f"{args.tag} is published; verified its assets and left them unchanged.")
         return 0
     gh("release", "upload", args.tag, *(str(args.dist / name) for name in uploads), "--clobber")
     return 0

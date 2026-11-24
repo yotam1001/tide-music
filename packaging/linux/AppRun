@@ -1,0 +1,13 @@
+#!/bin/sh
+# Tide AppImage entry point. Remembers the host's library environment so the
+# browser, file manager and restarted updates Tide launches see the system's
+# own settings, then runs the player from usr/bin.
+HERE="$(dirname "$(readlink -f "$0")")"
+for name in LD_LIBRARY_PATH LD_PRELOAD PYTHONHOME PYTHONPATH; do
+    eval "value=\${$name-}"
+    if [ -n "$value" ]; then
+        export "TIDE_HOST_$name=$value"
+    fi
+done
+unset PYTHONHOME PYTHONPATH
+exec "$HERE/usr/bin/tide-music" "$@"

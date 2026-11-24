@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>tide-music</id>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+  <name>Tide Music</name>
+  <summary>A lightweight YouTube Music player</summary>
+  <description>
+    <p>Tide plays your YouTube Music library, playlists and recommendations in a
+    small native window, with a Mini player, lyrics, Jams and desktop media controls.</p>
+  </description>
+  <launchable type="desktop-id">tide-music.desktop</launchable>
+  <url type="homepage">https://github.com/yotam1001/tide-music</url>
+  <categories>
+    <category>AudioVideo</category>
+    <category>Audio</category>
+  </categories>
+</component>
