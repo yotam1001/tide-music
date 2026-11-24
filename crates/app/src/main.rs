@@ -434,25 +434,28 @@ fn local_controls_allowed(state: &State) -> bool {
         true
     }
 }
-async fn select_zen_session(index: i32) -> Option<tide_provider::Request> {
-    let mut dialog = rfd::AsyncFileDialog::new()
-        .set_title("Connect your Zen session: select cookies.sqlite in your profile")
-        .add_filter("Zen cookie database", &["sqlite"])
-        .set_file_name("cookies.sqlite");
+fn zen_profiles_dir() -> Option<PathBuf> {
     #[cfg(target_os = "macos")]
     let profiles = std::env::var_os("HOME")
         .map(|home| PathBuf::from(home).join("Library/Application Support/zen/Profiles"));
     #[cfg(not(target_os = "macos"))]
     let profiles =
         std::env::var_os("APPDATA").map(|appdata| PathBuf::from(appdata).join("zen/Profiles"));
-    if let Some(profiles) = profiles.filter(|path| path.is_dir()) {
+    profiles.filter(|path| path.is_dir())
+}
+async fn select_zen_session(index: i32) -> Option<tide_provider::Request> {
+    let mut dialog = rfd::AsyncFileDialog::new()
+        .set_title("Connect your Zen session: select cookies.sqlite in your profile")
+        .add_filter("Zen cookie database", &["sqlite"])
+        .set_file_name("cookies.sqlite");
+    if let Some(profiles) = zen_profiles_dir() {
         dialog = dialog.set_directory(profiles);
     }
     dialog
         .pick_file()
         .await
         .map(|database| tide_provider::Request::Connect {
-            database: database.path().to_owned(),
+            database: Some(database.path().to_owned()),
             index: index.clamp(0, 9) as u32,
         })
 }
@@ -3382,6 +3385,39 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Some(u) = weak.upgrade() {
                 connect_picker(&picker_busy, state.clone(), &u, tx.clone());
             }
+        });
+    }
+    ui.set_zen_available(zen_profiles_dir().is_some());
+    {
+        // One click for people already signed in to YouTube Music in Zen,
+        // including Family Link accounts that Google keeps out of embedded
+        // sign-in windows. The helper picks the signed-in profile and the
+        // session is verified online before it replaces anything.
+        let state = state.clone();
+        let weak = ui.as_weak();
+        let tx = library_tx.clone();
+        ui.on_connect_zen(move || {
+            if !local_controls_allowed(&state.borrow()) {
+                return;
+            }
+            let Some(u) = weak.upgrade() else {
+                return;
+            };
+            let mut s = state.borrow_mut();
+            if s.library_worker.is_some() {
+                u.set_account_status("A request is still in progress. Try connecting again.".into());
+                return;
+            }
+            let index = u.get_account_index().clamp(0, 9) as u32;
+            request_library(
+                &mut s,
+                &u,
+                &tx,
+                tide_provider::Request::Connect {
+                    database: None,
+                    index,
+                },
+            );
         });
     }
     {
@@ -7194,7 +7230,7 @@ mod tests {
         }
         for request in [
             Request::Connect {
-                database: "fixture.sqlite".into(),
+                database: Some("fixture.sqlite".into()),
                 index: 1,
             },
             Request::SwitchAccount { index: 1 },

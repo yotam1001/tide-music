@@ -283,8 +283,10 @@ pub struct Card {
 #[derive(Clone, Serialize)]
 #[serde(tag = "action", rename_all = "lowercase")]
 pub enum Request {
+    /// Connect an existing Zen session. `None` asks the helper to find the
+    /// signed-in profile itself ("Connect from Zen").
     Connect {
-        database: PathBuf,
+        database: Option<PathBuf>,
         index: u32,
     },
     SwitchAccount {
@@ -2643,6 +2645,9 @@ fn execute_helper(
         }
         Response::Error { code } if code == "profile" => {
             Err("Select cookies.sqlite inside your Zen profile, or use Import session for a custom profile".into())
+        }
+        Response::Error { code } if code == "no_profile" => {
+            Err("No Zen profile signed in to YouTube Music was found. Sign in at music.youtube.com in Zen (outside a container), then try again".into())
         }
         Response::Error { code } if code == "profile_read" => {
             Err("Zen's cookie database could not be read. Close Zen after signing in, then reconnect using the same profile.".into())

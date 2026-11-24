@@ -44,7 +44,7 @@ fn outcome_message(code: i32) -> &'static str {
         #[cfg(not(target_os = "macos"))]
         6 => "Tide couldn’t save the verified session in Windows. Try again from your usual Windows account.",
         7 => "Sign-in timed out. Reopen the window when you’re ready to finish.",
-        8 => "Google blocked sign-in in the embedded window (common for Family Link or supervised accounts). Use Browser companion or Import session file from your regular browser below.",
+        8 => "Google blocked sign-in in the embedded window (common for Family Link or supervised accounts). Close this window and use Zen browser, Browser companion or Import session file below.",
         _ => "Sign-in could not finish. Retry or use the browser companion below.",
     }
 }

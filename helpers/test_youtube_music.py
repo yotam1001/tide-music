@@ -667,10 +667,46 @@ class LoginTests(unittest.TestCase):
             cookies = read_cookie_database(database, strict=True)
             self.assertEqual([cookie["value"] for cookie in cookies], ["default-fixture"])
             with closing(sqlite3.connect(database)) as lock:
+                # A running browser holds an exclusive lock. Strict reads fall
+                # back to the committed snapshot without taking a lock.
                 lock.execute("BEGIN EXCLUSIVE")
+                lock.execute("DELETE FROM moz_cookies")
+                cookies = read_cookie_database(database, strict=True)
+                self.assertEqual([cookie["value"] for cookie in cookies], ["default-fixture"])
+                self.assertEqual(read_cookie_database(database), [])
+                lock.rollback()
+            with patch("youtube_music._read_cookie_rows", side_effect=sqlite3.DatabaseError("malformed")):
                 with self.assertRaisesRegex(CookieReadError, "^profile_read$"):
                     read_cookie_database(database, strict=True)
-                lock.rollback()
+
+    def test_connect_from_zen_detects_the_most_recent_signed_in_profile(self):
+        with tempfile.TemporaryDirectory() as appdata, \
+                patch.dict("youtube_music.os.environ", {"APPDATA": appdata}):
+            self.assertEqual(connect_existing(None), {"type": "error", "code": "no_profile"})
+            root = Path(appdata) / "zen" / "Profiles"
+            root.mkdir(parents=True)
+            self.assertEqual(connect_existing(""), {"type": "error", "code": "no_profile"})
+            signed_out = self.database(root)
+            self.insert(signed_out, name="PREF", attrs="")
+            container = self.database(root)
+            self.insert(container, attrs="^userContextId=1")
+            self.assertEqual(connect_existing(None), {"type": "error", "code": "no_profile"})
+            older = self.database(root)
+            self.insert(older, value="older", attrs="")
+            newer = self.database(root)
+            self.insert(newer, value="newer", attrs="")
+            os.utime(older / "cookies.sqlite", (1_000_000, 1_000_000))
+            os.utime(newer / "cookies.sqlite", (2_000_000, 2_000_000))
+            (older / "cookies.sqlite-wal").write_bytes(b"")
+            os.utime(older / "cookies.sqlite-wal", (1_500_000, 1_500_000))
+            with patch("youtube_music.validate_session", return_value=True):
+                result = connect_existing(None, 2)
+            self.assertEqual(result["type"], "session")
+            self.assertEqual(result["headers"]["cookie"], "__Secure-3PAPISID=newer")
+            self.assertEqual(result["headers"]["x-goog-authuser"], "2")
+            os.utime(older / "cookies.sqlite-wal", (3_000_000, 3_000_000))
+            with patch("youtube_music.validate_session", return_value=True):
+                self.assertEqual(connect_existing(None)["headers"]["cookie"], "__Secure-3PAPISID=older")
 
     def test_sqlite_old_schema_row_limit_and_missing_database(self):
         with tempfile.TemporaryDirectory() as root:

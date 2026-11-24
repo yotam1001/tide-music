@@ -134,8 +134,13 @@ unpacked companion extensions in `Contents/Resources/browser-companion/{chromium
   common on Family Link accounts), and cleans up its child process group on
   cancellation. Its offline `--probe` creates an offscreen window and WebView
   and runs the offline cookie-scope check without Google traffic.
-- Because Google often blocks embedded WebViews for Family Link accounts and
-  Tide does not spoof browser User-Agents, `Tide.app` ships first-class macOS
+- The helper presents Safari's identity (WKWebView is Safari's engine), as
+  WebView2 presents Edge's on Windows, so Google accepts Family Link accounts.
+  The window fits the visible screen area, so Connect is never under the Dock,
+  and Google's regional `accounts.google.<country>/accounts/SetSID` step is
+  allowed. Opt-in navigation tracing (`TIDE_LOGIN_TRACE=<file>`) records only
+  decisions, hosts and paths.
+- As fallbacks, `Tide.app` ships one-click "Connect from Zen" and first-class macOS
   Browser Companion support (Chrome, Edge, Brave, Arc, Firefox, Zen) plus
   online-verified `Copy as cURL` session import (including Safari).
 - All mutable native-messaging manifests and the host allowlist policy

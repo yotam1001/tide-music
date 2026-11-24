@@ -25,10 +25,30 @@ fn secure_url(raw: &str) -> Option<url::Url> {
         && u.password().is_none())
     .then_some(u)
 }
+/// After sign-in Google copies the session to the account's regional
+/// domain, e.g. `https://accounts.google.co.il/accounts/SetSID`. Only that
+/// step on an `accounts.google.<country>` host is allowed.
+#[cfg(any(target_os = "macos", test))]
+fn regional_session_sync(u: &url::Url) -> bool {
+    let Some(suffix) = u
+        .host_str()
+        .and_then(|host| host.strip_prefix("accounts.google."))
+    else {
+        return false;
+    };
+    let country = suffix
+        .strip_prefix("com.")
+        .or_else(|| suffix.strip_prefix("co."))
+        .unwrap_or(suffix);
+    country.len() == 2
+        && country.bytes().all(|b| b.is_ascii_lowercase())
+        && matches!(u.path(), "/accounts/SetSID" | "/accounts/SetSIDFrame")
+}
 #[cfg(any(target_os = "macos", test))]
 fn allowed(raw: &str) -> bool {
     secure_url(raw).is_some_and(|u| {
-        matches!(
+        regional_session_sync(&u)
+            || matches!(
             u.host_str(),
             Some(
                 "music.youtube.com"
@@ -327,6 +347,7 @@ mod native {
                             mark_blocked();
                         }
                     }
+                    trace(if is_main { "nav main" } else { "nav sub" }, permitted, &raw);
                     handler.call((if permitted { 1 } else { 0 },));
                 }
             }
@@ -354,6 +375,7 @@ mod native {
                     if trusted && is_main.as_bool() && is_google_refusal_url(&raw) {
                         mark_blocked();
                     }
+                    trace(if is_main.as_bool() { "resp main" } else { "resp sub" }, trusted && show.as_bool() && !attachment, &raw);
                     handler.call((if trusted && show.as_bool() && !attachment { 1 } else { 0 },));
                 }
             }
@@ -651,6 +673,43 @@ mod native {
         });
         let _: () = msg_send![&*cookies, getAllCookies: &*callback];
     }
+    /// Opt-in diagnostics for sign-in navigation (TIDE_LOGIN_TRACE=<file>).
+    /// Records only the decision, host and path: never queries or fragments,
+    /// which can carry sign-in tokens.
+    fn trace(kind: &str, permitted: bool, raw: &str) {
+        let Some(path) = std::env::var_os("TIDE_LOGIN_TRACE") else {
+            return;
+        };
+        let place = url::Url::parse(raw)
+            .map(|u| format!("{}://{}{}", u.scheme(), u.host_str().unwrap_or(""), u.path()))
+            .unwrap_or_else(|_| raw.chars().take(32).collect());
+        if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+            use std::io::Write;
+            let _ = writeln!(file, "{kind} {} {place}", if permitted { "allow" } else { "BLOCK" });
+        }
+    }
+
+    /// `Version/<installed Safari> Safari/605.1.15`, the suffix Safari adds
+    /// to the WebKit user agent WKWebView already sends.
+    fn safari_product_token() -> String {
+        let version = std::process::Command::new("/usr/bin/plutil")
+            .args(["-extract", "CFBundleShortVersionString", "raw", "-o", "-"])
+            .arg("/Applications/Safari.app/Contents/Info.plist")
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .and_then(|output| String::from_utf8(output.stdout).ok())
+            .map(|text| text.trim().to_owned())
+            .filter(|text| {
+                !text.is_empty()
+                    && text.len() <= 16
+                    && text.bytes().all(|b| b.is_ascii_digit() || b == b'.')
+            })
+            .unwrap_or_else(|| "18.0".into());
+        format!("Version/{version} Safari/605.1.15")
+    }
+
     fn offline_cookie_probe() -> Result<(), String> {
         let now = 1_700_000_000.0;
         if capture::cookie_scope(".google.com", "/", None, now).is_some()
@@ -698,29 +757,50 @@ mod native {
             let config: Obj = msg_send![class!(WKWebViewConfiguration), new];
             let store: Obj = msg_send![class!(WKWebsiteDataStore), nonPersistentDataStore];
             let _: () = msg_send![&*config, setWebsiteDataStore: &*store];
+            // WKWebView is Safari's engine but omits Safari's product token, so
+            // Google treats it as an embedded browser and refuses supervised
+            // (Family Link) accounts. Present the installed Safari's identity,
+            // as WebView2 presents Edge's on Windows.
+            let _: () = msg_send![&*config, setApplicationNameForUserAgent: &*string(&safari_product_token())];
             let content: Obj = msg_send![&*config, userContentController];
             let script: Allocated<AnyObject> = msg_send![class!(WKUserScript), alloc];
             let script: Obj = msg_send![script, initWithSource: &*string(OBSERVER), injectionTime: 0isize, forMainFrameOnly: true];
             let _: () = msg_send![&*content, addUserScript: &*script];
             let preferences: Obj = msg_send![&*config, preferences];
             let _: () = msg_send![&*preferences, setJavaScriptCanOpenWindowsAutomatically: false];
-            let frame = NSRect::new(NSPoint::new(0., 0.), NSSize::new(800., 800.));
+            // Fit inside the usable screen area (below the menu bar, above the
+            // Dock) so the Connect button at the bottom is always reachable.
+            let screen: Option<Obj> = msg_send![class!(NSScreen), mainScreen];
+            let visible: Option<NSRect> = screen.map(|screen| msg_send![&*screen, visibleFrame]);
+            let height = visible
+                .map(|v| (v.size.height - 48.).clamp(420., 800.))
+                .unwrap_or(800.);
+            let frame = NSRect::new(NSPoint::new(0., 0.), NSSize::new(800., height));
             let window: Allocated<AnyObject> = msg_send![class!(NSWindow), alloc];
-            let window: Obj = msg_send![window, initWithContentRect: frame, styleMask: 3usize, backing: 2usize, defer: false];
+            // Titled, closable, miniaturizable and resizable.
+            let window: Obj = msg_send![window, initWithContentRect: frame, styleMask: 15usize, backing: 2usize, defer: false];
+            let _: () = msg_send![&*window, setContentMinSize: NSSize::new(520., 420.)];
             let _: () = msg_send![&*window, setReleasedWhenClosed: false];
             let _: () = msg_send![&*window, setTitle: &*string("Connect YouTube Music to Tide")];
             let root: Obj = msg_send![&*window, contentView];
             let web: Allocated<AnyObject> = msg_send![class!(WKWebView), alloc];
-            let web: Obj = msg_send![web, initWithFrame: NSRect::new(NSPoint::new(0.,96.),NSSize::new(800.,704.)), configuration: &*config];
+            let web: Obj = msg_send![web, initWithFrame: NSRect::new(NSPoint::new(0.,96.),NSSize::new(800.,height - 96.)), configuration: &*config];
+            // Width and height follow the window; the bar below stays fixed.
+            let _: () = msg_send![&*web, setAutoresizingMask: 18usize];
             let _: () = msg_send![&*web, setNavigationDelegate: &*delegate];
             let _: () = msg_send![&*web, setUIDelegate: &*delegate];
             let _: () = msg_send![&*root, addSubview: &*web];
             let label: Obj =
                 msg_send![class!(NSTextField), wrappingLabelWithString: &*string(PROMPT_DEFAULT)];
             let _: () = msg_send![&*label, setFrame: NSRect::new(NSPoint::new(16.,44.),NSSize::new(768.,42.))];
+            // Flexible width, pinned to the bottom edge.
+            let _: () = msg_send![&*label, setAutoresizingMask: 34usize];
             let _: () = msg_send![&*root, addSubview: &*label];
             let button: Obj = msg_send![class!(NSButton), buttonWithTitle: &*string("Connect this profile"), target: &*delegate, action: sel!(connect:)];
             let _: () = msg_send![&*button, setFrame: NSRect::new(NSPoint::new(16.,8.),NSSize::new(210.,30.))];
+            let _: () = msg_send![&*button, setAutoresizingMask: 32usize];
+            // Return activates Connect once it is enabled.
+            let _: () = msg_send![&*button, setKeyEquivalent: &*string("\r")];
             let _: () = msg_send![&*root, addSubview: &*button];
             let _: () = msg_send![&*button, setEnabled: false];
             STATE.with(|s| {
@@ -734,6 +814,12 @@ mod native {
                 let request: Obj = msg_send![class!(NSURLRequest), requestWithURL: &*url];
                 let _: Option<Obj> = msg_send![&*web, loadRequest: &*request];
                 let _: () = msg_send![&*window, center];
+                if let Some(visible) = visible {
+                    let mut placed: NSRect = msg_send![&*window, frame];
+                    placed.origin.x = visible.origin.x + ((visible.size.width - placed.size.width) / 2.).max(0.);
+                    placed.origin.y = visible.origin.y + ((visible.size.height - placed.size.height) / 2.).max(0.);
+                    let _: () = msg_send![&*window, setFrame: placed, display: true];
+                }
                 let _: () =
                     msg_send![&*window, makeKeyAndOrderFront: std::ptr::null::<AnyObject>()];
                 #[allow(deprecated)]
@@ -805,6 +891,9 @@ mod tests {
             "https://myaccount.google.com/",
             "https://gds.google.com/web/chip",
             "https://ogs.google.com/u/0/widget/account",
+            "https://accounts.google.co.il/accounts/SetSID",
+            "https://accounts.google.de/accounts/SetSID",
+            "https://accounts.google.com.au/accounts/SetSID",
         ] {
             assert!(allowed(u), "expected main-frame host allowed: {u}");
         }
@@ -814,6 +903,12 @@ mod tests {
             "https://@music.youtube.com/",
             "https://music.youtube.com:444/",
             "https://accounts.google.com.evil.org/",
+            "https://accounts.google.co.il/",
+            "https://accounts.google.co.il/ServiceLogin",
+            "https://accounts.google.evil/accounts/SetSID",
+            "https://accounts.google.co.evil.il/accounts/SetSID",
+            "https://accounts.google.co.il.evil.org/accounts/SetSID",
+            "http://accounts.google.co.il/accounts/SetSID",
             "file:///tmp/a",
         ] {
             assert!(!allowed(u), "expected main-frame host rejected: {u}");

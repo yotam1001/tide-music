@@ -1,5 +1,7 @@
 //! Published stable releases only. No Google sessions or browser state enter this module.
 mod handoff;
+#[cfg(target_os = "macos")]
+mod mac_install;
 mod publisher;
 
 use semver::Version;
@@ -20,7 +22,11 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+#[cfg(not(target_os = "macos"))]
 const MAX_INSTALLER: u64 = 96 * 1024 * 1024;
+// The Mac disk image bundles mpv, yt-dlp and Python.
+#[cfg(target_os = "macos")]
+const MAX_INSTALLER: u64 = 512 * 1024 * 1024;
 const CACHE_MARKER: &str = "Tide updater cache v1\n";
 
 #[derive(Clone, Debug)]
@@ -88,26 +94,76 @@ fn mac_download_url(version: &Version, filename: &str) -> String {
     format!("https://github.com/yotam1001/tide-music/releases/download/v{version}/{filename}")
 }
 
+/// The disk image for this Mac at the signed release version: its exact
+/// GitHub URL, the SHA-256 published beside it and its size. Ok(None) when the
+/// release has no image for this architecture yet.
 #[cfg(target_os = "macos")]
-fn mac_download_available(version: &Version) -> Result<bool, String> {
+fn mac_image_identity(version: &Version) -> Result<Option<(String, String, u64)>, String> {
+    const FAILED: &str = "Could not check for the Mac disk image. Try again later.";
+    let client = agent(15);
     let url = mac_download_url(version, MAC_DMG);
-    let response = agent(10)
-        .head(&url)
-        .header("User-Agent", "Tide-Updater")
-        .call()
-        .map_err(|_| "Could not check for the Mac disk image. Try again later.")?;
-    // The fixed GitHub release URL serves the file or redirects to its asset
-    // host. Inspect headers only, leaving the actual download to the browser.
-    match response.status().as_u16() {
-        200 => Ok(true),
-        301 | 302 | 303 | 307 | 308 => Ok(response
-            .headers()
-            .get("location")
-            .and_then(|header| header.to_str().ok())
-            .is_some_and(allowed_download)),
-        404 => Ok(false),
-        _ => Err("Could not check for the Mac disk image. Try again later.".into()),
+    // Follow release redirects to GitHub's asset hosts only.
+    let follow = |start: &str, head: bool| -> Result<Option<ureq::http::Response<ureq::Body>>, String> {
+        let mut url = start.to_owned();
+        for _ in 0..4 {
+            if !allowed_download(&url) {
+                return Err(FAILED.into());
+            }
+            let request = if head { client.head(&url) } else { client.get(&url) };
+            let response = request
+                .header("User-Agent", "Tide-Updater")
+                .call()
+                .map_err(|_| FAILED)?;
+            match response.status().as_u16() {
+                200 => return Ok(Some(response)),
+                404 => return Ok(None),
+                301 | 302 | 303 | 307 | 308 => {
+                    url = response
+                        .headers()
+                        .get("location")
+                        .and_then(|header| header.to_str().ok())
+                        .ok_or(FAILED)?
+                        .to_owned();
+                }
+                _ => return Err(FAILED.into()),
+            }
+        }
+        Err(FAILED.into())
+    };
+    let Some(image) = follow(&url, true)? else {
+        return Ok(None);
+    };
+    let size = image
+        .headers()
+        .get("content-length")
+        .and_then(|header| header.to_str().ok())
+        .and_then(|text| text.parse::<u64>().ok())
+        .ok_or(FAILED)?;
+    let Some(mut sums) = follow(&format!("{url}.sha256"), false)? else {
+        return Ok(None);
+    };
+    let mut text = String::new();
+    sums.body_mut()
+        .as_reader()
+        .take(512)
+        .read_to_string(&mut text)
+        .map_err(|_| FAILED)?;
+    let digest = mac_image_digest(&text, MAC_DMG).ok_or(FAILED)?;
+    Ok(Some((url, digest, size)))
+}
+
+/// `<sha256>  <filename>` as written by shasum, for exactly `filename`.
+#[cfg(any(test, target_os = "macos"))]
+fn mac_image_digest(text: &str, filename: &str) -> Option<String> {
+    let mut lines = text.lines().filter(|line| !line.trim().is_empty());
+    let line = lines.next()?;
+    if lines.next().is_some() {
+        return None;
     }
+    let (digest, name) = line.split_once(char::is_whitespace)?;
+    let name = name.trim_start().trim_start_matches('*');
+    (digest.len() == 64 && digest.bytes().all(|b| b.is_ascii_hexdigit()) && name == filename)
+        .then(|| digest.to_lowercase())
 }
 
 fn agent(timeout: u64) -> ureq::Agent {
@@ -140,8 +196,18 @@ pub(super) fn check() -> Result<Option<Release>, String> {
         unix_time()?,
     )?);
     #[cfg(target_os = "macos")]
-    if !mac_download_available(&release.version)? {
-        return Ok(None);
+    {
+        // The signature names the version; the Mac image is the one published
+        // under that exact version, checked against its release checksum.
+        let Some((url, digest, size)) = mac_image_identity(&release.version)? else {
+            return Ok(None);
+        };
+        if !(1..=MAX_INSTALLER).contains(&size) {
+            return Err("Invalid Mac disk image size".into());
+        }
+        release.url = url;
+        release.digest = digest;
+        release.size = size;
     }
     Ok(Some(release))
 }
@@ -449,8 +515,13 @@ fn stage_installer_controlled(
 ) -> Result<PathBuf, String> {
     transfer.check()?;
     let directory = cache_directory(base)?;
-    let partial = directory.join("TideSetup.part");
-    let destination = directory.join("TideSetup.exe");
+    #[cfg(not(target_os = "macos"))]
+    let (partial, destination) = (
+        directory.join("TideSetup.part"),
+        directory.join("TideSetup.exe"),
+    );
+    #[cfg(target_os = "macos")]
+    let (partial, destination) = (directory.join("Tide.part"), directory.join("Tide.dmg"));
     let lock = directory.join(".update-lock");
     for path in [&partial, &destination, &lock] {
         plain(path)?;
@@ -481,6 +552,7 @@ fn stage_installer_controlled(
     Ok(destination)
 }
 
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 fn installed_player(base: &Path, executable: &Path) -> bool {
     let root = base.join("Programs/Tide");
     let record_path = root.join(".tide-install.json");
@@ -591,6 +663,14 @@ pub(super) struct Updater {
     task: Task,
 }
 impl Updater {
+    #[cfg(target_os = "macos")]
+    fn installable(&self) -> bool {
+        self.executable
+            .as_deref()
+            .and_then(mac_install::current_bundle)
+            .is_some()
+    }
+    #[cfg(not(target_os = "macos"))]
     fn installable(&self) -> bool {
         cfg!(windows)
             && self
@@ -629,11 +709,16 @@ impl Updater {
             .name("tide-update".into())
             .spawn(move || {
                 let completion = if install {
-                    Completion::Downloaded(download(
-                        &candidate.unwrap(),
-                        &base.unwrap(),
-                        &task_transfer,
-                    ))
+                    let candidate = candidate.unwrap();
+                    let downloaded = download(&candidate, &base.unwrap(), &task_transfer);
+                    // Mac: unpack and check the new Tide.app now, so Restart
+                    // only swaps bundles.
+                    #[cfg(target_os = "macos")]
+                    let downloaded = downloaded.and_then(|image| {
+                        task_transfer.check()?;
+                        mac_install::stage(&image, &candidate.version.to_string())
+                    });
+                    Completion::Downloaded(downloaded)
                 } else {
                     Completion::Checked(check().map(|candidate| {
                         let cached = if cfg!(windows) {
@@ -794,11 +879,17 @@ pub(super) fn wire(ui: &super::AppWindow, enabled: bool) -> Rc<RefCell<Updater>>
         .filter(|p| p.is_absolute())
         .map(|home| home.join("Library/Caches/TideMusic"));
     let executable = std::env::current_exe().ok();
+    #[cfg(not(target_os = "macos"))]
     let installable = cfg!(windows)
         && base
             .as_deref()
             .zip(executable.as_deref())
             .is_some_and(|(base, exe)| installed_player(base, exe));
+    #[cfg(target_os = "macos")]
+    let installable = executable
+        .as_deref()
+        .and_then(mac_install::current_bundle)
+        .is_some();
     ui.set_update_installable(installable);
     let owner = Rc::new(RefCell::new(Updater {
         timer: slint::Timer::default(),
@@ -862,6 +953,32 @@ pub(super) fn wire(ui: &super::AppWindow, enabled: bool) -> Rc<RefCell<Updater>>
                 let Some(release) = updater.available.as_ref() else {
                     return;
                 };
+                #[cfg(target_os = "macos")]
+                {
+                    let bundle = updater
+                        .executable
+                        .as_deref()
+                        .and_then(mac_install::current_bundle);
+                    let result = bundle.ok_or_else(|| "This copy of Tide cannot be replaced in place. Move it to Applications and retry.".to_string())
+                        .and_then(|bundle| mac_install::apply(&path, &bundle, &release.version.to_string()));
+                    match result {
+                        Ok(()) => {
+                            ui.set_update_busy(true);
+                            ui.set_update_phase(4);
+                            ui.set_update_status("Installing the update. Tide reopens in a moment…".into());
+                            let _ = slint::quit_event_loop();
+                        }
+                        Err(message) => updater.restart_failed(
+                            &ui,
+                            LaunchFailure {
+                                message,
+                                keep_ready: false,
+                            },
+                        ),
+                    }
+                    return;
+                }
+                #[allow(unreachable_code)]
                 match launch(&path, release) {
                     Ok(pending) => {
                         updater.task = Task::Preparing(pending);
@@ -995,6 +1112,29 @@ mod tests {
             release_notes_url(None),
             "https://github.com/yotam1001/tide-music/releases/latest"
         );
+    }
+
+    #[test]
+    fn mac_image_digest_requires_one_line_for_exactly_the_expected_image() {
+        let digest = "164efd12ddb48d105f13d46473cc7c4a099e3e8b4fa2c268bd5ff654bfc454f6";
+        assert_eq!(
+            mac_image_digest(&format!("{digest}  Tide.dmg\n"), "Tide.dmg").as_deref(),
+            Some(digest)
+        );
+        assert_eq!(
+            mac_image_digest(&format!("{}  Tide.dmg", digest.to_uppercase()), "Tide.dmg")
+                .as_deref(),
+            Some(digest)
+        );
+        for invalid in [
+            format!("{digest}  Tide-Intel.dmg"),
+            format!("{digest}  Tide.dmg\n{digest}  Tide.dmg"),
+            format!("{}  Tide.dmg", &digest[1..]),
+            format!("{}g  Tide.dmg", &digest[1..]),
+            String::new(),
+        ] {
+            assert_eq!(mac_image_digest(&invalid, "Tide.dmg"), None, "{invalid}");
+        }
     }
 
     #[test]
