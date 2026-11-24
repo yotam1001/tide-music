@@ -72,7 +72,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: macos-developer-build
-      - run: brew install mpv yt-dlp
+      - run: brew install mpv yt-dlp deno
       - run: cargo build --release --locked -p tide-music
       - run: cargo build --release --locked -p tide-provider --bin tide-login --features tide-provider/native-login
       - run: cargo build --release --locked -p tide-provider --bin tide-session-host
