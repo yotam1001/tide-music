@@ -44,10 +44,9 @@ jobs:
           xvfb-run -a target/debug/tide-login --probe
       - name: Platform integrations on a headless X11 + D-Bus session
         run: |
-          cargo build -p tide-music --locked
-          xvfb-run -a dbus-run-session -- target/debug/tide-music --smoke-jam-ownership
           # MPRIS driven by a D-Bus client, Mini pin/opacity on a real X
-          # window, and global chords pressed through XTEST.
+          # window, and global chords pressed through XTEST. (The Jam smoke
+          # needs mpv and runs against the bundled runtime in the AppImage job.)
           xvfb-run -a dbus-run-session -- cargo test -p tide-linux --test desktop --locked -- --ignored --test-threads=1
       - name: Session key storage without a keyring (0600 key-file fallback)
         run: |
