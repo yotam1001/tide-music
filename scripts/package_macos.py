@@ -59,6 +59,15 @@ def runtime(arch, resources, work):
     if expected not in sums.read_text().splitlines():
         raise RuntimeError('yt-dlp digest not found in official SHA2-256SUMS')
     (resources / 'bin/yt-dlp').chmod(0o755)
+    # yt-dlp needs a JavaScript runtime to solve YouTube's signature challenge
+    # for signed-in requests; without it only images are offered. Tide puts
+    # bin/ on the PATH of mpv and yt-dlp, as Windows does with deno.exe.
+    deno = lock['deno'][arch]
+    archive = work / 'deno.zip'
+    download(deno, archive)
+    with zipfile.ZipFile(archive) as z:
+        (resources / 'bin/deno').write_bytes(z.read('deno'))
+    (resources / 'bin/deno').chmod(0o755)
     account_helper(arch, lock, resources, work)
     shutil.copy(PACK / 'runtime.lock.json', resources)
 

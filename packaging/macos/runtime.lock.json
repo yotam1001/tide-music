@@ -36,6 +36,20 @@
       "license": "Unlicense"
     }
   },
+  "deno": {
+    "arm64": {
+      "url": "https://github.com/denoland/deno/releases/download/v2.9.7/deno-aarch64-apple-darwin.zip",
+      "sha256": "5cd46d6268f6f78f5d88bdc7159d20bd44cdaa4b3303474839f87ec6fe7ae25c",
+      "version": "2.9.7",
+      "license": "MIT (Deno); third-party notices in the Deno repository"
+    },
+    "x86_64": {
+      "url": "https://github.com/denoland/deno/releases/download/v2.9.7/deno-x86_64-apple-darwin.zip",
+      "sha256": "95daaff11c116a52ad54785e7914c8e9c9cdcaba793c5ed929c74ca2d8e6259a",
+      "version": "2.9.7",
+      "license": "MIT (Deno); third-party notices in the Deno repository"
+    }
+  },
   "python": {
     "arm64": {
       "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261026/cpython-3.14.10%2B20261026-aarch64-apple-darwin-install_only_stripped.tar.gz",

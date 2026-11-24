@@ -31,7 +31,9 @@ class MacOSPlistTests(unittest.TestCase):
         self.assertEqual(lock['minimum_macos'], '14.0')
         self.assertEqual(set(lock['mpv']), {'arm64', 'x86_64'})
         self.assertEqual(set(lock['python']), {'arm64', 'x86_64'})
+        self.assertEqual(set(lock['deno']), {'arm64', 'x86_64'})
         entries = [*lock['mpv'].values(), lock['yt-dlp'], lock['yt-dlp']['checksums'],
+                   *lock['deno'].values(),
                    *lock['python'].values(), *lock['helper_wheels']]
         for entry in entries:
             with self.subTest(url=entry['url']):
@@ -43,7 +45,7 @@ class MacOSPlistTests(unittest.TestCase):
             self.assertTrue(entry['version'])
             self.assertEqual(entry['ffmpeg_license'], 'GPL-3.0-or-later')
         for name in ['GPL-2.0.txt', 'GPL-3.0.txt', 'LGPL-2.1.txt', 'LGPL-3.0.txt',
-                     'yt-dlp-LICENSE.txt', 'mpv-Copyright.txt', 'FFmpeg-LICENSE.md']:
+                     'yt-dlp-LICENSE.txt', 'mpv-Copyright.txt', 'FFmpeg-LICENSE.md', 'Deno-LICENSE.md']:
             self.assertTrue((ROOT / 'packaging/macos/licenses' / name).is_file())
 
     def test_helper_wheels_match_windows_pins(self):
