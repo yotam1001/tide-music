@@ -49,6 +49,8 @@ export global Theme {
     pure public function accent-for(light: bool) -> color { return light ? #b45448 : #c43f68; }
     pure public function selected-for(light: bool) -> color { return light ? #e8d5cb : #2e2029; }
     pure public function selected-ink-for(light: bool) -> color { return light ? #88463e : #f2b7c8; }
+    // Dim behind modal cards (updater, playlist chooser).
+    out property <color> scrim: self.light ? #00000038 : #00000070;
     // Placeholder art: a stable gradient per title instead of a grey square.
     public pure function art(seed: int) -> brush {
         return seed == 0 ? @linear-gradient(140deg, #c43f68 0%, #6a3fb5 100%)
@@ -80,6 +82,20 @@ export global LayoutMetrics {
     out property <length> home-row-gap: 8px;
     out property <length> queue-row-height: 66px;
     out property <length> queue-heading-height: 28px;
+}
+
+// The same switch as PreferenceRow, small enough to sit on a section heading.
+export component ToggleSwitch inherits Rectangle {
+    in property <bool> checked;
+    in property <bool> enabled: true;
+    in property <string> label;
+    callback toggled();
+    width: 34px; height: 20px; border-radius: 10px;
+    opacity: root.enabled ? 1 : 0.45;
+    background: root.checked ? Theme.accent : Theme.outline;
+    border-width: native.has-focus ? 2px : 0px; border-color: Theme.focus;
+    Rectangle { x: root.checked ? 16px : 2px; y: 2px; width: 16px; height: 16px; border-radius: 8px; background: #fff8f6; animate x { duration: 100ms; } }
+    native := CheckBox { width: parent.width; height: parent.height; opacity: 0; enabled: root.enabled; checked: root.checked; accessible-label: root.label; toggled => { native.focus(); root.toggled(); } }
 }
 
 // Preferences are rows with independent labels, rather than a wall of buttons.
@@ -129,6 +145,7 @@ export component SearchMark inherits Path {
 
 export component VolumeMark inherits Path {
     in property <color> ink;
+    in property <bool> muted: false;
     width: 18px;
     height: 18px;
     viewbox-width: 24;
@@ -136,12 +153,14 @@ export component VolumeMark inherits Path {
     fill: Colors.transparent;
     stroke: root.ink;
     stroke-width: 1.5px;
-    commands: "M 3 9 L 7 9 L 12 5 L 12 19 L 7 15 L 3 15 Z M 16 8 C 19 10 19 14 16 16 M 19 5 C 24 9 24 15 19 19";
+    commands: root.muted ? "M 3 9 L 7 9 L 12 5 L 12 19 L 7 15 L 3 15 Z M 16 9 L 22 15 M 22 9 L 16 15"
+        : "M 3 9 L 7 9 L 12 5 L 12 19 L 7 15 L 3 15 Z M 16 8 C 19 10 19 14 16 16 M 19 5 C 24 9 24 15 19 19";
 }
 
 // The native slider supplies pointer, keyboard, focus and accessibility actions.
 // Its value drives a tiny code-native treatment in the approved accent colors.
 export component TideSlider inherits Rectangle {
+    in property <bool> show-thumb: true;
     in property <float> minimum: 0;
     in property <float> maximum: 100;
     in property <float> value: 0;
@@ -201,7 +220,8 @@ export component TideSlider inherits Rectangle {
         border-radius: 2px;
         background: root.enabled ? root.accent : (Theme.rail-disabled);
     }
-    Rectangle {
+    // A failed song's bar shows no thumb to grab.
+    if root.show-thumb : Rectangle {
         x: 3px + max(0px, root.width - 20px) * root.fraction;
         y: (root.height - 14px) / 2;
         width: 14px;
@@ -428,13 +448,13 @@ export component TransportButtons inherits Rectangle {
             clicked => { root.previous-track(); }
         }
 
-        TideButton { quiet: true;
+        TideButton { quiet: root.enabled;
             enabled: root.enabled;
             width: 48px;
             height: 44px;
-            label: root.paused ? "Play" : "Pause";
+            label: root.enabled ? (root.paused ? "Play" : "Pause") : "Playback is controlled elsewhere";
             caption: root.paused ? "▶" : "Ⅱ";
-            active: true;
+            active: root.enabled;
             round: true;
             caption-size: 17px;
             surface-color: root.surface;

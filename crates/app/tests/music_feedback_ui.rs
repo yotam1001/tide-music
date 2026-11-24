@@ -104,14 +104,38 @@ fn native_ratings_remain_reachable_and_do_not_take_over_transport() {
         );
         ui.set_rating_busy(false);
     }
+    // A liked song with the confirmation the app shows after rating.
     ui.set_light_mode(false);
+    ui.set_current_rating(1);
+    ui.set_feedback_notice("Liked on YouTube Music".into());
+    ui.set_feedback_undo(true);
+    let undone = Rc::new(RefCell::new(0));
+    let captured = undone.clone();
+    ui.on_undo_feedback(move || *captured.borrow_mut() += 1);
+    draw(&window, 1140, 800, "ratings-liked-1140");
+    // Undo sits just before the toast's close button.
+    for x in (770..1110).step_by(8) {
+        click(&ui, x as f32, 800.0 - 110.0 - 32.0);
+        if *undone.borrow() > 0 {
+            break;
+        }
+    }
+    assert_eq!(
+        *undone.borrow(),
+        1,
+        "Undo on the rating toast is unreachable"
+    );
+    ui.set_feedback_undo(false);
+    ui.set_feedback_notice("".into());
+    ui.set_current_rating(0);
     ui.set_jam_available(true);
     ui.set_jam_active(true);
     ui.set_jam_guest(true);
     ui.set_collapsed(true);
     draw(&window, 700, 166, "ratings-mini-guest");
     let before = ratings.borrow().len();
-    click(&ui, 588.0, 67.0);
+    // Mini controls, right to left: Expand, Smaller, Pin, Dislike, Like.
+    click(&ui, 544.0, 67.0);
     assert_eq!(
         ratings.borrow().len(),
         before + 1,
@@ -164,7 +188,7 @@ fn native_ratings_remain_reachable_and_do_not_take_over_transport() {
     ui.set_collapsed(true);
     draw(&window, 700, 132, "mini-pin-off");
     let before_ratings = ratings.borrow().len();
-    click(&ui, 622.0, 36.0);
+    click(&ui, 582.0, 36.0);
     assert_eq!(*pins.borrow(), 1, "Mini pin is not reachable");
     assert!(ui.get_mini_pinned());
     assert_eq!(
@@ -174,11 +198,11 @@ fn native_ratings_remain_reachable_and_do_not_take_over_transport() {
     );
     assert_eq!(*transport.borrow(), 0, "Pin also changed playback");
     draw(&window, 700, 132, "mini-pin-on");
-    // One size button: the first click shrinks the mini player to one row,
-    // the second (in the same corner) returns to the full window.
+    // Smaller shrinks the mini player to one row; the corner button in both
+    // sizes returns to the full window.
     let weak = ui.as_weak();
     ui.on_shrink_mini(move || weak.upgrade().unwrap().set_mini_small(true));
-    click(&ui, 660.0, 36.0);
+    click(&ui, 623.0, 36.0);
     assert!(ui.get_mini_small(), "Smaller mini player is not reachable");
     assert!(ui.get_collapsed(), "Shrinking left the mini player");
     draw(&window, 380, 80, "mini-small");
@@ -207,6 +231,12 @@ fn native_ratings_remain_reachable_and_do_not_take_over_transport() {
             subtitle: "12 songs".into(),
             ..Default::default()
         },
+        PlaylistRow {
+            id: "PLthird".into(),
+            title: "Third editable playlist".into(),
+            subtitle: "3 songs".into(),
+            ..Default::default()
+        },
     ])));
     let chosen = Rc::new(RefCell::new(Vec::new()));
     let captured = chosen.clone();
@@ -222,7 +252,10 @@ fn native_ratings_remain_reachable_and_do_not_take_over_transport() {
         draw(&window, width, height, &format!("playlist-picker-{width}"));
         let x = width as f32 - 200.0;
         let before = chosen.borrow().len();
-        click(&ui, x, 168.0);
+        // The chooser is a floating card: header, the song, New playlist, then rows.
+        // Short windows fold the song into the header, so rows start higher.
+        let row = if height < 500 { 180.0 } else { 240.0 };
+        click(&ui, x, row);
         assert_eq!(
             chosen.borrow().len(),
             before + 1,
@@ -230,7 +263,7 @@ fn native_ratings_remain_reachable_and_do_not_take_over_transport() {
         );
         assert_eq!(chosen.borrow().last(), Some(&0));
         ui.set_playlist_choices_busy(true);
-        click(&ui, x, 168.0);
+        click(&ui, x, row);
         assert_eq!(
             chosen.borrow().len(),
             before + 1,
@@ -238,9 +271,10 @@ fn native_ratings_remain_reachable_and_do_not_take_over_transport() {
         );
         ui.set_playlist_choices_busy(false);
         let before = *refreshed.borrow();
-        click(&ui, x, height as f32 - 174.0);
+        // Refresh and close sit together in the card's header.
+        click(&ui, width as f32 - 76.0, 108.0);
         assert_eq!(*refreshed.borrow(), before + 1, "Refresh is clipped");
-        click(&ui, width as f32 - 28.0, 94.0);
+        click(&ui, width as f32 - 40.0, 108.0);
         assert!(!ui.get_playlist_picker_open(), "Chooser cannot be closed");
         ui.set_playlist_picker_open(true);
         draw(&window, width, height, "playlist-picker-keyboard");
@@ -253,9 +287,10 @@ fn native_ratings_remain_reachable_and_do_not_take_over_transport() {
         );
     }
     ui.set_playlist_picker_open(true);
+    // Scrolled to the end: one whole row is visible at 650x420.
     ui.set_playlist_picker_artwork_y(-72.0);
     draw(&window, 650, 420, "playlist-picker-scrolled");
-    click(&ui, 450.0, 168.0);
+    click(&ui, 450.0, 180.0);
     assert_eq!(
         chosen.borrow().last(),
         Some(&1),
@@ -273,6 +308,7 @@ fn native_ratings_remain_reachable_and_do_not_take_over_transport() {
     let saved = Rc::new(RefCell::new(Vec::new()));
     let captured = saved.clone();
     ui.on_add_to_playlist(move |origin, index| captured.borrow_mut().push((origin, index)));
+    // In a Jam the menu starts with Add to shared queue.
     for (guest, down_count) in [(false, 4), (true, 2)] {
         ui.set_jam_guest(guest);
         draw(&window, 1140, 800, "playlist-menu-before");
@@ -325,7 +361,8 @@ fn native_ratings_remain_reachable_and_do_not_take_over_transport() {
     draw(&window, 1140, 800, "playlist-editable");
     click(&ui, 1087.0, 283.0);
     draw(&window, 1140, 800, "playlist-menu-owned");
-    for _ in 0..5 {
+    // Remove is last, in its own group after Copy song link.
+    for _ in 0..6 {
         ui.window().dispatch_event(WindowEvent::KeyPressed {
             text: slint::platform::Key::DownArrow.into(),
         });

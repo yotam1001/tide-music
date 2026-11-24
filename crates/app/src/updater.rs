@@ -76,6 +76,13 @@ const MAC_DMG: &str = "Tide.dmg";
 #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
 const MAC_DMG: &str = "Tide-Intel.dmg";
 
+fn release_notes_url(version: Option<&Version>) -> String {
+    match version {
+        Some(version) => format!("https://github.com/yotam1001/tide-music/releases/tag/v{version}"),
+        None => "https://github.com/yotam1001/tide-music/releases/latest".into(),
+    }
+}
+
 #[cfg(any(test, target_os = "macos"))]
 fn mac_download_url(version: &Version, filename: &str) -> String {
     format!("https://github.com/yotam1001/tide-music/releases/download/v{version}/{filename}")
@@ -659,7 +666,7 @@ impl Updater {
         ui.set_update_busy(true);
         ui.set_update_status(
             if install {
-                "Downloading and verifying update…"
+                "Tide checks the download before it installs."
             } else {
                 "Checking GitHub for updates…"
             }
@@ -745,12 +752,20 @@ impl Updater {
                 self.ready = cached;
                 ui.set_update_phase(if self.ready.is_some() { 2 } else { 0 });
                 ui.set_update_progress(if self.ready.is_some() { 100.0 } else { 0.0 });
+                // The title and version line already name the release; say what it costs.
                 let status = candidate
                     .as_ref()
-                    .map(|r| format!("Tide {} is available", r.version))
+                    .map(|r| format!("About {} MB to download", r.size.div_ceil(1024 * 1024)))
                     .unwrap_or_else(|| "No newer stable release is available".into());
                 self.available = candidate;
                 ui.set_update_available(self.available.is_some());
+                ui.set_update_version(
+                    self.available
+                        .as_ref()
+                        .map(|r| r.version.to_string())
+                        .unwrap_or_default()
+                        .into(),
+                );
                 ui.set_update_status(status.into());
             }
             Completion::Checked(Err(error)) | Completion::Downloaded(Err(error)) => {
@@ -793,6 +808,18 @@ pub(super) fn wire(ui: &super::AppWindow, enabled: bool) -> Rc<RefCell<Updater>>
         ready: None,
         task: Task::Idle,
     }));
+    let state = owner.clone();
+    let weak = ui.as_weak();
+    // "What's new": the public release page for the offered version. Opened
+    // only on click; nothing is fetched in the background.
+    ui.on_open_update_notes(move || {
+        let url = release_notes_url(state.borrow().available.as_ref().map(|r| &r.version));
+        if let Err(error) = crate::platform::open_web_page(&url) {
+            if let Some(ui) = weak.upgrade() {
+                ui.set_update_status(error.into());
+            }
+        }
+    });
     let state = owner.clone();
     let weak = ui.as_weak();
     ui.on_check_updates(move || {
@@ -957,6 +984,18 @@ mod tests {
     }
     #[cfg(windows)]
     use serde_json::json;
+
+    #[test]
+    fn release_notes_open_the_offered_version() {
+        assert_eq!(
+            release_notes_url(Some(&Version::parse("0.4.36").unwrap())),
+            "https://github.com/yotam1001/tide-music/releases/tag/v0.4.36"
+        );
+        assert_eq!(
+            release_notes_url(None),
+            "https://github.com/yotam1001/tide-music/releases/latest"
+        );
+    }
 
     #[test]
     fn mac_update_download_targets_the_offered_version_and_architecture() {

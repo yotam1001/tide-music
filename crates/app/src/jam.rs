@@ -835,7 +835,8 @@ pub fn tick(s: &mut State, u: &AppWindow, tx: &mpsc::SyncSender<LibraryResult>) 
             u.set_jam_members(slint::ModelRc::new(slint::VecModel::from(rows)));
             u.set_jam_status(
                 format!(
-                    "Hosting · {guests} guest(s){}",
+                    "Hosting · {guests} {}{}",
+                    if guests == 1 { "listener" } else { "listeners" },
                     if open { "" } else { " · room locked" }
                 )
                 .into(),

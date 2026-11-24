@@ -14,10 +14,11 @@ doctest = false
 [features]
 default = ["jams"]
 jams = ["experimental-jams"]
-experimental-jams = ["dep:tide-jam-lab", "dep:zeroize", "dep:arboard"]
+experimental-jams = ["dep:tide-jam-lab", "dep:zeroize"]
 
 [dependencies]
-arboard = { version = "3", default-features = false, optional = true }
+# Clipboard for Jam invites and "Copy song link".
+arboard = { version = "3", default-features = false }
 tide-core = { path = "../core" }
 tide-playback = { path = "../playback" }
 tide-windows = { path = "../windows" }

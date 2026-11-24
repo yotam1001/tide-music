@@ -1,7 +1,7 @@
 // The queue drawer. Drag geometry is shared with the native input tests.
 import { LineEdit, ListView } from "std-widgets.slint";
 import { TrackRow } from "model.slint";
-import { Theme, LayoutMetrics, PreferenceRow, LibraryButton } from "theme.slint";
+import { Theme, LayoutMetrics, PreferenceRow, LibraryButton, ToggleSwitch } from "theme.slint";
 import { EmptyState, ActionMenu, SongRow, Cover } from "components.slint";
 
 // Each row tests the captured pointer against its actual bounds, including section
@@ -16,6 +16,11 @@ export component QueueItem inherits Rectangle {
     in property <int> index;
     in property <int> current-index;
     in property <bool> heading;
+    // The Autoplay section heading carries its own switch.
+    in property <bool> autoplay-enabled;
+    // Off while filtering: the drawer's bottom row holds the switch then.
+    in property <bool> autoplay-switch: true;
+    callback toggle-autoplay();
     in property <bool> light-mode;
     in property <int> drag-source: -1;
     in property <bool> drag-recommended;
@@ -51,12 +56,18 @@ export component QueueItem inherits Rectangle {
     height: song.height + (root.heading ? LayoutMetrics.queue-heading-height : 0px);
     VerticalLayout {
         spacing: 0px;
-        if root.heading : Text {
+        if root.heading && root.track.recommended && root.index != root.current-index : HorizontalLayout {
+            height: LayoutMetrics.queue-heading-height; padding-right: 8px; spacing: 8px; cross-axis-alignment: center;
+            Text { horizontal-stretch: 1; text: "Autoplay · similar songs"; color: Theme.muted; font-size: 12px; font-weight: 700; letter-spacing: 0.3px; vertical-alignment: center; }
+            if root.autoplay-switch : ToggleSwitch { checked: root.autoplay-enabled; enabled: root.enabled; label: "Autoplay similar songs when the queue ends"; toggled => { root.toggle-autoplay(); } }
+        }
+        if root.heading && !(root.track.recommended && root.index != root.current-index) : Text {
             height: LayoutMetrics.queue-heading-height;
-            text: root.index == root.current-index ? "Now playing" : root.track.recommended ? "Autoplay" : "Up next";
-            color: Theme.cover-ink;
-            font-size: 10px;
-            font-weight: 650;
+            text: root.index == root.current-index ? "Now playing" : "Up next";
+            color: Theme.muted;
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 0.3px;
             vertical-alignment: center;
         }
         song := SongRow {
@@ -93,6 +104,8 @@ export component QueueItem inherits Rectangle {
 
 export component QueueDrawer inherits Rectangle {
     in property <bool> live: false;
+    private property <bool> autoplay-showing: !root.filtering && root.rows.length > 0
+        && root.rows[root.rows.length - 1].recommended && root.rows.length - 1 > root.current-index;
     in property <string> source-name;
     in-out property <string> query;
     in property <[int]> matches;
@@ -171,22 +184,31 @@ export component QueueDrawer inherits Rectangle {
         ];
         chosen(code) => { if root.enabled { if code == 4 { root.shuffle(); } if code == 5 { root.toggle-repeat(); } if code == 3 { root.clear(); } } }
     }
+    // A hairline keeps the docked queue visually separate from the page beside it.
+    Rectangle { x: 0px; width: 1px; height: parent.height; background: Theme.outline; }
 
     VerticalLayout {
         padding: 14px;
         spacing: 10px;
         HorizontalLayout {
-            height: 34px;
+            // Room for the "From …" line under the title.
+            height: !root.related-open && root.rows.length > 0 && root.source-name != "" ? 52px : 34px;
             spacing: 7px;
             cross-axis-alignment: center;
             VerticalLayout {
-                horizontal-stretch: 1; min-width: 0px; alignment: center;
-                Text { text: root.related-open ? "Related" : "Queue"; color: Theme.text; font-size: 20px; font-weight: 600; }
+                horizontal-stretch: 1; min-width: 0px; alignment: center; spacing: 3px;
+                Rectangle {
+                    width: 156px; height: 32px; border-radius: 16px; background: Theme.raised;
+                    border-width: 1px; border-color: Theme.outline;
+                    HorizontalLayout { padding: 3px; spacing: 2px;
+                        LibraryButton { width: 74px; height: 26px; round: true; caption-size: 12px; light-mode: root.light-mode; caption: "Queue"; label: "Show the queue"; active: !root.related-open; enabled: root.navigation-enabled; clicked => { if root.related-open { root.cancel-drag(); root.related-open = false; } } }
+                        LibraryButton { width: 74px; height: 26px; round: true; caption-size: 12px; light-mode: root.light-mode; caption: "Related"; label: "See songs related to the current track"; active: root.related-open; enabled: root.related-open || (root.related-enabled && root.enabled); clicked => { if !root.related-open { root.cancel-drag(); root.related-open = true; root.load-related(); } } }
+                    }
+                }
                 if !root.related-open && root.rows.length > 0 && root.source-name != "" : Text {
                     text: "From " + root.source-name; color: Theme.muted; font-size: 11px; overflow: elide;
                 }
             }
-            LibraryButton { width: 66px; height: 30px; light-mode: root.light-mode; caption: root.related-open ? "Queue" : "Related"; label: root.related-open ? "Back to the queue" : "See songs related to the current track"; enabled: (root.related-open && root.navigation-enabled) || (root.related-enabled && root.enabled); active: root.related-open; clicked => { root.cancel-drag(); root.related-open = !root.related-open; if root.related-open { root.load-related(); } } }
             if !root.related-open : LibraryButton { width: 30px; height: 30px; show-tooltip: true; light-mode: root.light-mode; active: root.filter-open || root.filtering; icon-path: "M 16 10 A 6 6 0 1 0 4 10 A 6 6 0 1 0 16 10 M 14 14 L 21 21"; label: "Search queue"; clicked => { root.filter-open = !(root.filter-open || root.filtering); if !root.filter-open { root.query = ""; root.filter-changed(); } } }
             if !root.related-open : LibraryButton { width: 30px; height: 30px; enabled: root.enabled; caption: "..."; label: "More queue actions"; light-mode: root.light-mode; clicked => { queue-menu.show(); } }
             LibraryButton { width: 30px; height: 30px; enabled: root.navigation-enabled; caption: "×"; label: "Close queue drawer"; light-mode: root.light-mode; clicked => { root.cancel-drag(); root.close(); } }
@@ -209,7 +231,7 @@ export component QueueDrawer inherits Rectangle {
                     Text { text: track.title; overflow: elide; color: Theme.text; font-size: 14px; }
                     Text { text: track.artist; overflow: elide; color: Theme.muted; font-size: 12px; }
                 }
-                LibraryButton { width: 36px; height: 34px; light-mode: root.light-mode; caption: "+"; label: "Add " + track.title + " to the queue"; enabled: root.enabled; clicked => { root.add-related(index); } }
+                LibraryButton { width: 36px; height: 34px; light-mode: root.light-mode; caption: "＋"; show-tooltip: true; label: "Add " + track.title + " to the queue"; enabled: root.enabled; clicked => { root.add-related(index); } }
             }
         }
         // The fixed rail owns pointer capture while ListView recycles song rows.
@@ -256,6 +278,9 @@ export component QueueDrawer inherits Rectangle {
                     index: root.filtering ? root.matches[visible-index] : visible-index + max(0, root.current-index);
                     track: root.rows[self.index];
                     reorder-enabled: !root.filtering;
+                    autoplay-enabled: root.autoplay-enabled;
+                    autoplay-switch: !root.filtering;
+                    toggle-autoplay => { root.toggle-autoplay(); }
                     current-index: root.current-index;
                     live: root.live;
                     light-mode: root.light-mode;
@@ -327,6 +352,8 @@ export component QueueDrawer inherits Rectangle {
             }
         }
         if !root.related-open && root.rows.length == 0 : EmptyState { vertical-stretch: 1; light-mode: root.light-mode; heading: "Queue is empty"; detail: "Choose a song or playlist to start listening."; }
-        if !root.related-open : PreferenceRow { title: "Autoplay"; checked: root.autoplay-enabled; enabled: root.enabled; light-mode: root.light-mode; toggled => { root.toggle-autoplay(); } }
+        // Autoplay songs sit at the end; while they show, their heading holds the switch.
+        if !root.related-open && !root.autoplay-showing : Rectangle { height: 1px; background: Theme.divider; }
+        if !root.related-open && !root.autoplay-showing : PreferenceRow { title: "Keep playing similar songs"; checked: root.autoplay-enabled; enabled: root.enabled; light-mode: root.light-mode; toggled => { root.toggle-autoplay(); } }
     }
 }

@@ -222,6 +222,13 @@ export component EmptyState inherits Rectangle {
     }
 }
 
+// Song actions that need no per-row wiring: the row passes its song key.
+export global SongActions {
+    callback copy-link(string);
+    // Window y where song menus must end (top of the player bar); set by the window.
+    in-out property <length> menu-bottom: 100000px;
+}
+
 // Draw inside Slint rather than delegating to the OS context-menu renderer,
 // whose theme and font can differ from the player's current appearance.
 export component ActionMenu inherits PopupWindow {
@@ -229,11 +236,22 @@ export component ActionMenu inherits PopupWindow {
     in property <bool> light-mode;
     in property <int> separator-after: -1;
     private property <int> selected: -1;
+    // A trailing Remove gets its own group unless the main divider is already there.
+    private property <bool> danger-last: root.items.length > 1 && (root.items[root.items.length - 1].code == 3 || root.items[root.items.length - 1].code == 7) && root.separator-after != root.items.length - 2;
     callback chosen(int);
     width: 252px;
-    height: root.items.length * 42px + 12px + (root.separator-after >= 0 ? 9px : 0px);
+    height: root.items.length * 42px + 12px + (root.separator-after >= 0 ? 9px : 0px) + (root.danger-last ? 9px : 0px);
     close-policy: close-on-click-outside;
     forward-focus: menu-focus;
+    function wrap(index: int) -> int { return index < 0 ? root.items.length - 1 : index >= root.items.length ? 0 : index; }
+    // The next enabled item in a direction, looking past up to two disabled ones.
+    function step(from: int, by: int) -> int {
+        let first = root.wrap(from < 0 && by < 0 ? root.items.length - 1 : from + by);
+        if root.items[first].enabled { return first; }
+        let second = root.wrap(first + by);
+        if root.items[second].enabled { return second; }
+        return root.wrap(second + by);
+    }
     function activate(index: int) {
         if index >= 0 && index < root.items.length && root.items[index].enabled {
             let code = root.items[index].code;
@@ -245,23 +263,29 @@ export component ActionMenu inherits PopupWindow {
         width: parent.width; height: parent.height;
         key-pressed(event) => {
             if event.text == Key.Escape || event.text == Key.Tab { root.close(); return accept; }
-            if event.text == Key.DownArrow { root.selected = root.selected < root.items.length - 1 ? root.selected + 1 : 0; return accept; }
-            if event.text == Key.UpArrow { root.selected = root.selected > 0 ? root.selected - 1 : root.items.length - 1; return accept; }
+            if event.text == Key.DownArrow { root.selected = root.step(root.selected, 1); return accept; }
+            if event.text == Key.UpArrow { root.selected = root.step(root.selected, -1); return accept; }
             if event.text == Key.Return || event.text == " " { root.activate(root.selected); return accept; }
             return reject;
         }
         Rectangle {
             width: parent.width; height: parent.height;
-            background: Theme.surface;
+            background: Theme.raised;
             border-width: 1px; border-color: Theme.outline;
-            border-radius: 10px;
+            border-radius: 12px;
+            drop-shadow-blur: 24px; drop-shadow-offset-y: 8px; drop-shadow-color: Theme.shadow;
             if root.separator-after >= 0 : Rectangle {
                 x: 12px; y: 9px + (root.separator-after + 1) * 42px;
                 width: parent.width - 24px; height: 1px;
                 background: Theme.outline;
             }
+            if root.danger-last : Rectangle {
+                x: 12px; y: 6px + (root.items.length - 1) * 42px + (root.separator-after >= 0 ? 9px : 0px) + 4px;
+                width: parent.width - 24px; height: 1px;
+                background: Theme.outline;
+            }
             for item[index] in root.items : Rectangle {
-                x: 6px; y: 6px + index * 42px + (index > root.separator-after && root.separator-after >= 0 ? 9px : 0px);
+                x: 6px; y: 6px + index * 42px + (index > root.separator-after && root.separator-after >= 0 ? 9px : 0px) + (root.danger-last && index == root.items.length - 1 ? 9px : 0px);
                 width: parent.width - 12px; height: 40px; border-radius: 6px;
                 opacity: item.enabled ? 1 : 0.45;
                 background: item.enabled && (hit.has-hover || root.selected == index) ? (Theme.selected) : Colors.transparent;
@@ -271,16 +295,21 @@ export component ActionMenu inherits PopupWindow {
                 }
                 Path {
                     x: 12px; y: 11px; width: 18px; height: 18px; viewbox-width: 24; viewbox-height: 24;
-                    stroke: Theme.cover-ink; stroke-width: 1.5px; fill: Colors.transparent;
+                    stroke: item.code == 3 || item.code == 7 ? (Theme.light ? #b42318 : #ff8a80) : Theme.muted; stroke-width: 1.6px; fill: Colors.transparent;
                     commands: item.code == 0 ? "M 5 5 L 14 12 L 5 19 Z M 19 5 L 19 19"
                         : item.code == 1 ? "M 3 6 L 17 6 M 3 11 L 17 11 M 3 16 L 10 16 M 18 14 L 18 22 M 14 18 L 22 18"
                         : item.code == 2 ? "M 12 10 A 2 2 0 1 0 12 14 A 2 2 0 1 0 12 10 Z M 8 7 C 5 10 5 14 8 17 M 16 7 C 19 10 19 14 16 17 M 5 4 C 1 8 1 16 5 20 M 19 4 C 23 8 23 16 19 20"
                         : item.code == 4 ? "M 3 6 L 7 6 C 11 6 13 18 17 18 L 21 18 M 17 14 L 21 18 L 17 22 M 3 18 L 7 18 C 11 18 13 6 17 6 L 21 6 M 17 2 L 21 6 L 17 10"
-                        : item.code == 6 ? "M 3 5 L 17 5 M 3 10 L 17 10 M 3 15 L 10 15 M 18 13 L 18 21 M 14 17 L 22 17"
+                        : item.code == 5 ? "M 4 11 L 4 9 A 3 3 0 0 1 7 6 L 19 6 M 16 3 L 19 6 L 16 9 M 20 13 L 20 15 A 3 3 0 0 1 17 18 L 5 18 M 8 21 L 5 18 L 8 15"
+                        : item.code == 6 ? "M 9 18 A 3 3 0 1 1 9 12 A 3 3 0 1 1 9 18 M 12 15 L 12 4 L 17 6 M 19 13 L 19 21 M 15 17 L 23 17"
                         : item.code == 7 ? "M 3 5 L 20 5 M 3 10 L 20 10 M 3 15 L 10 15 M 14 17 L 22 17"
+                        : item.code == 8 ? "M 12 20 L 12 4 M 6 10 L 12 4 L 18 10"
+                        : item.code == 9 ? "M 12 4 L 12 20 M 6 14 L 12 20 L 18 14"
+                        : item.code == 10 ? "M 12 3 A 4 4 0 1 0 12 11 A 4 4 0 1 0 12 3 Z M 4 21 C 4 14 20 14 20 21"
+                        : item.code == 11 ? "M 10 14 L 14 10 M 9 11 L 6 14 A 3 3 0 0 0 10 18 L 13 15 M 11 9 L 14 6 A 3 3 0 0 1 18 10 L 15 13"
                         : "M 6 7 L 18 7 L 17 21 L 7 21 Z M 4 7 L 20 7 M 9 7 L 9 3 L 15 3 L 15 7 M 10 10 L 10 18 M 14 10 L 14 18";
                 }
-                Text { x: 42px; width: parent.width - 50px; height: parent.height; text: item.title; color: Theme.text; font-size: 13px; font-weight: 500; vertical-alignment: center; overflow: elide; }
+                Text { x: 42px; width: parent.width - 50px; height: parent.height; text: item.title; color: item.code == 3 || item.code == 7 ? (Theme.light ? #b42318 : #ff8a80) : Theme.text; font-size: 13px; font-weight: 500; vertical-alignment: center; overflow: elide; }
             }
         }
     }
@@ -429,6 +458,7 @@ export component SongRow inherits Rectangle {
                     color: Theme.muted; font-size: 14px;
                 }
             }
+            // Every queue row keeps the handle column, so covers line up under Now playing.
             if root.removable : Rectangle {
                 width: 20px;
                 height: 40px;
@@ -470,44 +500,80 @@ export component SongRow inherits Rectangle {
     song-menu := ActionMenu {
         // A tile is narrower than its menu. Let the popup extend to its left
         // so actions on the last column stay inside the player window.
-        x: root.tile-mode ? root.width - self.width - 10px : max(0px, root.width - self.width - 10px); y: 52px;
+        x: root.tile-mode ? root.width - self.width - 10px : max(0px, root.width - self.width - 10px);
+        // Open upward when the menu would run under the player bar.
+        // Never past the header (64px) when it opens upward.
+        y: root.absolute-position.y + 52px + self.height > SongActions.menu-bottom ? max(72px - root.absolute-position.y, 8px - self.height) : 52px;
         light-mode: root.light-mode;
-        separator-after: root.shared-queue || (root.removable && !root.current) ? 0 : 1;
-        items: root.shared-queue && root.playlist-removable ? [
+        separator-after: root.shared-queue ? 0 : root.removable && !root.current ? (root.draggable ? 1 : -1) : 1;
+        items: root.shared-queue && root.playlist-removable && root.track.artist-enabled ? [
             { title: "Add to shared queue", code: 1, enabled: root.enabled },
-            { title: "Add to playlist…", code: 6, enabled: root.collection-enabled },
+            { title: "Add to playlist…", code: 6, enabled: root.enabled },
+            { title: "Go to artist", code: 10, enabled: root.enabled },
+            { title: "Copy song link", code: 11, enabled: root.enabled },
             { title: "Remove from playlist", code: 7, enabled: root.collection-enabled },
+        ] : root.shared-queue && root.playlist-removable ? [
+            { title: "Add to shared queue", code: 1, enabled: root.enabled },
+            { title: "Add to playlist…", code: 6, enabled: root.enabled },
+            { title: "Copy song link", code: 11, enabled: root.enabled },
+            { title: "Remove from playlist", code: 7, enabled: root.collection-enabled },
+        ] : root.shared-queue && root.track.artist-enabled ? [
+            { title: "Add to shared queue", code: 1, enabled: root.enabled },
+            { title: "Add to playlist…", code: 6, enabled: root.enabled },
+            { title: "Go to artist", code: 10, enabled: root.enabled },
+            { title: "Copy song link", code: 11, enabled: root.enabled },
         ] : root.shared-queue ? [
             { title: "Add to shared queue", code: 1, enabled: root.enabled },
-            { title: "Add to playlist…", code: 6, enabled: root.collection-enabled },
+            { title: "Add to playlist…", code: 6, enabled: root.enabled },
+            { title: "Copy song link", code: 11, enabled: root.enabled },
         ] : root.removable && !root.current && root.draggable ? [
             // Keyboard-reachable reordering alongside drag and drop.
             { title: "Move up", code: 8, enabled: root.enabled && root.can-move-up },
             { title: "Move down", code: 9, enabled: root.enabled && root.can-move-down },
             { title: "Preview song radio", code: 2, enabled: root.enabled },
-            { title: "Add to playlist…", code: 6, enabled: root.collection-enabled },
+            { title: "Add to playlist…", code: 6, enabled: root.enabled },
+            { title: "Copy song link", code: 11, enabled: root.enabled },
             { title: "Remove from queue", code: 3, enabled: root.enabled },
         ] : root.removable && !root.current ? [
             { title: "Preview song radio", code: 2, enabled: root.enabled },
-            { title: "Add to playlist…", code: 6, enabled: root.collection-enabled },
+            { title: "Add to playlist…", code: 6, enabled: root.enabled },
+            { title: "Copy song link", code: 11, enabled: root.enabled },
             { title: "Remove from queue", code: 3, enabled: root.enabled },
         ] : root.removable ? [
             { title: "Repeat next", code: 0, enabled: root.enabled },
             { title: "Repeat later", code: 1, enabled: root.enabled },
             { title: "Preview song radio", code: 2, enabled: root.enabled },
-            { title: "Add to playlist…", code: 6, enabled: root.collection-enabled },
+            { title: "Add to playlist…", code: 6, enabled: root.enabled },
+            { title: "Copy song link", code: 11, enabled: root.enabled },
             { title: "Remove from queue", code: 3, enabled: root.enabled },
+        ] : root.playlist-removable && root.track.artist-enabled ? [
+            { title: "Play next", code: 0, enabled: root.enabled },
+            { title: "Add to queue", code: 1, enabled: root.enabled },
+            { title: "Preview song radio", code: 2, enabled: root.enabled },
+            { title: "Add to playlist…", code: 6, enabled: root.enabled },
+            { title: "Go to artist", code: 10, enabled: root.enabled },
+            { title: "Copy song link", code: 11, enabled: root.enabled },
+            { title: "Remove from playlist", code: 7, enabled: root.collection-enabled },
         ] : root.playlist-removable ? [
             { title: "Play next", code: 0, enabled: root.enabled },
             { title: "Add to queue", code: 1, enabled: root.enabled },
             { title: "Preview song radio", code: 2, enabled: root.enabled },
-            { title: "Add to playlist…", code: 6, enabled: root.collection-enabled },
+            { title: "Add to playlist…", code: 6, enabled: root.enabled },
+            { title: "Copy song link", code: 11, enabled: root.enabled },
             { title: "Remove from playlist", code: 7, enabled: root.collection-enabled },
+        ] : root.track.artist-enabled ? [
+            { title: "Play next", code: 0, enabled: root.enabled },
+            { title: "Add to queue", code: 1, enabled: root.enabled },
+            { title: "Preview song radio", code: 2, enabled: root.enabled },
+            { title: "Add to playlist…", code: 6, enabled: root.enabled },
+            { title: "Go to artist", code: 10, enabled: root.enabled },
+            { title: "Copy song link", code: 11, enabled: root.enabled },
         ] : [
             { title: "Play next", code: 0, enabled: root.enabled },
             { title: "Add to queue", code: 1, enabled: root.enabled },
             { title: "Preview song radio", code: 2, enabled: root.enabled },
-            { title: "Add to playlist…", code: 6, enabled: root.collection-enabled },
+            { title: "Add to playlist…", code: 6, enabled: root.enabled },
+            { title: "Copy song link", code: 11, enabled: root.enabled },
         ];
         chosen(code) => {
             if root.enabled && !root.drag-in-progress {
@@ -517,7 +583,10 @@ export component SongRow inherits Rectangle {
                 if code == 3 && root.removable { root.remove(); }
                 if code == 8 && root.can-move-up { root.move-by(-1); }
                 if code == 9 && root.can-move-down { root.move-by(1); }
-                if code == 6 && root.collection-enabled { root.add-playlist(); }
+                // Signed out or busy, the app explains instead of the item going dead.
+                if code == 6 { root.add-playlist(); }
+                if code == 10 && root.track.artist-enabled { root.artist(); }
+                if code == 11 { SongActions.copy-link(root.track.key); }
                 if code == 7 && root.collection-enabled && root.playlist-removable { root.remove-playlist(); }
             }
         }
@@ -635,13 +704,14 @@ export component RatingButton inherits Rectangle {
     in property <bool> active: false;
     in property <string> label;
     callback clicked();
-    LibraryButton { width: parent.width; height: parent.height; enabled: root.enabled; light-mode: root.light-mode; active: root.active; caption: ""; label: root.label; clicked => { root.clicked(); } }
+    LibraryButton { width: parent.width; height: parent.height; enabled: root.enabled; light-mode: root.light-mode; caption: ""; label: root.label; clicked => { root.clicked(); } }
     Path {
         x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
         width: 18px; height: 18px; viewbox-width: 24; viewbox-height: 24;
-        fill: root.active ? (root.light-mode ? #c48776 : #a94164) : Colors.transparent;
+        // Like fills with the accent; an active dislike stays neutral so it doesn't read as an error.
+        fill: root.active ? (root.negative ? Theme.text : Theme.accent) : Colors.transparent;
         // Clearly visible at rest (the like state should read at a glance).
-        stroke: root.active ? Theme.accent-ink : Theme.text.with-alpha(0.82); stroke-width: 1.6px;
+        stroke: root.active ? (root.negative ? Theme.text : Theme.accent) : Theme.text.with-alpha(0.82); stroke-width: 1.6px;
         commands: root.negative ? "M 17 14 L 13 21 Q 10 21 11 16 L 11 15 L 5 15 Q 3 15 3.5 13 L 5.5 5 Q 6 3 8 3 L 17 3 Z M 21 14 L 18 14 L 18 3 L 21 3 Z"
             : "M 7 10 L 11 3 Q 14 3 13 8 L 13 9 L 19 9 Q 21 9 20.5 11 L 18.5 19 Q 18 21 16 21 L 7 21 Z M 3 10 L 6 10 L 6 21 L 3 21 Z";
         opacity: root.enabled ? 1 : 0.45;
@@ -658,20 +728,22 @@ export component UpdateAction inherits Rectangle {
     callback cancel();
     private property <bool> downloading: root.phase > 0;
     private property <bool> cancelable: root.phase == 1 || root.phase == 3 || root.phase == 4;
-    private property <color> ink: root.light-mode ? #593641 : #f0eeef;
+    private property <length> cancel-width: 84px;
+    private property <bool> primary: !root.busy && (root.phase == 0 || root.phase == 2);
+    private property <color> ink: root.primary ? Theme.on-accent : Theme.text;
     Rectangle {
-        x: 0px; width: root.width - (root.cancelable ? root.height + 6px : 0px);
+        x: 0px; width: root.width - (root.cancelable ? root.cancel-width + 6px : 0px);
         height: root.height; border-radius: self.height / 2; clip: true;
         animate width { duration: 160ms; easing: ease-in-out; }
-        LibraryButton { width: parent.width; height: parent.height; caption: ""; quiet: false; light-mode: root.light-mode; enabled: !root.busy && (root.phase == 0 || root.phase == 2); label: root.phase == 2 ? "Restart Tide to install the verified update" : "Download Tide update"; clicked => { root.activate(); } }
-        Rectangle { x: 0px; height: parent.height; width: parent.width * (root.phase == 2 ? 1 : (root.downloading ? clamp(root.progress / 100, 0, 1) : 0)); background: root.light-mode ? #b13e622c : #b13e6240; animate width { duration: 160ms; } }
-        Rectangle { x: 5px; y: 5px; width: parent.height - 10px; height: self.width; border-radius: self.height / 2; background: root.light-mode ? #b45249 : #b13e62;
+        LibraryButton { width: parent.width; height: parent.height; caption: ""; quiet: false; round: true; active: root.primary; light-mode: root.light-mode; enabled: !root.busy && (root.phase == 0 || root.phase == 2); label: root.phase == 2 ? "Restart Tide to install the verified update" : "Download Tide update"; clicked => { root.activate(); } }
+        Rectangle { x: 0px; height: parent.height; width: parent.width * (root.phase == 2 ? 1 : (root.downloading ? clamp(root.progress / 100, 0, 1) : 0)); background: root.primary ? Colors.transparent : Theme.accent.with-alpha(0.22); animate width { duration: ControlMotion.enabled ? 160ms : 0ms; } }
+        Rectangle { x: 5px; y: 5px; width: parent.height - 10px; height: self.width; border-radius: self.height / 2; background: root.primary ? #ffffff2e : Theme.accent;
             Path { x: 6px; y: 6px; width: parent.width - 12px; height: parent.height - 12px; viewbox-width: 24; viewbox-height: 24; fill: Colors.transparent; stroke: #fff5ee; stroke-width: 2px; commands: root.phase == 2 ? "M5 12 L10 17 L19 7" : "M12 3 V15 M7 10 L12 15 L17 10 M5 17 V21 H19 V17"; }
         }
         Text { x: parent.height + 4px; width: max(0px, parent.width - self.x - 8px); height: parent.height; vertical-alignment: center; text: root.phase == 4 ? "Preparing restart…" : (root.phase == 2 ? "Restart to update" : (root.phase == 3 ? "Canceling…" : (root.phase == 1 ? "Downloading " + root.progress.to-fixed(0) + "%" : "Download update"))); color: root.ink; font-size: 12px; font-weight: 600; overflow: elide; }
     }
-    if root.cancelable : Rectangle { x: parent.width - self.width; width: parent.height; height: parent.height; border-radius: self.height / 2; clip: true;
-        LibraryButton { width: parent.width; height: parent.height; caption: "×"; label: root.phase == 4 ? "Cancel update preparation" : "Cancel update download"; light-mode: root.light-mode; quiet: false; enabled: root.phase != 3; clicked => { root.cancel(); } }
+    if root.cancelable : Rectangle { x: parent.width - self.width; width: root.cancel-width; height: parent.height; border-radius: self.height / 2; clip: true;
+        LibraryButton { width: parent.width; height: parent.height; caption: "Cancel"; round: true; label: root.phase == 4 ? "Cancel update preparation" : "Cancel update download"; light-mode: root.light-mode; quiet: false; enabled: root.phase != 3; clicked => { root.cancel(); } }
     }
 }
 

@@ -73,6 +73,8 @@ fn sidebar_updates_remain_reachable_without_interrupting_playback() {
             ui.set_update_phase(1);
             ui.set_update_progress(37.0);
             ui.set_update_busy(true);
+            // The same status text the updater sets in the app.
+            ui.set_update_status("Tide checks the download before it installs.".into());
         }
     });
     let c = cancellations.clone();
@@ -91,6 +93,8 @@ fn sidebar_updates_remain_reachable_without_interrupting_playback() {
         ui.set_update_phase(0);
         ui.set_update_busy(false);
         ui.set_update_progress(0.0);
+        ui.set_update_status("About 48 MB to download".into());
+        ui.set_update_version("0.4.36".into());
         draw(
             &window,
             1140,
@@ -106,7 +110,16 @@ fn sidebar_updates_remain_reachable_without_interrupting_playback() {
             ui.get_update_panel_open(),
             "Update panel is reachable from the sidebar"
         );
-        draw(&window, 1140, 800, "updater-sidebar-panel");
+        draw(
+            &window,
+            1140,
+            800,
+            if light {
+                "updater-sidebar-panel"
+            } else {
+                "updater-dialog-dark"
+            },
+        );
         let d = downloads.get();
         click(&ui, 570.0, 443.0);
         assert_eq!(downloads.get(), d + 1, "Update action is not reachable");
@@ -135,6 +148,7 @@ fn sidebar_updates_remain_reachable_without_interrupting_playback() {
         ui.set_update_phase(2);
         ui.set_update_busy(false);
         ui.set_update_progress(100.0);
+        ui.set_update_status("Update verified and ready. Restart when convenient.".into());
         draw(
             &window,
             1140,
