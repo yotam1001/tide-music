@@ -43,7 +43,10 @@ def verify_portable(binary: Path, allow_webkit=False):
                # Desktop font stack: present on every graphical Linux system and
                # deliberately not bundled, so Tide uses the system's font settings.
                'libfontconfig', 'libfreetype', 'libexpat', 'libz.so', 'libbz2',
-               'libpng16', 'libbrotlidec', 'libbrotlicommon')
+               'libpng16', 'libbrotlidec', 'libbrotlicommon',
+               # Older fontconfig (Ubuntu 22.04) also links util-linux's libuuid,
+               # which every Linux system has.
+               'libuuid')
     if allow_webkit:
         allowed += ('libwebkit2gtk', 'libjavascriptcoregtk', 'libgtk-3', 'libgdk-3',
                     'libglib', 'libgobject', 'libgio', 'libsoup', 'libcairo', 'libpango',
