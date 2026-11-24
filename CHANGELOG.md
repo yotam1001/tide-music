@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Polished Jams, song menus, Add to playlist, the updater, the queue, the mini player and error messages:
+  - Jams: the screen lines up with the narrow sidebar and stacks Start and Join in small windows. It shows song times, marks you as Host, asks before removing a listener, and has a "New listeners can join" switch. Guests in small windows now see the shared queue.
+  - Song menus have their own icon per action, keep Remove apart in red, and add **Go to artist** and **Copy song link**. They open upward when they would run under the player bar.
+  - **Add to playlist** is a floating card with **New playlist**, which creates the playlist and saves the song to it.
+  - The update window names the version you're moving to, shows the download size and has a **What's new** link.
+  - Liking or disliking a song shows a confirmation with **Undo**. An active dislike is no longer shown in red.
+  - The queue has a **Queue | Related** switch, and the Autoplay switch sits on the Autoplay section.
+  - A song that can't play says "Couldn't play" in the player, including the mini player, and can't be scrubbed.
+  - The mini player has a one-click button back to the full window and a working mute button.
+
 ## 0.4.36 - 2026-11-23
 
 - Refined the Settings window:
