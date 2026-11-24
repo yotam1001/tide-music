@@ -1335,7 +1335,14 @@ async fn launch_player(
             default_audio_output()
         })
         .arg("--audio-device=auto")
-        .arg("--audio-exclusive=no")
+        .arg("--audio-exclusive=no");
+    // mpv's CoreAudio output rejects planar float (what the Opus decoder
+    // produces) on current macOS: "unable to set the input channel layout",
+    // so no song plays. Interleaved float carries the same samples, so this
+    // is lossless and keeps bit-perfect output intact.
+    #[cfg(target_os = "macos")]
+    command.arg("--audio-format=float");
+    command
         .arg("--osc=no")
         .arg("--osd-level=0")
         .arg("--ytdl=yes")

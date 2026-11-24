@@ -559,8 +559,17 @@ trait SessionKeyStore: Send + Sync {
 
 #[cfg(target_os = "macos")]
 const KEYCHAIN_SERVICE: &str = "com.tidemusic.Tide.session";
+/// Items under this account are readable by every Tide build. Ad-hoc signed
+/// builds have a different code hash after every update, and macOS ties a
+/// default Keychain item to its creator's hash, so the login password was
+/// asked for after each update. The owner chose "allow any application"
+/// (2026-11-24): the key stays encrypted in the login Keychain, and any
+/// process running as this user can read it, as with DPAPI on Windows.
 #[cfg(target_os = "macos")]
-const KEYCHAIN_ACCOUNT: &str = "session-key";
+const KEYCHAIN_ACCOUNT: &str = "session-key-v2";
+/// Items created before 0.4.37, restricted to the build that created them.
+#[cfg(target_os = "macos")]
+const KEYCHAIN_LEGACY_ACCOUNT: &str = "session-key";
 #[cfg(target_os = "macos")]
 const ERR_SEC_ITEM_NOT_FOUND: i32 = -25300;
 
@@ -568,26 +577,88 @@ const ERR_SEC_ITEM_NOT_FOUND: i32 = -25300;
 struct KeychainKeyStore;
 
 #[cfg(target_os = "macos")]
+fn keychain_key(account: &str) -> Result<Option<zeroize::Zeroizing<[u8; 32]>>, &'static str> {
+    use security_framework::passwords::{generic_password, PasswordOptions};
+    match generic_password(PasswordOptions::new_generic_password(
+        KEYCHAIN_SERVICE,
+        account,
+    )) {
+        Ok(mut bytes) => {
+            if bytes.len() != 32 {
+                bytes.zeroize();
+                return Err("Account session key in Keychain is invalid");
+            }
+            let mut key = zeroize::Zeroizing::new([0u8; 32]);
+            key.copy_from_slice(&bytes);
+            bytes.zeroize();
+            Ok(Some(key))
+        }
+        Err(err) if err.code() == ERR_SEC_ITEM_NOT_FOUND => Ok(None),
+        Err(_) => Err("Could not read account session key from Keychain"),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn delete_keychain_key(account: &str) -> Result<(), &'static str> {
+    use security_framework::passwords::delete_generic_password;
+    match delete_generic_password(KEYCHAIN_SERVICE, account) {
+        Ok(()) => Ok(()),
+        Err(err) if err.code() == ERR_SEC_ITEM_NOT_FOUND => Ok(()),
+        Err(_) => Err("Could not remove account session key from Keychain"),
+    }
+}
+
+/// Store `key` readable by any application. The Security framework's
+/// non-deprecated API cannot build that access list, so Apple's `security`
+/// tool does it. The key reaches it on stdin, never on its command line.
+#[cfg(target_os = "macos")]
+fn store_open_keychain_key(key: &[u8; 32]) -> Result<(), &'static str> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    const FAILED: &str = "Could not store account session key in Keychain";
+    let mut line = zeroize::Zeroizing::new(format!(
+        "add-generic-password -U -A -s {KEYCHAIN_SERVICE} -a {KEYCHAIN_ACCOUNT} -l {KEYCHAIN_SERVICE} -X "
+    ));
+    for byte in key {
+        line.push_str(&format!("{byte:02x}"));
+    }
+    line.push('\n');
+    let mut child = Command::new("/usr/bin/security")
+        .arg("-i")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|_| FAILED)?;
+    let written = child
+        .stdin
+        .take()
+        .ok_or(FAILED)
+        .and_then(|mut stdin| stdin.write_all(line.as_bytes()).map_err(|_| FAILED));
+    let status = child.wait().map_err(|_| FAILED)?;
+    written?;
+    // `security -i` reports command failures on stderr only; read back.
+    match keychain_key(KEYCHAIN_ACCOUNT)? {
+        Some(stored) if status.success() && *stored == *key => Ok(()),
+        _ => Err(FAILED),
+    }
+}
+
+#[cfg(target_os = "macos")]
 impl SessionKeyStore for KeychainKeyStore {
     fn load_key(&self) -> Result<Option<zeroize::Zeroizing<[u8; 32]>>, &'static str> {
-        use security_framework::passwords::{generic_password, PasswordOptions};
-        match generic_password(PasswordOptions::new_generic_password(
-            KEYCHAIN_SERVICE,
-            KEYCHAIN_ACCOUNT,
-        )) {
-            Ok(mut bytes) => {
-                if bytes.len() != 32 {
-                    bytes.zeroize();
-                    return Err("Account session key in Keychain is invalid");
-                }
-                let mut key = zeroize::Zeroizing::new([0u8; 32]);
-                key.copy_from_slice(&bytes);
-                bytes.zeroize();
-                Ok(Some(key))
-            }
-            Err(err) if err.code() == ERR_SEC_ITEM_NOT_FOUND => Ok(None),
-            Err(_) => Err("Could not read account session key from Keychain"),
+        if let Some(key) = keychain_key(KEYCHAIN_ACCOUNT)? {
+            return Ok(Some(key));
         }
+        // One-time move of a pre-0.4.37 key. Reading it may ask for the login
+        // password a last time; afterwards updates never ask again.
+        let Some(key) = keychain_key(KEYCHAIN_LEGACY_ACCOUNT)? else {
+            return Ok(None);
+        };
+        if store_open_keychain_key(&key).is_ok() {
+            let _ = delete_keychain_key(KEYCHAIN_LEGACY_ACCOUNT);
+        }
+        Ok(Some(key))
     }
 
     fn load_or_create_key(&self) -> Result<zeroize::Zeroizing<[u8; 32]>, &'static str> {
@@ -595,23 +666,17 @@ impl SessionKeyStore for KeychainKeyStore {
             return Ok(key);
         }
         use ring::rand::{SecureRandom, SystemRandom};
-        use security_framework::passwords::set_generic_password;
         let mut key = zeroize::Zeroizing::new([0u8; 32]);
         SystemRandom::new()
             .fill(&mut *key)
             .map_err(|_| "Could not generate account session key")?;
-        set_generic_password(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT, &*key)
-            .map_err(|_| "Could not store account session key in Keychain")?;
+        store_open_keychain_key(&key)?;
         Ok(key)
     }
 
     fn delete_key(&self) -> Result<(), &'static str> {
-        use security_framework::passwords::delete_generic_password;
-        match delete_generic_password(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT) {
-            Ok(()) => Ok(()),
-            Err(err) if err.code() == ERR_SEC_ITEM_NOT_FOUND => Ok(()),
-            Err(_) => Err("Could not remove account session key from Keychain"),
-        }
+        delete_keychain_key(KEYCHAIN_LEGACY_ACCOUNT)?;
+        delete_keychain_key(KEYCHAIN_ACCOUNT)
     }
 }
 

@@ -56,7 +56,10 @@ is discarded. A Zen profile's `cookies.sqlite` also works.
 
 Your session is encrypted in
 `~/Library/Application Support/TideMusic/account`, and its key is kept in your
-login Keychain. macOS may ask once whether Tide can use that Keychain item.
+login Keychain, readable by any app running as you (the same protection
+Windows gives Tide), so updates never ask for your password. Copies from
+before 0.4.37 move their key once; macOS may ask for your password that one
+time.
 
 ## Listen together
 
