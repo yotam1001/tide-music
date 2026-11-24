@@ -561,10 +561,13 @@ trait SessionKeyStore: Send + Sync {
 const KEYCHAIN_SERVICE: &str = "com.tidemusic.Tide.session";
 /// Items under this account are readable by every Tide build. Ad-hoc signed
 /// builds have a different code hash after every update, and macOS ties a
-/// default Keychain item to its creator's hash, so the login password was
-/// asked for after each update. The owner chose "allow any application"
-/// (2026-11-24): the key stays encrypted in the login Keychain, and any
-/// process running as this user can read it, as with DPAPI on Windows.
+/// Keychain item to the code hashes allowed to read it (its partition list),
+/// so the login password was asked for after each update. The owner chose
+/// open access (2026-11-24): the item allows any application, and Tide
+/// reads and writes it through Apple's `security` tool, whose `apple-tool:`
+/// partition is always on the list. The key stays encrypted in the login
+/// Keychain; any process running as this user can read it, as with DPAPI on
+/// Windows.
 #[cfg(target_os = "macos")]
 const KEYCHAIN_ACCOUNT: &str = "session-key-v2";
 /// Items created before 0.4.37, restricted to the build that created them.
@@ -598,6 +601,73 @@ fn keychain_key(account: &str) -> Result<Option<zeroize::Zeroizing<[u8; 32]>>, &
     }
 }
 
+/// Run Apple's `security` tool with `input` on stdin; never put the key in
+/// its arguments. Returns the exit code and stdout.
+#[cfg(target_os = "macos")]
+fn security_tool(
+    arguments: &[&str],
+    input: &[u8],
+) -> Result<(Option<i32>, zeroize::Zeroizing<Vec<u8>>), &'static str> {
+    use std::io::{Read, Write};
+    use std::process::{Command, Stdio};
+    let mut child = Command::new("/usr/bin/security")
+        .args(arguments)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|_| "Could not open the Keychain")?;
+    let written = child
+        .stdin
+        .take()
+        .ok_or("Could not open the Keychain")
+        .and_then(|mut stdin| {
+            stdin
+                .write_all(input)
+                .map_err(|_| "Could not open the Keychain")
+        });
+    let mut output = zeroize::Zeroizing::new(Vec::new());
+    if let Some(stdout) = child.stdout.take() {
+        let _ = stdout.take(4096).read_to_end(&mut output);
+    }
+    let status = child.wait().map_err(|_| "Could not open the Keychain")?;
+    written?;
+    Ok((status.code(), output))
+}
+
+/// The open-access key, read through `security` so no build is prompted.
+#[cfg(target_os = "macos")]
+fn open_keychain_key() -> Result<Option<zeroize::Zeroizing<[u8; 32]>>, &'static str> {
+    const INVALID: &str = "Account session key in Keychain is invalid";
+    let (code, output) = security_tool(
+        &[
+            "find-generic-password",
+            "-w",
+            "-s",
+            KEYCHAIN_SERVICE,
+            "-a",
+            KEYCHAIN_ACCOUNT,
+        ],
+        b"",
+    )?;
+    match code {
+        Some(0) => {}
+        // errSecItemNotFound
+        Some(44) => return Ok(None),
+        _ => return Err("Could not read account session key from Keychain"),
+    }
+    let hex = output.strip_suffix(b"\n").unwrap_or(&output);
+    if hex.len() != 64 {
+        return Err(INVALID);
+    }
+    let mut key = zeroize::Zeroizing::new([0u8; 32]);
+    for (index, pair) in hex.chunks(2).enumerate() {
+        let text = std::str::from_utf8(pair).map_err(|_| INVALID)?;
+        key[index] = u8::from_str_radix(text, 16).map_err(|_| INVALID)?;
+    }
+    Ok(Some(key))
+}
+
 #[cfg(target_os = "macos")]
 fn delete_keychain_key(account: &str) -> Result<(), &'static str> {
     use security_framework::passwords::delete_generic_password;
@@ -613,8 +683,6 @@ fn delete_keychain_key(account: &str) -> Result<(), &'static str> {
 /// tool does it. The key reaches it on stdin, never on its command line.
 #[cfg(target_os = "macos")]
 fn store_open_keychain_key(key: &[u8; 32]) -> Result<(), &'static str> {
-    use std::io::Write;
-    use std::process::{Command, Stdio};
     const FAILED: &str = "Could not store account session key in Keychain";
     let mut line = zeroize::Zeroizing::new(format!(
         "add-generic-password -U -A -s {KEYCHAIN_SERVICE} -a {KEYCHAIN_ACCOUNT} -l {KEYCHAIN_SERVICE} -X "
@@ -623,23 +691,10 @@ fn store_open_keychain_key(key: &[u8; 32]) -> Result<(), &'static str> {
         line.push_str(&format!("{byte:02x}"));
     }
     line.push('\n');
-    let mut child = Command::new("/usr/bin/security")
-        .arg("-i")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|_| FAILED)?;
-    let written = child
-        .stdin
-        .take()
-        .ok_or(FAILED)
-        .and_then(|mut stdin| stdin.write_all(line.as_bytes()).map_err(|_| FAILED));
-    let status = child.wait().map_err(|_| FAILED)?;
-    written?;
+    let (code, _) = security_tool(&["-i"], line.as_bytes()).map_err(|_| FAILED)?;
     // `security -i` reports command failures on stderr only; read back.
-    match keychain_key(KEYCHAIN_ACCOUNT)? {
-        Some(stored) if status.success() && *stored == *key => Ok(()),
+    match open_keychain_key()? {
+        Some(stored) if code == Some(0) && *stored == *key => Ok(()),
         _ => Err(FAILED),
     }
 }
@@ -647,7 +702,7 @@ fn store_open_keychain_key(key: &[u8; 32]) -> Result<(), &'static str> {
 #[cfg(target_os = "macos")]
 impl SessionKeyStore for KeychainKeyStore {
     fn load_key(&self) -> Result<Option<zeroize::Zeroizing<[u8; 32]>>, &'static str> {
-        if let Some(key) = keychain_key(KEYCHAIN_ACCOUNT)? {
+        if let Some(key) = open_keychain_key()? {
             return Ok(Some(key));
         }
         // One-time move of a pre-0.4.37 key. Reading it may ask for the login
@@ -676,7 +731,20 @@ impl SessionKeyStore for KeychainKeyStore {
 
     fn delete_key(&self) -> Result<(), &'static str> {
         delete_keychain_key(KEYCHAIN_LEGACY_ACCOUNT)?;
-        delete_keychain_key(KEYCHAIN_ACCOUNT)
+        let (code, _) = security_tool(
+            &[
+                "delete-generic-password",
+                "-s",
+                KEYCHAIN_SERVICE,
+                "-a",
+                KEYCHAIN_ACCOUNT,
+            ],
+            b"",
+        )?;
+        match code {
+            Some(0) | Some(44) => Ok(()),
+            _ => Err("Could not remove account session key from Keychain"),
+        }
     }
 }
 
