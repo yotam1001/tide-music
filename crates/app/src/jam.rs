@@ -202,21 +202,36 @@ fn millis(value: f64) -> u64 {
         0
     }
 }
-fn host_timeline(s: &State) -> Result<Timeline, &'static str> {
-    let current = s
-        .settings
-        .queue
-        .current
-        .ok_or("Play a YouTube song before hosting")?;
-    let queue = s
-        .settings
-        .queue
+/// The part of the local queue a host shares: the current song onwards.
+fn shared_queue(queue: &Queue) -> Result<Vec<VideoId>, &'static str> {
+    let current = queue.current.ok_or("Play a YouTube song before hosting")?;
+    let videos = queue
         .tracks
         .iter()
         .skip(current)
         .take(MAX_QUEUE)
         .map(|track| video(&track.source))
         .collect::<Result<Vec<_>, _>>()?;
+    if videos.is_empty() {
+        return Err("Play a YouTube song before hosting");
+    }
+    Ok(videos)
+}
+/// After launch the restored song is shown but not loaded, so there is no
+/// playback generation to share yet (a zero play ID is an invalid timeline).
+/// Resume it the way Play would, after confirming the queue can be shared.
+fn prepare_host(s: &mut State, u: &AppWindow) -> Result<Timeline, &'static str> {
+    shared_queue(&s.settings.queue)?;
+    if s.generation == 0 {
+        crate::resume_or_play(s, u);
+    }
+    host_timeline(s)
+}
+fn host_timeline(s: &State) -> Result<Timeline, &'static str> {
+    if s.generation == 0 {
+        return Err("Press play on a YouTube song, then start the Jam");
+    }
+    let queue = shared_queue(&s.settings.queue)?;
     let p = s
         .engine
         .as_ref()
@@ -402,7 +417,7 @@ pub fn install(state: &Rc<RefCell<State>>, ui: &AppWindow, picker: &Rc<PickerSta
                     );
                     return;
                 }
-                if let Err(error) = host_timeline(&state.borrow()) {
+                if let Err(error) = prepare_host(&mut state.borrow_mut(), &u) {
                     u.set_jam_status(error.into());
                     return;
                 }
@@ -541,7 +556,7 @@ fn install_code_controls(state: &Rc<RefCell<State>>, ui: &AppWindow, picker: &Rc
                         return;
                     }
                 };
-                let timeline = match host_timeline(&s) {
+                let timeline = match prepare_host(&mut s, &u) {
                     Ok(timeline) => timeline,
                     Err(error) => {
                         u.set_jam_status(error.into());
@@ -1176,6 +1191,50 @@ pub fn ownership_smoke(state: &Rc<RefCell<State>>, u: &AppWindow, pickers: &Rc<P
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn queued(ids: &[&str], current: Option<usize>) -> Queue {
+        Queue {
+            tracks: ids
+                .iter()
+                .map(|id| Track {
+                    artists: Vec::new(),
+                    title: String::new(),
+                    artist: String::new(),
+                    album: String::new(),
+                    source: if id.contains("://") {
+                        (*id).into()
+                    } else {
+                        VideoId::parse(id).unwrap().playback_url()
+                    },
+                    duration_seconds: None,
+                    artwork_url: None,
+                    recommended: false,
+                })
+                .collect(),
+            current,
+        }
+    }
+
+    #[test]
+    fn restored_queue_is_shared_from_the_current_song() {
+        let queue = queued(&["fixture0001", "fixture0002", "fixture0003"], Some(1));
+        let videos = shared_queue(&queue).unwrap();
+        assert_eq!(
+            videos.iter().map(VideoId::as_str).collect::<Vec<_>>(),
+            ["fixture0002", "fixture0003"]
+        );
+    }
+
+    #[test]
+    fn unshareable_queue_is_rejected_before_playback_starts() {
+        for queue in [
+            queued(&["fixture0001"], None),
+            queued(&["fixture0001"], Some(1)),
+            queued(&["fixture0001", "https://example.com/song.mp3"], Some(0)),
+        ] {
+            assert!(shared_queue(&queue).is_err());
+        }
+    }
 
     fn view(play_id: u64) -> View {
         View {
