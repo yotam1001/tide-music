@@ -90,6 +90,15 @@ jobs:
           chmod +x runtime/mpv yt-dlp && mv yt-dlp runtime/yt-dlp
           echo "TIDE_RUNTIME_DIR=$RUNNER_TEMP/runtime" >> "$GITHUB_ENV"
           runtime/mpv --no-config --version | head -1
+      # Hosted runners have no sound server. A desktop always has one; give
+      # mpv a PulseAudio null sink so output stays available across reloads.
+      - name: Start a headless PulseAudio sink
+        run: |
+          sudo apt-get install -y pulseaudio
+          pulseaudio --start --exit-idle-time=-1 --daemonize=yes
+          pactl load-module module-null-sink sink_name=tide_ci
+          pactl set-default-sink tide_ci
+          pactl info | grep -E 'Server Name|Default Sink'
       - run: cargo test -p tide-playback --locked
       - run: cargo test -p tide-playback --locked real_mpv_exits_when_lifetime_connection_closes -- --ignored
       - run: cargo test -p tide-playback --locked native_audio_preferences_probe -- --ignored
