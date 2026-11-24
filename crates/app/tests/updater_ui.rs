@@ -94,7 +94,7 @@ fn sidebar_updates_remain_reachable_without_interrupting_playback() {
         ui.set_update_busy(false);
         ui.set_update_progress(0.0);
         ui.set_update_status("About 48 MB to download".into());
-        ui.set_update_version("0.4.37".into());
+        ui.set_update_version("0.4.38".into());
         draw(
             &window,
             1140,

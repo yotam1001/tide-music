@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.4.38 - 2026-11-24
+
 - Songs play again. YouTube changed its player on 2026-11-24 and the bundled
   yt-dlp could no longer solve its stream challenges, so Tide now ships
   yt-dlp 2026.11.23.
