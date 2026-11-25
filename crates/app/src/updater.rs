@@ -468,7 +468,9 @@ impl Drop for PartialDownload {
 
 fn download(release: &Release, base: &Path, transfer: &Transfer) -> Result<PathBuf, String> {
     require_authorization(release)?;
-    let agent = agent(180);
+    // The whole transfer must finish within this time. The Mac disk image is
+    // about nine times the Windows installer, so allow a slow connection.
+    let agent = agent(if cfg!(target_os = "macos") { 45 * 60 } else { 180 });
     let mut url = release.url.clone();
     let mut response = None;
     for _ in 0..4 {
