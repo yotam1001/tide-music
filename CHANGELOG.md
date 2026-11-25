@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Tide for Mac is ready for everyday use:
+  - Songs play on the Mac again. Signed-in playback now ships the same Deno runtime as Windows, which yt-dlp needs for YouTube's stream challenges, and audio reaches the speakers on current macOS. Before, mpv's CoreAudio output rejected YouTube's audio format.
+  - Family Link and other supervised Google accounts can sign in from Tide's own sign-in window, as on Windows. The window always fits above the Dock, can be resized, and Return connects.
+  - Already signed in to YouTube Music in Zen? **Account → Zen browser → Connect** uses that session in one click, even while Zen is open. This works on Windows too.
+  - Install with one Terminal command, without the Gatekeeper "Not Opened" block. Tide then updates itself: it downloads, verifies and replaces itself, then reopens, without asking you to approve it again or to re-enter your Mac password for the Keychain.
+  - Four-finger swipes between Spaces no longer flash a black strip at the bottom of the window.
+
 ## 0.4.38 - 2026-11-24
 
 - Songs play again. YouTube changed its player on 2026-11-24 and the bundled
