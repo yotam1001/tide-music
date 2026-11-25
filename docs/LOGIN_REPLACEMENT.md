@@ -12,9 +12,14 @@ timeout or app exit. Verify the entire helper process tree exits. Deleting a UI
 object alone does not prove that WebView runtime processes have exited.
 
 The unresolved prerequisite is successful supported Google login. Google prohibits
-OAuth authorization in embedded user agents. Do not spoof a browser user agent,
-copy another product's OAuth credentials or suppress browser security checks to
-make an embedded sign-in appear supported. A successful ordinary web page load
+OAuth authorization in embedded user agents. Do not copy another product's
+OAuth credentials or suppress browser security checks to make an embedded
+sign-in appear supported. Each sign-in window presents the identity of the
+browser engine it actually runs: WebView2 sends Edge's user agent on Windows,
+and on macOS the WKWebView helper appends the installed Safari's product token
+(`Version/<n> Safari/605.1.15`), because WKWebView omits it and Google then
+refuses supervised (Family Link) accounts. The owner approved this on
+2026-11-24 after the Mac helper was refused while the Windows one was not. A successful ordinary web page load
 would not prove the full authentication, account selection and refresh path.
 
 ## OAuth/device-code

@@ -193,37 +193,51 @@ class CookieReadError(Exception):
 def read_cookie_database(database, strict=False):
     """Caller must authorize and confine the file before this bounded read."""
     try:
-        with closing(sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True, timeout=0.1)) as connection:
-            connection.execute("PRAGMA query_only=ON")
-            columns = {row[1] for row in connection.execute("PRAGMA table_info(moz_cookies)")}
-            context_filter = " AND originAttributes = ''" if "originAttributes" in columns else ""
-            # All selected cookies have the same path. RFC ordering therefore
-            # uses creation time, never domain specificity. Old schemas lack it.
-            order = "creationTime, rowid" if "creationTime" in columns else "rowid"
-            rows = connection.execute(
-                "SELECT name, value, host, path FROM moz_cookies "
-                "WHERE host IN (?, ?, ?) AND path = '/' AND expiry > ? "
-                "AND length(name) BETWEEN 1 AND 128 AND length(value) BETWEEN 1 AND 4096"
-                + context_filter + " ORDER BY " + order + " LIMIT 201",
-                (*COOKIE_DOMAINS, int(time.time())),
-            ).fetchall()
-            if strict and "originAttributes" in columns and not any(row[0] == "__Secure-3PAPISID" for row in rows):
-                container = connection.execute(
-                    "SELECT 1 FROM moz_cookies WHERE host IN (?, ?, ?) "
-                    "AND path = '/' AND name = '__Secure-3PAPISID' AND originAttributes != '' AND expiry > ? LIMIT 1",
-                    (*COOKIE_DOMAINS, int(time.time())),
-                ).fetchone()
-                if container:
-                    raise CookieReadError("container")
-        if len(rows) > 200:
-            return []
-        return [{"name": name, "value": value, "domain": host, "path": path}
-                for name, value, host, path in rows]
+        try:
+            return _read_cookie_rows(database, strict, "?mode=ro")
+        except sqlite3.OperationalError as error:
+            # A running Firefox/Zen keeps cookies.sqlite under an exclusive
+            # lock. Read the last checkpointed snapshot in place instead of
+            # asking the user to quit their browser: immutable=1 takes no lock,
+            # writes nothing and creates no copy. The session is still verified
+            # online before it can replace anything.
+            if not strict or "locked" not in str(error) and "busy" not in str(error):
+                raise
+            return _read_cookie_rows(database, strict, "?mode=ro&immutable=1")
     except (sqlite3.Error, OSError):
         # Browser startup, write locks, or shutdown can temporarily prevent a read.
         if strict:
             raise CookieReadError("profile_read") from None
         return []
+
+
+def _read_cookie_rows(database, strict, query):
+    with closing(sqlite3.connect(database.resolve().as_uri() + query, uri=True, timeout=0.1)) as connection:
+        connection.execute("PRAGMA query_only=ON")
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(moz_cookies)")}
+        context_filter = " AND originAttributes = ''" if "originAttributes" in columns else ""
+        # All selected cookies have the same path. RFC ordering therefore
+        # uses creation time, never domain specificity. Old schemas lack it.
+        order = "creationTime, rowid" if "creationTime" in columns else "rowid"
+        rows = connection.execute(
+            "SELECT name, value, host, path FROM moz_cookies "
+            "WHERE host IN (?, ?, ?) AND path = '/' AND expiry > ? "
+            "AND length(name) BETWEEN 1 AND 128 AND length(value) BETWEEN 1 AND 4096"
+            + context_filter + " ORDER BY " + order + " LIMIT 201",
+            (*COOKIE_DOMAINS, int(time.time())),
+        ).fetchall()
+        if strict and "originAttributes" in columns and not any(row[0] == "__Secure-3PAPISID" for row in rows):
+            container = connection.execute(
+                "SELECT 1 FROM moz_cookies WHERE host IN (?, ?, ?) "
+                "AND path = '/' AND name = '__Secure-3PAPISID' AND originAttributes != '' AND expiry > ? LIMIT 1",
+                (*COOKIE_DOMAINS, int(time.time())),
+            ).fetchone()
+            if container:
+                raise CookieReadError("container")
+    if len(rows) > 200:
+        return []
+    return [{"name": name, "value": value, "domain": host, "path": path}
+            for name, value, host, path in rows]
 
 
 def zen_profiles_root():
@@ -247,9 +261,49 @@ def selected_zen_database(value):
     return canonical
 
 
+def detect_zen_database():
+    """Return the signed-in Zen cookie database the user most recently used.
+
+    Only regular profile folders directly inside Zen's own Profiles root are
+    considered. A profile counts only when its default (non-container) cookie
+    jar holds a YouTube sign-in; the most recently written one wins so the
+    browser the user is actually using is chosen when several installs exist.
+    """
+    try:
+        root = zen_profiles_root()
+    except (ValueError, OSError, KeyError):
+        return None
+    candidates = []
+    try:
+        profiles = sorted(root.iterdir())[:64]
+    except OSError:
+        return None
+    for profile in profiles:
+        database = profile / "cookies.sqlite"
+        try:
+            if profile.is_symlink() or not profile.is_dir():
+                continue
+            database = selected_zen_database(str(database))
+            cookies = read_cookie_database(database, strict=True)
+        except (ValueError, OSError, CookieReadError):
+            continue
+        if not any(cookie["name"] == "__Secure-3PAPISID" for cookie in cookies):
+            continue
+        written = max(path.stat().st_mtime for path in (database, database.with_name("cookies.sqlite-wal"))
+                      if path.is_file())
+        candidates.append((written, str(database)))
+    return max(candidates)[1] if candidates else None
+
+
 def connect_existing(database, index=0):
-    # This path arrives only after the user explicitly selects the cookie file.
-    # No browser is opened, no profile is copied, and no files are changed here.
+    # This path arrives only after the user explicitly asks to connect Zen,
+    # either by selecting the cookie file or with "Connect from Zen" (database
+    # omitted). No browser is opened, no profile is copied, and no files are
+    # changed here.
+    if database in (None, ""):
+        database = detect_zen_database()
+        if database is None:
+            return {"type": "error", "code": "no_profile"}
     try:
         database = selected_zen_database(database)
     except (ValueError, OSError, KeyError, TypeError):
@@ -1622,7 +1676,7 @@ def main():
             print(json.dumps(result, ensure_ascii=True))
             return
         if request.get("action") == "connect_existing":
-            result = connect_existing(request["database"], request.get("index", 0))
+            result = connect_existing(request.get("database"), request.get("index", 0))
             print(json.dumps(result, ensure_ascii=True))
             return
         if request.get("action") == "connect":

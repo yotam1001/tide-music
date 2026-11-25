@@ -34,7 +34,7 @@ Homebrew. From the checkout root, build Tide and its separate login helper
 into the same directory:
 
 ```sh
-brew install mpv yt-dlp
+brew install mpv yt-dlp deno
 cargo build --release --locked -p tide-music
 cargo build --release --locked -p tide-provider --bin tide-login --features tide-provider/native-login
 target/release/tide-login --probe

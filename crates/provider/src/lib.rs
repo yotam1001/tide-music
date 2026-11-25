@@ -283,8 +283,10 @@ pub struct Card {
 #[derive(Clone, Serialize)]
 #[serde(tag = "action", rename_all = "lowercase")]
 pub enum Request {
+    /// Connect an existing Zen session. `None` asks the helper to find the
+    /// signed-in profile itself ("Connect from Zen").
     Connect {
-        database: PathBuf,
+        database: Option<PathBuf>,
         index: u32,
     },
     SwitchAccount {
@@ -557,8 +559,20 @@ trait SessionKeyStore: Send + Sync {
 
 #[cfg(target_os = "macos")]
 const KEYCHAIN_SERVICE: &str = "com.tidemusic.Tide.session";
+/// Items under this account are readable by every Tide build. Ad-hoc signed
+/// builds have a different code hash after every update, and macOS ties a
+/// Keychain item to the code hashes allowed to read it (its partition list),
+/// so the login password was asked for after each update. The owner chose
+/// open access (2026-11-24): the item allows any application, and Tide
+/// reads and writes it through Apple's `security` tool, whose `apple-tool:`
+/// partition is always on the list. The key stays encrypted in the login
+/// Keychain; any process running as this user can read it, as with DPAPI on
+/// Windows.
 #[cfg(target_os = "macos")]
-const KEYCHAIN_ACCOUNT: &str = "session-key";
+const KEYCHAIN_ACCOUNT: &str = "session-key-v2";
+/// Items created before 0.4.37, restricted to the build that created them.
+#[cfg(target_os = "macos")]
+const KEYCHAIN_LEGACY_ACCOUNT: &str = "session-key";
 #[cfg(target_os = "macos")]
 const ERR_SEC_ITEM_NOT_FOUND: i32 = -25300;
 
@@ -566,26 +580,140 @@ const ERR_SEC_ITEM_NOT_FOUND: i32 = -25300;
 struct KeychainKeyStore;
 
 #[cfg(target_os = "macos")]
+fn keychain_key(account: &str) -> Result<Option<zeroize::Zeroizing<[u8; 32]>>, &'static str> {
+    use security_framework::passwords::{generic_password, PasswordOptions};
+    match generic_password(PasswordOptions::new_generic_password(
+        KEYCHAIN_SERVICE,
+        account,
+    )) {
+        Ok(mut bytes) => {
+            if bytes.len() != 32 {
+                bytes.zeroize();
+                return Err("Account session key in Keychain is invalid");
+            }
+            let mut key = zeroize::Zeroizing::new([0u8; 32]);
+            key.copy_from_slice(&bytes);
+            bytes.zeroize();
+            Ok(Some(key))
+        }
+        Err(err) if err.code() == ERR_SEC_ITEM_NOT_FOUND => Ok(None),
+        Err(_) => Err("Could not read account session key from Keychain"),
+    }
+}
+
+/// Run Apple's `security` tool with `input` on stdin; never put the key in
+/// its arguments. Returns the exit code and stdout.
+#[cfg(target_os = "macos")]
+fn security_tool(
+    arguments: &[&str],
+    input: &[u8],
+) -> Result<(Option<i32>, zeroize::Zeroizing<Vec<u8>>), &'static str> {
+    use std::io::{Read, Write};
+    use std::process::{Command, Stdio};
+    let mut child = Command::new("/usr/bin/security")
+        .args(arguments)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|_| "Could not open the Keychain")?;
+    let written = child
+        .stdin
+        .take()
+        .ok_or("Could not open the Keychain")
+        .and_then(|mut stdin| {
+            stdin
+                .write_all(input)
+                .map_err(|_| "Could not open the Keychain")
+        });
+    let mut output = zeroize::Zeroizing::new(Vec::new());
+    if let Some(stdout) = child.stdout.take() {
+        let _ = stdout.take(4096).read_to_end(&mut output);
+    }
+    let status = child.wait().map_err(|_| "Could not open the Keychain")?;
+    written?;
+    Ok((status.code(), output))
+}
+
+/// The open-access key, read through `security` so no build is prompted.
+#[cfg(target_os = "macos")]
+fn open_keychain_key() -> Result<Option<zeroize::Zeroizing<[u8; 32]>>, &'static str> {
+    const INVALID: &str = "Account session key in Keychain is invalid";
+    let (code, output) = security_tool(
+        &[
+            "find-generic-password",
+            "-w",
+            "-s",
+            KEYCHAIN_SERVICE,
+            "-a",
+            KEYCHAIN_ACCOUNT,
+        ],
+        b"",
+    )?;
+    match code {
+        Some(0) => {}
+        // errSecItemNotFound
+        Some(44) => return Ok(None),
+        _ => return Err("Could not read account session key from Keychain"),
+    }
+    let hex = output.strip_suffix(b"\n").unwrap_or(&output);
+    if hex.len() != 64 {
+        return Err(INVALID);
+    }
+    let mut key = zeroize::Zeroizing::new([0u8; 32]);
+    for (index, pair) in hex.chunks(2).enumerate() {
+        let text = std::str::from_utf8(pair).map_err(|_| INVALID)?;
+        key[index] = u8::from_str_radix(text, 16).map_err(|_| INVALID)?;
+    }
+    Ok(Some(key))
+}
+
+#[cfg(target_os = "macos")]
+fn delete_keychain_key(account: &str) -> Result<(), &'static str> {
+    use security_framework::passwords::delete_generic_password;
+    match delete_generic_password(KEYCHAIN_SERVICE, account) {
+        Ok(()) => Ok(()),
+        Err(err) if err.code() == ERR_SEC_ITEM_NOT_FOUND => Ok(()),
+        Err(_) => Err("Could not remove account session key from Keychain"),
+    }
+}
+
+/// Store `key` readable by any application. The Security framework's
+/// non-deprecated API cannot build that access list, so Apple's `security`
+/// tool does it. The key reaches it on stdin, never on its command line.
+#[cfg(target_os = "macos")]
+fn store_open_keychain_key(key: &[u8; 32]) -> Result<(), &'static str> {
+    const FAILED: &str = "Could not store account session key in Keychain";
+    let mut line = zeroize::Zeroizing::new(format!(
+        "add-generic-password -U -A -s {KEYCHAIN_SERVICE} -a {KEYCHAIN_ACCOUNT} -l {KEYCHAIN_SERVICE} -X "
+    ));
+    for byte in key {
+        line.push_str(&format!("{byte:02x}"));
+    }
+    line.push('\n');
+    let (code, _) = security_tool(&["-i"], line.as_bytes()).map_err(|_| FAILED)?;
+    // `security -i` reports command failures on stderr only; read back.
+    match open_keychain_key()? {
+        Some(stored) if code == Some(0) && *stored == *key => Ok(()),
+        _ => Err(FAILED),
+    }
+}
+
+#[cfg(target_os = "macos")]
 impl SessionKeyStore for KeychainKeyStore {
     fn load_key(&self) -> Result<Option<zeroize::Zeroizing<[u8; 32]>>, &'static str> {
-        use security_framework::passwords::{generic_password, PasswordOptions};
-        match generic_password(PasswordOptions::new_generic_password(
-            KEYCHAIN_SERVICE,
-            KEYCHAIN_ACCOUNT,
-        )) {
-            Ok(mut bytes) => {
-                if bytes.len() != 32 {
-                    bytes.zeroize();
-                    return Err("Account session key in Keychain is invalid");
-                }
-                let mut key = zeroize::Zeroizing::new([0u8; 32]);
-                key.copy_from_slice(&bytes);
-                bytes.zeroize();
-                Ok(Some(key))
-            }
-            Err(err) if err.code() == ERR_SEC_ITEM_NOT_FOUND => Ok(None),
-            Err(_) => Err("Could not read account session key from Keychain"),
+        if let Some(key) = open_keychain_key()? {
+            return Ok(Some(key));
         }
+        // One-time move of a pre-0.4.37 key. Reading it may ask for the login
+        // password a last time; afterwards updates never ask again.
+        let Some(key) = keychain_key(KEYCHAIN_LEGACY_ACCOUNT)? else {
+            return Ok(None);
+        };
+        if store_open_keychain_key(&key).is_ok() {
+            let _ = delete_keychain_key(KEYCHAIN_LEGACY_ACCOUNT);
+        }
+        Ok(Some(key))
     }
 
     fn load_or_create_key(&self) -> Result<zeroize::Zeroizing<[u8; 32]>, &'static str> {
@@ -593,22 +721,29 @@ impl SessionKeyStore for KeychainKeyStore {
             return Ok(key);
         }
         use ring::rand::{SecureRandom, SystemRandom};
-        use security_framework::passwords::set_generic_password;
         let mut key = zeroize::Zeroizing::new([0u8; 32]);
         SystemRandom::new()
             .fill(&mut *key)
             .map_err(|_| "Could not generate account session key")?;
-        set_generic_password(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT, &*key)
-            .map_err(|_| "Could not store account session key in Keychain")?;
+        store_open_keychain_key(&key)?;
         Ok(key)
     }
 
     fn delete_key(&self) -> Result<(), &'static str> {
-        use security_framework::passwords::delete_generic_password;
-        match delete_generic_password(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT) {
-            Ok(()) => Ok(()),
-            Err(err) if err.code() == ERR_SEC_ITEM_NOT_FOUND => Ok(()),
-            Err(_) => Err("Could not remove account session key from Keychain"),
+        delete_keychain_key(KEYCHAIN_LEGACY_ACCOUNT)?;
+        let (code, _) = security_tool(
+            &[
+                "delete-generic-password",
+                "-s",
+                KEYCHAIN_SERVICE,
+                "-a",
+                KEYCHAIN_ACCOUNT,
+            ],
+            b"",
+        )?;
+        match code {
+            Some(0) | Some(44) => Ok(()),
+            _ => Err("Could not remove account session key from Keychain"),
         }
     }
 }
@@ -2643,6 +2778,9 @@ fn execute_helper(
         }
         Response::Error { code } if code == "profile" => {
             Err("Select cookies.sqlite inside your Zen profile, or use Import session for a custom profile".into())
+        }
+        Response::Error { code } if code == "no_profile" => {
+            Err("No Zen profile signed in to YouTube Music was found. Sign in at music.youtube.com in Zen (outside a container), then try again".into())
         }
         Response::Error { code } if code == "profile_read" => {
             Err("Zen's cookie database could not be read. Close Zen after signing in, then reconnect using the same profile.".into())

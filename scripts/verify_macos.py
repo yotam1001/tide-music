@@ -75,6 +75,7 @@ def main():
         if not any(line.split()[0] == '--media-controls' for line in media_options):
             raise RuntimeError('Bundled mpv must accept --media-controls=no')
         run(app / 'Contents/Resources/bin/yt-dlp', '--version')
+        run(app / 'Contents/Resources/bin/deno', '--version')
         # -B prevents imports from adding files after the resource seal is signed.
         run(app / 'Contents/Resources/python/bin/python3', '-I', '-B', '-c',
             'import ytmusicapi, requests, certifi, ruamel.yaml; print("helper imports ok")')

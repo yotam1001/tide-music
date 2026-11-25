@@ -99,6 +99,8 @@ export component AppWindow inherits Window {
     in-out property <int> account-index;
     callback switch-account(int);
     callback connect-account();
+    in property <bool> zen-available: false;
+    callback connect-zen();
     callback native-sign-in();
     callback cancel-native-sign-in();
     callback cancel-account();
@@ -2503,8 +2505,14 @@ export component AppWindow inherits Window {
                                 }
                                 SettingsGroup {
                                     title: "Other ways to connect";
-                                    if root.native-login-available : SettingRow {
+                                    if root.zen-available : SettingRow {
                                         separator: false;
+                                        title: "Zen browser";
+                                        detail: "Signed in to YouTube Music in Zen? Connect it in one click. Works with Family Link.";
+                                        LibraryButton { width: 112px; height: 32px; quiet: false; active: !root.account-verified; light-mode: root.light-mode; caption: "Connect"; label: "Connect the YouTube Music session from Zen"; enabled: !root.account-busy && !root.native-login-busy; clicked => { root.connect-zen(); } }
+                                    }
+                                    if root.native-login-available : SettingRow {
+                                        separator: root.zen-available;
                                         title: "Browser companion";
                                         detail: "Chrome, Edge, Brave, Arc, Firefox or Zen. Best for Family Link.";
                                         LibraryButton { width: 112px; height: 32px; quiet: false; light-mode: root.light-mode; caption: root.companion-setup-available && root.companion-setup-open ? "Hide" : "Set up"; label: "Open browser companion setup or connection guide"; enabled: !root.account-busy && !root.native-login-busy; clicked => { if root.companion-setup-available { root.companion-setup-open = !root.companion-setup-open; } else { root.open-account-help(); } } }

@@ -17,6 +17,8 @@ ROOT = Path(__file__).resolve().parent.parent
 PACK = ROOT / 'packaging/macos'
 
 
+BUNDLE_ID = 'com.tidemusic.Tide'
+
 def run(*args, **kwargs):
     return subprocess.run([str(a) for a in args], check=True, **kwargs)
 
@@ -57,6 +59,15 @@ def runtime(arch, resources, work):
     if expected not in sums.read_text().splitlines():
         raise RuntimeError('yt-dlp digest not found in official SHA2-256SUMS')
     (resources / 'bin/yt-dlp').chmod(0o755)
+    # yt-dlp needs a JavaScript runtime to solve YouTube's signature challenge
+    # for signed-in requests; without it only images are offered. Tide puts
+    # bin/ on the PATH of mpv and yt-dlp, as Windows does with deno.exe.
+    deno = lock['deno'][arch]
+    archive = work / 'deno.zip'
+    download(deno, archive)
+    with zipfile.ZipFile(archive) as z:
+        (resources / 'bin/deno').write_bytes(z.read('deno'))
+    (resources / 'bin/deno').chmod(0o755)
     account_helper(arch, lock, resources, work)
     shutil.copy(PACK / 'runtime.lock.json', resources)
 
@@ -123,6 +134,24 @@ def relocate(bundle):
                     run('install_name_tool', '-id', '@rpath/' + path.name, path)
 
 
+def stable_identity(app, path, identity):
+    """Ad-hoc signatures default to a per-build cdhash requirement, so macOS
+    asks for the login password to reach Tide's Keychain session key after
+    every update. Tide's own executables get an identifier requirement that
+    stays the same across releases. Developer ID builds keep their team-based
+    requirement."""
+    if identity != '-':
+        return []
+    if path == app:
+        name = BUNDLE_ID
+    elif (path.parent == app / 'Contents' / 'MacOS' and path.name.startswith('tide-')
+          and path.name != 'tide-music'):
+        name = f'{BUNDLE_ID}.{path.name.removeprefix("tide-")}'
+    else:
+        return []
+    return ['--identifier', name, f'-r=designated => identifier "{name}"']
+
+
 def sign(app):
     identity = os.environ.get('MACOS_SIGNING_IDENTITY', '-')
     flags = ['--force', '--sign', identity]
@@ -130,10 +159,10 @@ def sign(app):
         '--timestamp', '--options', 'runtime', '--entitlements', str(PACK / 'Tide.entitlements')]
     for path in sorted(app.rglob('*'), key=lambda p: len(p.parts), reverse=True):
         if macho(path):
-            run('codesign', *flags, path)
+            run('codesign', *flags, *stable_identity(app, path, identity), path)
     for path in sorted(app.rglob('*.app'), key=lambda p: len(p.parts), reverse=True):
         run('codesign', *flags, path)
-    run('codesign', *flags, app)
+    run('codesign', *flags, *stable_identity(app, app, identity), app)
     run('codesign', '--verify', '--strict', '--verbose=2', app)
 
 
